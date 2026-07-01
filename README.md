@@ -9,7 +9,7 @@ It is not just an Agent Skill. The core product is `pcl`, a small local CLI/runt
 Until a PyPI package is published, install from a pinned GitHub tag or commit:
 
 ```bash
-pipx install "git+https://github.com/mocchalera/project-loop-harness.git@v0.1.0"
+pipx install "git+https://github.com/mocchalera/project-loop-harness.git@v0.1.1"
 pcl --help
 ```
 

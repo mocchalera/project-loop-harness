@@ -18,7 +18,7 @@ Install and verify `pcl` separately before using this plugin with a target
 repository:
 
 ```bash
-pipx install "git+https://github.com/mocchalera/project-loop-harness.git@v0.1.0"
+pipx install "git+https://github.com/mocchalera/project-loop-harness.git@v0.1.1"
 pcl --help
 ```
 
