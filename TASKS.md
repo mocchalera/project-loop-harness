@@ -61,5 +61,6 @@ Give these tasks to coding agents in this order:
 57. `agent-tasks/0057-executor-no-executable-step-guard.md`
 58. `agent-tasks/0058-dogfood-usability-hardening.md`
 59. `agent-tasks/0059-checkpoint-review-guidance.md`
+60. `agent-tasks/0060-pypi-trusted-publishing.md`
 
 Do not start with MCP. Do not start with a hosted UI. The CLI/runtime must become reliable first.

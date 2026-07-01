@@ -13,6 +13,10 @@ pipx install "git+https://github.com/mocchalera/project-loop-harness.git@v0.1.2"
 pcl --help
 ```
 
+PyPI publishing is prepared through GitHub Actions Trusted Publishing. See
+[docs/pypi-publishing.md](docs/pypi-publishing.md) for the TestPyPI/PyPI setup
+and release checklist.
+
 Initialize a target project:
 
 ```bash

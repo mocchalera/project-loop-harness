@@ -142,3 +142,5 @@ Only after static workflows are stable:
 - Add checkpoint review commands and `pcl next` routing so every several done
   features triggers a human commit/package, UX checklist, and next-priority
   review before continuing feature coverage.
+- Add PyPI/TestPyPI Trusted Publishing workflow and docs so public package
+  releases can use GitHub OIDC instead of long-lived PyPI tokens.

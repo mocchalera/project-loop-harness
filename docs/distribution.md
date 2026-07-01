@@ -31,6 +31,10 @@ Before a package is published, use a pinned GitHub install instead:
 python -m pip install "project-loop-harness @ git+https://github.com/mocchalera/project-loop-harness.git@<commit-or-tag>"
 ```
 
+Publishing is handled through GitHub Actions Trusted Publishing, not long-lived
+PyPI API tokens. See [pypi-publishing.md](pypi-publishing.md) for the exact
+TestPyPI/PyPI pending publisher fields and release checklist.
+
 ## Phase 2: Project template installer
 
 `pcl init` writes:
@@ -137,3 +141,22 @@ Then initialize a scratch project with the installed `pcl` and verify:
 ```
 
 The same path is covered by `pytest tests/test_distribution.py`.
+
+## PyPI Release Workflow
+
+The repository ships:
+
+```text
+.github/workflows/publish-pypi.yml
+```
+
+The workflow:
+
+- runs only on GitHub Release publication or manual dispatch;
+- builds both sdist and wheel;
+- runs `twine check`;
+- publishes to TestPyPI with `repository=testpypi`;
+- publishes to PyPI on a published GitHub Release or manual
+  `repository=pypi` dispatch;
+- uses OIDC Trusted Publishing through job-level `id-token: write`;
+- does not require `PYPI_TOKEN` or `TEST_PYPI_TOKEN` secrets.
