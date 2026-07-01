@@ -1,0 +1,27 @@
+name: Project Loop Validate
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - '.project-loop/**'
+      - 'pcl.yaml'
+      - 'AGENTS.md'
+      - 'CLAUDE.md'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Validate if project-loop is initialized
+        if: ${{ hashFiles('.project-loop/project.db') != '' }}
+        uses: ./.github/actions/project-loop-validate
+        with:
+          install-command: python -m pip install -e '.[dev]'
+      - name: Skip when project-loop is not initialized
+        if: ${{ hashFiles('.project-loop/project.db') == '' }}
+        run: echo "No .project-loop directory in this repository; skipping."

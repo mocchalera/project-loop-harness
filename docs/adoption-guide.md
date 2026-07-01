@@ -1,0 +1,279 @@
+# Adoption Guide
+
+This guide is for taking Project Loop Harness from this repository into a new
+software project.
+
+Use it when you need to answer three operator questions:
+
+- how to distribute the `pcl` runtime;
+- how to initialize a target project safely;
+- what to ask the first coding agent to do.
+
+## Distribution Options
+
+Project Loop Harness has multiple pieces, but the runtime is always the Python
+package that provides `pcl`.
+
+```text
+pcl CLI      = runtime and state machine
+Skill        = agent instructions installed by `pcl init`
+Plugin       = Codex packaging wrapper
+MCP server   = optional local bridge
+GitHub Action = optional validation wrapper
+```
+
+### Current Practical Default: Public Git Install
+
+Until a package is published, install from GitHub over HTTPS and pin a commit or
+tag for team use:
+
+```bash
+python -m pip install "project-loop-harness @ git+https://github.com/mocchalera/project-loop-harness.git@<commit-or-tag>"
+pcl --help
+```
+
+For an isolated command install, `pipx` can install the same Git package:
+
+```bash
+pipx install "git+https://github.com/mocchalera/project-loop-harness.git@<commit-or-tag>"
+pcl --help
+```
+
+Use `main` only for local dogfooding. For another project or another operator,
+prefer a tag or full commit hash so the initialized project can be reproduced.
+
+### Local Wheel Handoff
+
+When you want to test the exact distribution artifact before sharing it:
+
+```bash
+python -m pip wheel . --no-deps --no-build-isolation -w /tmp/pcl-wheelhouse
+python -m venv /tmp/pcl-wheel-venv
+/tmp/pcl-wheel-venv/bin/python -m pip install --no-deps /tmp/pcl-wheelhouse/project_loop_harness-*.whl
+/tmp/pcl-wheel-venv/bin/pcl --help
+/tmp/pcl-wheel-venv/bin/pcl-mcp --help
+```
+
+Then initialize a scratch project with the wheel-installed binary:
+
+```bash
+/tmp/pcl-wheel-venv/bin/pcl init --target /tmp/pcl-dist-demo
+/tmp/pcl-wheel-venv/bin/pcl validate --root /tmp/pcl-dist-demo --strict
+/tmp/pcl-wheel-venv/bin/pcl render --root /tmp/pcl-dist-demo --json
+```
+
+### Later Public Package
+
+Once the package is published, the intended command is:
+
+```bash
+pipx install project-loop-harness
+```
+
+Until publication exists, do not write onboarding instructions that assume PyPI
+availability. Use the GitHub or wheel path above.
+
+### Optional Wrappers
+
+These are useful after the CLI is already installed and understood:
+
+- Codex plugin scaffold: `plugins/codex-project-loop/`
+- local MCP server: `pcl-mcp --stdio --root <project>`
+- GitHub Action: `.github/actions/project-loop-validate/action.yml`
+
+The wrappers do not replace the runtime. State mutations still go through
+`pcl`.
+
+## New Project Start
+
+Run these steps from the target project root.
+
+### 1. Install The Runtime
+
+Use one of the distribution options above, then verify:
+
+```bash
+pcl --help
+pcl-mcp --help
+```
+
+### 2. Initialize The Project
+
+```bash
+cd /path/to/target-project
+pcl init
+pcl doctor
+pcl validate --strict
+pcl render --json
+```
+
+`pcl init` adds local state, workflow templates, agent instructions, and
+operator guidance. It is safe to rerun; existing `AGENTS.md`, `CLAUDE.md`, and
+`.gitignore` blocks are not duplicated.
+
+### 3. Tune `pcl.yaml`
+
+Edit `pcl.yaml` before asking agents to do real work:
+
+- set `project.name` and `project.type`;
+- fill `commands.install`, `commands.lint`, `commands.test`, and other known
+  checks;
+- make `discovery.include` match real source and test directories;
+- keep secrets, migrations, generated state, and production config out of
+  `permissions.agent_may_modify`;
+- add human approval gates for migrations, dependencies, auth, production
+  config, destructive operations, and external writes.
+
+Then rerun:
+
+```bash
+pcl validate --strict
+pcl render --json
+```
+
+### 4. Decide What To Commit
+
+Commit the project policy and reusable instructions:
+
+```text
+pcl.yaml
+AGENTS.md
+CLAUDE.md
+.agents/skills/project-control-loop/SKILL.md
+.project-loop/workflows/*.yaml
+.gitignore
+```
+
+Keep local state out of normal commits:
+
+```text
+.project-loop/project.db
+.project-loop/project.db-*
+.project-loop/events.jsonl
+.project-loop/evidence/
+.project-loop/worktrees/
+.project-loop/tmp/
+.project-loop/cache/
+```
+
+The generated review artifacts may be committed only if the team wants them in
+the repository:
+
+```text
+.project-loop/dashboard/
+.project-loop/reports/
+.project-loop/exports/
+```
+
+### 5. Run The First Loop
+
+For a new project, start with a bounded goal:
+
+```bash
+pcl goal create --title "Reach basic feature coverage"
+pcl loop run feature_coverage --goal G-0001
+pcl next --json
+```
+
+Then follow `pcl next`. It is the router for validation failures, human queues,
+active workflows, defects, goals, and feature coverage.
+
+For a command-only smoke check of the executor:
+
+```bash
+pcl workflow verify --template executor_smoke
+pcl workflow sandbox --template executor_smoke --json
+pcl loop execute executor_smoke --json
+pcl validate --strict
+```
+
+## First Agent Prompts
+
+The first prompt should make the harness boundary explicit. Do not ask the
+agent to "manage project state" in prose. Ask it to use `pcl`.
+
+### Orientation Prompt
+
+Use this when the target project has just been initialized and you want the
+agent to inspect without making product changes:
+
+```text
+Read AGENTS.md, CLAUDE.md if present, README.md, and pcl.yaml.
+
+This project uses Project Loop Harness. Do not edit `.project-loop/project.db`,
+`.project-loop/events.jsonl`, or generated dashboard HTML directly. Use `pcl`
+commands for loop state changes.
+
+Run:
+- pcl validate --json
+- pcl validate --strict --json
+- pcl next --json
+
+Then tell me:
+- whether the harness is healthy;
+- what `pcl next` recommends;
+- what first bounded goal you recommend for this repository;
+- any project-specific changes needed in `pcl.yaml`.
+
+Do not implement code changes yet.
+```
+
+### Start-Work Prompt
+
+Use this when you are ready for the agent to begin the first loop:
+
+```text
+Use Project Loop Harness for this work.
+
+First run `pcl next --strict --json`. If it reports validation errors, fix the
+smallest safe issue first. If it recommends creating or continuing a goal,
+follow the recommended `pcl` command.
+
+All loop state mutations must go through `pcl`. Do not edit SQLite, events
+JSONL, or generated dashboard HTML directly.
+
+Keep the first goal bounded. Prefer `feature_coverage`, `defect_repair`, or the
+bundled `executor_smoke` workflow before proposing new workflow templates.
+
+After meaningful state changes, run:
+- pcl validate --strict --json
+- pcl render --json
+
+Report the commands run, generated evidence or report paths, and the final
+`pcl next --json` action.
+```
+
+### Implementation Prompt
+
+Use this once a goal or workflow already exists:
+
+```text
+Continue the current Project Loop Harness workflow.
+
+Run `pcl next --strict --json` and take the next safe action. Use `pcl jobs
+read`, `pcl prompt job`, or `pcl agent command` for agent jobs. If a human
+decision is required, open or resolve escalation/decision state with `pcl`
+instead of leaving it as free text.
+
+Implement only the smallest scoped change needed for the current goal. Add or
+update tests for mutating behavior. Preserve unrelated user changes.
+
+Before finishing, run the relevant tests plus:
+- pcl validate --strict --json
+- pcl render --json
+
+Summarize evidence, not just conclusions.
+```
+
+## Operator Checklist
+
+Before handing a target project to another agent, confirm:
+
+- `pcl --help` works in that environment;
+- `pcl init` has been run;
+- `pcl.yaml` has real project commands and permissions;
+- `pcl validate --strict` passes;
+- `pcl render --json` returns dashboard artifact paths;
+- the committed files exclude local DB, JSONL audit log, and evidence blobs
+  unless the team intentionally chose otherwise;
+- the first prompt tells agents to use `pcl`, not raw SQLite or generated HTML.

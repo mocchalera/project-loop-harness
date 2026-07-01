@@ -1,0 +1,13 @@
+# Project Loop Harness local state
+.project-loop/project.db
+.project-loop/project.db-*
+.project-loop/events.jsonl
+.project-loop/evidence/
+.project-loop/worktrees/
+.project-loop/tmp/
+.project-loop/cache/
+
+# These may be committed if the team wants human-readable review artifacts.
+!.project-loop/dashboard/
+!.project-loop/reports/
+!.project-loop/exports/

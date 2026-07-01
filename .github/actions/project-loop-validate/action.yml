@@ -1,0 +1,40 @@
+name: Project Loop Validate
+description: Validate and optionally render a Project Loop Harness project.
+
+inputs:
+  root:
+    description: Project root containing pcl.yaml and optional .project-loop state.
+    required: false
+    default: "."
+  strict:
+    description: Run strict validation.
+    required: false
+    default: "true"
+  render:
+    description: Render the dashboard after validation.
+    required: false
+    default: "true"
+  install-command:
+    description: Command that installs project-loop-harness before validation.
+    required: false
+    default: "python -m pip install project-loop-harness"
+
+runs:
+  using: composite
+  steps:
+    - name: Install Project Loop Harness
+      shell: bash
+      run: ${{ inputs.install-command }}
+    - name: Validate Project Loop state
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "${{ inputs.root }}"
+        if [ "${{ inputs.strict }}" = "true" ]; then
+          pcl validate --strict
+        else
+          pcl validate
+        fi
+        if [ "${{ inputs.render }}" = "true" ]; then
+          pcl render
+        fi

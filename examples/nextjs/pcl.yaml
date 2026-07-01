@@ -1,0 +1,68 @@
+project_loop:
+  version: "0.1.0"
+  schema_version: 1
+
+project:
+  name: "nextjs-example"
+  type: "nextjs"
+  root: "."
+
+commands:
+  install: "pnpm install"
+  lint: "pnpm lint"
+  typecheck: "pnpm typecheck"
+  test: "pnpm test"
+  e2e: "pnpm playwright test"
+  build: "pnpm build"
+
+discovery:
+  include:
+    - app/
+    - pages/
+    - src/
+    - components/
+    - lib/
+    - tests/
+    - docs/
+  exclude:
+    - node_modules/
+    - .next/
+    - coverage/
+    - playwright-report/
+    - .vercel/
+
+loop:
+  max_iterations_per_workflow: 3
+  max_fix_attempts_per_defect: 2
+  max_parallel_jobs: 3
+  require_human_after_repeated_failure: true
+  stop_if_same_failure_repeats: true
+
+permissions:
+  agent_may_modify:
+    - app/
+    - pages/
+    - src/
+    - components/
+    - lib/
+    - tests/
+    - docs/
+    - README.md
+  agent_may_not_modify:
+    - .env
+    - ".env.*"
+    - .project-loop/project.db
+    - .project-loop/events.jsonl
+    - secrets/
+    - prisma/migrations/
+    - .vercel/
+  require_human_approval:
+    - dependency_addition
+    - database_migration
+    - auth_or_billing_change
+    - production_config_change
+    - destructive_operation
+
+dashboard:
+  output: ".project-loop/dashboard/dashboard.html"
+  auto_render: true

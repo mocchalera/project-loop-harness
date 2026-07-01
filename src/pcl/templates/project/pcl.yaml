@@ -1,0 +1,60 @@
+project_loop:
+  version: "0.1.0"
+  schema_version: 1
+
+project:
+  name: "CHANGE_ME"
+  type: "generic"
+  root: "."
+
+commands:
+  install: ""
+  lint: ""
+  typecheck: ""
+  test: ""
+  e2e: ""
+  build: ""
+
+discovery:
+  include:
+    - src/
+    - app/
+    - pages/
+    - components/
+    - tests/
+  exclude:
+    - node_modules/
+    - dist/
+    - build/
+    - coverage/
+    - .next/
+    - .venv/
+
+loop:
+  max_iterations_per_workflow: 3
+  max_fix_attempts_per_defect: 2
+  max_parallel_jobs: 3
+  require_human_after_repeated_failure: true
+  stop_if_same_failure_repeats: true
+
+permissions:
+  agent_may_modify:
+    - src/
+    - app/
+    - tests/
+    - docs/
+  agent_may_not_modify:
+    - .env
+    - .env.*
+    - secrets/
+    - migrations/
+  require_human_approval:
+    - database_migration
+    - dependency_addition
+    - auth_or_billing_change
+    - production_config_change
+    - destructive_operation
+
+dashboard:
+  output: ".project-loop/dashboard/dashboard.html"
+  auto_render: true

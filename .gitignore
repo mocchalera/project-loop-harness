@@ -1,0 +1,27 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+.pytest_cache/
+.ruff_cache/
+.venv/
+.env
+.DS_Store
+
+# Local demo state
+/tmp/
+
+# Project Loop Harness local state if this repo is used as a target project
+.project-loop/project.db
+.project-loop/project.db-*
+.project-loop/events.jsonl
+.project-loop/evidence/
+.project-loop/workflow-proposals/
+.project-loop/worktrees/
+.project-loop/tmp/
+.project-loop/cache/
+
+# Generated human-readable outputs may be committed intentionally with git add -f.
+.project-loop/dashboard/
+.project-loop/reports/
+.project-loop/exports/

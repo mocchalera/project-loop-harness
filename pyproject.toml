@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "project-loop-harness"
+version = "0.1.0"
+description = "Local control plane for agentic project development loops"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [{ name = "Project Loop Harness Contributors" }]
+keywords = ["agents", "codex", "claude-code", "sqlite", "dashboard", "workflow"]
+dependencies = []
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3 :: Only",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Software Development",
+]
+
+[project.urls]
+Homepage = "https://github.com/mocchalera/project-loop-harness"
+Repository = "https://github.com/mocchalera/project-loop-harness"
+Issues = "https://github.com/mocchalera/project-loop-harness/issues"
+Documentation = "https://github.com/mocchalera/project-loop-harness/tree/main/docs"
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8",
+  "ruff>=0.6"
+]
+
+[project.scripts]
+pcl = "pcl.cli:main"
+pcl-mcp = "pcl.mcp_server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pcl = [
+  "templates/**/*",
+  "db/*.sql",
+  "db/migrations/*.sql"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "project-loop-harness": {
+      "command": "pcl-mcp",
+      "args": ["--stdio", "--root", ".", "--approval-mode", "read-only"],
+      "env": {}
+    }
+  },
+  "status": "example-only",
+  "note": "The Python project-loop-harness package must be installed separately so pcl-mcp is on PATH. Use --approval-mode local-render only when dashboard writes are explicitly allowed."
+}

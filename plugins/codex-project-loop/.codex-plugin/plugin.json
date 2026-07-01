@@ -1,0 +1,24 @@
+{
+  "name": "project-loop-harness",
+  "version": "0.1.0",
+  "description": "Project-scoped agent development loops with SQLite memory, evidence tracking, and generated dashboards.",
+  "author": {
+    "name": "Project Loop Harness Contributors"
+  },
+  "license": "MIT",
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "interface": {
+    "displayName": "Project Loop Harness",
+    "shortDescription": "Agentic project control loops with a local pcl runtime.",
+    "longDescription": "Use the project-control-loop Skill with a repository that already has the Project Loop Harness Python CLI installed. The plugin bundles instructions and safe metadata only; pcl remains the runtime that mutates state, records evidence, validates, and renders dashboards.",
+    "developerName": "Project Loop Harness Contributors",
+    "category": "Productivity",
+    "capabilities": ["Read", "Write"],
+    "defaultPrompt": [
+      "Use Project Loop Harness to inspect this repository's current loop status.",
+      "Use Project Loop Harness to create the next queued agent job and print its prompt.",
+      "Use Project Loop Harness to ingest an agent output file as evidence."
+    ]
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "contract_version": "codex-plugin-package-files/v1",
+  "description": "Files intentionally included in the Codex Project Loop plugin package.",
+  "files": [
+    ".codex-plugin/plugin.json",
+    "README.md",
+    "hooks/hooks.json",
+    "marketplace.example.json",
+    "mcp.example.json",
+    "package-files.json",
+    "skills/project-control-loop/SKILL.md"
+  ]
+}
