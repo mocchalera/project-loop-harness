@@ -6,16 +6,23 @@ It is not just an Agent Skill. The core product is `pcl`, a small local CLI/runt
 
 ## Quick Start
 
-Until a PyPI package is published, install from a pinned GitHub tag or commit:
+Install the published `pcl` CLI/runtime from PyPI with `pipx`:
 
 ```bash
-pipx install "git+https://github.com/mocchalera/project-loop-harness.git@v0.1.2"
+pipx install project-loop-harness
+pcl --version
 pcl --help
 ```
 
-PyPI publishing is prepared through GitHub Actions Trusted Publishing. See
-[docs/pypi-publishing.md](docs/pypi-publishing.md) for the TestPyPI/PyPI setup
-and release checklist.
+Use `python -m pip install project-loop-harness` when installing inside a
+project-specific virtual environment or CI job instead of exposing the command
+globally.
+
+For unreleased changes, install from a pinned GitHub tag or commit:
+
+```bash
+pipx install "git+https://github.com/mocchalera/project-loop-harness.git@<commit-or-tag>"
+```
 
 Initialize a target project:
 
@@ -63,7 +70,7 @@ project-loop-harness/
 `- tests/                           # CLI/runtime tests
 ```
 
-## Install For Local Development
+## Local Development
 
 ```bash
 python -m venv .venv
@@ -75,7 +82,8 @@ pcl --help
 
 ## Distribution Smoke Test
 
-Before publishing or handing the runtime to another project, verify a wheel install rather than only editable install:
+Before releasing a new version or handing the runtime to another project,
+verify a wheel install rather than only editable install:
 
 ```bash
 python -m pip wheel . --no-deps --no-build-isolation -w /tmp/pcl-wheelhouse
@@ -94,9 +102,10 @@ pytest tests/test_distribution.py
 ## Adoption Guide
 
 For practical rollout into another repository, use
-[docs/adoption-guide.md](docs/adoption-guide.md). It covers the current GitHub
-install path, local wheel handoff, what `pcl init` adds to a target project,
-which files to commit, and starter prompts for the first agent session.
+[docs/adoption-guide.md](docs/adoption-guide.md). It covers target-project
+setup, optional Git and local wheel handoff paths, what `pcl init` adds to a
+target project, which files to commit, and starter prompts for the first agent
+session.
 
 ## Golden Path
 
