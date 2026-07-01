@@ -243,6 +243,10 @@ Report the commands run, generated evidence or report paths, and the final
 `pcl next --json` action.
 ```
 
+When reading `pcl next --json`, treat `safe_to_run: false` as "do not auto-run
+blindly", not as "this command is forbidden." If `requires_human: true`, a
+person should choose, verify, or confirm the transition before it is recorded.
+
 ### Implementation Prompt
 
 Use this once a goal or workflow already exists:

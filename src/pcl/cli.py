@@ -434,6 +434,8 @@ def _format_next_explanation(action: dict) -> str:
         f"Blocking: {_yes_no(bool(action.get('blocking')))}",
         f"Requires human: {_yes_no(bool(action.get('requires_human')))}",
         f"Safe to run: {_yes_no(bool(action.get('safe_to_run')))}",
+        f"Run policy: {action.get('run_policy', '')}",
+        f"Human guidance: {action.get('human_guidance', '')}",
         f"Reason: {action.get('reason', '')}",
         f"Command: {action.get('command', '')}",
         f"Expected after: {action.get('expected_after', '')}",

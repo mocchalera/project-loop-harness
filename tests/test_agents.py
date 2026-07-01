@@ -36,6 +36,12 @@ def test_prompt_job_prints_complete_prompt(tmp_path: Path, capsys) -> None:
     assert "# Agent Job J-0001" in captured.out
     assert "Role: mapper" in captured.out
     assert "Do not edit `.project-loop/project.db` directly." in captured.out
+    assert "agent-output/v1" in captured.out
+    assert "# Short result summary" in captured.out
+    assert "## Findings" in captured.out
+    assert "## Evidence" in captured.out
+    assert "## Recommended pcl Commands" in captured.out
+    assert "pcl feature add" in captured.out
 
     assert main(["--root", str(tmp_path), "prompt", "job", "J-0001", "--json"]) == 0
     payload = _json_output(capsys)
@@ -50,6 +56,8 @@ def test_prompt_job_prints_complete_prompt(tmp_path: Path, capsys) -> None:
     assert payload["ingest_command"] == "pcl ingest-agent-run .project-loop/evidence/agent-runs/J-0001/output.md"
     assert "agent-output/v1" in payload["expected_output_format"]
     assert payload["prompt"].startswith("# Agent Job J-0001")
+    assert "The first non-empty line must be the H1 summary." in payload["prompt"]
+    assert 'pcl feature add --name "..."' in payload["prompt"]
 
 
 def test_agent_command_adapters(tmp_path: Path, capsys) -> None:

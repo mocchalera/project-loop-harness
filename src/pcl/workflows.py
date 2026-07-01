@@ -222,6 +222,27 @@ def run_workflow(
 
 
 JOB_STATUSES = {"queued", "running", "blocked", "failed", "passed", "cancelled"}
+AGENT_OUTPUT_TEMPLATE = [
+    "Return an `agent-output/v1` Markdown report. It must use this exact minimum shape:",
+    "",
+    "```markdown",
+    "# Short result summary",
+    "",
+    "## Findings",
+    "",
+    "- Concrete findings, scoped to this job.",
+    "",
+    "## Evidence",
+    "",
+    "- Paths, commands, test results, screenshots, or files reviewed.",
+    "",
+    "## Recommended pcl Commands",
+    "",
+    "- Optional ready-to-review `pcl ...` commands for the operator.",
+    "```",
+    "",
+    "The first non-empty line must be the H1 summary. `## Findings` and `## Evidence` are required for ingestion.",
+]
 
 
 def list_jobs(
@@ -506,8 +527,43 @@ def _render_prompt(
             "- Do not execute commands unless the human or harness explicitly asks for it.",
             "",
             "## Expected Output",
-            "Return a concise markdown report with findings, evidence paths, and recommended `pcl` commands.",
+            *AGENT_OUTPUT_TEMPLATE,
             "",
+            *_workflow_specific_handoff(template=template, step=step),
         ]
     )
     return "\n".join(prompt)
+
+
+def _workflow_specific_handoff(*, template: WorkflowTemplate, step: dict[str, Any]) -> list[str]:
+    if template.workflow_id != "feature_coverage":
+        return []
+    step_id = str(step.get("id", ""))
+    if step_id == "map_surfaces":
+        return [
+            "## Feature Coverage Handoff",
+            "- For each concrete feature candidate, include a ready-to-review command:",
+            '  `pcl feature add --name "..." --surface "..." --description "..."`',
+            "- Prefer small user-visible features over broad subsystem labels.",
+            "- Include file paths or UI surfaces as evidence for each candidate.",
+            "",
+        ]
+    if step_id == "generate_stories":
+        return [
+            "## Feature Coverage Handoff",
+            "- If feature IDs are known, include ready-to-review story commands:",
+            '  `pcl story draft --feature F-0001 --actor "..." --goal "..." --expected-behavior "..."`',
+            "- Keep one story focused on one actor goal and expected behavior.",
+            "",
+        ]
+    if step_id == "generate_tests":
+        return [
+            "## Feature Coverage Handoff",
+            "- If feature IDs are known, include ready-to-review test commands:",
+            '  `pcl test plan --feature F-0001 --type happy --scenario "..." --expected "..."`',
+            "- If implementation or UX verification already happened, list build, test, and screenshot evidence paths.",
+            "- Evidence can later be attached with:",
+            '  `pcl feature status F-0001 --status implemented --summary "..." --evidence "..."`',
+            "",
+        ]
+    return []

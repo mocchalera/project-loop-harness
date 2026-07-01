@@ -52,6 +52,8 @@ NEXT_ACTION_KEYS = {
     "blocking",
     "requires_human",
     "safe_to_run",
+    "run_policy",
+    "human_guidance",
     "expected_after",
     "target",
 }

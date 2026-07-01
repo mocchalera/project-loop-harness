@@ -17,7 +17,9 @@ pcl ingest-agent-run .project-loop/evidence/agent-runs/J-0001/output.md
 The only state mutation in the external-agent return path is `pcl ingest-agent-run`.
 
 `pcl prompt job J-0001 --json` is the compact handoff surface for automation.
-It returns the prompt body plus the deterministic return path metadata:
+It returns the prompt body plus the deterministic return path metadata. The
+prompt itself repeats the required `agent-output/v1` shape so an agent can
+produce ingestible evidence without first reading this contract:
 
 ```json
 {
@@ -36,6 +38,10 @@ It returns the prompt body plus the deterministic return path metadata:
 ```
 
 The non-JSON form stays optimized for humans and prints only the prompt text.
+The prompt includes the required H1 summary plus `## Findings` and
+`## Evidence` headings, and may include workflow-specific handoff guidance such
+as ready-to-review `pcl feature add`, `pcl story draft`, or `pcl test plan`
+commands.
 
 ## Adapter Command JSON
 

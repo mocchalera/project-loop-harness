@@ -714,6 +714,8 @@ def _next_action_block(action: dict[str, Any]) -> str:
     blocking = html.escape(_yes_no(bool(action.get("blocking"))))
     requires_human = html.escape(_yes_no(bool(action.get("requires_human"))))
     safe_to_run = html.escape(_yes_no(bool(action.get("safe_to_run"))))
+    run_policy = html.escape(str(action.get("run_policy", "")))
+    human_guidance = html.escape(str(action.get("human_guidance", "")))
     expected_after = html.escape(str(action.get("expected_after", "")))
     return (
         f"<p><strong>{action_type}</strong></p>"
@@ -724,6 +726,8 @@ def _next_action_block(action: dict[str, Any]) -> str:
         f"<dt>blocking</dt><dd>{blocking}</dd>"
         f"<dt>requires_human</dt><dd>{requires_human}</dd>"
         f"<dt>safe_to_run</dt><dd>{safe_to_run}</dd>"
+        f"<dt>run_policy</dt><dd>{run_policy}</dd>"
+        f"<dt>human_guidance</dt><dd>{human_guidance}</dd>"
         f"<dt>expected_after</dt><dd>{expected_after}</dd>"
         "</dl>"
     )

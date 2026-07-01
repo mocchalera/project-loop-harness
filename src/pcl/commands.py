@@ -335,6 +335,11 @@ def build_next_action(
     safe_to_run: bool,
     expected_after: str,
 ) -> dict:
+    run_policy = _run_policy(
+        blocking=blocking,
+        requires_human=requires_human,
+        safe_to_run=safe_to_run,
+    )
     return {
         "type": action_type,
         "command": command,
@@ -345,7 +350,33 @@ def build_next_action(
         "requires_human": requires_human,
         "safe_to_run": safe_to_run,
         "expected_after": expected_after,
+        "run_policy": run_policy,
+        "human_guidance": _human_guidance(
+            run_policy=run_policy,
+            blocking=blocking,
+        ),
     }
+
+
+def _run_policy(*, blocking: bool, requires_human: bool, safe_to_run: bool) -> str:
+    if safe_to_run:
+        return "agent_safe"
+    if requires_human:
+        return "human_decision"
+    if blocking:
+        return "manual_resolution"
+    return "manual_state_transition"
+
+
+def _human_guidance(*, run_policy: str, blocking: bool) -> str:
+    prefix = "Normal loop continuation should wait. " if blocking else ""
+    if run_policy == "agent_safe":
+        return prefix + "An agent or automation may run this command in the current project context."
+    if run_policy == "human_decision":
+        return prefix + "A human should choose or confirm this state transition before the command is run."
+    if run_policy == "manual_resolution":
+        return prefix + "Resolve the blocking state deliberately; do not auto-run this command blindly."
+    return prefix + "This mutates durable loop state; run it deliberately after reviewing the recommendation."
 
 
 def next_action(paths: ProjectPaths) -> dict:

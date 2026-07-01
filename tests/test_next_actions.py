@@ -55,6 +55,8 @@ GUIDED_ACTION_KEYS = {
     "blocking",
     "requires_human",
     "safe_to_run",
+    "run_policy",
+    "human_guidance",
     "expected_after",
 }
 
@@ -73,6 +75,8 @@ def _assert_guided_action(action: dict) -> None:
     assert isinstance(action["blocking"], bool)
     assert isinstance(action["requires_human"], bool)
     assert isinstance(action["safe_to_run"], bool)
+    assert isinstance(action["run_policy"], str)
+    assert isinstance(action["human_guidance"], str)
     assert isinstance(action["expected_after"], str)
 
 
@@ -105,6 +109,8 @@ def test_next_json_returns_guided_schema_for_create_goal(tmp_path: Path, capsys)
     assert action["blocking"] is False
     assert action["requires_human"] is True
     assert action["safe_to_run"] is False
+    assert action["run_policy"] == "human_decision"
+    assert "human should choose" in action["human_guidance"]
     assert "open goal exists" in action["expected_after"]
 
 
@@ -262,6 +268,8 @@ def test_next_explain_prints_guided_fields(tmp_path: Path, capsys) -> None:
     assert "Blocking: no" in output
     assert "Requires human: yes" in output
     assert "Safe to run: no" in output
+    assert "Run policy: human_decision" in output
+    assert "Human guidance:" in output
     assert "Expected after:" in output
 
 
@@ -283,4 +291,6 @@ def test_dashboard_next_action_block_renders_guided_fields(tmp_path: Path, capsy
     assert "blocking" in html
     assert "requires_human" in html
     assert "safe_to_run" in html
+    assert "run_policy" in html
+    assert "human_guidance" in html
     assert "expected_after" in html

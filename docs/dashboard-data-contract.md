@@ -54,6 +54,8 @@ The top-level object must contain:
 - `blocking`
 - `requires_human`
 - `safe_to_run`
+- `run_policy`
+- `human_guidance`
 - `expected_after`
 - `target`
 

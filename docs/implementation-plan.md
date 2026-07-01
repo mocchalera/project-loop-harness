@@ -128,3 +128,14 @@ Only after static workflows are stable:
   no-ops instead of reporting a misleading successful execution.
 - Reject guarded executor runs with no executable command or agent steps before
   creating a workflow run.
+
+## Milestone 8: Dogfood usability hardening
+
+- Make generated job prompts repeat the required `agent-output/v1` Markdown
+  shape directly in the prompt body.
+- Clarify `safe_to_run`, `requires_human`, and verification result semantics for
+  operators and agents.
+- Encourage feature coverage outputs to include ready-to-review `pcl feature`,
+  `pcl story`, and `pcl test` commands before adding heavier automation.
+- Keep build, test, screenshot, and UX verification evidence attached through
+  existing evidence-backed feature and test lifecycle commands.

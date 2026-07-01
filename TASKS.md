@@ -59,5 +59,6 @@ Give these tasks to coding agents in this order:
 55. `agent-tasks/0055-workflow-proposal-list-filter.md`
 56. `agent-tasks/0056-sandbox-noop-execution-guard.md`
 57. `agent-tasks/0057-executor-no-executable-step-guard.md`
+58. `agent-tasks/0058-dogfood-usability-hardening.md`
 
 Do not start with MCP. Do not start with a hosted UI. The CLI/runtime must become reliable first.

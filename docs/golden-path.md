@@ -157,6 +157,29 @@ Every `pcl next --json` action includes:
 - `blocking`;
 - `requires_human`;
 - `safe_to_run`;
+- `run_policy`;
+- `human_guidance`;
 - `expected_after`.
 
 Use `pcl next --strict --json` before continuing when you want strict validation failures to take priority over normal loop routing.
+
+Interpret the routing fields this way:
+
+- `safe_to_run: true` means an agent or automation may run the command in the
+  current project context.
+- `safe_to_run: false` means the command mutates durable loop state or resolves
+  a human/terminal decision. It is not necessarily dangerous, but it should not
+  be auto-run blindly.
+- `requires_human: true` means a person should choose, verify, or confirm the
+  transition before it is recorded.
+- `blocking: true` means normal loop continuation should wait until the action
+  is resolved.
+
+Verification results should be used consistently:
+
+- `approved`: enough evidence exists to complete or close the workflow state;
+- `needs_human`: product, UX, data, permission, rollout, or acceptance ambiguity
+  requires a durable escalation/decision;
+- `inconclusive`: evidence is insufficient or the result cannot be determined
+  yet, but no human decision is the direct blocker;
+- `rejected`: the workflow result is known to be wrong or unacceptable.
