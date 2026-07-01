@@ -21,11 +21,19 @@ Ship as a Python package with a `pcl` console script.
 
 ```bash
 pipx install project-loop-harness
+pcl --version
 cd target-project
 pcl init
 ```
 
-Before a package is published, use a pinned GitHub install instead:
+For CI or a project-specific virtual environment, install the same published
+package with pip:
+
+```bash
+python -m pip install project-loop-harness
+```
+
+For unreleased commits or internal dogfooding, use a pinned Git install instead:
 
 ```bash
 python -m pip install "project-loop-harness @ git+https://github.com/mocchalera/project-loop-harness.git@<commit-or-tag>"
@@ -110,7 +118,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - uses: owner/project-loop-harness/.github/actions/project-loop-validate@v0.1.2
+      - uses: owner/project-loop-harness/.github/actions/project-loop-validate@v0.1.3
         with:
           root: "."
           strict: "true"

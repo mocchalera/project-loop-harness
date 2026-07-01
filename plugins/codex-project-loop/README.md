@@ -18,14 +18,15 @@ Install and verify `pcl` separately before using this plugin with a target
 repository:
 
 ```bash
-pipx install "git+https://github.com/mocchalera/project-loop-harness.git@v0.1.2"
+pipx install project-loop-harness
+pcl --version
 pcl --help
 ```
 
-After PyPI publication, the expected CLI prerequisite is:
+For unreleased changes, use a pinned GitHub tag or commit:
 
 ```bash
-pipx install project-loop-harness
+pipx install "git+https://github.com/mocchalera/project-loop-harness.git@<commit-or-tag>"
 ```
 
 Then initialize the target repository:

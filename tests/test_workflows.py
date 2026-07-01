@@ -115,6 +115,18 @@ def test_loop_run_creates_workflow_run_jobs_and_prompts(tmp_path: Path, capsys) 
         prompt = prompt_path.read_text(encoding="utf-8")
         assert f"# Agent Job {job['id']}" in prompt
         assert "Do not edit `.project-loop/project.db` directly." in prompt
+        assert (
+            "Valid `pcl test plan --type` values: acceptance, e2e, integration, manual, smoke, unit."
+            in prompt
+        )
+        assert (
+            "Valid `pcl feature status --status` values: discovered, done, needs_fix, "
+            "needs_test, passing, specified, waived."
+            in prompt
+        )
+
+    test_designer_prompt = (tmp_path / result["jobs"][2]["prompt_path"]).read_text(encoding="utf-8")
+    assert "Propose unit, integration, e2e, manual, smoke, or acceptance tests" in test_designer_prompt
 
     assert main(["--root", str(tmp_path), "jobs", "list", "--json"]) == 0
     jobs = _json_output(capsys)

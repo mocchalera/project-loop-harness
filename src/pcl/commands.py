@@ -159,7 +159,11 @@ def set_feature_status(
     _validate_identifier(feature_id, "feature_id")
     _require_feature_status(status)
     _require_text(summary, "--summary is required to update feature status.")
-    _require_text(evidence, "--evidence is required to update feature status.")
+    _require_text(
+        evidence,
+        "--evidence is required to update feature status. Use command output, artifact path, "
+        "screenshot path, commit, or report path.",
+    )
 
     conn = connect(paths.db_path)
     try:

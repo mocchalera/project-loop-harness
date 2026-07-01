@@ -60,7 +60,12 @@ class ValidationResult:
         }
 
 
-def validate_project(paths: ProjectPaths, *, strict: bool = False) -> ValidationResult:
+def validate_project(
+    paths: ProjectPaths,
+    *,
+    strict: bool = False,
+    include_config_advice: bool = False,
+) -> ValidationResult:
     result = ValidationResult()
     if not paths.loop_dir.exists():
         result.add_error(
@@ -117,6 +122,8 @@ def validate_project(paths: ProjectPaths, *, strict: bool = False) -> Validation
             result.add_warning(f"Pending migrations: {pending}. Run `pcl migrate --root {paths.root}`.")
         if not paths.root.joinpath("pcl.yaml").exists():
             result.add_warning(f"Missing pcl.yaml at {paths.root / 'pcl.yaml'}.")
+        elif include_config_advice:
+            _validate_pcl_yaml_advice(paths, result)
         skill_path = paths.agents_skill_dir.joinpath("SKILL.md")
         if not skill_path.exists():
             result.add_warning(f"Missing project-control-loop Skill at {skill_path}.")
@@ -131,6 +138,55 @@ def validate_project(paths: ProjectPaths, *, strict: bool = False) -> Validation
     finally:
         conn.close()
     return result
+
+
+def _validate_pcl_yaml_advice(paths: ProjectPaths, result: ValidationResult) -> None:
+    config_path = paths.root / "pcl.yaml"
+    try:
+        lines = config_path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        result.add_warning(f"Could not read pcl.yaml at {config_path}: {exc}.")
+        return
+
+    project = _simple_yaml_section(lines, "project")
+    project_name = project.get("name", "")
+    if project_name == "CHANGE_ME":
+        result.add_warning("pcl.yaml project.name is CHANGE_ME; set it to the real project name.")
+    elif not project_name:
+        result.add_warning("pcl.yaml project.name is empty; set it to the real project name.")
+
+    commands = _simple_yaml_section(lines, "commands")
+    if commands:
+        empty_commands = sorted(key for key, value in commands.items() if not value)
+        if empty_commands:
+            result.add_warning(
+                "pcl.yaml commands are empty: "
+                f"{', '.join(empty_commands)}. Fill them in or leave intentionally unused commands documented."
+            )
+    else:
+        result.add_warning("pcl.yaml has no commands section; configured checks cannot be discovered.")
+
+
+def _simple_yaml_section(lines: list[str], section_name: str) -> dict[str, str]:
+    values: dict[str, str] = {}
+    in_section = False
+    for raw_line in lines:
+        if raw_line.startswith(f"{section_name}:"):
+            in_section = True
+            continue
+        if in_section and raw_line and not raw_line.startswith(" "):
+            break
+        if not in_section or not raw_line.startswith("  ") or ":" not in raw_line:
+            continue
+        key, value = raw_line.strip().split(":", 1)
+        values[key.strip()] = _strip_yaml_string(value.strip())
+    return values
+
+
+def _strip_yaml_string(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1]
+    return value
 
 
 def _validate_strict_invariants(paths: ProjectPaths, conn: sqlite3.Connection, result: ValidationResult) -> None:

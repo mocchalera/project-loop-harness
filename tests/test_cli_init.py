@@ -27,6 +27,15 @@ def test_init_validate_render(tmp_path: Path) -> None:
     assert (tmp_path / ".project-loop" / "dashboard" / "dashboard.html").exists()
 
 
+def test_cli_version(capsys) -> None:
+    try:
+        main(["--version"])
+    except SystemExit as exc:
+        assert exc.code == 0
+
+    assert capsys.readouterr().out.strip() == "pcl 0.1.3"
+
+
 def test_render_is_deterministic_for_unchanged_state(tmp_path: Path, capsys) -> None:
     assert main(["init", "--target", str(tmp_path)]) == 0
     assert main(["--root", str(tmp_path), "feature", "add", "--name", "Login", "--surface", "ui:/login"]) == 0
@@ -89,6 +98,22 @@ def test_init_is_idempotent(tmp_path: Path, capsys) -> None:
     claude = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
     assert agents.count("<!-- project-loop-harness:start -->") == 1
     assert claude.count("<!-- project-loop-harness:start -->") == 1
+
+
+def test_doctor_warns_for_placeholder_project_config(tmp_path: Path, capsys) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "doctor", "--json"]) == 0
+    doctor = _json_output(capsys)
+
+    assert doctor["ok"] is True
+    assert "pcl.yaml project.name is CHANGE_ME" in doctor["warnings"][0]
+    assert any("pcl.yaml commands are empty" in warning for warning in doctor["warnings"])
+
+    assert main(["--root", str(tmp_path), "validate", "--json"]) == 0
+    validate = _json_output(capsys)
+    assert validate["warnings"] == []
 
 
 def test_json_outputs_for_current_commands(tmp_path: Path, capsys) -> None:

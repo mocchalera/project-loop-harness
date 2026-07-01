@@ -5,9 +5,11 @@ import json
 import sqlite3
 import sys
 
+from . import __version__
 from .agents import generate_agent_command, ingest_agent_run, read_job_prompt, read_job_prompt_handoff
 from .checkpoints import checkpoint_status, record_checkpoint
 from .commands import (
+    FEATURE_STATUSES,
     add_feature,
     build_next_action,
     create_goal,
@@ -58,6 +60,9 @@ from .paths import resolve_paths
 from .renderer import render_dashboard
 from .reports import report_defect, report_feature, report_goal, report_run, report_validation
 from .stories import (
+    STORY_STATUSES,
+    TEST_CASE_STATUSES,
+    TEST_CASE_TYPES,
     approve_story,
     block_test_case,
     draft_story,
@@ -88,10 +93,15 @@ from .workflow_executor import execute_workflow
 from .workflows import list_jobs, read_job, run_workflow
 
 
+def _choices_help(values: set[str]) -> str:
+    return ", ".join(sorted(values))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="pcl", description="Project Loop Harness CLI")
     parser.add_argument("--root", default=".", help="Project root. Defaults to current directory.")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON output.")
+    parser.add_argument("--version", action="version", version=f"pcl {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_init = sub.add_parser("init", help="Initialize Project Loop Harness in a target project")
@@ -139,14 +149,26 @@ def build_parser() -> argparse.ArgumentParser:
     p_feature_add.add_argument("--description", default="")
     p_feature_add.add_argument("--evidence", default="")
     p_feature_list = feature_sub.add_parser("list")
-    p_feature_list.add_argument("--status", default=None)
+    p_feature_list.add_argument(
+        "--status",
+        default=None,
+        help=f"Filter by feature status: {_choices_help(FEATURE_STATUSES)}",
+    )
     p_feature_read = feature_sub.add_parser("read")
     p_feature_read.add_argument("feature_id")
     p_feature_status = feature_sub.add_parser("status")
     p_feature_status.add_argument("feature_id")
-    p_feature_status.add_argument("--status", default="")
+    p_feature_status.add_argument(
+        "--status",
+        default="",
+        help=f"Target feature status: {_choices_help(FEATURE_STATUSES)}",
+    )
     p_feature_status.add_argument("--summary", default="")
-    p_feature_status.add_argument("--evidence", default="")
+    p_feature_status.add_argument(
+        "--evidence",
+        default="",
+        help="Reviewer-checkable proof, such as command output, artifact path, screenshot path, commit, or report path.",
+    )
 
     p_story = sub.add_parser("story", help="Manage user stories")
     story_sub = p_story.add_subparsers(dest="story_command", required=True)
@@ -167,7 +189,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_story_waive.add_argument("--reason", required=True)
     p_story_list = story_sub.add_parser("list")
     p_story_list.add_argument("--feature", default=None)
-    p_story_list.add_argument("--status", default=None)
+    p_story_list.add_argument(
+        "--status",
+        default=None,
+        help=f"Filter by story status: {_choices_help(STORY_STATUSES)}",
+    )
     p_story_read = story_sub.add_parser("read")
     p_story_read.add_argument("story_id")
 
@@ -176,18 +202,30 @@ def build_parser() -> argparse.ArgumentParser:
     p_test_plan = test_sub.add_parser("plan")
     p_test_plan.add_argument("--feature", required=True)
     p_test_plan.add_argument("--story", default=None)
-    p_test_plan.add_argument("--type", required=True)
+    p_test_plan.add_argument(
+        "--type",
+        required=True,
+        help=f"Test case type: {_choices_help(TEST_CASE_TYPES)}",
+    )
     p_test_plan.add_argument("--scenario", required=True)
     p_test_plan.add_argument("--expected", required=True)
     p_test_pass = test_sub.add_parser("pass")
     p_test_pass.add_argument("test_case_id")
     p_test_pass.add_argument("--summary", required=True)
-    p_test_pass.add_argument("--evidence", default="")
+    p_test_pass.add_argument(
+        "--evidence",
+        default="",
+        help="Reviewer-checkable proof, such as command output, artifact path, screenshot path, commit, or report path.",
+    )
     p_test_pass.add_argument("--run", default=None)
     p_test_fail = test_sub.add_parser("fail")
     p_test_fail.add_argument("test_case_id")
     p_test_fail.add_argument("--summary", required=True)
-    p_test_fail.add_argument("--evidence", default="")
+    p_test_fail.add_argument(
+        "--evidence",
+        default="",
+        help="Reviewer-checkable proof, such as failing command output, artifact path, screenshot path, or report path.",
+    )
     p_test_fail.add_argument("--run", default=None)
     p_test_block = test_sub.add_parser("block")
     p_test_block.add_argument("test_case_id")
@@ -202,7 +240,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_test_list = test_sub.add_parser("list")
     p_test_list.add_argument("--feature", default=None)
     p_test_list.add_argument("--story", default=None)
-    p_test_list.add_argument("--status", default=None)
+    p_test_list.add_argument(
+        "--status",
+        default=None,
+        help=f"Filter by test case status: {_choices_help(TEST_CASE_STATUSES)}",
+    )
     p_test_read = test_sub.add_parser("read")
     p_test_read.add_argument("test_case_id")
 
@@ -479,6 +521,9 @@ def _print_error(error: PclError, *, json_output: bool = False) -> None:
         _print_json(error.to_dict())
         return
     print(f"ERROR: {error}", file=sys.stderr)
+    allowed = error.details.get("allowed")
+    if isinstance(allowed, list) and all(isinstance(value, str) for value in allowed):
+        print(f"Allowed values: {', '.join(allowed)}", file=sys.stderr)
     detail_errors = error.details.get("errors")
     if isinstance(detail_errors, list):
         for detail in detail_errors:
@@ -544,7 +589,11 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Initialized Project Loop Harness at {paths.root}")
             return 0
 
-        if args.command in {"doctor", "validate"}:
+        if args.command == "doctor":
+            result = validate_project(paths, strict=args.strict, include_config_advice=True)
+            return _print_validation(result, json_output=json_output)
+
+        if args.command == "validate":
             result = validate_project(paths, strict=args.strict)
             return _print_validation(result, json_output=json_output)
 

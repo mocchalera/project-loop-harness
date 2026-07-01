@@ -351,6 +351,30 @@ def test_story_and_test_case_invalid_inputs_return_typed_json(tmp_path: Path, ca
     assert "already passing" in payload["error"]["message"]
 
 
+def test_test_plan_plain_error_lists_allowed_types(tmp_path: Path, capsys) -> None:
+    _init(tmp_path, capsys)
+    feature_id = _add_feature(tmp_path, capsys)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "test",
+        "plan",
+        "--feature",
+        feature_id,
+        "--type",
+        "happy",
+        "--scenario",
+        "Unsupported type",
+        "--expected",
+        "Typed error",
+    ]) == 2
+    captured = capsys.readouterr()
+
+    assert "ERROR: Invalid test case type: happy" in captured.err
+    assert "Allowed values: acceptance, e2e, integration, manual, smoke, unit" in captured.err
+
+
 def test_story_waive_and_test_case_failure_states(tmp_path: Path, capsys) -> None:
     _init(tmp_path, capsys)
     feature_id = _add_feature(tmp_path, capsys)

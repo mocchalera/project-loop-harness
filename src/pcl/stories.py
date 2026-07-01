@@ -503,7 +503,11 @@ def _transition_test_case(
         _validate_identifier(workflow_run_id, "workflow_run_id")
     _require_text(summary, f"--{text_field.replace('_', '-')} is required.")
     if require_evidence:
-        _require_text(evidence, "--evidence is required for this test case transition.")
+        _require_text(
+            evidence,
+            "--evidence is required for this test case transition. Use command output, "
+            "artifact path, screenshot path, commit, or report path.",
+        )
     now = utc_now_iso()
 
     conn = connect(paths.db_path)

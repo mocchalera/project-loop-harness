@@ -20,7 +20,7 @@ agents:
     purpose: Convert features into user stories and expected behavior.
   test_designer:
     mode: read_only
-    purpose: Propose happy, error, boundary, permission, and regression tests.
+    purpose: Propose unit, integration, e2e, manual, smoke, or acceptance tests for happy, error, boundary, permission, and regression scenarios.
   dashboard_reporter:
     mode: workspace_write
     purpose: Update loop state through pcl and render the dashboard.

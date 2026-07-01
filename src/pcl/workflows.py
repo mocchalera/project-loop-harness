@@ -6,13 +6,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .commands import to_pretty_json
+from .commands import FEATURE_STATUSES, to_pretty_json
 from .db import connect
 from .errors import InvalidInputError
 from .events import append_event
 from .guards import require_initialized
 from .ids import next_prefixed_id
 from .paths import ProjectPaths
+from .stories import TEST_CASE_TYPES
 from .timeutil import utc_now_iso
 from .workflow_yaml import parse_workflow_yaml
 
@@ -525,6 +526,9 @@ def _render_prompt(
             "- Use `pcl` commands for state changes.",
             "- Preserve evidence paths for completion claims.",
             "- Do not execute commands unless the human or harness explicitly asks for it.",
+            f"- Valid `pcl test plan --type` values: {_format_allowed_values(TEST_CASE_TYPES)}.",
+            f"- Valid `pcl feature status --status` values: {_format_allowed_values(FEATURE_STATUSES)}.",
+            "- `pcl test pass` and `pcl test fail` evidence should be command output, an artifact path, a screenshot path, a commit, or a report path.",
             "",
             "## Expected Output",
             *AGENT_OUTPUT_TEMPLATE,
@@ -560,10 +564,14 @@ def _workflow_specific_handoff(*, template: WorkflowTemplate, step: dict[str, An
         return [
             "## Feature Coverage Handoff",
             "- If feature IDs are known, include ready-to-review test commands:",
-            '  `pcl test plan --feature F-0001 --type happy --scenario "..." --expected "..."`',
+            '  `pcl test plan --feature F-0001 --type acceptance --scenario "..." --expected "..."`',
             "- If implementation or UX verification already happened, list build, test, and screenshot evidence paths.",
             "- Evidence can later be attached with:",
-            '  `pcl feature status F-0001 --status implemented --summary "..." --evidence "..."`',
+            '  `pcl feature status F-0001 --status done --summary "..." --evidence "..."`',
             "",
         ]
     return []
+
+
+def _format_allowed_values(values: set[str]) -> str:
+    return ", ".join(sorted(values))

@@ -22,10 +22,24 @@ MCP server   = optional local bridge
 GitHub Action = optional validation wrapper
 ```
 
-### Current Practical Default: Public Git Install
+### Current Practical Default: PyPI Install
 
-Until a package is published, install from GitHub over HTTPS and pin a commit or
-tag for team use:
+For normal operator use, install the published package from PyPI with `pipx`:
+
+```bash
+pipx install project-loop-harness
+pcl --version
+pcl --help
+```
+
+Use `python -m pip install project-loop-harness` when installing inside a
+project-specific virtual environment or CI job instead of exposing the command
+globally.
+
+### Pinned Git Install
+
+For unreleased commits or internal dogfooding, install from GitHub over HTTPS
+and pin a commit or tag for team use:
 
 ```bash
 python -m pip install "project-loop-harness @ git+https://github.com/mocchalera/project-loop-harness.git@<commit-or-tag>"
@@ -40,7 +54,8 @@ pcl --help
 ```
 
 Use `main` only for local dogfooding. For another project or another operator,
-prefer a tag or full commit hash so the initialized project can be reproduced.
+prefer the PyPI package, a tag, or a full commit hash so the initialized
+project can be reproduced.
 
 ### Local Wheel Handoff
 
@@ -61,17 +76,6 @@ Then initialize a scratch project with the wheel-installed binary:
 /tmp/pcl-wheel-venv/bin/pcl validate --root /tmp/pcl-dist-demo --strict
 /tmp/pcl-wheel-venv/bin/pcl render --root /tmp/pcl-dist-demo --json
 ```
-
-### Later Public Package
-
-Once the package is published, the intended command is:
-
-```bash
-pipx install project-loop-harness
-```
-
-Until publication exists, do not write onboarding instructions that assume PyPI
-availability. Use the GitHub or wheel path above.
 
 ### Optional Wrappers
 

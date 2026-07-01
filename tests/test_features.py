@@ -163,6 +163,29 @@ def test_feature_read_and_filter_errors_are_typed_json(tmp_path: Path, capsys) -
     assert missing["error"]["details"]["feature_id"] == "F-9999"
 
 
+def test_feature_status_plain_error_lists_allowed_values(tmp_path: Path, capsys) -> None:
+    _init(tmp_path, capsys)
+    feature_id = _add_feature(tmp_path, capsys, name="Migration", surface="cli:pcl migrate")
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "feature",
+        "status",
+        feature_id,
+        "--status",
+        "implemented",
+        "--summary",
+        "Invalid",
+        "--evidence",
+        "Invalid status",
+    ]) == 2
+    captured = capsys.readouterr()
+
+    assert "ERROR: Invalid feature status: implemented" in captured.err
+    assert "Allowed values: discovered, done, needs_fix, needs_test, passing, specified, waived" in captured.err
+
+
 def test_feature_status_updates_with_evidence_and_typed_errors(tmp_path: Path, capsys) -> None:
     _init(tmp_path, capsys)
     feature_id = _add_feature(tmp_path, capsys, name="Migration", surface="cli:pcl migrate")
