@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from json import JSONDecodeError
 
+from .checkpoints import checkpoint_status
 from .db import connect
 from .evidence import record_inline_evidence
 from .events import append_event
@@ -405,6 +406,9 @@ def next_action(paths: ProjectPaths) -> dict:
     proposal = _workflow_proposal_review_next_action(paths)
     if proposal is not None:
         return proposal
+    checkpoint = _checkpoint_review_next_action(paths)
+    if checkpoint is not None:
+        return checkpoint
     if status["open_goals"]:
         goal = status["open_goals"][0]
         return build_next_action(
@@ -712,6 +716,35 @@ def _workflow_proposal_review_next_action(paths: ProjectPaths) -> dict | None:
         requires_human=True,
         safe_to_run=False,
         expected_after="The proposal is approved into `.project-loop/workflows/` or cancelled.",
+    )
+
+
+def _checkpoint_review_next_action(paths: ProjectPaths) -> dict | None:
+    status = checkpoint_status(paths)
+    if not status["checkpoint_recommended"]:
+        return None
+    completed = status["completed_features_since_checkpoint"]
+    threshold = status["threshold"]
+    return build_next_action(
+        action_type="checkpoint_review",
+        command=(
+            "pcl checkpoint record --review-type integration "
+            "--summary 'Review commit/package checkpoint, UX checklist, and next big-goal priority' "
+            "--evidence 'Reviewed code state, validation results, UX checklist, and next feature priority'"
+        ),
+        reason=(
+            f"{completed} features were marked done since the last checkpoint; "
+            f"the checkpoint threshold is {threshold}. Pause before another feature coverage run "
+            "and review the larger product goal."
+        ),
+        target=status,
+        priority=58,
+        blocking=False,
+        requires_human=True,
+        safe_to_run=False,
+        expected_after=(
+            "A checkpoint_review evidence record exists, and `pcl next` can resume normal goal routing."
+        ),
     )
 
 

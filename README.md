@@ -9,7 +9,7 @@ It is not just an Agent Skill. The core product is `pcl`, a small local CLI/runt
 Until a PyPI package is published, install from a pinned GitHub tag or commit:
 
 ```bash
-pipx install "git+https://github.com/mocchalera/project-loop-harness.git@v0.1.1"
+pipx install "git+https://github.com/mocchalera/project-loop-harness.git@v0.1.2"
 pcl --help
 ```
 
@@ -166,6 +166,8 @@ pcl loop execute workflow_id --agent-adapter generic_shell --allow-agent-exec
   "blocking": false,
   "requires_human": false,
   "safe_to_run": true,
+  "run_policy": "agent_safe",
+  "human_guidance": "An agent or automation may run this command in the current project context.",
   "expected_after": "The agent job prompt is reviewed and the job can be executed or completed."
 }
 ```
@@ -185,9 +187,32 @@ Priority order is fixed:
 3. open decision
 4. `needs_human` verification requiring escalation
 5. active workflow lifecycle
-6. open defect lifecycle
-7. open goal continuation
-8. create goal
+6. executor retry routing
+7. open defect lifecycle
+8. workflow proposal review
+9. checkpoint review after several done features
+10. open goal continuation
+11. uncovered feature coverage
+12. create goal
+
+## Checkpoint Reviews
+
+Dogfooding showed that Project Loop is effective at small verified improvements,
+but large UX goals still need periodic human prioritization. Use checkpoint
+reviews to pause after several done features, organize commit/package boundaries,
+refresh UX or interaction checklists, and choose the next feature by product
+impact:
+
+```bash
+pcl checkpoint status --json
+pcl checkpoint record \
+  --review-type integration \
+  --summary "Reviewed commit boundary, UX checklist, and next priority" \
+  --evidence "Reviewed validation output, git diff, UX checklist, and next feature priority"
+```
+
+When five features are marked `done` after the latest checkpoint, `pcl next`
+returns `checkpoint_review` before recommending another feature-coverage run.
 
 ## Human Decision Flow
 
@@ -250,6 +275,7 @@ The current local runtime supports:
 - verification recording;
 - workflow run, goal, defect, escalation, and decision lifecycle commands;
 - escalation/decision linkage;
+- checkpoint review commands for commit/package, UX checklist, and next-priority pauses;
 - strict validation invariants and audit-log integrity checks;
 - evidence-backed Markdown reports;
 - deterministic dashboard data and HTML with JSON artifact paths, a versioned data contract, evidence navigation, and risk/blocker summary;

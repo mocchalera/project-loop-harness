@@ -142,6 +142,66 @@ def test_next_routes_uncovered_feature_before_generic_goal(tmp_path: Path, capsy
     assert "tracked feature still needs coverage" in action["reason"]
 
 
+def test_next_routes_checkpoint_review_before_more_goal_continuation(tmp_path: Path, capsys) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Improve UX"]) == 0
+    for index in range(1, 6):
+        assert main([
+            "--root",
+            str(tmp_path),
+            "feature",
+            "add",
+            "--name",
+            f"Feature {index}",
+            "--surface",
+            f"surface:{index}",
+        ]) == 0
+        assert main([
+            "--root",
+            str(tmp_path),
+            "feature",
+            "status",
+            f"F-000{index}",
+            "--status",
+            "done",
+            "--summary",
+            f"Feature {index} complete",
+            "--evidence",
+            f"Verification evidence for feature {index}",
+        ]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    action = _json_output(capsys)
+    _assert_guided_action(action)
+    assert action["type"] == "checkpoint_review"
+    assert action["priority"] == 58
+    assert action["requires_human"] is True
+    assert action["safe_to_run"] is False
+    assert action["run_policy"] == "human_decision"
+    assert action["target"]["completed_features_since_checkpoint"] == 5
+    assert action["target"]["checkpoint_recommended"] is True
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "checkpoint",
+        "record",
+        "--summary",
+        "Reviewed checkpoint",
+        "--evidence",
+        "Reviewed validation, UX checklist, and commit boundary",
+        "--json",
+    ]) == 0
+    _json_output(capsys)
+
+    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    resumed = _json_output(capsys)
+    _assert_guided_action(resumed)
+    assert resumed["type"] == "continue_goal"
+    assert resumed["command"] == "pcl loop run feature_coverage --goal G-0001"
+
+
 def test_next_strict_validation_failure_uses_guided_schema_and_first_priority(tmp_path: Path, capsys) -> None:
     assert main(["init", "--target", str(tmp_path)]) == 0
     assert main(["--root", str(tmp_path), "goal", "create", "--title", "Coverage"]) == 0

@@ -178,6 +178,21 @@ pcl next --json
 Then follow `pcl next`. It is the router for validation failures, human queues,
 active workflows, defects, goals, and feature coverage.
 
+After several small features, let `pcl next` stop the loop for a checkpoint
+instead of blindly starting another feature coverage run:
+
+```bash
+pcl checkpoint status --json
+pcl checkpoint record \
+  --review-type ux \
+  --summary "Reviewed checkpoint before more feature coverage" \
+  --evidence "Reviewed dirty worktree, validation output, UX checklist, and next high-impact feature"
+```
+
+Use this checkpoint to decide commit/package boundaries, refresh any hands-on UX
+checklist, and choose the next feature by contribution to the larger product
+goal rather than simply taking the next small item.
+
 For a command-only smoke check of the executor:
 
 ```bash

@@ -183,3 +183,22 @@ Verification results should be used consistently:
 - `inconclusive`: evidence is insufficient or the result cannot be determined
   yet, but no human decision is the direct blocker;
 - `rejected`: the workflow result is known to be wrong or unacceptable.
+
+## Checkpoint Reviews
+
+Project Loop is intentionally good at small verified steps. After several
+features, pause and review whether those small steps are still moving the larger
+product goal forward:
+
+```bash
+pcl checkpoint status --root /tmp/pcl-demo --json
+pcl checkpoint record --root /tmp/pcl-demo \
+  --review-type integration \
+  --summary "Reviewed commit boundary, UX checklist, and next priority" \
+  --evidence "Reviewed validation output, git diff, UX checklist, and next feature priority"
+```
+
+When five features have been marked `done` since the latest checkpoint,
+`pcl next --json` returns `checkpoint_review` before it recommends another
+feature coverage run. Recording the checkpoint stores `checkpoint_review`
+evidence and a `checkpoint_recorded` event, then normal routing resumes.

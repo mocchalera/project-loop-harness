@@ -6,6 +6,7 @@ import sqlite3
 import sys
 
 from .agents import generate_agent_command, ingest_agent_run, read_job_prompt, read_job_prompt_handoff
+from .checkpoints import checkpoint_status, record_checkpoint
 from .commands import (
     add_feature,
     build_next_action,
@@ -398,6 +399,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_escalation_list.add_argument("--status", choices=["open", "resolved", "cancelled"], default=None)
     p_escalation_read = escalation_sub.add_parser("read")
     p_escalation_read.add_argument("escalation_id")
+
+    p_checkpoint = sub.add_parser("checkpoint", help="Record and inspect integration checkpoints")
+    checkpoint_sub = p_checkpoint.add_subparsers(dest="checkpoint_command", required=True)
+    checkpoint_sub.add_parser("status", help="Inspect checkpoint recommendation state")
+    p_checkpoint_record = checkpoint_sub.add_parser("record", help="Record a human integration checkpoint")
+    p_checkpoint_record.add_argument("--summary", required=True)
+    p_checkpoint_record.add_argument("--evidence", required=True)
+    p_checkpoint_record.add_argument("--review-type", default="integration")
 
     p_next = sub.add_parser("next", help="Suggest the next harness action")
     p_next.add_argument("--strict", action="store_true", help="Route strict validation failures before normal next actions")
@@ -1276,6 +1285,27 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json({"ok": True, "escalation": escalation})
             else:
                 print(to_pretty_json(escalation))
+            return 0
+
+        if args.command == "checkpoint" and args.checkpoint_command == "status":
+            status = checkpoint_status(paths)
+            if json_output:
+                _print_json(status)
+            else:
+                print(to_pretty_json(status))
+            return 0
+
+        if args.command == "checkpoint" and args.checkpoint_command == "record":
+            result = record_checkpoint(
+                paths,
+                summary=args.summary,
+                evidence=args.evidence,
+                review_type=args.review_type,
+            )
+            if json_output:
+                _print_json(result)
+            else:
+                print(f"Recorded checkpoint {result['checkpoint_id']}")
             return 0
 
         if args.command == "next":

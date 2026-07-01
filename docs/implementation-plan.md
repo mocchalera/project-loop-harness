@@ -139,3 +139,6 @@ Only after static workflows are stable:
   `pcl story`, and `pcl test` commands before adding heavier automation.
 - Keep build, test, screenshot, and UX verification evidence attached through
   existing evidence-backed feature and test lifecycle commands.
+- Add checkpoint review commands and `pcl next` routing so every several done
+  features triggers a human commit/package, UX checklist, and next-priority
+  review before continuing feature coverage.
