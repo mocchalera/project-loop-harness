@@ -8,6 +8,8 @@ from .commands import next_action
 from .db import connect, count_rows
 from .guards import require_initialized
 from .links import enrich_decisions_with_links, enrich_escalations_with_links
+from .lifecycle import ACTIVE_RUN_STATUSES
+from .locales import dashboard_strings, resolve_dashboard_locale
 from .paths import ProjectPaths
 from .resources import read_text_resource
 from .validators import validate_project
@@ -19,6 +21,7 @@ from .workflow_yaml import parse_workflow_yaml
 DASHBOARD_DATA_CONTRACT_VERSION = "dashboard-data/v1"
 ENTITY_ID_PREFIXES = ("D-", "DEC-", "E-", "ESC-", "F-", "G-", "J-", "T-", "TC-", "US-", "V-", "WR-")
 SEVERITY_RANKS = {"none": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+HUMAN_DECISION_SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 TASK_STATUS_ORDER = {
     "in_progress": 0,
     "ready": 1,
@@ -44,8 +47,9 @@ def _one(conn, sql: str, params: tuple = ()) -> dict[str, Any] | None:
     return None if row is None else dict(row)
 
 
-def render_dashboard(paths: ProjectPaths) -> None:
+def render_dashboard(paths: ProjectPaths, *, locale: str | None = None) -> None:
     require_initialized(paths)
+    resolved_locale = resolve_dashboard_locale(paths, locale)
     validation = validate_project(paths)
 
     conn = connect(paths.db_path)
@@ -72,12 +76,26 @@ def render_dashboard(paths: ProjectPaths) -> None:
         )
         active_run_id = active_workflow["id"] if active_workflow else None
         risk_rows = _risk_source_rows(conn)
+        action = next_action(paths)
+        all_decision_link_rows = _rows(
+            conn,
+            """
+            SELECT id, blocks_json
+            FROM decisions
+            ORDER BY id
+            """,
+        )
+        open_decisions = enrich_decisions_with_links(risk_rows["decisions"])
+        open_escalations = enrich_escalations_with_links(
+            risk_rows["escalations"],
+            all_decision_link_rows,
+        )
         data = {
             "contract_version": DASHBOARD_DATA_CONTRACT_VERSION,
             "generated_at": _state_timestamp(conn),
             "source_db": str(paths.db_path),
             "validation": validation.to_dict(),
-            "next_action": next_action(paths),
+            "next_action": action,
             "counts": {
                 "features": count_rows(conn, "features"),
                 "user_stories": count_rows(conn, "user_stories"),
@@ -225,6 +243,12 @@ def render_dashboard(paths: ProjectPaths) -> None:
         data["escalations"] = enrich_escalations_with_links(data["escalations"], data["decisions"])
         _enrich_navigation(paths, data)
         data["risk_summary"] = _risk_summary(data, risk_rows)
+        data["human_decisions"] = _human_decisions(
+            conn,
+            action=action,
+            open_decisions=open_decisions,
+            open_escalations=open_escalations,
+        )
     finally:
         conn.close()
 
@@ -233,7 +257,7 @@ def render_dashboard(paths: ProjectPaths) -> None:
         json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    paths.dashboard_html.write_text(_render_html(data), encoding="utf-8")
+    paths.dashboard_html.write_text(_render_html(data, locale=resolved_locale), encoding="utf-8")
 
 
 def _with_workflow_budget(paths: ProjectPaths, active_workflow: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -439,6 +463,123 @@ def _risk_source_rows(conn) -> dict[str, list[dict[str, Any]]]:
             """,
         ),
     }
+
+
+def _human_decisions(
+    conn,
+    *,
+    action: dict[str, Any],
+    open_decisions: list[dict[str, Any]],
+    open_escalations: list[dict[str, Any]],
+) -> dict[str, Any]:
+    items: list[dict[str, Any]] = []
+
+    for decision in open_decisions:
+        decision_id = str(decision.get("id", ""))
+        items.append(
+            {
+                "kind": "decision",
+                "id": decision_id,
+                "question": str(decision.get("question", "")),
+                "recommendation": str(decision.get("recommendation", "")),
+                "created_at": str(decision.get("created_at", "")),
+                "resolve_command": (
+                    f"pcl decision resolve {decision_id} --selected-option '<option>' "
+                    "--reason '<why>'"
+                ),
+                "linked_escalation_ids": list(decision.get("linked_escalation_ids", [])),
+            }
+        )
+
+    for escalation in open_escalations:
+        escalation_id = str(escalation.get("id", ""))
+        linked_decision_ids = list(escalation.get("linked_decision_ids", []))
+        decision_id = linked_decision_ids[0] if linked_decision_ids else "DEC-xxxx"
+        items.append(
+            {
+                "kind": "escalation",
+                "id": escalation_id,
+                "severity": str(escalation.get("severity", "")),
+                "question": str(escalation.get("question", "")),
+                "recommendation": str(escalation.get("recommendation", "")),
+                "created_at": str(escalation.get("created_at", "")),
+                "resolve_command": (
+                    f"pcl escalation resolve {escalation_id} --decision {decision_id} "
+                    "--summary '<summary>'"
+                ),
+                "linked_decision_ids": linked_decision_ids,
+            }
+        )
+
+    for verification in _active_needs_human_verifications(conn):
+        verification_id = str(verification.get("id", ""))
+        workflow_run_id = str(verification.get("workflow_run_id", ""))
+        items.append(
+            {
+                "kind": "verification",
+                "id": verification_id,
+                "workflow_run_id": workflow_run_id,
+                "reasons": _json_string_list(verification.get("reasons_json")),
+                "created_at": str(verification.get("created_at", "")),
+                "resolve_command": (
+                    f"pcl escalation open --run {workflow_run_id} --severity high "
+                    "--question 'What human decision is needed?' "
+                    "--recommendation 'Review the needs_human verification and choose the next step'"
+                ),
+            }
+        )
+
+    if action.get("requires_human") is True:
+        items.append(
+            {
+                "kind": "next_action",
+                "type": str(action.get("type", "")),
+                "command": str(action.get("command", "")),
+                "reason": str(action.get("reason", "")),
+            }
+        )
+
+    ordered = sorted(items, key=_human_decision_sort_key)
+    return {"count": len(ordered), "items": ordered}
+
+
+def _active_needs_human_verifications(conn) -> list[dict[str, Any]]:
+    placeholders = ", ".join("?" for _ in ACTIVE_RUN_STATUSES)
+    return _rows(
+        conn,
+        f"""
+        SELECT
+          verifications.id,
+          verifications.workflow_run_id,
+          verifications.reasons_json,
+          verifications.created_at
+        FROM verifications
+        INNER JOIN workflow_runs
+          ON workflow_runs.id = verifications.workflow_run_id
+        WHERE verifications.result = 'needs_human'
+          AND workflow_runs.status IN ({placeholders})
+        ORDER BY verifications.created_at ASC, verifications.id ASC
+        """,
+        tuple(sorted(ACTIVE_RUN_STATUSES)),
+    )
+
+
+def _json_string_list(raw: object) -> list[str]:
+    try:
+        value = json.loads(str(raw or "[]"))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value]
+
+
+def _human_decision_sort_key(item: dict[str, Any]) -> tuple[int, str, str]:
+    severity = str(item.get("severity") or "")
+    severity_rank = HUMAN_DECISION_SEVERITY_ORDER.get(severity, 99)
+    created_at = str(item.get("created_at") or "~")
+    item_id = str(item.get("id") or item.get("type") or item.get("kind") or "")
+    return (severity_rank, created_at, item_id)
 
 
 def _risk_summary(data: dict[str, Any], risk_rows: dict[str, list[dict[str, Any]]]) -> dict[str, Any]:
@@ -651,10 +792,17 @@ def _defect_next_command(defect_id: str, status: str) -> str:
     return commands.get(status, f"pcl loop run defect_repair --defect {defect_id}")
 
 
-def _table(rows: list[dict], columns: list[str], *, anchor_rows: bool = True) -> str:
+def _table(
+    rows: list[dict],
+    columns: list[str],
+    *,
+    anchor_rows: bool = True,
+    strings: dict[str, str] | None = None,
+) -> str:
+    strings = strings or dashboard_strings("en")
     if not rows:
-        return '<p class="muted">No records yet.</p>'
-    head = "".join(f"<th>{html.escape(c)}</th>" for c in columns)
+        return f'<p class="muted">{html.escape(strings["empty.records"])}</p>'
+    head = "".join(f"<th>{html.escape(_column_label(c, strings))}</th>" for c in columns)
     body_rows = []
     for row in rows:
         cells = "".join(f"<td>{_cell(row, c)}</td>" for c in columns)
@@ -662,6 +810,10 @@ def _table(rows: list[dict], columns: list[str], *, anchor_rows: bool = True) ->
         attrs = f' id="{anchor}"' if anchor else ""
         body_rows.append(f"<tr{attrs}>{cells}</tr>")
     return f"<table><thead><tr>{head}</tr></thead><tbody>{''.join(body_rows)}</tbody></table>"
+
+
+def _column_label(column: str, strings: dict[str, str]) -> str:
+    return strings.get(f"column.{column}", column)
 
 
 def _cell(row: dict, column: str) -> str:
@@ -705,7 +857,12 @@ def _fragment(value: str) -> str:
     return "".join(char if char.isalnum() or char in {"-", "_"} else "-" for char in value)
 
 
-def _key_value_panel(row: dict[str, Any] | None, fields: list[str], empty: str) -> str:
+def _key_value_panel(
+    row: dict[str, Any] | None,
+    fields: list[str],
+    empty: str,
+    strings: dict[str, str],
+) -> str:
     if row is None:
         return f'<p class="muted">{html.escape(empty)}</p>'
     items = []
@@ -714,36 +871,39 @@ def _key_value_panel(row: dict[str, Any] | None, fields: list[str], empty: str) 
         if isinstance(value, (dict, list)):
             value = json.dumps(value, ensure_ascii=False, sort_keys=True)
         items.append(
-            f"<dt>{html.escape(field)}</dt><dd>{html.escape(str(value or ''))}</dd>"
+            f"<dt>{html.escape(_column_label(field, strings))}</dt>"
+            f"<dd>{html.escape(str(value or ''))}</dd>"
         )
     return f"<dl>{''.join(items)}</dl>"
 
 
-def _validation_block(validation: dict[str, Any]) -> str:
+def _validation_block(validation: dict[str, Any], strings: dict[str, str]) -> str:
     errors = validation.get("errors", [])
     warnings = validation.get("warnings", [])
     if not errors and not warnings:
-        return '<p class="ok">Validation OK</p>'
+        return f'<p class="ok">{html.escape(strings["validation.ok"])}</p>'
     parts = []
     if errors:
-        parts.append("<h3>Validation Errors</h3>")
+        parts.append(f"<h3>{html.escape(strings['validation.errors'])}</h3>")
         parts.append("<ul>" + "".join(f"<li>{html.escape(str(error))}</li>" for error in errors) + "</ul>")
     if warnings:
-        parts.append("<h3>Validation Warnings</h3>")
+        parts.append(f"<h3>{html.escape(strings['validation.warnings'])}</h3>")
         parts.append(
             "<ul>" + "".join(f"<li>{html.escape(str(warning))}</li>" for warning in warnings) + "</ul>"
         )
     return "".join(parts)
 
 
-def _risk_summary_block(summary: dict[str, Any]) -> str:
+def _risk_summary_block(summary: dict[str, Any], strings: dict[str, str]) -> str:
     items = summary.get("items", [])
     if not items:
-        return '<p class="ok">No risks or blockers detected.</p>'
+        return f'<p class="ok">{html.escape(strings["risk.none"])}</p>'
     parts = [
         "<dl>",
-        f"<dt>blocking</dt><dd>{html.escape(_yes_no(bool(summary.get('blocking'))))}</dd>",
-        f"<dt>highest_severity</dt><dd>{html.escape(str(summary.get('highest_severity', 'none')))}</dd>",
+        f"<dt>{html.escape(strings['risk.blocking'])}</dt>"
+        f"<dd>{html.escape(_yes_no(bool(summary.get('blocking')), strings))}</dd>",
+        f"<dt>{html.escape(strings['risk.highest_severity'])}</dt>"
+        f"<dd>{html.escape(str(summary.get('highest_severity', 'none')))}</dd>",
         "</dl>",
         "<ul>",
     ]
@@ -768,14 +928,14 @@ def _risk_summary_block(summary: dict[str, Any]) -> str:
     return "".join(parts)
 
 
-def _next_action_block(action: dict[str, Any]) -> str:
+def _next_action_block(action: dict[str, Any], strings: dict[str, str]) -> str:
     command = html.escape(str(action.get("command", "")))
     reason = html.escape(str(action.get("reason", "")))
     action_type = html.escape(str(action.get("type", "")))
     priority = html.escape(str(action.get("priority", "")))
-    blocking = html.escape(_yes_no(bool(action.get("blocking"))))
-    requires_human = html.escape(_yes_no(bool(action.get("requires_human"))))
-    safe_to_run = html.escape(_yes_no(bool(action.get("safe_to_run"))))
+    blocking = html.escape(_yes_no(bool(action.get("blocking")), strings))
+    requires_human = html.escape(_yes_no(bool(action.get("requires_human")), strings))
+    safe_to_run = html.escape(_yes_no(bool(action.get("safe_to_run")), strings))
     run_policy = html.escape(str(action.get("run_policy", "")))
     human_guidance = html.escape(str(action.get("human_guidance", "")))
     expected_after = html.escape(str(action.get("expected_after", "")))
@@ -784,42 +944,169 @@ def _next_action_block(action: dict[str, Any]) -> str:
         f"<p>{reason}</p>"
         f"<p><code>{command}</code></p>"
         "<dl>"
-        f"<dt>priority</dt><dd>{priority}</dd>"
-        f"<dt>blocking</dt><dd>{blocking}</dd>"
-        f"<dt>requires_human</dt><dd>{requires_human}</dd>"
-        f"<dt>safe_to_run</dt><dd>{safe_to_run}</dd>"
-        f"<dt>run_policy</dt><dd>{run_policy}</dd>"
-        f"<dt>human_guidance</dt><dd>{human_guidance}</dd>"
-        f"<dt>expected_after</dt><dd>{expected_after}</dd>"
+        f"<dt>{html.escape(strings['next_action.priority'])}</dt><dd>{priority}</dd>"
+        f"<dt>{html.escape(strings['next_action.blocking'])}</dt><dd>{blocking}</dd>"
+        f"<dt>{html.escape(strings['next_action.requires_human'])}</dt><dd>{requires_human}</dd>"
+        f"<dt>{html.escape(strings['next_action.safe_to_run'])}</dt><dd>{safe_to_run}</dd>"
+        f"<dt>{html.escape(strings['next_action.run_policy'])}</dt><dd>{run_policy}</dd>"
+        f"<dt>{html.escape(strings['next_action.human_guidance'])}</dt><dd>{human_guidance}</dd>"
+        f"<dt>{html.escape(strings['next_action.expected_after'])}</dt><dd>{expected_after}</dd>"
         "</dl>"
     )
 
 
-def _yes_no(value: bool) -> str:
-    return "yes" if value else "no"
+def _yes_no(value: bool, strings: dict[str, str]) -> str:
+    return strings["yes"] if value else strings["no"]
 
 
-def _budget_block(active_workflow: dict[str, Any] | None) -> str:
+def _budget_block(active_workflow: dict[str, Any] | None, strings: dict[str, str]) -> str:
     if active_workflow is None:
-        return '<p class="muted">No active workflow budget.</p>'
+        return f'<p class="muted">{html.escape(strings["empty.budget"])}</p>'
     budget = active_workflow.get("budget", {})
     iteration = html.escape(str(active_workflow.get("iteration", "")))
     max_iterations = ""
     if isinstance(budget, dict):
         max_iterations = html.escape(str(budget.get("max_iterations", "")))
-    detail = f"<p>Iteration <strong>{iteration}</strong>"
+    detail = f"<p>{html.escape(strings['budget.iteration'])} <strong>{iteration}</strong>"
     if max_iterations:
-        detail += f" of <strong>{max_iterations}</strong>"
+        detail += f" {html.escape(strings['budget.of'])} <strong>{max_iterations}</strong>"
     detail += "</p>"
     if isinstance(budget, dict) and budget:
         detail += "<pre>" + html.escape(json.dumps(budget, ensure_ascii=False, indent=2, sort_keys=True)) + "</pre>"
     return detail
 
 
-def _render_html(data: dict) -> str:
+def _human_decisions_block(human_decisions: dict[str, Any], strings: dict[str, str]) -> str:
+    items = human_decisions.get("items", [])
+    if not items:
+        return f'<p class="ok">{html.escape(strings["empty.human_decisions"])}</p>'
+
+    parts = ['<div class="decision-list">']
+    for item in items:
+        parts.append('<article class="decision-card">')
+        parts.append(f"<h3>{_human_decision_title(item, strings)}</h3>")
+
+        details = _human_decision_details(item, strings)
+        if details:
+            parts.append(f"<dl>{''.join(details)}</dl>")
+
+        question = str(item.get("question", ""))
+        reason = str(item.get("reason", ""))
+        reasons = item.get("reasons", [])
+        recommendation = str(item.get("recommendation", ""))
+        command = str(item.get("resolve_command") or item.get("command") or "")
+
+        if question:
+            parts.append(
+                f"<p><strong>{html.escape(strings['human_decision.question'])}:</strong> "
+                f"{html.escape(question)}</p>"
+            )
+        if reason:
+            parts.append(
+                f"<p><strong>{html.escape(strings['human_decision.reason'])}:</strong> "
+                f"{html.escape(reason)}</p>"
+            )
+        if isinstance(reasons, list) and reasons:
+            rendered_reasons = "".join(f"<li>{html.escape(str(reason))}</li>" for reason in reasons)
+            parts.append(
+                f"<p><strong>{html.escape(strings['human_decision.reasons'])}:</strong></p>"
+                f"<ul>{rendered_reasons}</ul>"
+            )
+        if recommendation:
+            parts.append(
+                f"<p><strong>{html.escape(strings['human_decision.recommendation'])}:</strong> "
+                f"{html.escape(recommendation)}</p>"
+            )
+        if command:
+            parts.append(
+                f"<p><strong>{html.escape(strings['human_decision.resolve_command'])}:</strong></p>"
+                f"<pre><code>{html.escape(command)}</code></pre>"
+            )
+        parts.append("</article>")
+    parts.append("</div>")
+    return "".join(parts)
+
+
+def _human_decision_title(item: dict[str, Any], strings: dict[str, str]) -> str:
+    kind = str(item.get("kind", ""))
+    label = strings.get(f"human_decision.kind.{kind}", kind)
+    item_id = str(item.get("id") or item.get("type") or "")
+    if item_id:
+        return f"{html.escape(label)} <code>{html.escape(item_id)}</code>"
+    return html.escape(label)
+
+
+def _human_decision_details(item: dict[str, Any], strings: dict[str, str]) -> list[str]:
+    details = []
+    for key, label_key in [
+        ("severity", "human_decision.severity"),
+        ("workflow_run_id", "human_decision.workflow_run"),
+        ("created_at", "human_decision.created"),
+    ]:
+        value = str(item.get(key, ""))
+        if value:
+            details.append(
+                f"<dt>{html.escape(strings[label_key])}</dt><dd>{html.escape(value)}</dd>"
+            )
+    for key, label_key in [
+        ("linked_decision_ids", "human_decision.linked_decisions"),
+        ("linked_escalation_ids", "human_decision.linked_escalations"),
+    ]:
+        value = item.get(key, [])
+        if isinstance(value, list) and value:
+            details.append(
+                f"<dt>{html.escape(strings[label_key])}</dt>"
+                f"<dd>{html.escape(', '.join(str(item_id) for item_id in value))}</dd>"
+            )
+    return details
+
+
+def _render_html(data: dict, *, locale: str = "en") -> str:
     template = read_text_resource("templates/dashboard/dashboard.html")
+    strings = dashboard_strings(locale)
     counts = data["counts"]
     replacements = {
+        "{{ lang }}": html.escape(locale),
+        "{{ title }}": html.escape(strings["title"]),
+        "{{ label_generated_at }}": html.escape(strings["generated_at"]),
+        "{{ label_source_db }}": html.escape(strings["source_db"]),
+        "{{ label_rule }}": html.escape(strings["rule"]),
+        "{{ rule_text }}": strings["rule_text"],
+        "{{ heading_next_human_action }}": html.escape(strings["next_human_action"]),
+        "{{ heading_validation }}": html.escape(strings["validation"]),
+        "{{ heading_risk_and_blockers }}": html.escape(strings["risk_and_blockers"]),
+        "{{ heading_needs_your_decision }}": html.escape(strings["needs_your_decision"]),
+        "{{ heading_current_goal }}": html.escape(strings["current_goal"]),
+        "{{ heading_active_workflow }}": html.escape(strings["active_workflow"]),
+        "{{ heading_budget_usage }}": html.escape(strings["budget_usage"]),
+        "{{ heading_active_agent_jobs }}": html.escape(strings["active_agent_jobs"]),
+        "{{ heading_verification_results }}": html.escape(strings["verification_results"]),
+        "{{ heading_decision_queue }}": html.escape(strings["decision_queue"]),
+        "{{ heading_escalation_queue }}": html.escape(strings["escalation_queue"]),
+        "{{ heading_evidence_links }}": html.escape(strings["evidence_links"]),
+        "{{ heading_reports }}": html.escape(strings["reports"]),
+        "{{ heading_workflow_proposals }}": html.escape(strings["workflow_proposals"]),
+        "{{ heading_recent_events }}": html.escape(strings["recent_events"]),
+        "{{ heading_goals }}": html.escape(strings["goals"]),
+        "{{ heading_features }}": html.escape(strings["features"]),
+        "{{ heading_story_coverage }}": html.escape(strings["story_coverage"]),
+        "{{ heading_test_coverage }}": html.escape(strings["test_coverage"]),
+        "{{ heading_defects }}": html.escape(strings["defects"]),
+        "{{ heading_task_backlog }}": html.escape(strings["task_backlog"]),
+        "{{ heading_workflow_runs }}": html.escape(strings["workflow_runs"]),
+        "{{ heading_agent_jobs }}": html.escape(strings["agent_jobs"]),
+        "{{ label_features_count }}": html.escape(strings["summary.features"]),
+        "{{ label_user_stories_count }}": html.escape(strings["summary.user_stories"]),
+        "{{ label_test_cases_count }}": html.escape(strings["summary.test_cases"]),
+        "{{ label_open_defects_count }}": html.escape(strings["summary.open_defects"]),
+        "{{ label_goals_count }}": html.escape(strings["summary.goals"]),
+        "{{ label_open_decisions_count }}": html.escape(strings["summary.open_decisions"]),
+        "{{ label_workflow_runs_count }}": html.escape(strings["summary.workflow_runs"]),
+        "{{ label_queued_jobs_count }}": html.escape(strings["summary.queued_jobs"]),
+        "{{ label_open_escalations_count }}": html.escape(strings["summary.open_escalations"]),
+        "{{ label_workflow_proposals_count }}": html.escape(
+            strings["summary.workflow_proposals"]
+        ),
         "{{ generated_at }}": html.escape(data["generated_at"]),
         "{{ source_db }}": html.escape(data["source_db"]),
         "{{ features_count }}": str(counts["features"]),
@@ -832,29 +1119,49 @@ def _render_html(data: dict) -> str:
         "{{ queued_jobs_count }}": str(counts["queued_jobs"]),
         "{{ open_escalations_count }}": str(counts["open_escalations"]),
         "{{ workflow_proposals_count }}": str(counts["workflow_proposals"]),
-        "{{ validation_block }}": _validation_block(data["validation"]),
-        "{{ next_action_block }}": _next_action_block(data["next_action"]),
-        "{{ risk_summary_block }}": _risk_summary_block(data["risk_summary"]),
+        "{{ validation_block }}": _validation_block(data["validation"], strings),
+        "{{ next_action_block }}": _next_action_block(data["next_action"], strings),
+        "{{ risk_summary_block }}": _risk_summary_block(data["risk_summary"], strings),
+        "{{ human_decisions_block }}": _human_decisions_block(data["human_decisions"], strings),
         "{{ current_goal_panel }}": _key_value_panel(
             data["current_goal"],
             ["id", "title", "status", "updated_at", "completion_json", "budget_json"],
-            "No open goal. Create one with `pcl goal create`.",
+            strings["empty.current_goal"],
+            strings,
         ),
         "{{ active_workflow_panel }}": _key_value_panel(
             data["active_workflow"],
             ["id", "workflow_id", "goal_id", "status", "iteration", "started_at", "summary"],
-            "No queued, running, or blocked workflow.",
+            strings["empty.active_workflow"],
+            strings,
         ),
         "{{ active_agent_jobs_table }}": _table(
             data["active_agent_jobs"],
             ["id", "role", "status", "prompt_path", "output_path", "evidence_ids", "latest_evidence_id", "summary"],
             anchor_rows=False,
+            strings=strings,
         ),
-        "{{ budget_panel }}": _budget_block(data["active_workflow"]),
-        "{{ features_table }}": _table(data["features"], ["id", "name", "surface", "status", "confidence", "updated_at"]),
-        "{{ user_stories_table }}": _table(data["user_stories"], ["id", "feature_id", "actor", "goal", "status", "updated_at"]),
-        "{{ test_cases_table }}": _table(data["test_cases"], ["id", "feature_id", "story_id", "type", "status", "last_run_id", "evidence_id", "updated_at"]),
-        "{{ defects_table }}": _table(data["defects"], ["id", "feature_id", "severity", "status", "expected", "actual", "updated_at"]),
+        "{{ budget_panel }}": _budget_block(data["active_workflow"], strings),
+        "{{ features_table }}": _table(
+            data["features"],
+            ["id", "name", "surface", "status", "confidence", "updated_at"],
+            strings=strings,
+        ),
+        "{{ user_stories_table }}": _table(
+            data["user_stories"],
+            ["id", "feature_id", "actor", "goal", "status", "updated_at"],
+            strings=strings,
+        ),
+        "{{ test_cases_table }}": _table(
+            data["test_cases"],
+            ["id", "feature_id", "story_id", "type", "status", "last_run_id", "evidence_id", "updated_at"],
+            strings=strings,
+        ),
+        "{{ defects_table }}": _table(
+            data["defects"],
+            ["id", "feature_id", "severity", "status", "expected", "actual", "updated_at"],
+            strings=strings,
+        ),
         "{{ tasks_table }}": _table(
             data["tasks"],
             [
@@ -873,16 +1180,92 @@ def _render_html(data: dict) -> str:
                 "created_at",
                 "updated_at",
             ],
+            strings=strings,
         ),
-        "{{ goals_table }}": _table(data["goals"], ["id", "title", "status", "updated_at"]),
-        "{{ workflow_runs_table }}": _table(data["workflow_runs"], ["id", "workflow_id", "goal_id", "status", "iteration", "started_at", "summary"]),
-        "{{ agent_jobs_table }}": _table(data["agent_jobs"], ["id", "workflow_run_id", "role", "status", "prompt_path", "output_path", "evidence_ids", "latest_evidence_id", "summary"]),
-        "{{ verifications_table }}": _table(data["verifications"], ["id", "workflow_run_id", "target_job_id", "target_job_evidence_ids", "workflow_report_path", "verifier_role", "result", "reasons_json", "created_at"]),
-        "{{ decisions_table }}": _table(data["decisions"], ["id", "status", "question", "recommendation", "linked_escalation_ids", "selected_option", "reason", "blocks_json", "created_at"]),
-        "{{ escalations_table }}": _table(data["escalations"], ["id", "workflow_run_id", "severity", "question", "recommendation", "linked_decision_ids", "status", "created_at"]),
-        "{{ evidence_table }}": _table(data["evidence"], ["id", "type", "path", "related_agent_job_ids", "related_workflow_run_ids", "related_report_paths", "command", "summary", "created_at"]),
-        "{{ recent_events_table }}": _table(data["recent_events"], ["id", "event_type", "entity_type", "entity_id", "created_at"]),
-        "{{ reports_table }}": _table(data["reports"], ["name", "path", "related_evidence_ids", "related_agent_job_ids", "related_workflow_run_ids"]),
+        "{{ goals_table }}": _table(
+            data["goals"],
+            ["id", "title", "status", "updated_at"],
+            strings=strings,
+        ),
+        "{{ workflow_runs_table }}": _table(
+            data["workflow_runs"],
+            ["id", "workflow_id", "goal_id", "status", "iteration", "started_at", "summary"],
+            strings=strings,
+        ),
+        "{{ agent_jobs_table }}": _table(
+            data["agent_jobs"],
+            ["id", "workflow_run_id", "role", "status", "prompt_path", "output_path", "evidence_ids", "latest_evidence_id", "summary"],
+            strings=strings,
+        ),
+        "{{ verifications_table }}": _table(
+            data["verifications"],
+            [
+                "id",
+                "workflow_run_id",
+                "target_job_id",
+                "target_job_evidence_ids",
+                "workflow_report_path",
+                "verifier_role",
+                "result",
+                "reasons_json",
+                "created_at",
+            ],
+            strings=strings,
+        ),
+        "{{ decisions_table }}": _table(
+            data["decisions"],
+            [
+                "id",
+                "status",
+                "question",
+                "recommendation",
+                "linked_escalation_ids",
+                "selected_option",
+                "reason",
+                "blocks_json",
+                "created_at",
+            ],
+            strings=strings,
+        ),
+        "{{ escalations_table }}": _table(
+            data["escalations"],
+            [
+                "id",
+                "workflow_run_id",
+                "severity",
+                "question",
+                "recommendation",
+                "linked_decision_ids",
+                "status",
+                "created_at",
+            ],
+            strings=strings,
+        ),
+        "{{ evidence_table }}": _table(
+            data["evidence"],
+            [
+                "id",
+                "type",
+                "path",
+                "related_agent_job_ids",
+                "related_workflow_run_ids",
+                "related_report_paths",
+                "command",
+                "summary",
+                "created_at",
+            ],
+            strings=strings,
+        ),
+        "{{ recent_events_table }}": _table(
+            data["recent_events"],
+            ["id", "event_type", "entity_type", "entity_id", "created_at"],
+            strings=strings,
+        ),
+        "{{ reports_table }}": _table(
+            data["reports"],
+            ["name", "path", "related_evidence_ids", "related_agent_job_ids", "related_workflow_run_ids"],
+            strings=strings,
+        ),
         "{{ workflow_proposals_table }}": _table(
             data["workflow_proposals"],
             [
@@ -897,6 +1280,7 @@ def _render_html(data: dict) -> str:
                 "reviewed_at",
                 "parse_error",
             ],
+            strings=strings,
         ),
     }
     for key, value in replacements.items():

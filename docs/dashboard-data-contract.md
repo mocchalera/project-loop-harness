@@ -17,6 +17,7 @@ The top-level object must contain:
 - `source_db`
 - `validation`
 - `next_action`
+- `human_decisions`
 - `risk_summary`
 - `counts`
 - `current_goal`
@@ -59,6 +60,48 @@ The top-level object must contain:
 - `human_guidance`
 - `expected_after`
 - `target`
+
+`human_decisions`:
+
+- `count`
+- `items`
+
+`human_decisions.items` rows for open decisions:
+
+- `kind`
+- `id`
+- `question`
+- `recommendation`
+- `created_at`
+- `resolve_command`
+- `linked_escalation_ids`
+
+`human_decisions.items` rows for open escalations:
+
+- `kind`
+- `id`
+- `severity`
+- `question`
+- `recommendation`
+- `created_at`
+- `resolve_command`
+- `linked_decision_ids`
+
+`human_decisions.items` rows for active `needs_human` verifications:
+
+- `kind`
+- `id`
+- `workflow_run_id`
+- `reasons`
+- `created_at`
+- `resolve_command`
+
+`human_decisions.items` rows for human-required next actions:
+
+- `kind`
+- `type`
+- `command`
+- `reason`
 
 `risk_summary`:
 
@@ -232,6 +275,17 @@ Dashboard HTML should expose deterministic row anchors for rows that have an `id
 Entity references such as `J-0001`, `E-0001`, `WR-0001`, and `V-0001` should render as in-page links when they appear in navigation columns. Path values should render as file links. This keeps the dashboard static while still allowing review navigation across jobs, evidence, reports, and verifications.
 
 The "Risk & Blockers" panel renders `risk_summary` near the top of the dashboard. It is a derived review aid only: it summarizes validation issues, human queues, active defects, failed or blocked workflow runs, and failed or blocked agent jobs from existing state. It must not be treated as source of truth.
+
+The "Needs Your Decision" panel renders `human_decisions` immediately after the
+validation/risk/next-action block. It is the consolidated export surface for
+human decision notifications. It includes enough ids, prompt text,
+recommendations, links, and commands for a consumer to render each item without
+joining against other dashboard sections.
+
+Dashboard HTML chrome can be localized with `pcl render --locale ja` or
+`dashboard.locale: "ja"` in `pcl.yaml`. Locale selection affects only
+`dashboard.html`; `dashboard-data.json` keys and values remain English and
+locale-independent.
 
 ## Compatibility
 
