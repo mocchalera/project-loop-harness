@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from shlex import quote
+import sys
 from typing import Any
 
 from .db import connect
@@ -327,6 +328,7 @@ def _codex_exec_command(
     script = "\n".join(
         [
             "set -euo pipefail",
+            _current_python_bin_path_export(),
             f"mkdir -p {quote(str(absolute_output.parent))}",
             (
                 "codex exec "
@@ -352,6 +354,7 @@ def _generic_shell_command(
     script = "\n".join(
         [
             "set -euo pipefail",
+            _current_python_bin_path_export(),
             f"mkdir -p {quote(str(absolute_output.parent))}",
             (
                 ': "${PCL_AGENT_COMMAND:?Set PCL_AGENT_COMMAND to a shell command that '
@@ -363,6 +366,10 @@ def _generic_shell_command(
         ]
     )
     return f"bash -lc {quote(script)}"
+
+
+def _current_python_bin_path_export() -> str:
+    return f"export PATH={quote(str(Path(sys.executable).parent))}:$PATH"
 
 
 def _claude_manual_instructions(*, prompt_path: str, output_path: str, ingest_command: str) -> str:

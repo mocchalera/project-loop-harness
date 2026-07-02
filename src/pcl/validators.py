@@ -31,6 +31,12 @@ REQUIRED_TABLES = [
     "verifications",
     "escalations",
 ]
+VERSIONED_REQUIRED_TABLES = {
+    2: [
+        "tasks",
+        "task_dependencies",
+    ],
+}
 
 ACTIVE_RUN_STATUSES = ("blocked", "queued", "running")
 TERMINAL_WORKFLOW_PROPOSAL_EVENT_TYPES = {
@@ -98,6 +104,7 @@ def validate_project(
                 missing_tables.append(table)
                 result.add_error(f"Missing table: {table}")
         schema_version = get_metadata(conn, "schema_version")
+        current_version: int | None = None
         if schema_version is None:
             result.add_error("Missing metadata.schema_version")
         status = migration_status(paths)
@@ -117,6 +124,12 @@ def validate_project(
                         f"Schema version {current_version} is behind latest "
                         f"{status.latest_version}. Run `pcl migrate --root {paths.root}`."
                     )
+                for version, tables in sorted(VERSIONED_REQUIRED_TABLES.items()):
+                    if current_version >= version:
+                        for table in tables:
+                            if not table_exists(conn, table):
+                                missing_tables.append(table)
+                                result.add_error(f"Missing table: {table}")
         if status.pending:
             pending = ", ".join(migration.id for migration in status.pending)
             result.add_warning(f"Pending migrations: {pending}. Run `pcl migrate --root {paths.root}`.")
@@ -127,6 +140,8 @@ def validate_project(
         skill_path = paths.agents_skill_dir.joinpath("SKILL.md")
         if not skill_path.exists():
             result.add_warning(f"Missing project-control-loop Skill at {skill_path}.")
+        if table_exists(conn, "tasks") and table_exists(conn, "task_dependencies"):
+            _validate_task_invariants(conn, result)
         if strict and not missing_tables:
             _validate_strict_invariants(paths, conn, result)
         if strict and result.warnings:
@@ -644,6 +659,122 @@ def _validate_duplicate_active_runs(conn: sqlite3.Connection, result: Validation
             result.add_error(
                 f"Duplicate active workflow runs for {target_type} {target_id}: {', '.join(run_ids)}."
             )
+
+
+def _validate_task_invariants(conn: sqlite3.Connection, result: ValidationResult) -> None:
+    _validate_task_references(conn, result)
+    _validate_task_dependency_cycles(conn, result)
+    _validate_done_task_dependencies(conn, result)
+
+
+def _validate_task_references(conn: sqlite3.Connection, result: ValidationResult) -> None:
+    reference_checks = [
+        ("related_goal_id", "goals", "goal"),
+        ("related_feature_id", "features", "feature"),
+        ("related_defect_id", "defects", "defect"),
+    ]
+    for column, table, label in reference_checks:
+        rows = conn.execute(
+            f"""
+            SELECT tasks.id, tasks.{column}
+            FROM tasks
+            LEFT JOIN {table} ON {table}.id = tasks.{column}
+            WHERE tasks.{column} IS NOT NULL
+              AND {table}.id IS NULL
+            ORDER BY tasks.id
+            """
+        ).fetchall()
+        for row in rows:
+            result.add_error(
+                f"Task {row['id']} references missing {label} {row[column]} via {column}."
+            )
+
+    dependency_checks = [
+        ("task_id", "task"),
+        ("depends_on_task_id", "dependency task"),
+    ]
+    for column, label in dependency_checks:
+        rows = conn.execute(
+            f"""
+            SELECT task_dependencies.{column}
+            FROM task_dependencies
+            LEFT JOIN tasks ON tasks.id = task_dependencies.{column}
+            WHERE tasks.id IS NULL
+            ORDER BY task_dependencies.{column}
+            """
+        ).fetchall()
+        for row in rows:
+            result.add_error(f"Task dependency references missing {label} {row[column]}.")
+
+
+def _validate_task_dependency_cycles(conn: sqlite3.Connection, result: ValidationResult) -> None:
+    graph = _task_dependency_graph(conn)
+    reported: set[tuple[str, ...]] = set()
+    for task_id in sorted(graph):
+        cycle = _find_task_dependency_cycle(graph, task_id, [], set())
+        if cycle is None:
+            continue
+        canonical = tuple(sorted(set(cycle)))
+        if canonical in reported:
+            continue
+        reported.add(canonical)
+        result.add_error(f"Task dependency cycle detected: {' -> '.join(cycle)}.")
+
+
+def _task_dependency_graph(conn: sqlite3.Connection) -> dict[str, list[str]]:
+    rows = conn.execute(
+        """
+        SELECT task_id, depends_on_task_id
+        FROM task_dependencies
+        ORDER BY task_id, depends_on_task_id
+        """
+    ).fetchall()
+    graph: dict[str, list[str]] = {}
+    task_rows = conn.execute("SELECT id FROM tasks ORDER BY id").fetchall()
+    for row in task_rows:
+        graph[str(row["id"])] = []
+    for row in rows:
+        graph.setdefault(str(row["task_id"]), []).append(str(row["depends_on_task_id"]))
+        graph.setdefault(str(row["depends_on_task_id"]), [])
+    return graph
+
+
+def _find_task_dependency_cycle(
+    graph: dict[str, list[str]],
+    current_id: str,
+    path: list[str],
+    visited: set[str],
+) -> list[str] | None:
+    if current_id in path:
+        start = path.index(current_id)
+        return path[start:] + [current_id]
+    if current_id in visited:
+        return None
+    visited.add(current_id)
+    for dependency_id in graph.get(current_id, []):
+        cycle = _find_task_dependency_cycle(graph, dependency_id, path + [current_id], visited)
+        if cycle is not None:
+            return cycle
+    return None
+
+
+def _validate_done_task_dependencies(conn: sqlite3.Connection, result: ValidationResult) -> None:
+    rows = conn.execute(
+        """
+        SELECT tasks.id AS task_id, dependency.id AS dependency_id, dependency.status AS dependency_status
+        FROM tasks
+        JOIN task_dependencies ON task_dependencies.task_id = tasks.id
+        JOIN tasks AS dependency ON dependency.id = task_dependencies.depends_on_task_id
+        WHERE tasks.status = 'done'
+          AND dependency.status NOT IN ('done', 'cancelled', 'waived')
+        ORDER BY tasks.id, dependency.id
+        """
+    ).fetchall()
+    for row in rows:
+        result.add_warning(
+            f"Task {row['task_id']} is done but depends on incomplete task "
+            f"{row['dependency_id']} ({row['dependency_status']})."
+        )
 
 
 def _validate_defect_transition_evidence(

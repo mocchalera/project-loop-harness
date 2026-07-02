@@ -309,6 +309,7 @@ The current local runtime supports:
 - `pcl init`, inspect-first `pcl init --dry-run`, `doctor`, `validate`, `migrate`, migration status, `render`;
 - feature creation, inspection, and evidence-backed status changes;
 - user story and test case lifecycle commands for behavior-facing TDD/BDD loops;
+- task/backlog CRUD, reasoned status changes, and guarded dependency links;
 - workflow run creation from static templates;
 - agent job prompts, filtered inspection, adapter commands, completion/failure/cancellation;
 - documented agent adapter command contract;
@@ -359,6 +360,8 @@ agent-tasks/0034-limited-execution-sandbox.md
 agent-tasks/0035-automatic-workflow-executor.md
 agent-tasks/0036-executor-dogfood-workflow.md
 agent-tasks/0037-executor-retry-resume.md
+...
+agent-tasks/0062-task-backlog-entity.md
 ```
 
 Do not skip directly to MCP, plugin distribution, hosted services, or dynamic workflow generation before the CLI/runtime and project state layer are solid.

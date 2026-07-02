@@ -79,6 +79,16 @@ from .stories import (
     waive_story,
     waive_test_case,
 )
+from .tasks import (
+    TASK_RISKS,
+    TASK_STATUSES,
+    add_dependency,
+    create_task,
+    list_tasks,
+    read_task,
+    remove_dependency,
+    set_task_status,
+)
 from . import update_check
 from .validators import validate_project
 from .workflow_proposals import (
@@ -131,6 +141,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="apply",
         help="Use `status` to inspect migrations without applying them.",
     )
+    p_migrate.add_argument("--status", action="store_true", dest="migrate_status", help="Inspect migrations without applying them.")
 
     sub.add_parser("render", help="Render dashboard from state")
 
@@ -267,6 +278,39 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_test_read = test_sub.add_parser("read")
     p_test_read.add_argument("test_case_id")
+
+    p_task = sub.add_parser("task", help="Manage tasks")
+    task_sub = p_task.add_subparsers(dest="task_command", required=True)
+    p_task_create = task_sub.add_parser("create")
+    p_task_create.add_argument("--title", required=True)
+    p_task_create.add_argument("--description", default="")
+    p_task_create.add_argument("--priority", type=int, default=100)
+    p_task_create.add_argument("--owner", default="")
+    p_task_create.add_argument("--risk", default=None, help=f"Task risk: {_choices_help(TASK_RISKS)}")
+    p_task_create.add_argument("--effort", default="")
+    p_task_create.add_argument("--goal", default=None)
+    p_task_create.add_argument("--feature", default=None)
+    p_task_create.add_argument("--defect", default=None)
+    p_task_list = task_sub.add_parser("list")
+    p_task_list.add_argument(
+        "--status",
+        default=None,
+        help=f"Filter by task status: {_choices_help(TASK_STATUSES)}",
+    )
+    p_task_list.add_argument("--goal", default=None)
+    p_task_list.add_argument("--owner", default=None)
+    p_task_read = task_sub.add_parser("read")
+    p_task_read.add_argument("task_id")
+    p_task_status = task_sub.add_parser("status")
+    p_task_status.add_argument("task_id")
+    p_task_status.add_argument("new_status", help=f"Target task status: {_choices_help(TASK_STATUSES)}")
+    p_task_status.add_argument("--reason", required=True)
+    p_task_depend = task_sub.add_parser("depend")
+    p_task_depend.add_argument("task_id")
+    p_task_depend.add_argument("--on", required=True, dest="depends_on_task_id")
+    p_task_undepend = task_sub.add_parser("undepend")
+    p_task_undepend.add_argument("task_id")
+    p_task_undepend.add_argument("--on", required=True, dest="depends_on_task_id")
 
     p_defect = sub.add_parser("defect", help="Manage defects")
     defect_sub = p_defect.add_subparsers(dest="defect_command", required=True)
@@ -701,7 +745,7 @@ def main(argv: list[str] | None = None) -> int:
             return _print_validation(result, json_output=json_output)
 
         if args.command == "migrate":
-            if args.migrate_action == "status":
+            if args.migrate_status or args.migrate_action == "status":
                 status = migration_status(paths)
                 payload = {"ok": True, **status.to_dict()}
                 if json_output:
@@ -984,6 +1028,71 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json({"ok": True, "test_case": test_case})
             else:
                 print(to_pretty_json(test_case))
+            return 0
+
+        if args.command == "task" and args.task_command == "create":
+            result = create_task(
+                paths,
+                title=args.title,
+                description=args.description,
+                priority=args.priority,
+                owner=args.owner,
+                risk=args.risk,
+                effort=args.effort,
+                goal_id=args.goal,
+                feature_id=args.feature,
+                defect_id=args.defect,
+            )
+            if json_output:
+                _print_json(result)
+            else:
+                print(result["id"])
+            return 0
+
+        if args.command == "task" and args.task_command == "list":
+            tasks = list_tasks(paths, status=args.status, goal_id=args.goal, owner=args.owner)
+            if json_output:
+                _print_json({"ok": True, "tasks": tasks})
+            elif tasks:
+                for task in tasks:
+                    print(
+                        f"{task['id']} {task['status']} priority={task['priority']} "
+                        f"title={task['title']}"
+                    )
+            else:
+                print("No tasks")
+            return 0
+
+        if args.command == "task" and args.task_command == "read":
+            task = read_task(paths, args.task_id)
+            if json_output:
+                _print_json({"ok": True, "task": task})
+            else:
+                print(to_pretty_json(task))
+            return 0
+
+        if args.command == "task" and args.task_command == "status":
+            result = set_task_status(paths, args.task_id, status=args.new_status, reason=args.reason)
+            if json_output:
+                _print_json(result)
+            else:
+                print(f"Updated task {result['id']} from {result['from_status']} to {result['to_status']}")
+            return 0
+
+        if args.command == "task" and args.task_command == "depend":
+            result = add_dependency(paths, args.task_id, depends_on_task_id=args.depends_on_task_id)
+            if json_output:
+                _print_json(result)
+            else:
+                print(f"Added task dependency {result['task_id']} -> {result['depends_on_task_id']}")
+            return 0
+
+        if args.command == "task" and args.task_command == "undepend":
+            result = remove_dependency(paths, args.task_id, depends_on_task_id=args.depends_on_task_id)
+            if json_output:
+                _print_json(result)
+            else:
+                print(f"Removed task dependency {result['task_id']} -> {result['depends_on_task_id']}")
             return 0
 
         if args.command == "defect" and args.defect_command == "open":
