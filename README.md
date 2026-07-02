@@ -28,6 +28,7 @@ Initialize a target project:
 
 ```bash
 cd target-project
+pcl init --dry-run --json
 pcl init
 pcl doctor
 pcl validate --strict
@@ -115,6 +116,7 @@ This path runs a complete feature-coverage loop in a temporary project:
 rm -rf /tmp/pcl-demo
 mkdir -p /tmp/pcl-demo
 
+pcl init --target /tmp/pcl-demo --dry-run --json
 pcl init --target /tmp/pcl-demo
 pcl doctor --root /tmp/pcl-demo
 
@@ -275,8 +277,9 @@ Seed configs live under [examples/](examples/). Copy one to a scratch directory,
 
 The current local runtime supports:
 
-- `pcl init`, `doctor`, `validate`, `migrate`, migration status, `render`;
+- `pcl init`, inspect-first `pcl init --dry-run`, `doctor`, `validate`, `migrate`, migration status, `render`;
 - feature creation, inspection, and evidence-backed status changes;
+- user story and test case lifecycle commands for behavior-facing TDD/BDD loops;
 - workflow run creation from static templates;
 - agent job prompts, filtered inspection, adapter commands, completion/failure/cancellation;
 - documented agent adapter command contract;

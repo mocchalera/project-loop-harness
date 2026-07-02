@@ -105,6 +105,7 @@ pcl-mcp --help
 
 ```bash
 cd /path/to/target-project
+pcl init --dry-run --json
 pcl init
 pcl doctor
 pcl validate --strict
@@ -114,6 +115,11 @@ pcl render --json
 `pcl init` adds local state, workflow templates, agent instructions, and
 operator guidance. It is safe to rerun; existing `AGENTS.md`, `CLAUDE.md`, and
 `.gitignore` blocks are not duplicated.
+
+Use the dry-run output as the inspect-first adoption plan for non-empty
+projects. It lists the files and directories that would be created, updated,
+skipped, or overwritten without touching local state. Only use `pcl init
+--force` after a human has reviewed and approved template replacement.
 
 ### 3. Tune `pcl.yaml`
 
@@ -197,6 +203,19 @@ Use this checkpoint to decide commit/package boundaries, refresh any hands-on UX
 checklist, and choose the next feature by contribution to the larger product
 goal rather than simply taking the next small item.
 
+For test-first work, keep behavior in harness state instead of only in prose:
+
+```bash
+pcl feature add --name "Import invoices" --surface "cli:import"
+pcl story draft --feature F-0001 --actor "operator" --goal "import invoices" --expected-behavior "valid CSV rows become invoice records"
+pcl story approve US-0001 --summary "Acceptance behavior is clear"
+pcl test plan --feature F-0001 --story US-0001 --type acceptance --scenario "Valid CSV import" --expected "Invoices are created and reported"
+```
+
+Then run the relevant project command, record the red/green result with `pcl
+test fail`, `pcl test missing`, `pcl test block`, or `pcl test pass`, and use
+`pcl validate --strict` before calling the loop done.
+
 For a command-only smoke check of the executor:
 
 ```bash
@@ -253,6 +272,8 @@ JSONL, or generated dashboard HTML directly.
 
 Keep the first goal bounded. Prefer `feature_coverage`, `defect_repair`, or the
 bundled `executor_smoke` workflow before proposing new workflow templates.
+For behavior changes, use `pcl story` and `pcl test` to capture acceptance
+behavior before or alongside implementation.
 
 After meaningful state changes, run:
 - pcl validate --strict --json
@@ -293,6 +314,7 @@ Summarize evidence, not just conclusions.
 Before handing a target project to another agent, confirm:
 
 - `pcl --help` works in that environment;
+- `pcl init --dry-run --json` was reviewed for a non-empty project;
 - `pcl init` has been run;
 - `pcl.yaml` has real project commands and permissions;
 - `pcl validate --strict` passes;

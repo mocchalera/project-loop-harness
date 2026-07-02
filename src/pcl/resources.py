@@ -12,6 +12,11 @@ def read_text_resource(relative_path: str) -> str:
     return ref.read_text(encoding="utf-8")
 
 
+def list_resource_files(relative_dir: str) -> list[str]:
+    src = resources.files(PACKAGE).joinpath(relative_dir)
+    return sorted(str(item.relative_to(src)) for item in src.rglob("*") if item.is_file())
+
+
 def copy_tree_resource(relative_dir: str, destination: Path, *, overwrite: bool = False) -> None:
     src = resources.files(PACKAGE).joinpath(relative_dir)
     destination.mkdir(parents=True, exist_ok=True)

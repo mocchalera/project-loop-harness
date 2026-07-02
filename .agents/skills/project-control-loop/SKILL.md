@@ -27,11 +27,55 @@ When this skill is invoked:
 7. Run `pcl render` after validation.
 8. Report evidence, not just conclusions.
 
+## Adoption and setup safety
+
+When initializing or auditing a target project, use the same inspect-first
+discipline expected from a careful project setup:
+
+1. Inspect existing `AGENTS.md`, `CLAUDE.md`, `pcl.yaml`, `.agents/`, and
+   existing test/build commands before proposing changes.
+2. In a non-empty project, prefer `pcl init --dry-run --json` before `pcl init`.
+3. Treat the dry-run output as the adoption plan: explain which files would be
+   created, updated, skipped, or overwritten.
+4. Do not use `pcl init --force` unless the human explicitly approves replacing
+   generated templates.
+5. After initialization, tune `pcl.yaml` commands, discovery paths, permissions,
+   and human gates to the actual repository.
+6. Verify the installed harness with `pcl doctor --strict`, `pcl validate
+   --strict`, and `pcl render`.
+
+Keep always-loaded files compact. Put procedures in skills, docs, workflow
+templates, or reports instead of duplicating long instructions across
+`AGENTS.md`, `CLAUDE.md`, and project memory.
+
+## Test-first delivery
+
+Use `pcl story` and `pcl test` as the durable TDD/BDD layer. Free-form testing
+docs are useful, but they are not the source of truth once Project Loop Harness
+is initialized.
+
+For user-visible behavior changes:
+
+1. Make or identify the feature with `pcl feature add` or `pcl feature read`.
+2. Capture behavior as a user story with `pcl story draft`, then review or
+   approve it before implementation when feasible.
+3. Plan at least one behavior-facing test case with `pcl test plan`.
+4. Prefer a red-green-refactor loop: reproduce the missing/failing behavior,
+   record `pcl test fail`, `pcl test missing`, or `pcl test block` when useful,
+   implement the smallest change, then record `pcl test pass` with evidence.
+5. Use explicit evidence: command output, artifact paths, screenshots, commits,
+   reports, or verifier notes that another operator can inspect.
+6. Run `pcl validate --strict` after terminal test states and before calling the
+   loop done.
+
 ## Normal commands
 
 ```bash
+pcl init --dry-run --json
 pcl doctor
+pcl doctor --strict
 pcl validate
+pcl validate --strict
 pcl next
 pcl loop status
 pcl render
@@ -43,6 +87,9 @@ pcl export csv
 ```bash
 pcl goal create --title "..."
 pcl feature add --name "..." --surface "..." --description "..."
+pcl story draft --feature F-0001 --actor "..." --goal "..." --expected-behavior "..."
+pcl test plan --feature F-0001 --type acceptance --scenario "..." --expected "..."
+pcl test pass TC-0001 --summary "..." --evidence "..."
 pcl defect open --feature F-0001 --severity high --expected "..." --actual "..."
 ```
 

@@ -49,5 +49,6 @@ Before acting:
 2. Run `pcl loop status` or `pcl next` when the next action is unclear.
 3. Do not hand-edit generated dashboard HTML.
 4. Do not write raw SQL against `.project-loop/project.db`.
-5. Preserve evidence paths for claims of completion.
+5. Use `pcl story` and `pcl test` for behavior-facing test-first work.
+6. Preserve evidence paths for claims of completion.
 <!-- project-loop-harness:end -->

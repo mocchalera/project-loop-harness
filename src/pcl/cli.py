@@ -37,7 +37,7 @@ from .escalations import (
     read_escalation,
     resolve_escalation,
 )
-from .init_project import init_project
+from .init_project import init_project, plan_init_project
 from .lifecycle import (
     cancel_goal,
     cancel_job,
@@ -108,6 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("--target", default=None, help="Target project root. Overrides --root.")
     p_init.add_argument("--force", action="store_true", help="Overwrite template files where safe")
     p_init.add_argument("--no-claude", action="store_true", help="Do not create/update CLAUDE.md")
+    p_init.add_argument("--dry-run", action="store_true", help="Inspect the init plan without writing files")
 
     p_doctor = sub.add_parser("doctor", help="Check project-loop installation health")
     p_doctor.add_argument("--strict", action="store_true")
@@ -516,6 +517,19 @@ def _print_validation(result, *, json_output: bool = False) -> int:
     return 1
 
 
+def _print_init_plan(plan, *, json_output: bool = False) -> int:
+    if json_output:
+        _print_json(plan.to_dict())
+        return 0 if plan.ok else 1
+    print(f"Init plan for {plan.root}")
+    for entry in plan.changes:
+        print(f"[{entry.action.upper():9}] {entry.path}  ({entry.reason})")
+    for error in plan.errors:
+        print(f"ERROR: {error}")
+    print("No files were changed.")
+    return 0 if plan.ok else 1
+
+
 def _print_error(error: PclError, *, json_output: bool = False) -> None:
     if json_output:
         _print_json(error.to_dict())
@@ -575,6 +589,9 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command == "init":
+            if args.dry_run:
+                plan = plan_init_project(paths, overwrite=args.force, with_claude=not args.no_claude)
+                return _print_init_plan(plan, json_output=json_output)
             result = init_project(paths, overwrite=args.force, with_claude=not args.no_claude)
             if json_output:
                 _print_json(

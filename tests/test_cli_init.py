@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from pcl.cli import main
+from pcl.db import connect
 
 
 def _json_output(capsys) -> dict:
@@ -17,6 +18,15 @@ def _csv_rows(path: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(f))
 
 
+def _drop_schema_migrations(root: Path) -> None:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        conn.execute("DROP TABLE schema_migrations")
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def test_init_validate_render(tmp_path: Path) -> None:
     assert main(["init", "--target", str(tmp_path)]) == 0
     assert (tmp_path / ".project-loop" / "project.db").exists()
@@ -25,6 +35,113 @@ def test_init_validate_render(tmp_path: Path) -> None:
     assert main(["--root", str(tmp_path), "validate"]) == 0
     assert main(["--root", str(tmp_path), "render"]) == 0
     assert (tmp_path / ".project-loop" / "dashboard" / "dashboard.html").exists()
+
+
+def test_init_dry_run_reports_plan_without_writing(tmp_path: Path, capsys) -> None:
+    target = tmp_path / "target"
+
+    assert main(["init", "--target", str(target), "--dry-run", "--json"]) == 0
+    payload = _json_output(capsys)
+
+    assert payload["ok"] is True
+    assert payload["dry_run"] is True
+    assert payload["root"] == str(target)
+    assert not target.exists()
+
+    changes = payload["changes"]
+    assert {"action": "create", "path": ".", "reason": "target project root"} in changes
+    assert {
+        "action": "create",
+        "path": ".project-loop/project.db",
+        "reason": "create local SQLite loop memory",
+    } in changes
+    assert any(
+        change["action"] == "create"
+        and change["path"] == ".agents/skills/project-control-loop/SKILL.md"
+        for change in changes
+    )
+
+
+def test_init_dry_run_force_does_not_claim_database_overwrite(tmp_path: Path, capsys) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    capsys.readouterr()
+
+    assert main(["init", "--target", str(tmp_path), "--force", "--dry-run", "--json"]) == 0
+    payload = _json_output(capsys)
+
+    changes = {change["path"]: change for change in payload["changes"]}
+    assert changes[".project-loop/project.db"]["action"] == "skip"
+    assert changes[".project-loop/project.db"]["reason"] == (
+        "local SQLite loop memory already exists and will be preserved"
+    )
+    assert changes[".project-loop/events.jsonl"]["action"] == "update"
+    assert changes["pcl.yaml"]["action"] == "overwrite"
+
+
+def test_init_dry_run_reports_pending_migrations_without_applying(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    capsys.readouterr()
+    before_events = (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8")
+    _drop_schema_migrations(tmp_path)
+
+    assert main(["init", "--target", str(tmp_path), "--dry-run", "--json"]) == 0
+    payload = _json_output(capsys)
+
+    changes = {change["path"]: change for change in payload["changes"]}
+    assert changes[".project-loop/project.db"] == {
+        "action": "update",
+        "path": ".project-loop/project.db",
+        "reason": "would apply pending migrations: 001_initial",
+    }
+    assert changes[".project-loop/events.jsonl"] == {
+        "action": "update",
+        "path": ".project-loop/events.jsonl",
+        "reason": "would append migration events for: 001_initial",
+    }
+    assert (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8") == before_events
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        row = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations'"
+        ).fetchone()
+        assert row is None
+    finally:
+        conn.close()
+
+
+def test_init_dry_run_reports_target_file_conflict(tmp_path: Path, capsys) -> None:
+    target = tmp_path / "target"
+    target.write_text("not a directory", encoding="utf-8")
+
+    assert main(["init", "--target", str(target), "--dry-run", "--json"]) == 1
+    payload = _json_output(capsys)
+
+    assert payload["ok"] is False
+    assert payload["errors"] == [".: expected directory but found a file"]
+    assert payload["changes"] == [
+        {"action": "error", "path": ".", "reason": "expected directory but found a file"}
+    ]
+    assert target.read_text(encoding="utf-8") == "not a directory"
+
+
+def test_init_dry_run_reports_nested_path_conflicts_and_human_output(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    (tmp_path / ".project-loop").write_text("not a directory", encoding="utf-8")
+    (tmp_path / ".agents").write_text("not a directory", encoding="utf-8")
+
+    assert main(["init", "--target", str(tmp_path), "--dry-run"]) == 1
+    output = capsys.readouterr().out
+
+    assert "[ERROR    ] .project-loop  (expected directory but found a file)" in output
+    assert ".agents/skills/project-control-loop/SKILL.md" in output
+    assert "ERROR: .project-loop: expected directory but found a file" in output
+    assert "ERROR: .agents/skills/project-control-loop/SKILL.md: cannot create because .agents is not a directory" in output
+    assert "No files were changed." in output
 
 
 def test_cli_version(capsys) -> None:
@@ -98,6 +215,23 @@ def test_init_is_idempotent(tmp_path: Path, capsys) -> None:
     claude = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
     assert agents.count("<!-- project-loop-harness:start -->") == 1
     assert claude.count("<!-- project-loop-harness:start -->") == 1
+
+
+def test_init_installs_inspect_first_and_test_first_agent_guidance(tmp_path: Path) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+
+    agents = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
+    claude = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
+    skill = (
+        tmp_path / ".agents" / "skills" / "project-control-loop" / "SKILL.md"
+    ).read_text(encoding="utf-8")
+
+    assert "pcl init --dry-run --json" in agents
+    assert "pcl story" in agents
+    assert "pcl story" in claude
+    assert "Adoption and setup safety" in skill
+    assert "Test-first delivery" in skill
+    assert "pcl test plan" in skill
 
 
 def test_doctor_warns_for_placeholder_project_config(tmp_path: Path, capsys) -> None:
