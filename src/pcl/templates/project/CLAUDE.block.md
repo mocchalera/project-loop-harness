@@ -7,8 +7,9 @@ Before acting:
 
 1. Read `pcl.yaml`.
 2. Run `pcl loop status` or `pcl next` when the next action is unclear.
-3. Do not hand-edit generated dashboard HTML.
-4. Do not write raw SQL against `.project-loop/project.db`.
-5. Use `pcl story` and `pcl test` for behavior-facing test-first work.
-6. Preserve evidence paths for claims of completion.
+3. Do not read, parse, or hand-edit generated dashboard HTML; it is a human-only view.
+4. Use `pcl` JSON commands, reports, evidence paths, or `dashboard-data.json` for machine context.
+5. Do not write raw SQL against `.project-loop/project.db`.
+6. Use `pcl story` and `pcl test` for behavior-facing test-first work.
+7. Preserve evidence paths for claims of completion.
 <!-- project-loop-harness:end -->

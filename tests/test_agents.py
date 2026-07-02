@@ -36,6 +36,8 @@ def test_prompt_job_prints_complete_prompt(tmp_path: Path, capsys) -> None:
     assert "# Agent Job J-0001" in captured.out
     assert "Role: mapper" in captured.out
     assert "Do not edit `.project-loop/project.db` directly." in captured.out
+    assert "Do not read or parse generated dashboard HTML as project state." in captured.out
+    assert "dashboard-data.json" in captured.out
     assert "agent-output/v1" in captured.out
     assert "# Short result summary" in captured.out
     assert "## Findings" in captured.out
@@ -104,6 +106,8 @@ def test_agent_command_adapters(tmp_path: Path, capsys) -> None:
     assert "agent-output/v1" in claude["instructions"]
     assert "## Findings" in claude["instructions"]
     assert "## Evidence" in claude["instructions"]
+    assert "Do not read or parse generated dashboard HTML as project state." in claude["instructions"]
+    assert "dashboard-data.json" in claude["instructions"]
 
     assert main([
         "--root",
@@ -122,6 +126,8 @@ def test_agent_command_adapters(tmp_path: Path, capsys) -> None:
     assert "pcl ingest-agent-run" in shell["command"]
     assert shell["ingest_command"] in shell["command"]
     assert shell["output_path"] == ".project-loop/evidence/agent-runs/J-0001/output.md"
+    assert "Do not read or parse generated dashboard HTML as project state." in shell["instructions"]
+    assert "dashboard-data.json" in shell["instructions"]
 
     assert main([
         "--root",

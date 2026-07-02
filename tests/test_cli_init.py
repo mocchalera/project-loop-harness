@@ -150,7 +150,7 @@ def test_cli_version(capsys) -> None:
     except SystemExit as exc:
         assert exc.code == 0
 
-    assert capsys.readouterr().out.strip() == "pcl 0.1.5"
+    assert capsys.readouterr().out.strip() == "pcl 0.1.6"
 
 
 def test_render_is_deterministic_for_unchanged_state(tmp_path: Path, capsys) -> None:
@@ -228,10 +228,16 @@ def test_init_installs_inspect_first_and_test_first_agent_guidance(tmp_path: Pat
 
     assert "pcl init --dry-run --json" in agents
     assert "pcl story" in agents
+    assert "Do not read or parse `.project-loop/dashboard/dashboard.html` as project state" in agents
+    assert ".project-loop/dashboard/dashboard-data.json" in agents
     assert "pcl story" in claude
+    assert "Do not read, parse, or hand-edit generated dashboard HTML" in claude
+    assert "dashboard-data.json" in claude
     assert "Adoption and setup safety" in skill
     assert "Test-first delivery" in skill
     assert "pcl test plan" in skill
+    assert "Agents should not" in skill
+    assert "read or parse it for project state" in skill
 
 
 def test_doctor_warns_for_placeholder_project_config(tmp_path: Path, capsys) -> None:

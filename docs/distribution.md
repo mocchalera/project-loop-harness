@@ -93,12 +93,14 @@ pcl-mcp --stdio --root target-project
 pcl-mcp --stdio --root target-project --approval-mode local-render
 ```
 
-The `render_dashboard` tool returns both generated artifact paths:
+The `render_dashboard` tool renders both dashboard artifacts, but returns only
+machine-oriented metadata. The generated HTML is a human-only view and is not
+returned as agent context:
 
 ```json
 {
-  "dashboard": "target-project/.project-loop/dashboard/dashboard.html",
   "data_path": "target-project/.project-loop/dashboard/dashboard-data.json",
+  "machine_context": "Use data_path or read-only MCP tools for state. dashboard.html is human-only and intentionally not returned.",
   "rendered": true
 }
 ```
@@ -132,7 +134,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - uses: owner/project-loop-harness/.github/actions/project-loop-validate@v0.1.5
+      - uses: owner/project-loop-harness/.github/actions/project-loop-validate@v0.1.6
         with:
           root: "."
           strict: "true"

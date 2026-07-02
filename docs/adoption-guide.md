@@ -251,8 +251,10 @@ agent to inspect without making product changes:
 Read AGENTS.md, CLAUDE.md if present, README.md, and pcl.yaml.
 
 This project uses Project Loop Harness. Do not edit `.project-loop/project.db`,
-`.project-loop/events.jsonl`, or generated dashboard HTML directly. Use `pcl`
-commands for loop state changes.
+`.project-loop/events.jsonl`, or generated dashboard HTML directly. Do not
+read or parse generated dashboard HTML as project state. Use `pcl` commands for
+loop state changes and `pcl` JSON, reports, evidence paths, or
+`dashboard-data.json` for machine context.
 
 Run:
 - pcl validate --json
@@ -280,7 +282,8 @@ smallest safe issue first. If it recommends creating or continuing a goal,
 follow the recommended `pcl` command.
 
 All loop state mutations must go through `pcl`. Do not edit SQLite, events
-JSONL, or generated dashboard HTML directly.
+JSONL, or generated dashboard HTML directly. Do not read or parse generated
+dashboard HTML as project state.
 
 Keep the first goal bounded. Prefer `feature_coverage`, `defect_repair`, or the
 bundled `executor_smoke` workflow before proposing new workflow templates.
@@ -330,7 +333,7 @@ Before handing a target project to another agent, confirm:
 - `pcl init` has been run;
 - `pcl.yaml` has real project commands and permissions;
 - `pcl validate --strict` passes;
-- `pcl render --json` returns dashboard artifact paths;
+- `pcl render --json` returns dashboard artifact paths for human review and machine JSON;
 - the committed files exclude local DB, JSONL audit log, and evidence blobs
   unless the team intentionally chose otherwise;
-- the first prompt tells agents to use `pcl`, not raw SQLite or generated HTML.
+- the first prompt tells agents to use `pcl` or dashboard-data JSON, not raw SQLite or generated HTML.

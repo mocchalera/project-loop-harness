@@ -21,6 +21,7 @@ from .commands import (
     set_feature_status,
     to_pretty_json,
 )
+from .context import DEFAULT_MAX_TOKENS, pack_context_for_job
 from .decisions import (
     list_decisions,
     open_decision,
@@ -408,6 +409,19 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_ingest = sub.add_parser("ingest-agent-run", help="Record an agent output file as evidence")
     p_ingest.add_argument("path")
+
+    p_context = sub.add_parser("context", help="Build focused machine context packages")
+    context_sub = p_context.add_subparsers(dest="context_command", required=True)
+    p_context_pack = context_sub.add_parser("pack", help="Build a focused context pack for an agent job")
+    context_pack_target = p_context_pack.add_mutually_exclusive_group(required=True)
+    context_pack_target.add_argument("--job", dest="job_id", default=None, help="Agent job id to package")
+    p_context_pack.add_argument("--role", default=None, help="Reader role for this handoff")
+    p_context_pack.add_argument(
+        "--max-tokens",
+        type=int,
+        default=DEFAULT_MAX_TOKENS,
+        help="Approximate token budget for the generated Markdown package.",
+    )
 
     p_verification = sub.add_parser("verification", help="Record verification results")
     verification_sub = p_verification.add_subparsers(dest="verification_command", required=True)
@@ -1307,6 +1321,19 @@ def main(argv: list[str] | None = None) -> int:
                     f"Ingested {result['output_path']} as {result['evidence_id']} "
                     f"for job {result['job_id']}"
                 )
+            return 0
+
+        if args.command == "context" and args.context_command == "pack":
+            pack = pack_context_for_job(
+                paths,
+                job_id=args.job_id,
+                reader_role=args.role,
+                max_tokens=args.max_tokens,
+            )
+            if json_output:
+                _print_json({"ok": True, "context_pack": pack})
+            else:
+                print(pack["markdown"], end="")
             return 0
 
         if args.command == "verification" and args.verification_command == "record":

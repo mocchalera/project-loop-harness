@@ -64,12 +64,12 @@ Skill          = instructions for agents
 pcl CLI        = runtime that mutates state, validates, renders, and routes work
 project.db     = current normalized loop memory
 events.jsonl   = append-only audit log
-dashboard.html = generated human-readable view
+dashboard.html = generated human-readable view, not agent context
 Plugin         = Codex distribution wrapper
 MCP            = optional read/local-render bridge
 ```
 
-Agents should never edit `.project-loop/project.db` or generated dashboard HTML directly. State changes go through `pcl` commands or internal service functions, and every state mutation appends an event.
+Agents should never edit `.project-loop/project.db` or read, parse, or edit generated dashboard HTML as project state. State changes go through `pcl` commands or internal service functions, and every state mutation appends an event. For machine context, use `pcl` JSON commands, reports, evidence paths, or `.project-loop/dashboard/dashboard-data.json`.
 
 ## Repository Layout
 
@@ -154,7 +154,7 @@ pcl feature list --root /tmp/pcl-demo --json
 pcl render --root /tmp/pcl-demo
 ```
 
-Open `/tmp/pcl-demo/.project-loop/dashboard/dashboard.html` after rendering.
+Humans can open `/tmp/pcl-demo/.project-loop/dashboard/dashboard.html` after rendering.
 
 See [docs/golden-path.md](docs/golden-path.md) for the same path with expected checkpoints and a human-decision branch.
 
@@ -179,6 +179,21 @@ Agent steps are not launched unless explicitly enabled:
 ```bash
 pcl loop execute workflow_id --agent-adapter generic_shell --allow-agent-exec
 ```
+
+## Context Packs
+
+Use context packs to hand focused, budget-aware loop context to another agent
+without making generated dashboard HTML a machine context source:
+
+```bash
+pcl context pack --job J-0001
+pcl context pack --job J-0001 --role verifier --max-tokens 12000 --json
+```
+
+The JSON contract is `context-pack/v1`. It includes included/omitted section
+metadata, source commands, source paths, and the generated Markdown package.
+See [docs/context-pack.md](docs/context-pack.md) for the contract shape and
+boundaries.
 
 ## Guided Next Actions
 
@@ -279,6 +294,7 @@ Reports are written to `.project-loop/reports/`. The dashboard writes:
 ```
 
 Run `pcl validate` before rendering whenever possible. `pcl render` already performs normal validation and refuses to render on errors.
+Agents should use `.project-loop/dashboard/dashboard-data.json` or `pcl` JSON commands for rendered machine context; `dashboard.html` is human-only.
 
 If validation fails or generated artifacts look stale, use [docs/recovery-playbook.md](docs/recovery-playbook.md) before continuing normal work.
 
@@ -299,6 +315,7 @@ The current local runtime supports:
 - hardened Codex CLI adapter command template;
 - hardened Claude Code manual adapter instructions;
 - generic shell adapter command template;
+- read-only context packs for focused agent handoff;
 - validated agent output ingestion as evidence;
 - job-centric evidence linkage for ingested agent output;
 - verification recording;

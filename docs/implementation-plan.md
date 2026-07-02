@@ -114,8 +114,8 @@ Only after static workflows are stable:
   `pcl render --json`.
 - Add a machine-readable Codex plugin package inventory and tests that keep the
   bundled plugin file set deterministic.
-- Return both generated dashboard artifact paths from the gated MCP
-  `render_dashboard` tool.
+- Return only machine-oriented dashboard-data metadata from the gated MCP
+  `render_dashboard` tool; dashboard HTML remains a human-only artifact.
 - Cancel active jobs when a workflow run fails so terminal runs do not leave
   stale queued work behind.
 - Include output and ingest metadata in `pcl prompt job --json` so agent
@@ -144,3 +144,6 @@ Only after static workflows are stable:
   review before continuing feature coverage.
 - Add PyPI/TestPyPI Trusted Publishing workflow and docs so public package
   releases can use GitHub OIDC instead of long-lived PyPI tokens.
+- Add read-only context packs so PM agents can hand budget-aware goal, run, job,
+  evidence, verification, human-queue, event, and prompt context to worker
+  agents without using generated dashboard HTML as machine context.

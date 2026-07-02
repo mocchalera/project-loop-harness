@@ -9,6 +9,9 @@ description: Use this skill when auditing, developing, testing, fixing, or track
 
 The dashboard is not the source of truth.
 The source of truth is `.project-loop/project.db`, with `.project-loop/events.jsonl` as an append-only audit log.
+Generated `dashboard.html` is a human-only review artifact. Agents should not
+read or parse it for project state; use `pcl` JSON commands, reports, evidence
+paths, or `.project-loop/dashboard/dashboard-data.json` for machine context.
 
 Never edit generated HTML directly.
 Never write SQL directly unless the human explicitly asks for database maintenance.

@@ -145,11 +145,16 @@ def test_mcp_render_dashboard_requires_explicit_approval_mode(tmp_path: Path) ->
 
     rendered = _tool_payload(writable.handle(_tool_call("render_dashboard")))
     assert rendered == {
-        "dashboard": str(tmp_path / ".project-loop" / "dashboard" / "dashboard.html"),
         "data_path": str(tmp_path / ".project-loop" / "dashboard" / "dashboard-data.json"),
+        "machine_context": (
+            "Use data_path or read-only MCP tools for state. "
+            "dashboard.html is human-only and intentionally not returned."
+        ),
         "rendered": True,
     }
     assert rendered["rendered"] is True
+    assert "dashboard" not in rendered
+    assert str(tmp_path / ".project-loop" / "dashboard" / "dashboard.html") not in json.dumps(rendered)
     assert (tmp_path / ".project-loop" / "dashboard" / "dashboard.html").exists()
     assert (tmp_path / ".project-loop" / "dashboard" / "dashboard-data.json").exists()
 

@@ -88,8 +88,8 @@ Review:
 - `/tmp/pcl-demo/.project-loop/reports/goal-G-0001.md`;
 - `/tmp/pcl-demo/.project-loop/reports/run-WR-0001.md`;
 - `pcl feature list --json` can be used to inspect tracked feature IDs and status;
-- `/tmp/pcl-demo/.project-loop/dashboard/dashboard.html`;
-- `/tmp/pcl-demo/.project-loop/dashboard/dashboard-data.json`.
+- `/tmp/pcl-demo/.project-loop/dashboard/dashboard.html` for human review;
+- `/tmp/pcl-demo/.project-loop/dashboard/dashboard-data.json` for rendered machine context.
 
 If validation fails or the generated artifacts do not match state, follow [recovery-playbook.md](recovery-playbook.md) before continuing.
 

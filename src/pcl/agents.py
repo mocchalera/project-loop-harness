@@ -383,6 +383,8 @@ def _claude_manual_instructions(*, prompt_path: str, output_path: str, ingest_co
             "Boundary:",
             "- `pcl` does not execute Claude Code automatically.",
             "- Do not edit `.project-loop/project.db` directly.",
+            "- Do not read or parse generated dashboard HTML as project state.",
+            "- Use `pcl` JSON commands, reports, evidence paths, or `dashboard-data.json` for machine context.",
             "- Do not edit generated dashboard HTML directly.",
         ]
     )
@@ -406,6 +408,8 @@ def _generic_shell_instructions(*, prompt_path: str, output_path: str, ingest_co
             "Boundary:",
             "- `pcl` only prints this wrapper; it does not execute the shell command automatically.",
             "- Do not edit `.project-loop/project.db` directly.",
+            "- Do not read or parse generated dashboard HTML as project state.",
+            "- Use `pcl` JSON commands, reports, evidence paths, or `dashboard-data.json` for machine context.",
             "- Do not edit generated dashboard HTML directly.",
         ]
     )

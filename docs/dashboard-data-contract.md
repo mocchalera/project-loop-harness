@@ -6,7 +6,7 @@
 dashboard-data/v1
 ```
 
-The JSON file is a deterministic review artifact derived from SQLite state, JSONL events, reports, and workflow templates. It is not the source of truth and must not be edited directly.
+The JSON file is a deterministic review artifact derived from SQLite state, JSONL events, reports, and workflow templates. It is not the source of truth and must not be edited directly. When an agent needs rendered dashboard context, use this JSON contract instead of reading or parsing `dashboard.html`.
 
 ## Top-Level Keys
 

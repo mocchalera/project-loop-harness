@@ -102,8 +102,10 @@ class ProjectLoopMcpServer:
             "serverInfo": {"name": SERVER_NAME, "version": __version__},
             "instructions": (
                 "Project Loop Harness MCP exposes safe local pcl read operations. "
-                "State mutations still go through the pcl CLI. render_dashboard is only "
-                "available when the server is started with --approval-mode local-render."
+                "State mutations still go through the pcl CLI. Generated dashboard HTML "
+                "is a human-only view and must not be read or parsed as project state. "
+                "render_dashboard is only available when the server is started with "
+                "--approval-mode local-render."
             ),
         }
 
@@ -122,7 +124,10 @@ class ProjectLoopMcpServer:
             tools.append(
                 _tool(
                     "render_dashboard",
-                    "Render the local dashboard from state. Requires explicit local-render approval mode.",
+                    (
+                        "Render the local human dashboard and dashboard-data JSON from state. "
+                        "Returns machine-oriented dashboard-data metadata only; dashboard HTML is human-only."
+                    ),
                     read_only=False,
                 )
             )
@@ -157,8 +162,11 @@ class ProjectLoopMcpServer:
             render_dashboard(self.paths)
             return _tool_result(
                 {
-                    "dashboard": str(self.paths.dashboard_html),
                     "data_path": str(self.paths.dashboard_data),
+                    "machine_context": (
+                        "Use data_path or read-only MCP tools for state. "
+                        "dashboard.html is human-only and intentionally not returned."
+                    ),
                     "rendered": True,
                 }
             )

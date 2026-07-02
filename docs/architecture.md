@@ -28,7 +28,7 @@ It is designed to let coding agents work through bounded loops while humans can 
 | CLI | Mutate state, validate, render, schedule | Become model-specific |
 | SQLite | Store current normalized state | Be hand-edited by agents |
 | JSONL | Preserve audit trail | Serve as query engine |
-| HTML | Human-readable view | Become source of truth |
+| HTML | Human-readable view | Become source of truth or agent context |
 | Plugin | Package Codex-facing assets | Replace CLI/runtime |
 | MCP | External tool bridge | Own local state logic |
 

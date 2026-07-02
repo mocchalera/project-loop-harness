@@ -71,6 +71,7 @@ pcl render --json
 Do not edit `.project-loop/project.db` directly.
 Do not edit `.project-loop/events.jsonl` directly.
 Do not edit `.project-loop/dashboard/dashboard.html` directly.
+Do not read or parse `.project-loop/dashboard/dashboard.html` as project state.
 Do not delete `.project-loop/reports/validation-strict.md` to hide a failure.
 Do not synthesize evidence for a terminal state that was not actually verified.
 

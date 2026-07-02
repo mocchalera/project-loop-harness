@@ -725,7 +725,8 @@ def _maybe_render(paths: ProjectPaths, result: dict[str, Any], *, enabled: bool)
         return
     render_dashboard(paths)
     result["rendered"] = True
-    result["dashboard_path"] = str(paths.dashboard_html)
+    result["dashboard_data_path"] = str(paths.dashboard_data)
+    result["machine_context"] = "Use dashboard_data_path or pcl JSON commands for state; dashboard.html is human-only."
 
 
 def _write_execution_result(paths: ProjectPaths, result: dict[str, Any]) -> None:
@@ -843,7 +844,8 @@ def _initial_result(
         "goal_closure": None,
         "validation": None,
         "rendered": False,
-        "dashboard_path": "",
+        "dashboard_data_path": "",
+        "machine_context": "",
     }
 
 

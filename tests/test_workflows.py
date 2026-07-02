@@ -115,6 +115,8 @@ def test_loop_run_creates_workflow_run_jobs_and_prompts(tmp_path: Path, capsys) 
         prompt = prompt_path.read_text(encoding="utf-8")
         assert f"# Agent Job {job['id']}" in prompt
         assert "Do not edit `.project-loop/project.db` directly." in prompt
+        assert "Do not read or parse generated dashboard HTML as project state." in prompt
+        assert "dashboard-data.json" in prompt
         assert (
             "Valid `pcl test plan --type` values: acceptance, e2e, integration, manual, smoke, unit."
             in prompt

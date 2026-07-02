@@ -160,6 +160,9 @@ def test_loop_execute_command_only_workflow_completes_and_records_evidence(
     assert payload["verification_id"] == "V-0001"
     assert payload["completion"]["status"] == "passed"
     assert payload["rendered"] is True
+    assert payload["dashboard_data_path"] == str(tmp_path / ".project-loop" / "dashboard" / "dashboard-data.json")
+    assert "dashboard_path" not in payload
+    assert str(tmp_path / ".project-loop" / "dashboard" / "dashboard.html") not in json.dumps(payload)
     assert payload["steps"][0]["kind"] == "command"
     assert payload["steps"][0]["status"] == "passed"
     assert (tmp_path / payload["evidence_path"]).exists()
@@ -218,6 +221,9 @@ def test_loop_execute_bundled_executor_smoke_runs_in_fresh_project(
     assert payload["evidence_id"] == "E-0001"
     assert payload["verification_id"] == "V-0001"
     assert payload["rendered"] is True
+    assert payload["dashboard_data_path"] == str(tmp_path / ".project-loop" / "dashboard" / "dashboard-data.json")
+    assert "dashboard_path" not in payload
+    assert str(tmp_path / ".project-loop" / "dashboard" / "dashboard.html") not in json.dumps(payload)
     assert [step["status"] for step in payload["steps"]] == ["passed", "passed", "passed"]
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
