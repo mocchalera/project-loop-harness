@@ -17,6 +17,7 @@ EXPORT_TABLES: tuple[tuple[str, str], ...] = (
     ("goals", "id"),
     ("workflows", "id"),
     ("workflow_runs", "id"),
+    ("agents", "id"),
     ("agent_jobs", "id"),
     ("features", "id"),
     ("user_stories", "id"),

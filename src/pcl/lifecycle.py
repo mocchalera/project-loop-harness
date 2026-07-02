@@ -52,7 +52,7 @@ def complete_job(
             UPDATE agent_jobs
             SET status = ?, output_path = COALESCE(?, output_path), token_input = COALESCE(?, token_input),
                 token_output = COALESCE(?, token_output), started_at = COALESCE(started_at, ?),
-                ended_at = ?, summary = ?
+                ended_at = ?, summary = ?, lease_expires_at = NULL, last_heartbeat_at = NULL
             WHERE id = ?
             """,
             ("passed", normalized_output, token_input, token_output, now, now, summary, job_id),
@@ -103,7 +103,16 @@ def fail_job(paths: ProjectPaths, *, job_id: str, summary: str) -> dict[str, Any
             ACTIVE_RUN_STATUSES,
         )
         conn.execute(
-            "UPDATE agent_jobs SET status = ?, started_at = COALESCE(started_at, ?), ended_at = ?, summary = ? WHERE id = ?",
+            """
+            UPDATE agent_jobs
+            SET status = ?,
+                started_at = COALESCE(started_at, ?),
+                ended_at = ?,
+                summary = ?,
+                lease_expires_at = NULL,
+                last_heartbeat_at = NULL
+            WHERE id = ?
+            """,
             ("failed", now, now, summary, job_id),
         )
         cancelled_jobs = _cancel_active_jobs_for_failed_run(
@@ -159,7 +168,11 @@ def cancel_job(paths: ProjectPaths, *, job_id: str, summary: str) -> dict[str, A
         job = _get_job(conn, job_id)
         _require_active_status("Agent job", job_id, str(job["status"]), ACTIVE_JOB_STATUSES)
         conn.execute(
-            "UPDATE agent_jobs SET status = ?, ended_at = ?, summary = ? WHERE id = ?",
+            """
+            UPDATE agent_jobs
+            SET status = ?, ended_at = ?, summary = ?, lease_expires_at = NULL, last_heartbeat_at = NULL
+            WHERE id = ?
+            """,
             ("cancelled", now, summary, job_id),
         )
         append_event(
@@ -377,7 +390,11 @@ def cancel_workflow_run(paths: ProjectPaths, *, workflow_run_id: str, summary: s
         cancelled_jobs: list[str] = []
         for job in active_jobs:
             conn.execute(
-                "UPDATE agent_jobs SET status = ?, ended_at = ?, summary = ? WHERE id = ?",
+                """
+                UPDATE agent_jobs
+                SET status = ?, ended_at = ?, summary = ?, lease_expires_at = NULL, last_heartbeat_at = NULL
+                WHERE id = ?
+                """,
                 ("cancelled", now, summary, job["id"]),
             )
             cancelled_jobs.append(str(job["id"]))
@@ -823,7 +840,11 @@ def _cancel_active_jobs_for_failed_run(
     for job in active_jobs:
         cancelled_job_id = str(job["id"])
         conn.execute(
-            "UPDATE agent_jobs SET status = ?, ended_at = ?, summary = ? WHERE id = ?",
+            """
+            UPDATE agent_jobs
+            SET status = ?, ended_at = ?, summary = ?, lease_expires_at = NULL, last_heartbeat_at = NULL
+            WHERE id = ?
+            """,
             ("cancelled", now, summary, cancelled_job_id),
         )
         cancelled_jobs.append(cancelled_job_id)

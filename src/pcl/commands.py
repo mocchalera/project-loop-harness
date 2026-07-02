@@ -5,6 +5,7 @@ from json import JSONDecodeError
 
 from .checkpoints import checkpoint_status
 from .db import connect
+from .dispatch import expired_lease_job_ids
 from .evidence import record_inline_evidence
 from .events import append_event
 from .errors import InvalidInputError
@@ -400,6 +401,9 @@ def next_action(paths: ProjectPaths) -> dict:
     unfinished_executor = _unfinished_executor_next_action(paths)
     if unfinished_executor is not None:
         return unfinished_executor
+    expired_leases = _expired_lease_next_action(paths)
+    if expired_leases is not None:
+        return expired_leases
     active = _active_workflow_next_action(paths)
     if active is not None:
         return active
@@ -707,6 +711,23 @@ def _defect_next_action(defect: dict) -> dict:
         requires_human=False,
         safe_to_run=False,
         expected_after=f"Defect {defect_id} advances beyond {defect_status}.",
+    )
+
+
+def _expired_lease_next_action(paths: ProjectPaths) -> dict | None:
+    job_ids = expired_lease_job_ids(paths)
+    if not job_ids:
+        return None
+    return build_next_action(
+        action_type="reap_expired_leases",
+        command="pcl jobs reap",
+        reason=f"Running agent job leases have expired: {', '.join(job_ids)}.",
+        target={"expired_job_ids": job_ids},
+        priority=44,
+        blocking=False,
+        requires_human=False,
+        safe_to_run=True,
+        expected_after="Expired leases are requeued or blocked with an escalation when attempts are exhausted.",
     )
 
 

@@ -94,12 +94,12 @@ def test_init_dry_run_reports_pending_migrations_without_applying(
     assert changes[".project-loop/project.db"] == {
         "action": "update",
         "path": ".project-loop/project.db",
-        "reason": "would apply pending migrations: 001_initial, 002_tasks",
+        "reason": "would apply pending migrations: 001_initial, 002_tasks, 003_agent_registry",
     }
     assert changes[".project-loop/events.jsonl"] == {
         "action": "update",
         "path": ".project-loop/events.jsonl",
-        "reason": "would append migration events for: 001_initial, 002_tasks",
+        "reason": "would append migration events for: 001_initial, 002_tasks, 003_agent_registry",
     }
     assert (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8") == before_events
     conn = connect(tmp_path / ".project-loop" / "project.db")
@@ -207,10 +207,11 @@ def test_init_is_idempotent(tmp_path: Path, capsys) -> None:
         "root": str(tmp_path),
     }
     events = (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines()
-    assert len(events) == 3
+    assert len(events) == 4
     assert "migration_applied" in events[0]
     assert "migration_applied" in events[1]
-    assert "project_initialized" in events[2]
+    assert "migration_applied" in events[2]
+    assert "project_initialized" in events[3]
 
     agents = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
     claude = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")
@@ -422,6 +423,7 @@ def test_export_csv_includes_reviewable_loop_state(tmp_path: Path, capsys) -> No
         "goals.csv",
         "workflows.csv",
         "workflow_runs.csv",
+        "agents.csv",
         "agent_jobs.csv",
         "features.csv",
         "user_stories.csv",
