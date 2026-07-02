@@ -301,6 +301,11 @@ Reports are written to `.project-loop/reports/`. The dashboard writes:
 Run `pcl validate` before rendering whenever possible. `pcl render` already performs normal validation and refuses to render on errors.
 Agents should use `.project-loop/dashboard/dashboard-data.json` or `pcl` JSON commands for rendered machine context; `dashboard.html` is human-only.
 
+Use `pcl render --locale ja` to render Japanese dashboard chrome. Without the
+flag, `pcl render` reads `dashboard.locale` from `pcl.yaml` and then falls back
+to English. The locale affects only `dashboard.html`; `dashboard-data.json`
+keys and values stay English for agents and integrations.
+
 If validation fails or generated artifacts look stale, use [docs/recovery-playbook.md](docs/recovery-playbook.md) before continuing normal work.
 
 ## Example Projects
@@ -333,6 +338,7 @@ The current local runtime supports:
 - strict validation invariants and audit-log integrity checks;
 - evidence-backed Markdown reports;
 - deterministic dashboard data and HTML with JSON artifact paths, a versioned data contract, evidence navigation, and risk/blocker summary;
+- consolidated `human_decisions` dashboard data plus localized English/Japanese dashboard HTML chrome;
 - guided `pcl next` actions with uncovered-feature routing;
 - complete CSV export for reviewable loop state;
 - optional local stdio MCP server;
@@ -371,6 +377,7 @@ agent-tasks/0037-executor-retry-resume.md
 agent-tasks/0062-task-backlog-entity.md
 agent-tasks/0063-structured-verification-rubric.md
 agent-tasks/0064-task-loop-integration.md
+agent-tasks/0065-dashboard-human-decisions.md
 ```
 
 Do not skip directly to MCP, plugin distribution, hosted services, or dynamic workflow generation before the CLI/runtime and project state layer are solid.

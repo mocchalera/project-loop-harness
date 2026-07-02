@@ -18,6 +18,31 @@ def _read_dashboard_data(root: Path) -> dict:
     )
 
 
+def _json_output(capsys) -> dict:
+    captured = capsys.readouterr()
+    return json.loads(captured.out)
+
+
+def _set_dashboard_locale(root: Path, locale: str) -> None:
+    config_path = root / "pcl.yaml"
+    text = config_path.read_text(encoding="utf-8")
+    if "dashboard:\n  locale:" in text:
+        text = text.replace(
+            "dashboard:\n  locale:",
+            f'dashboard:\n  locale: "{locale}"\n  previous_locale:',
+            1,
+        )
+    elif "dashboard:\n  output:" in text:
+        text = text.replace(
+            "dashboard:\n  output:",
+            f'dashboard:\n  locale: "{locale}"\n  output:',
+            1,
+        )
+    else:
+        text += f'\ndashboard:\n  locale: "{locale}"\n'
+    config_path.write_text(text, encoding="utf-8")
+
+
 def test_dashboard_renders_control_panels_and_workflow_state(tmp_path: Path) -> None:
     assert main(["init", "--target", str(tmp_path)]) == 0
     assert main(["--root", str(tmp_path), "goal", "create", "--title", "Coverage"]) == 0
@@ -37,6 +62,8 @@ def test_dashboard_renders_control_panels_and_workflow_state(tmp_path: Path) -> 
     assert "Source DB:" in html
     assert "Next Human Action" in html
     assert "Risk &amp; Blockers" in html
+    assert "Needs Your Decision" in html
+    assert "No decisions are waiting on you." in html
     assert "Current Goal" in html
     assert "Active Workflow" in html
     assert "Budget Usage" in html
@@ -62,6 +89,7 @@ def test_dashboard_renders_control_panels_and_workflow_state(tmp_path: Path) -> 
     assert data["active_agent_jobs"][0]["id"] == "J-0001"
     assert data["counts"]["queued_jobs"] == 3
     assert data["next_action"]["type"] == "continue_workflow"
+    assert data["human_decisions"] == {"count": 0, "items": []}
     assert data["risk_summary"] == {
         "blocking": False,
         "highest_severity": "none",
@@ -122,8 +150,208 @@ def test_dashboard_surfaces_open_human_queue_risks(tmp_path: Path) -> None:
     assert items_by_type["open_decision"]["requires_human"] is True
     assert items_by_type["open_decision"]["target"] == {"type": "decision", "id": "DEC-0001"}
     assert "Risk &amp; Blockers" in html
+    assert "Needs Your Decision" in html
+    assert "pcl escalation resolve ESC-0001 --decision DEC-xxxx --summary" in html
+    assert "pcl decision resolve DEC-0001 --selected-option" in html
     assert "Open escalation ESC-0001" in html
     assert "Open decision DEC-0001" in html
+
+
+def test_dashboard_human_decisions_contract_orders_and_links_items(tmp_path: Path) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Human queue"]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "loop",
+        "run",
+        "feature_coverage",
+        "--goal",
+        "G-0001",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "verification",
+        "record",
+        "--run",
+        "WR-0001",
+        "--result",
+        "needs_human",
+        "--reason",
+        "Product decision required",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "escalation",
+        "open",
+        "--run",
+        "WR-0001",
+        "--severity",
+        "low",
+        "--question",
+        "Can this wait?",
+        "--recommendation",
+        "Wait if low risk",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "escalation",
+        "open",
+        "--run",
+        "WR-0001",
+        "--severity",
+        "high",
+        "--question",
+        "What should ship?",
+        "--recommendation",
+        "Safest reversible path",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "decision",
+        "open",
+        "--escalation",
+        "ESC-0002",
+        "--question",
+        "Which path?",
+        "--recommendation",
+        "Ship locally first",
+    ]) == 0
+
+    assert main(["--root", str(tmp_path), "render"]) == 0
+
+    data = _read_dashboard_data(tmp_path)
+    human_decisions = data["human_decisions"]
+    items = human_decisions["items"]
+    items_by_kind = {item["kind"]: item for item in items}
+
+    assert human_decisions["count"] == 5
+    assert [(item["kind"], item.get("id")) for item in items[:2]] == [
+        ("escalation", "ESC-0002"),
+        ("escalation", "ESC-0001"),
+    ]
+    assert items[0]["severity"] == "high"
+    assert items[1]["severity"] == "low"
+    assert items_by_kind["decision"]["linked_escalation_ids"] == ["ESC-0002"]
+    assert items_by_kind["decision"]["resolve_command"] == (
+        "pcl decision resolve DEC-0001 --selected-option '<option>' --reason '<why>'"
+    )
+    assert items[0]["linked_decision_ids"] == ["DEC-0001"]
+    assert items[0]["resolve_command"] == (
+        "pcl escalation resolve ESC-0002 --decision DEC-0001 --summary '<summary>'"
+    )
+    assert items_by_kind["verification"]["workflow_run_id"] == "WR-0001"
+    assert items_by_kind["verification"]["reasons"] == ["Product decision required"]
+    assert items_by_kind["verification"]["resolve_command"].startswith(
+        "pcl escalation open --run WR-0001"
+    )
+    next_items = [item for item in items if item["kind"] == "next_action"]
+    assert len(next_items) == 1
+    assert set(next_items[0]) == {"kind", "type", "command", "reason"}
+    assert next_items[0]["type"] == data["next_action"]["type"]
+
+
+def test_dashboard_human_decisions_filters_inactive_needs_human_verifications(
+    tmp_path: Path,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Human queue"]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "loop",
+        "run",
+        "feature_coverage",
+        "--goal",
+        "G-0001",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "verification",
+        "record",
+        "--run",
+        "WR-0001",
+        "--result",
+        "needs_human",
+        "--reason",
+        "Product decision required",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "loop",
+        "cancel",
+        "WR-0001",
+        "--summary",
+        "Stop inactive run",
+    ]) == 0
+
+    assert main(["--root", str(tmp_path), "render"]) == 0
+
+    data = _read_dashboard_data(tmp_path)
+    assert [item for item in data["human_decisions"]["items"] if item["kind"] == "verification"] == []
+
+
+def test_dashboard_locale_flag_renders_japanese_and_is_deterministic(tmp_path: Path) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Coverage"]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "loop",
+        "run",
+        "feature_coverage",
+        "--goal",
+        "G-0001",
+    ]) == 0
+
+    assert main(["--root", str(tmp_path), "render", "--locale", "ja"]) == 0
+    first_html = _read_dashboard(tmp_path)
+    first_data = _read_dashboard_data(tmp_path)
+
+    assert '<html lang="ja">' in first_html
+    assert "あなたの判断が必要です" in first_html
+    assert "あなたの判断待ちはありません。" in first_html
+    assert "Project Loop ダッシュボード" in first_html
+
+    assert main(["--root", str(tmp_path), "render", "--locale", "ja"]) == 0
+    assert _read_dashboard(tmp_path) == first_html
+    assert _read_dashboard_data(tmp_path) == first_data
+
+
+def test_dashboard_locale_precedence_and_invalid_locale(tmp_path: Path, capsys) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Coverage"]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "loop",
+        "run",
+        "feature_coverage",
+        "--goal",
+        "G-0001",
+    ]) == 0
+
+    assert main(["--root", str(tmp_path), "render"]) == 0
+    assert '<html lang="en">' in _read_dashboard(tmp_path)
+
+    _set_dashboard_locale(tmp_path, "ja")
+    assert main(["--root", str(tmp_path), "render"]) == 0
+    assert '<html lang="ja">' in _read_dashboard(tmp_path)
+
+    assert main(["--root", str(tmp_path), "render", "--locale", "en"]) == 0
+    assert '<html lang="en">' in _read_dashboard(tmp_path)
+
+    capsys.readouterr()
+    assert main(["--root", str(tmp_path), "render", "--locale", "fr", "--json"]) == 2
+    payload = _json_output(capsys)
+    assert payload["error"]["code"] == "invalid_input"
+    assert "Supported locales: en, ja" in payload["error"]["message"]
 
 
 def test_dashboard_risk_summary_includes_open_items_outside_table_limit(tmp_path: Path) -> None:

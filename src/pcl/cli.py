@@ -145,7 +145,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_migrate.add_argument("--status", action="store_true", dest="migrate_status", help="Inspect migrations without applying them.")
 
-    sub.add_parser("render", help="Render dashboard from state")
+    p_render = sub.add_parser("render", help="Render dashboard from state")
+    p_render.add_argument("--locale", default=None, help="Dashboard HTML locale: en, ja")
 
     p_update = sub.add_parser("update", help="Check for newer pcl releases")
     update_sub = p_update.add_subparsers(dest="update_command", required=True)
@@ -795,7 +796,7 @@ def main(argv: list[str] | None = None) -> int:
             result = validate_project(paths)
             if not result.ok:
                 return _print_validation(result, json_output=json_output)
-            render_dashboard(paths)
+            render_dashboard(paths, locale=args.locale)
             if json_output:
                 _print_json(
                     {

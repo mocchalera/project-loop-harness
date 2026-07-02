@@ -12,6 +12,7 @@ TOP_LEVEL_KEYS = {
     "source_db",
     "validation",
     "next_action",
+    "human_decisions",
     "risk_summary",
     "counts",
     "current_goal",
@@ -70,6 +71,7 @@ RISK_ITEM_KEYS = {
     "count",
 }
 RISK_TARGET_KEYS = {"type", "id"}
+HUMAN_DECISIONS_KEYS = {"count", "items"}
 VALIDATION_KEYS = {"ok", "errors", "warnings"}
 CURRENT_GOAL_KEYS = {"id", "title", "status", "completion_json", "budget_json", "updated_at"}
 ACTIVE_WORKFLOW_KEYS = {
@@ -230,6 +232,8 @@ def test_dashboard_data_contract_shape_for_active_loop(tmp_path: Path) -> None:
     assert data["counts"]["user_stories"] == 0
     assert data["counts"]["test_cases"] == 0
     assert set(data["next_action"]) == NEXT_ACTION_KEYS
+    assert set(data["human_decisions"]) == HUMAN_DECISIONS_KEYS
+    assert data["human_decisions"] == {"count": 0, "items": []}
     assert set(data["risk_summary"]) == RISK_SUMMARY_KEYS
     assert data["risk_summary"] == {
         "blocking": False,
@@ -276,6 +280,8 @@ def test_dashboard_data_contract_is_documented() -> None:
         "contract_version",
         "next_action",
         "risk_summary",
+        "human_decisions",
+        "Needs Your Decision",
         "Risk & Blockers",
         "latest_evidence_id",
         "related_report_paths",
