@@ -33,6 +33,20 @@ package with pip:
 python -m pip install project-loop-harness
 ```
 
+Operators can explicitly check for newer PyPI releases without upgrading:
+
+```bash
+pcl update check
+pcl doctor --check-updates
+pcl update command
+```
+
+The checker reads `https://pypi.org/pypi/project-loop-harness/json`, stores a
+24-hour cache under the user's cache directory, and only reports the result. It
+does not auto-upgrade the package, write telemetry, or contact any service
+unless the operator runs the update-check command. `PCL_NO_VERSION_CHECK=1`
+disables the check.
+
 For unreleased commits or internal dogfooding, use a pinned Git install instead:
 
 ```bash
@@ -118,7 +132,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - uses: owner/project-loop-harness/.github/actions/project-loop-validate@v0.1.4
+      - uses: owner/project-loop-harness/.github/actions/project-loop-validate@v0.1.5
         with:
           root: "."
           strict: "true"

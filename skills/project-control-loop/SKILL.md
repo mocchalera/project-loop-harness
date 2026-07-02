@@ -78,6 +78,7 @@ pcl validate
 pcl validate --strict
 pcl next
 pcl loop status
+pcl update check
 pcl render
 pcl export csv
 ```

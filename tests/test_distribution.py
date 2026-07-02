@@ -60,6 +60,9 @@ def test_wheel_install_smoke_runs_cli_mcp_and_bundled_templates(tmp_path: Path) 
 
     assert "Project Loop Harness CLI" in _run([pcl, "--help"]).stdout
     assert "Project Loop Harness MCP server" in _run([pcl_mcp, "--help"]).stdout
+    update_command = _json_output(_run([pcl, "--json", "update", "command"]))
+    assert update_command["ok"] is True
+    assert update_command["install"]["command"]
 
     target = tmp_path / "target-project"
     init = _json_output(_run([pcl, "--json", "init", "--target", target]))

@@ -35,6 +35,19 @@ pcl validate --strict
 pcl render --json
 ```
 
+Check whether a newer PyPI release is available:
+
+```bash
+pcl update check
+pcl update command
+```
+
+`pcl update check` is explicit and advisory. It uses PyPI project metadata, keeps
+a short local cache, performs no telemetry collection, and never upgrades the
+environment by itself. Use `pcl doctor --check-updates` when you want the same
+advisory warning alongside normal harness health checks. Set
+`PCL_NO_VERSION_CHECK=1` to disable version checks.
+
 Then ask your coding agent to read `AGENTS.md`, `CLAUDE.md` if present, and
 `pcl.yaml`, run `pcl next --json`, and follow the next safe harness action.
 

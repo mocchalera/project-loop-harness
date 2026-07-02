@@ -32,6 +32,18 @@ pcl --version
 pcl --help
 ```
 
+To check for updates later, run:
+
+```bash
+pcl update check
+pcl update command
+```
+
+`pcl update check` reads PyPI metadata only when explicitly requested, caches the
+latest version for 24 hours, and does not upgrade the environment. The companion
+`pcl update command` prints the manual upgrade command for the detected install
+shape, such as `pipx upgrade project-loop-harness` for pipx installs.
+
 Use `python -m pip install project-loop-harness` when installing inside a
 project-specific virtual environment or CI job instead of exposing the command
 globally.

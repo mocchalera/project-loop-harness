@@ -43,7 +43,7 @@ python -m venv /tmp/pcl-testpypi-smoke
 /tmp/pcl-testpypi-smoke/bin/python -m pip install \
   --index-url https://test.pypi.org/simple/ \
   --extra-index-url https://pypi.org/simple/ \
-  project-loop-harness==0.1.4
+  project-loop-harness==0.1.5
 /tmp/pcl-testpypi-smoke/bin/pcl --help
 ```
 
@@ -60,7 +60,7 @@ Environment name: pypi
 ```
 
 The preferred production path is to publish a GitHub Release for a tag such as
-`v0.1.4`. The workflow publishes to PyPI only when a release is published or
+`v0.1.5`. The workflow publishes to PyPI only when a release is published or
 when manually dispatched with `repository=pypi`.
 
 Manual production dispatch is available but should be used only after reviewing
@@ -87,7 +87,7 @@ For local artifact smoke testing:
 
 ```bash
 python -m venv /tmp/pcl-wheel-smoke
-/tmp/pcl-wheel-smoke/bin/python -m pip install --no-index --find-links dist project-loop-harness==0.1.4
+/tmp/pcl-wheel-smoke/bin/python -m pip install --no-index --find-links dist project-loop-harness==0.1.5
 /tmp/pcl-wheel-smoke/bin/pcl init --target /tmp/pcl-wheel-demo
 /tmp/pcl-wheel-smoke/bin/pcl validate --root /tmp/pcl-wheel-demo --strict
 /tmp/pcl-wheel-smoke/bin/pcl render --root /tmp/pcl-wheel-demo --json

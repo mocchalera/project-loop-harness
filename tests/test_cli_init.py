@@ -150,7 +150,7 @@ def test_cli_version(capsys) -> None:
     except SystemExit as exc:
         assert exc.code == 0
 
-    assert capsys.readouterr().out.strip() == "pcl 0.1.4"
+    assert capsys.readouterr().out.strip() == "pcl 0.1.5"
 
 
 def test_render_is_deterministic_for_unchanged_state(tmp_path: Path, capsys) -> None:

@@ -78,6 +78,7 @@ from .stories import (
     waive_story,
     waive_test_case,
 )
+from . import update_check
 from .validators import validate_project
 from .workflow_proposals import (
     PROPOSAL_STATUSES,
@@ -112,6 +113,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_doctor = sub.add_parser("doctor", help="Check project-loop installation health")
     p_doctor.add_argument("--strict", action="store_true")
+    p_doctor.add_argument(
+        "--check-updates",
+        action="store_true",
+        help="Also check PyPI for a newer project-loop-harness release.",
+    )
 
     p_validate = sub.add_parser("validate", help="Validate project-loop state")
     p_validate.add_argument("--strict", action="store_true")
@@ -126,6 +132,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     sub.add_parser("render", help="Render dashboard from state")
+
+    p_update = sub.add_parser("update", help="Check for newer pcl releases")
+    update_sub = p_update.add_subparsers(dest="update_command", required=True)
+    p_update_check = update_sub.add_parser("check", help="Check PyPI for a newer release")
+    p_update_check.add_argument("--no-cache", action="store_true", help="Bypass the local 24h cache")
+    p_update_check.add_argument(
+        "--timeout",
+        type=float,
+        default=update_check.DEFAULT_TIMEOUT_SECONDS,
+        help="Network timeout in seconds.",
+    )
+    update_sub.add_parser("command", help="Print the recommended manual upgrade command")
 
     p_goal = sub.add_parser("goal", help="Manage goals")
     goal_sub = p_goal.add_subparsers(dest="goal_command", required=True)
@@ -517,6 +535,57 @@ def _print_validation(result, *, json_output: bool = False) -> int:
     return 1
 
 
+def _print_doctor(result, *, update_result=None, json_output: bool = False) -> int:
+    if update_result is not None:
+        if update_result.update_available and update_result.latest_version:
+            result.add_warning(
+                f"pcl {update_result.latest_version} is available; "
+                f"run `{update_result.install.command}`."
+            )
+        elif not update_result.ok and not update_result.disabled:
+            result.add_warning(f"Could not check for pcl updates: {update_result.error}")
+
+    if json_output:
+        payload = result.to_dict()
+        if update_result is not None:
+            payload["update"] = update_result.to_dict()
+        _print_json(payload)
+        return 0 if result.ok else 1
+
+    exit_code = _print_validation(result, json_output=False)
+    if update_result is not None and result.ok:
+        if update_result.disabled:
+            print(f"Update check disabled by {update_check.NO_VERSION_CHECK_ENV}.")
+        elif update_result.ok and not update_result.update_available:
+            print(f"Update check: pcl is up to date ({update_result.current_version})")
+    return exit_code
+
+
+def _print_update_check(result, *, json_output: bool = False) -> int:
+    if json_output:
+        _print_json(result.to_dict())
+        return 0
+    if result.disabled:
+        print(f"Update check disabled by {update_check.NO_VERSION_CHECK_ENV}.")
+    elif not result.ok:
+        print(f"Update check unavailable: {result.error}")
+    elif result.update_available and result.latest_version:
+        print(f"Update available: pcl {result.latest_version} (current {result.current_version})")
+        print(f"Run: {result.install.command}")
+    else:
+        print(f"pcl is up to date ({result.current_version})")
+    return 0
+
+
+def _print_update_command(context, *, json_output: bool = False) -> int:
+    payload = {"install": context.to_dict(), "ok": True}
+    if json_output:
+        _print_json(payload)
+    else:
+        print(context.command)
+    return 0
+
+
 def _print_init_plan(plan, *, json_output: bool = False) -> int:
     if json_output:
         _print_json(plan.to_dict())
@@ -608,7 +677,10 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "doctor":
             result = validate_project(paths, strict=args.strict, include_config_advice=True)
-            return _print_validation(result, json_output=json_output)
+            update_result = None
+            if args.check_updates:
+                update_result = update_check.check_for_update()
+            return _print_doctor(result, update_result=update_result, json_output=json_output)
 
         if args.command == "validate":
             result = validate_project(paths, strict=args.strict)
@@ -649,6 +721,17 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(f"Rendered {paths.dashboard_html}")
             return 0
+
+        if args.command == "update" and args.update_command == "check":
+            result = update_check.check_for_update(
+                timeout=args.timeout,
+                use_cache=not args.no_cache,
+            )
+            return _print_update_check(result, json_output=json_output)
+
+        if args.command == "update" and args.update_command == "command":
+            context = update_check.detect_install_context()
+            return _print_update_command(context, json_output=json_output)
 
         if args.command == "goal" and args.goal_command == "create":
             goal_id = create_goal(
