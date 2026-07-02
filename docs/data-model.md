@@ -16,6 +16,8 @@ Core tables:
 - `features`
 - `user_stories`
 - `test_cases`
+- `tasks`
+- `task_dependencies`
 - `defects`
 - `decisions`
 - `evidence`
@@ -35,6 +37,12 @@ Feature
   ├─ TestCase
   └─ Defect
 
+Task
+  ├─ Goal?
+  ├─ Feature?
+  ├─ Defect?
+  └─ Task dependencies
+
 Defect
   ├─ TestCase?
   ├─ Evidence?
@@ -51,7 +59,8 @@ Decision / Escalation
 | Goal | G | G-0001 |
 | Feature | F | F-0001 |
 | User Story | US | US-0001 |
-| Test Case | T | T-0001 |
+| Test Case | TC | TC-0001 |
+| Task | T | T-0001 |
 | Defect | D | D-0001 |
 | Workflow Run | WR | WR-0001 |
 | Agent Job | J | J-0001 |
@@ -71,8 +80,8 @@ Decision / Escalation
 ## Lifecycle transitions
 
 The CLI/runtime owns lifecycle transitions for agent jobs, workflow runs,
-verifications, goals, and defects. Commands must reject invalid jumps instead
-of letting agents assign arbitrary status values.
+verifications, goals, defects, stories, test cases, and tasks. Commands must
+reject invalid jumps instead of letting agents assign arbitrary status values.
 
 Current implemented examples:
 
@@ -82,6 +91,9 @@ workflow_run.queued|running|blocked -> passed|failed|cancelled
 goal.open|active|blocked -> closed|cancelled
 defect.open -> triaged -> in_progress -> fixed -> verified -> closed
 defect.open|triaged|in_progress|fixed|verified -> waived
+user_story.draft -> review -> approved|waived
+test_case.planned -> passing|failing|blocked|missing|waived
+task.todo|ready|in_progress|blocked|done|cancelled|waived -> any other task status with reason
 ```
 
 Completing a workflow run requires all jobs to pass and an approved
@@ -89,12 +101,3 @@ verification. Closing a goal requires explicit evidence text or an approved
 verification. Fixing, closing, or waiving a defect records evidence, and
 verifying a defect requires an approved verification tied to the defect repair
 workflow run.
-
-## Future improvement
-
-Extend the same transition service to user stories and test cases:
-
-```text
-test_case.planned -> passing|failing|blocked|waived
-user_story.draft -> review -> approved|waived
-```
