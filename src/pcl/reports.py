@@ -9,6 +9,7 @@ from .errors import InvalidInputError
 from .guards import require_initialized
 from .links import enrich_decisions_with_links, enrich_escalations_with_links
 from .paths import ProjectPaths
+from .rubric import claims_rubric_v1
 from .validators import validate_project
 
 
@@ -298,6 +299,7 @@ def _render_run_report(data: dict[str, Any]) -> str:
         "## Verifications",
         _table(data["verifications"], ["id", "workflow_run_id", "target_job_id", "verifier_role", "result", "reasons_json", "created_at"]),
         "",
+        *_verification_rubric_section(data["verifications"]),
         "## Escalations",
         _table(data["escalations"], ["id", "workflow_run_id", "severity", "question", "recommendation", "linked_decision_ids", "status", "created_at"]),
         "",
@@ -427,6 +429,58 @@ def _render_validation_report(data: dict[str, Any]) -> str:
         "",
     ]
     return "\n".join(parts)
+
+
+def _verification_rubric_section(verifications: list[dict[str, Any]]) -> list[str]:
+    rows = _verification_rubric_rows(verifications)
+    if not rows:
+        return []
+    return [
+        "## Verification Rubrics",
+        _table(
+            rows,
+            [
+                "id",
+                "criteria_yes",
+                "criteria_no",
+                "criteria_unknown",
+                "criteria_total",
+                "regression_risk",
+                "confidence_score",
+                "evidence_completeness",
+            ],
+        ),
+        "",
+    ]
+
+
+def _verification_rubric_rows(verifications: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for verification in verifications:
+        rubric = _json_object_from_value(verification.get("rubric_json"))
+        if not claims_rubric_v1(rubric):
+            continue
+        criteria = rubric.get("acceptance_criteria") if isinstance(rubric, dict) else []
+        criteria_items = [item for item in criteria if isinstance(item, dict)] if isinstance(criteria, list) else []
+        counts = {
+            "yes": sum(1 for item in criteria_items if item.get("met") == "yes"),
+            "no": sum(1 for item in criteria_items if item.get("met") == "no"),
+            "unknown": sum(1 for item in criteria_items if item.get("met") == "unknown"),
+        }
+        regression_risk = rubric.get("regression_risk") if isinstance(rubric.get("regression_risk"), dict) else {}
+        rows.append(
+            {
+                "id": verification["id"],
+                "criteria_yes": counts["yes"],
+                "criteria_no": counts["no"],
+                "criteria_unknown": counts["unknown"],
+                "criteria_total": len(criteria_items),
+                "regression_risk": regression_risk.get("level", ""),
+                "confidence_score": rubric.get("confidence_score"),
+                "evidence_completeness": rubric.get("evidence_completeness", ""),
+            }
+        )
+    return rows
 
 
 def _report_path(paths: ProjectPaths, kind: str, entity_id: str) -> Path:
@@ -682,8 +736,12 @@ def _events_for_entities(conn, entities: list[tuple[str, str]]) -> list[dict[str
 
 
 def _payload(event: dict[str, Any]) -> dict[str, Any]:
+    return _json_object_from_value(event.get("payload_json"))
+
+
+def _json_object_from_value(raw: Any) -> dict[str, Any]:
     try:
-        value = json.loads(str(event.get("payload_json") or "{}"))
+        value = json.loads(str(raw or "{}"))
     except json.JSONDecodeError:
         return {}
     return value if isinstance(value, dict) else {}

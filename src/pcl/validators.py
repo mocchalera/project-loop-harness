@@ -11,6 +11,7 @@ from .db import connect, get_metadata, table_exists
 from .errors import InvalidInputError
 from .migrations import migration_status
 from .paths import ProjectPaths
+from .rubric import claims_rubric_v1, evidence_ids_in_rubric, validate_rubric
 from .workflow_proposal_validation import PROPOSAL_ID_RE, validate_workflow_proposal_text
 from .workflow_verifier import verify_workflow_text
 
@@ -127,6 +128,13 @@ def validate_project(
         skill_path = paths.agents_skill_dir.joinpath("SKILL.md")
         if not skill_path.exists():
             result.add_warning(f"Missing project-control-loop Skill at {skill_path}.")
+        if "verifications" not in missing_tables:
+            _validate_verification_rubrics(
+                conn,
+                result,
+                strict=strict,
+                check_evidence="evidence" not in missing_tables,
+            )
         if strict and not missing_tables:
             _validate_strict_invariants(paths, conn, result)
         if strict and result.warnings:
@@ -198,6 +206,50 @@ def _validate_strict_invariants(paths: ProjectPaths, conn: sqlite3.Connection, r
     _validate_verified_or_closed_defects(conn, result)
     _validate_terminal_test_cases(conn, result)
     _validate_duplicate_active_runs(conn, result)
+
+
+def _validate_verification_rubrics(
+    conn: sqlite3.Connection,
+    result: ValidationResult,
+    *,
+    strict: bool,
+    check_evidence: bool,
+) -> None:
+    rows = conn.execute(
+        """
+        SELECT id, rubric_json
+        FROM verifications
+        ORDER BY created_at, id
+        """
+    ).fetchall()
+    for row in rows:
+        verification_id = str(row["id"])
+        rubric = _json_object(row["rubric_json"])
+        if not claims_rubric_v1(rubric):
+            continue
+        for problem in validate_rubric(rubric):
+            _add_rubric_validation_problem(
+                result,
+                strict=strict,
+                message=f"Verification {verification_id} rubric/v1 invalid: {problem}",
+            )
+        if strict and check_evidence:
+            for evidence_id in _missing_evidence_ids(conn, evidence_ids_in_rubric(rubric)):
+                result.add_error(
+                    f"Verification {verification_id} rubric/v1 references missing evidence {evidence_id}."
+                )
+
+
+def _add_rubric_validation_problem(
+    result: ValidationResult,
+    *,
+    strict: bool,
+    message: str,
+) -> None:
+    if strict:
+        result.add_error(message)
+    else:
+        result.add_warning(message)
 
 
 def _validate_workflow_proposals(
@@ -747,6 +799,18 @@ def _validate_test_case_transition_evidence(
 def _evidence_type(conn: sqlite3.Connection, evidence_id: str) -> str | None:
     row = conn.execute("SELECT type FROM evidence WHERE id = ?", (evidence_id,)).fetchone()
     return None if row is None else str(row["type"])
+
+
+def _missing_evidence_ids(conn: sqlite3.Connection, evidence_ids: list[str]) -> list[str]:
+    if not evidence_ids:
+        return []
+    placeholders = ", ".join("?" for _ in evidence_ids)
+    rows = conn.execute(
+        f"SELECT id FROM evidence WHERE id IN ({placeholders})",
+        tuple(evidence_ids),
+    ).fetchall()
+    found = {str(row["id"]) for row in rows}
+    return sorted(evidence_id for evidence_id in evidence_ids if evidence_id not in found)
 
 
 def _has_approved_defect_verification(conn: sqlite3.Connection, defect_id: str) -> bool:

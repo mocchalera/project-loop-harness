@@ -38,6 +38,65 @@ def _db_rows(root: Path, sql: str) -> list[dict]:
         conn.close()
 
 
+def _event_payloads(root: Path, event_type: str) -> list[dict]:
+    events = []
+    for line in (root / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines():
+        event = json.loads(line)
+        if event["event_type"] == event_type:
+            events.append(event["payload"])
+    return events
+
+
+def _valid_rubric(evidence_id: str | None = None) -> dict:
+    return {
+        "contract_version": "rubric/v1",
+        "acceptance_criteria": [
+            {"criterion": "Expected behavior was verified", "met": "yes", "evidence_id": evidence_id}
+        ],
+        "regression_risk": {"level": "low", "notes": None},
+        "test_evidence": [
+            {"evidence_id": evidence_id, "command": "pytest", "summary": "Focused tests passed"}
+        ]
+        if evidence_id
+        else [],
+        "security_ux_checks": [{"check": "No secrets emitted", "result": "pass", "notes": None}],
+        "confidence_score": 0.9,
+        "evidence_completeness": "complete",
+    }
+
+
+def _create_test_evidence(root: Path, capsys) -> None:
+    assert main(["--root", str(root), "feature", "add", "--name", "Rubric", "--surface", "cli:pcl"]) == 0
+    assert main([
+        "--root",
+        str(root),
+        "test",
+        "plan",
+        "--feature",
+        "F-0001",
+        "--type",
+        "acceptance",
+        "--scenario",
+        "Record a structured rubric",
+        "--expected",
+        "The rubric is stored with evidence references",
+    ]) == 0
+    assert main([
+        "--root",
+        str(root),
+        "test",
+        "pass",
+        "TC-0001",
+        "--summary",
+        "Rubric path passed",
+        "--evidence",
+        "pytest tests/test_rubric.py passed",
+        "--run",
+        "WR-0001",
+    ]) == 0
+    capsys.readouterr()
+
+
 def test_lifecycle_completes_run_and_closes_goal(tmp_path: Path, capsys) -> None:
     _create_run(tmp_path, capsys)
     output_path = tmp_path / ".project-loop" / "evidence" / "agent-runs" / "J-0001" / "output.md"
@@ -149,6 +208,206 @@ def test_lifecycle_completes_run_and_closes_goal(tmp_path: Path, capsys) -> None
 
     assert main(["--root", str(tmp_path), "next", "--json"]) == 0
     assert _json_output(capsys)["type"] == "create_goal"
+
+
+def test_verification_record_accepts_rubric_v1_inline_and_file(tmp_path: Path, capsys) -> None:
+    _create_run(tmp_path, capsys)
+    _create_test_evidence(tmp_path, capsys)
+    rubric = _valid_rubric("E-0001")
+    rubric_path = tmp_path / "rubric.json"
+    rubric_path.write_text(json.dumps(rubric), encoding="utf-8")
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "verification",
+        "record",
+        "--run",
+        "WR-0001",
+        "--result",
+        "approved",
+        "--rubric-file",
+        str(rubric_path),
+        "--reason",
+        "Structured file rubric passed",
+        "--json",
+    ]) == 0
+    file_record = _json_output(capsys)
+    assert file_record["id"] == "V-0001"
+    assert file_record["rubric_contract_version"] == "rubric/v1"
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "verification",
+        "record",
+        "--run",
+        "WR-0001",
+        "--result",
+        "approved",
+        "--rubric-json",
+        json.dumps(rubric),
+        "--reason",
+        "Structured inline rubric passed",
+        "--json",
+    ]) == 0
+    inline_record = _json_output(capsys)
+    assert inline_record["id"] == "V-0002"
+    assert inline_record["rubric_contract_version"] == "rubric/v1"
+
+    rows = _db_rows(tmp_path, "SELECT id, rubric_json FROM verifications ORDER BY id")
+    assert [row["id"] for row in rows] == ["V-0001", "V-0002"]
+    assert json.loads(rows[0]["rubric_json"])["contract_version"] == "rubric/v1"
+
+    payloads = _event_payloads(tmp_path, "verification_recorded")
+    assert [payload["rubric_contract_version"] for payload in payloads] == ["rubric/v1", "rubric/v1"]
+
+
+def test_verification_record_rejects_invalid_rubric_v1(tmp_path: Path, capsys) -> None:
+    _create_run(tmp_path, capsys)
+    rubric = _valid_rubric()
+    del rubric["acceptance_criteria"]
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "verification",
+        "record",
+        "--run",
+        "WR-0001",
+        "--result",
+        "approved",
+        "--rubric-json",
+        json.dumps(rubric),
+        "--reason",
+        "Invalid rubric should fail",
+        "--json",
+    ]) == 2
+    payload = _json_output(capsys)
+    assert payload["error"]["code"] == "invalid_input"
+    assert "rubric/v1" in payload["error"]["message"]
+    assert "acceptance_criteria is required." in payload["error"]["details"]["errors"]
+    assert _db_rows(tmp_path, "SELECT id FROM verifications") == []
+    assert _event_payloads(tmp_path, "verification_recorded") == []
+
+
+def test_verification_record_rejects_missing_rubric_evidence_id(tmp_path: Path, capsys) -> None:
+    _create_run(tmp_path, capsys)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "verification",
+        "record",
+        "--run",
+        "WR-0001",
+        "--result",
+        "approved",
+        "--rubric-json",
+        json.dumps(_valid_rubric("E-9999")),
+        "--reason",
+        "Missing evidence should fail",
+        "--json",
+    ]) == 2
+    payload = _json_output(capsys)
+    assert payload["error"]["code"] == "invalid_input"
+    assert payload["error"]["details"]["missing_evidence_ids"] == ["E-9999"]
+    assert _db_rows(tmp_path, "SELECT id FROM verifications") == []
+    assert _event_payloads(tmp_path, "verification_recorded") == []
+
+
+def test_verification_record_keeps_free_form_rubric_compatibility(tmp_path: Path, capsys) -> None:
+    _create_run(tmp_path, capsys)
+    free_form = {
+        "contract_version": "legacy/v1",
+        "acceptance_criteria": [{"evidence_id": "E-9999"}],
+        "notes": "Legacy rubric shape remains accepted.",
+    }
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "verification",
+        "record",
+        "--run",
+        "WR-0001",
+        "--result",
+        "inconclusive",
+        "--rubric-json",
+        json.dumps(free_form),
+        "--reason",
+        "Legacy rubric accepted",
+        "--json",
+    ]) == 0
+    payload = _json_output(capsys)
+    assert payload["id"] == "V-0001"
+    assert payload["rubric_contract_version"] is None
+    assert _event_payloads(tmp_path, "verification_recorded")[0]["rubric_contract_version"] is None
+
+
+def test_verification_list_and_read_are_read_only_and_ordered(tmp_path: Path, capsys) -> None:
+    _create_run(tmp_path, capsys)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "verification",
+        "record",
+        "--run",
+        "WR-0001",
+        "--result",
+        "approved",
+        "--rubric-json",
+        json.dumps(_valid_rubric()),
+        "--reason",
+        "Approved with structured rubric",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "verification",
+        "record",
+        "--run",
+        "WR-0001",
+        "--result",
+        "rejected",
+        "--rubric-json",
+        '{"legacy": true}',
+        "--reason",
+        "Rejected with free-form rubric",
+    ]) == 0
+    capsys.readouterr()
+    events_before = (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8")
+
+    assert main(["--root", str(tmp_path), "verification", "list", "--json"]) == 0
+    listed = _json_output(capsys)
+    assert [item["id"] for item in listed["verifications"]] == ["V-0001", "V-0002"]
+    assert [item["result"] for item in listed["verifications"]] == ["approved", "rejected"]
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "verification",
+        "list",
+        "--run",
+        "WR-0001",
+        "--result",
+        "rejected",
+        "--json",
+    ]) == 0
+    filtered = _json_output(capsys)
+    assert [item["id"] for item in filtered["verifications"]] == ["V-0002"]
+
+    assert main(["--root", str(tmp_path), "verification", "read", "V-0001", "--json"]) == 0
+    read = _json_output(capsys)
+    verification = read["verification"]
+    assert verification["id"] == "V-0001"
+    assert verification["rubric"]["contract_version"] == "rubric/v1"
+    assert verification["rubric_contract_version"] == "rubric/v1"
+    assert verification["reasons"] == ["Approved with structured rubric"]
+
+    events_after = (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8")
+    assert events_after == events_before
 
 
 def test_next_prioritizes_active_workflow_lifecycle(tmp_path: Path, capsys) -> None:

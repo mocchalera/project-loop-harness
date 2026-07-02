@@ -319,6 +319,7 @@ The current local runtime supports:
 - validated agent output ingestion as evidence;
 - job-centric evidence linkage for ingested agent output;
 - verification recording;
+- structured `rubric/v1` verification metadata with inline/file recording and read-only inspection;
 - workflow run, goal, defect, escalation, and decision lifecycle commands;
 - escalation/decision linkage;
 - checkpoint review commands for commit/package, UX checklist, and next-priority pauses;
@@ -359,6 +360,7 @@ agent-tasks/0034-limited-execution-sandbox.md
 agent-tasks/0035-automatic-workflow-executor.md
 agent-tasks/0036-executor-dogfood-workflow.md
 agent-tasks/0037-executor-retry-resume.md
+agent-tasks/0063-structured-verification-rubric.md
 ```
 
 Do not skip directly to MCP, plugin distribution, hosted services, or dynamic workflow generation before the CLI/runtime and project state layer are solid.
