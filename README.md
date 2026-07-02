@@ -229,19 +229,45 @@ Priority order is fixed:
 2. open escalation
 3. open decision
 4. `needs_human` verification requiring escalation
-5. active workflow lifecycle
-6. executor retry routing
-7. open defect lifecycle
-8. workflow proposal review
-9. checkpoint review after several done features
-10. task backlog item under an open goal
-11. open goal continuation
-12. uncovered feature coverage
-13. create goal
+5. unfinished executor resume routing
+6. expired job lease reaping
+7. active workflow lifecycle
+8. executor retry routing
+9. open defect lifecycle
+10. workflow proposal review
+11. checkpoint review after several done features
+12. task backlog item under an open goal
+13. open goal continuation
+14. uncovered feature coverage
+15. create goal
 
 Task routing only considers tasks linked to an `open` or `active` goal through
 `related_goal_id`. Unlinked tasks stay visible in backlog surfaces, but `pcl
 next` intentionally does not route them in v1.
+
+## Agent Registry And Leases
+
+Register local agents before leasing jobs:
+
+```bash
+pcl agent register --name codex-worker --role implementer --adapter codex_exec --max-concurrency 1
+pcl agent list --json
+pcl jobs assign J-0001 --agent A-0001
+pcl jobs lease J-0001 --agent A-0001 --ttl-seconds 1800 --json
+pcl jobs heartbeat J-0001 --json
+pcl jobs release J-0001 --reason "Pausing for handoff"
+```
+
+Lease expiry is lazy. No daemon or timer mutates job state. When `pcl next`
+reports `reap_expired_leases`, run:
+
+```bash
+pcl jobs reap --json
+```
+
+`loop.lease_ttl_seconds` defaults to `1800`. `loop.max_lease_attempts` defaults
+to `2`, meaning the first expired lease is requeued and the second expired lease
+blocks the job and opens a high-severity escalation for human review.
 
 ## Checkpoint Reviews
 
@@ -322,6 +348,7 @@ The current local runtime supports:
 - task/backlog CRUD, reasoned status changes, and guarded dependency links;
 - workflow run creation from static templates;
 - agent job prompts, filtered inspection, adapter commands, completion/failure/cancellation;
+- local agent registry plus explicit job assignment, lease, heartbeat, release, and reap commands;
 - documented agent adapter command contract;
 - hardened Codex CLI adapter command template;
 - hardened Claude Code manual adapter instructions;
@@ -378,6 +405,7 @@ agent-tasks/0062-task-backlog-entity.md
 agent-tasks/0063-structured-verification-rubric.md
 agent-tasks/0064-task-loop-integration.md
 agent-tasks/0065-dashboard-human-decisions.md
+agent-tasks/0066-agent-registry-lease.md
 ```
 
 Do not skip directly to MCP, plugin distribution, hosted services, or dynamic workflow generation before the CLI/runtime and project state layer are solid.

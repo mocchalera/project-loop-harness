@@ -12,6 +12,7 @@ from .errors import InvalidInputError
 from .migrations import migration_status
 from .paths import ProjectPaths
 from .rubric import claims_rubric_v1, evidence_ids_in_rubric, validate_rubric
+from .timeutil import utc_now_iso
 from .workflow_proposal_validation import PROPOSAL_ID_RE, validate_workflow_proposal_text
 from .workflow_verifier import verify_workflow_text
 
@@ -36,6 +37,9 @@ VERSIONED_REQUIRED_TABLES = {
     2: [
         "tasks",
         "task_dependencies",
+    ],
+    3: [
+        "agents",
     ],
 }
 
@@ -143,6 +147,8 @@ def validate_project(
             result.add_warning(f"Missing project-control-loop Skill at {skill_path}.")
         if table_exists(conn, "tasks") and table_exists(conn, "task_dependencies"):
             _validate_task_invariants(conn, result)
+        if table_exists(conn, "agents") and _agent_jobs_has_lease_columns(conn):
+            _validate_agent_registry_invariants(conn, result)
         if "verifications" not in missing_tables:
             _validate_verification_rubrics(
                 conn,
@@ -717,6 +723,110 @@ def _validate_task_invariants(conn: sqlite3.Connection, result: ValidationResult
     _validate_task_references(conn, result)
     _validate_task_dependency_cycles(conn, result)
     _validate_done_task_dependencies(conn, result)
+
+
+def _agent_jobs_has_lease_columns(conn: sqlite3.Connection) -> bool:
+    rows = conn.execute("PRAGMA table_info(agent_jobs)").fetchall()
+    columns = {str(row["name"]) for row in rows}
+    return {
+        "assigned_agent_id",
+        "lease_expires_at",
+        "last_heartbeat_at",
+        "attempts",
+    } <= columns
+
+
+def _validate_agent_registry_invariants(conn: sqlite3.Connection, result: ValidationResult) -> None:
+    _validate_job_agent_references(conn, result)
+    _validate_expired_running_leases(conn, result)
+    _validate_retired_agent_active_leases(conn, result)
+    _validate_agent_concurrency(conn, result)
+
+
+def _validate_job_agent_references(conn: sqlite3.Connection, result: ValidationResult) -> None:
+    rows = conn.execute(
+        """
+        SELECT agent_jobs.id, agent_jobs.assigned_agent_id
+        FROM agent_jobs
+        LEFT JOIN agents ON agents.id = agent_jobs.assigned_agent_id
+        WHERE agent_jobs.assigned_agent_id IS NOT NULL
+          AND agents.id IS NULL
+        ORDER BY agent_jobs.id
+        """
+    ).fetchall()
+    for row in rows:
+        result.add_error(
+            f"Agent job {row['id']} references missing agent {row['assigned_agent_id']}."
+        )
+
+
+def _validate_expired_running_leases(conn: sqlite3.Connection, result: ValidationResult) -> None:
+    now = utc_now_iso()
+    rows = conn.execute(
+        """
+        SELECT id, assigned_agent_id, lease_expires_at
+        FROM agent_jobs
+        WHERE status = 'running'
+          AND lease_expires_at IS NOT NULL
+          AND lease_expires_at <= ?
+        ORDER BY id
+        """,
+        (now,),
+    ).fetchall()
+    for row in rows:
+        result.add_warning(
+            f"Agent job {row['id']} has an expired lease for agent {row['assigned_agent_id']}; "
+            "run `pcl jobs reap`."
+        )
+
+
+def _validate_retired_agent_active_leases(conn: sqlite3.Connection, result: ValidationResult) -> None:
+    now = utc_now_iso()
+    rows = conn.execute(
+        """
+        SELECT agent_jobs.id AS job_id, agents.id AS agent_id
+        FROM agent_jobs
+        JOIN agents ON agents.id = agent_jobs.assigned_agent_id
+        WHERE agent_jobs.status = 'running'
+          AND agent_jobs.lease_expires_at IS NOT NULL
+          AND agent_jobs.lease_expires_at > ?
+          AND agents.status = 'retired'
+        ORDER BY agent_jobs.id
+        """,
+        (now,),
+    ).fetchall()
+    for row in rows:
+        result.add_error(
+            f"Retired agent {row['agent_id']} holds active lease for job {row['job_id']}."
+        )
+
+
+def _validate_agent_concurrency(conn: sqlite3.Connection, result: ValidationResult) -> None:
+    now = utc_now_iso()
+    rows = conn.execute(
+        """
+        SELECT
+          agents.id,
+          agents.max_concurrency,
+          COUNT(agent_jobs.id) AS active_lease_count
+        FROM agents
+        JOIN agent_jobs
+          ON agent_jobs.assigned_agent_id = agents.id
+         AND agent_jobs.status = 'running'
+         AND agent_jobs.lease_expires_at IS NOT NULL
+         AND agent_jobs.lease_expires_at > ?
+        WHERE agents.status = 'active'
+        GROUP BY agents.id, agents.max_concurrency
+        HAVING COUNT(agent_jobs.id) > agents.max_concurrency
+        ORDER BY agents.id
+        """,
+        (now,),
+    ).fetchall()
+    for row in rows:
+        result.add_warning(
+            f"Active agent {row['id']} has {row['active_lease_count']} active leases, "
+            f"exceeding max_concurrency {row['max_concurrency']}."
+        )
 
 
 def _validate_task_references(conn: sqlite3.Connection, result: ValidationResult) -> None:

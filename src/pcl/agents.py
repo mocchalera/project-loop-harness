@@ -260,7 +260,12 @@ def ingest_agent_run(paths: ProjectPaths, output_path: str | Path) -> dict[str, 
         conn.execute(
             """
             UPDATE agent_jobs
-            SET status = ?, output_path = ?, ended_at = ?, summary = ?
+            SET status = ?,
+                output_path = ?,
+                ended_at = ?,
+                summary = ?,
+                lease_expires_at = NULL,
+                last_heartbeat_at = NULL
             WHERE id = ?
             """,
             ("passed", relative_path, now, summary, job_id),

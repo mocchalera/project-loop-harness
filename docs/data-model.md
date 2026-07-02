@@ -13,6 +13,7 @@ Core tables:
 - `workflows`
 - `workflow_runs`
 - `agent_jobs`
+- `agents`
 - `features`
 - `user_stories`
 - `test_cases`
@@ -31,6 +32,9 @@ Goal
   └─ WorkflowRun
       ├─ AgentJob
       └─ Verification
+
+Agent
+  └─ AgentJob lease assignment
 
 Feature
   ├─ UserStory
@@ -64,6 +68,7 @@ Decision / Escalation
 | Defect | D | D-0001 |
 | Workflow Run | WR | WR-0001 |
 | Agent Job | J | J-0001 |
+| Agent | A | A-0001 |
 | Evidence | E | E-0001 |
 | Verification | V | V-0001 |
 | Escalation | ESC | ESC-0001 |
@@ -95,6 +100,36 @@ user_story.draft -> review -> approved|waived
 test_case.planned -> passing|failing|blocked|missing|waived
 task.todo|ready|in_progress|blocked|done|cancelled|waived -> any other task status with reason
 ```
+
+## Agent Registry And Leases
+
+Schema version 3 adds an `agents` registry and lease fields on `agent_jobs`.
+Agents are durable local records with `name`, `role`, `adapter`,
+`max_concurrency`, `status`, and normalized `metadata_json`.
+
+Agent status is constrained to:
+
+```text
+agent.active|paused -> active|paused
+agent.active|paused -> retired through `pcl agent retire`
+```
+
+Agent job status values are unchanged. Lease state is additive:
+
+- `assigned_agent_id` optionally points at `agents.id`.
+- `lease_expires_at` records the current lease deadline.
+- `last_heartbeat_at` records the latest heartbeat command time.
+- `attempts` counts expired lease reaps.
+
+An active lease is a job with `status = 'running'`, `assigned_agent_id` set,
+and `lease_expires_at` greater than the current UTC timestamp. Lease expiry is
+evaluated lazily by commands; no background process mutates state. The only
+command that mutates expired leases is `pcl jobs reap`.
+
+`loop.lease_ttl_seconds` defaults to `1800`. `loop.max_lease_attempts` defaults
+to `2` and means total expired lease attempts before blocking: the first expiry
+is requeued, and the second expiry blocks the job and opens a high-severity
+escalation.
 
 Completing a workflow run requires all jobs to pass and an approved
 verification. Closing a goal requires explicit evidence text or an approved

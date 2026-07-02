@@ -30,6 +30,7 @@ from .decisions import (
     resolve_decision,
     waive_decision,
 )
+from .dispatch import assign_job, heartbeat_job, lease_job, reap_expired_leases, release_job
 from .errors import DataStoreError, InvalidInputError, PclError
 from .exporters import export_csv
 from .escalations import (
@@ -60,6 +61,7 @@ from .lifecycle import (
 from .migrations import apply_migrations, migration_status
 from .paths import resolve_paths
 from .renderer import render_dashboard
+from .registry import AGENT_STATUSES, list_agents, read_agent, register_agent, retire_agent, update_agent
 from .reports import report_defect, report_feature, report_goal, report_run, report_validation
 from .stories import (
     STORY_STATUSES,
@@ -437,13 +439,37 @@ def build_parser() -> argparse.ArgumentParser:
     p_jobs_cancel = jobs_sub.add_parser("cancel", help="Cancel an agent job")
     p_jobs_cancel.add_argument("job_id")
     p_jobs_cancel.add_argument("--summary", required=True)
+    p_jobs_assign = jobs_sub.add_parser("assign", help="Assign a queued job to an agent")
+    p_jobs_assign.add_argument("job_id")
+    p_jobs_assign.add_argument("--agent", required=True, help="Agent registry id")
+    p_jobs_lease = jobs_sub.add_parser("lease", help="Lease a queued job for an agent")
+    p_jobs_lease.add_argument("job_id")
+    p_jobs_lease.add_argument("--agent", required=True, help="Agent registry id")
+    p_jobs_lease.add_argument(
+        "--ttl-seconds",
+        type=int,
+        default=None,
+        help="Lease TTL in seconds. Defaults to loop.lease_ttl_seconds or 1800.",
+    )
+    p_jobs_heartbeat = jobs_sub.add_parser("heartbeat", help="Extend a running job lease")
+    p_jobs_heartbeat.add_argument("job_id")
+    p_jobs_heartbeat.add_argument(
+        "--ttl-seconds",
+        type=int,
+        default=None,
+        help="Lease TTL in seconds. Defaults to loop.lease_ttl_seconds or 1800.",
+    )
+    p_jobs_release = jobs_sub.add_parser("release", help="Release a running job lease back to queued")
+    p_jobs_release.add_argument("job_id")
+    p_jobs_release.add_argument("--reason", required=True)
+    jobs_sub.add_parser("reap", help="Requeue or block expired job leases")
 
     p_prompt = sub.add_parser("prompt", help="Print generated prompts")
     prompt_sub = p_prompt.add_subparsers(dest="prompt_command", required=True)
     p_prompt_job = prompt_sub.add_parser("job", help="Print one agent job prompt")
     p_prompt_job.add_argument("job_id")
 
-    p_agent = sub.add_parser("agent", help="Generate agent adapter commands")
+    p_agent = sub.add_parser("agent", help="Manage agents and generate adapter commands")
     agent_sub = p_agent.add_subparsers(dest="agent_command", required=True)
     p_agent_command = agent_sub.add_parser("command", help="Print an adapter command for a job")
     p_agent_command.add_argument("job_id")
@@ -453,6 +479,36 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["manual", "codex_exec", "claude_manual", "generic_shell"],
         help="Agent adapter to use. Defaults to manual.",
     )
+    p_agent_register = agent_sub.add_parser("register", help="Register an agent")
+    p_agent_register.add_argument("--name", required=True)
+    p_agent_register.add_argument("--role", required=True)
+    p_agent_register.add_argument(
+        "--adapter",
+        required=True,
+        choices=["manual", "codex_exec", "claude_manual", "generic_shell"],
+    )
+    p_agent_register.add_argument("--max-concurrency", type=int, default=1)
+    p_agent_register.add_argument("--metadata-json", default="{}")
+    p_agent_list = agent_sub.add_parser("list", help="List registered agents")
+    p_agent_list.add_argument("--status", choices=sorted(AGENT_STATUSES), default=None)
+    p_agent_read = agent_sub.add_parser("read", help="Read a registered agent")
+    p_agent_read.add_argument("agent_id")
+    p_agent_update = agent_sub.add_parser("update", help="Update a registered agent")
+    p_agent_update.add_argument("agent_id")
+    p_agent_update.add_argument("--name", default=None)
+    p_agent_update.add_argument("--role", default=None)
+    p_agent_update.add_argument(
+        "--adapter",
+        choices=["manual", "codex_exec", "claude_manual", "generic_shell"],
+        default=None,
+    )
+    p_agent_update.add_argument("--max-concurrency", type=int, default=None)
+    p_agent_update.add_argument("--metadata-json", default=None)
+    p_agent_update.add_argument("--status", choices=["active", "paused"], default=None)
+    p_agent_update.add_argument("--reason", required=True)
+    p_agent_retire = agent_sub.add_parser("retire", help="Retire a registered agent")
+    p_agent_retire.add_argument("agent_id")
+    p_agent_retire.add_argument("--reason", required=True)
 
     p_ingest = sub.add_parser("ingest-agent-run", help="Record an agent output file as evidence")
     p_ingest.add_argument("path")
@@ -1431,6 +1487,58 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Cancelled job {result['job_id']}")
             return 0
 
+        if args.command == "jobs" and args.jobs_command == "assign":
+            result = assign_job(paths, job_id=args.job_id, agent_id=args.agent)
+            if json_output:
+                _print_json(result)
+            else:
+                print(f"Assigned job {result['job_id']} to {result['assigned_agent_id']}")
+            return 0
+
+        if args.command == "jobs" and args.jobs_command == "lease":
+            result = lease_job(
+                paths,
+                job_id=args.job_id,
+                agent_id=args.agent,
+                ttl_seconds=args.ttl_seconds,
+            )
+            if json_output:
+                _print_json(result)
+            else:
+                print(
+                    f"Leased job {result['job_id']} to {result['assigned_agent_id']} "
+                    f"until {result['lease_expires_at']}"
+                )
+            return 0
+
+        if args.command == "jobs" and args.jobs_command == "heartbeat":
+            result = heartbeat_job(paths, job_id=args.job_id, ttl_seconds=args.ttl_seconds)
+            if json_output:
+                _print_json(result)
+            else:
+                print(f"Heartbeat recorded for job {result['job_id']} until {result['lease_expires_at']}")
+            return 0
+
+        if args.command == "jobs" and args.jobs_command == "release":
+            result = release_job(paths, job_id=args.job_id, reason=args.reason)
+            if json_output:
+                _print_json(result)
+            else:
+                print(f"Released job {result['job_id']}")
+            return 0
+
+        if args.command == "jobs" and args.jobs_command == "reap":
+            result = reap_expired_leases(paths)
+            if json_output:
+                _print_json(result)
+            else:
+                print(
+                    "Reaped expired leases: "
+                    f"requeued={','.join(result['reaped_job_ids']) or '-'} "
+                    f"blocked={','.join(result['blocked_job_ids']) or '-'}"
+                )
+            return 0
+
         if args.command == "prompt" and args.prompt_command == "job":
             if json_output:
                 _print_json(read_job_prompt_handoff(paths, args.job_id))
@@ -1448,6 +1556,72 @@ def main(argv: list[str] | None = None) -> int:
                     print(command.command)
                 else:
                     print(command.instructions)
+            return 0
+
+        if args.command == "agent" and args.agent_command == "register":
+            result = register_agent(
+                paths,
+                name=args.name,
+                role=args.role,
+                adapter=args.adapter,
+                max_concurrency=args.max_concurrency,
+                metadata_json=args.metadata_json,
+            )
+            if json_output:
+                _print_json(result)
+            else:
+                print(f"Registered agent {result['id']}")
+            return 0
+
+        if args.command == "agent" and args.agent_command == "list":
+            agents = list_agents(paths, status=args.status)
+            if json_output:
+                _print_json({"ok": True, "agents": agents})
+            elif agents:
+                for agent in agents:
+                    print(
+                        f"{agent['id']} {agent['status']} name={agent['name']} "
+                        f"role={agent['role']} adapter={agent['adapter']} "
+                        f"active_leases={agent['active_lease_count']}/{agent['max_concurrency']}"
+                    )
+            else:
+                print("No agents")
+            return 0
+
+        if args.command == "agent" and args.agent_command == "read":
+            agent = read_agent(paths, args.agent_id)
+            if json_output:
+                _print_json({"ok": True, "agent": agent})
+            else:
+                print(to_pretty_json(agent))
+            return 0
+
+        if args.command == "agent" and args.agent_command == "update":
+            result = update_agent(
+                paths,
+                args.agent_id,
+                fields={
+                    "name": args.name,
+                    "role": args.role,
+                    "adapter": args.adapter,
+                    "max_concurrency": args.max_concurrency,
+                    "metadata_json": args.metadata_json,
+                    "status": args.status,
+                },
+                reason=args.reason,
+            )
+            if json_output:
+                _print_json(result)
+            else:
+                print(f"Updated agent {result['agent']['id']}")
+            return 0
+
+        if args.command == "agent" and args.agent_command == "retire":
+            result = retire_agent(paths, args.agent_id, reason=args.reason)
+            if json_output:
+                _print_json(result)
+            else:
+                print(f"Retired agent {result['agent']['id']}")
             return 0
 
         if args.command == "ingest-agent-run":

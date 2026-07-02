@@ -24,7 +24,9 @@ def test_example_configs_have_current_guardrails() -> None:
         config = parse_workflow_yaml((example / "pcl.yaml").read_text(encoding="utf-8"))
 
         assert config["project_loop"]["version"] == "0.1.0"
-        assert config["project_loop"]["schema_version"] == 2
+        assert config["project_loop"]["schema_version"] == 3
+        assert config["loop"]["lease_ttl_seconds"] == 1800
+        assert config["loop"]["max_lease_attempts"] == 2
         assert config["loop"]["stop_if_same_failure_repeats"] is True
         assert config["dashboard"]["output"] == ".project-loop/dashboard/dashboard.html"
         assert config["dashboard"]["auto_render"] is True

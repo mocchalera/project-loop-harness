@@ -291,7 +291,11 @@ def list_jobs(
               agent_jobs.status,
               agent_jobs.prompt_path,
               agent_jobs.output_path,
-              agent_jobs.summary
+              agent_jobs.summary,
+              agent_jobs.assigned_agent_id,
+              agent_jobs.lease_expires_at,
+              agent_jobs.last_heartbeat_at,
+              agent_jobs.attempts
             FROM agent_jobs
             JOIN workflow_runs ON workflow_runs.id = agent_jobs.workflow_run_id
             {where_sql}
@@ -321,7 +325,11 @@ def read_job(paths: ProjectPaths, job_id: str) -> dict[str, Any]:
               agent_jobs.status,
               agent_jobs.prompt_path,
               agent_jobs.output_path,
-              agent_jobs.summary
+              agent_jobs.summary,
+              agent_jobs.assigned_agent_id,
+              agent_jobs.lease_expires_at,
+              agent_jobs.last_heartbeat_at,
+              agent_jobs.attempts
             FROM agent_jobs
             JOIN workflow_runs ON workflow_runs.id = agent_jobs.workflow_run_id
             WHERE agent_jobs.id = ?
