@@ -29,6 +29,24 @@ def _update_db(root: Path, sql: str, params: tuple = ()) -> None:
         conn.close()
 
 
+def _valid_rubric(evidence_id: str | None = None) -> dict:
+    return {
+        "contract_version": "rubric/v1",
+        "acceptance_criteria": [
+            {"criterion": "Expected behavior was verified", "met": "yes", "evidence_id": evidence_id}
+        ],
+        "regression_risk": {"level": "low", "notes": None},
+        "test_evidence": [
+            {"evidence_id": evidence_id, "command": "pytest", "summary": "Focused tests passed"}
+        ]
+        if evidence_id
+        else [],
+        "security_ux_checks": [{"check": "No secrets emitted", "result": "pass", "notes": None}],
+        "confidence_score": 0.9,
+        "evidence_completeness": "complete",
+    }
+
+
 def _complete_all_jobs(root: Path, capsys, job_ids: list[str]) -> None:
     for job_id in job_ids:
         assert main([
@@ -199,6 +217,77 @@ def test_strict_validate_rejects_passed_run_without_passed_jobs_or_verification(
     payload = _json_output(capsys)
     assert "Passed workflow run WR-0001 has non-passed jobs: queued=3." in payload["errors"]
     assert "Passed workflow run WR-0001 has no approved verification." in payload["errors"]
+
+
+def test_validate_warns_and_strict_errors_on_invalid_rubric_v1(tmp_path: Path, capsys) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Coverage"]) == 0
+    assert main(["--root", str(tmp_path), "loop", "run", "feature_coverage", "--goal", "G-0001"]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "verification",
+        "record",
+        "--run",
+        "WR-0001",
+        "--result",
+        "approved",
+        "--reason",
+        "Stored before corruption",
+    ]) == 0
+    capsys.readouterr()
+
+    broken_rubric = _valid_rubric()
+    del broken_rubric["acceptance_criteria"]
+    _update_db(
+        tmp_path,
+        "UPDATE verifications SET rubric_json = ? WHERE id = 'V-0001'",
+        (json.dumps(broken_rubric),),
+    )
+
+    assert main(["--root", str(tmp_path), "validate", "--json"]) == 0
+    normal = _json_output(capsys)
+    assert normal["ok"] is True
+    assert "Verification V-0001 rubric/v1 invalid: acceptance_criteria is required." in normal["warnings"]
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 1
+    strict = _json_output(capsys)
+    assert "Verification V-0001 rubric/v1 invalid: acceptance_criteria is required." in strict["errors"]
+
+
+def test_strict_validate_rejects_missing_rubric_evidence_reference(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Coverage"]) == 0
+    assert main(["--root", str(tmp_path), "loop", "run", "feature_coverage", "--goal", "G-0001"]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "verification",
+        "record",
+        "--run",
+        "WR-0001",
+        "--result",
+        "approved",
+        "--reason",
+        "Stored before corruption",
+    ]) == 0
+    capsys.readouterr()
+
+    _update_db(
+        tmp_path,
+        "UPDATE verifications SET rubric_json = ? WHERE id = 'V-0001'",
+        (json.dumps(_valid_rubric("E-9999")),),
+    )
+
+    assert main(["--root", str(tmp_path), "validate", "--json"]) == 0
+    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": []}
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 1
+    payload = _json_output(capsys)
+    assert "Verification V-0001 rubric/v1 references missing evidence E-9999." in payload["errors"]
 
 
 def test_strict_validate_rejects_verified_defect_without_evidence_or_verification(

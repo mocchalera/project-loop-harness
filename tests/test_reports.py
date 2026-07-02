@@ -11,6 +11,21 @@ def _json_output(capsys) -> dict:
     return json.loads(captured.out)
 
 
+def _valid_rubric() -> dict:
+    return {
+        "contract_version": "rubric/v1",
+        "acceptance_criteria": [
+            {"criterion": "Acceptance one", "met": "yes", "evidence_id": None},
+            {"criterion": "Acceptance two", "met": "unknown", "evidence_id": None},
+        ],
+        "regression_risk": {"level": "medium", "notes": "One manual edge remains"},
+        "test_evidence": [],
+        "security_ux_checks": [{"check": "No secrets emitted", "result": "pass", "notes": None}],
+        "confidence_score": 0.75,
+        "evidence_completeness": "partial",
+    }
+
+
 def _build_closed_goal(root: Path, capsys) -> None:
     assert main(["init", "--target", str(root)]) == 0
     assert main(["--root", str(root), "goal", "create", "--title", "Coverage"]) == 0
@@ -285,6 +300,43 @@ def test_report_goal_and_run_are_deterministic_and_include_evidence(tmp_path: Pa
     report_paths = [row["path"] for row in data["reports"]]
     assert ".project-loop/reports/goal-G-0001.md" in report_paths
     assert ".project-loop/reports/run-WR-0001.md" in report_paths
+
+
+def test_report_run_renders_compact_rubric_v1_summary(tmp_path: Path, capsys) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Coverage"]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "loop",
+        "run",
+        "feature_coverage",
+        "--goal",
+        "G-0001",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "verification",
+        "record",
+        "--run",
+        "WR-0001",
+        "--result",
+        "approved",
+        "--rubric-json",
+        json.dumps(_valid_rubric()),
+        "--reason",
+        "Structured rubric reviewed",
+    ]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "report", "run", "WR-0001", "--json"]) == 0
+    run = _json_output(capsys)
+    report = Path(run["path"]).read_text(encoding="utf-8")
+
+    assert "## Verification Rubrics" in report
+    assert "criteria_yes" in report
+    assert "| V-0001 | 1 | 0 | 1 | 2 | medium | 0.75 | partial |" in report
 
 
 def test_report_includes_all_repeated_agent_output_ingests(tmp_path: Path, capsys) -> None:

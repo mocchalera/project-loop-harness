@@ -12,6 +12,12 @@ from .events import append_event
 from .guards import require_initialized
 from .ids import next_prefixed_id
 from .paths import ProjectPaths
+from .rubric import (
+    claims_rubric_v1,
+    evidence_ids_in_rubric,
+    rubric_contract_version,
+    validate_rubric,
+)
 from .timeutil import utc_now_iso
 
 
@@ -197,7 +203,16 @@ def record_verification(
         )
     if not reasons or not any(reason.strip() for reason in reasons):
         raise InvalidInputError("At least one --reason is required to record verification.")
-    rubric = _normalized_json_object(rubric_json, "rubric-json")
+    rubric_obj = _json_object_from_raw(rubric_json, "rubric-json")
+    rubric_contract = rubric_contract_version(rubric_obj)
+    if claims_rubric_v1(rubric_obj):
+        rubric_errors = validate_rubric(rubric_obj)
+        if rubric_errors:
+            raise InvalidInputError(
+                "rubric-json does not satisfy rubric/v1.",
+                details={"errors": rubric_errors},
+            )
+    rubric = json.dumps(rubric_obj, ensure_ascii=False, sort_keys=True)
     cleaned_reasons = [reason.strip() for reason in reasons if reason.strip()]
     now = utc_now_iso()
 
@@ -211,6 +226,13 @@ def record_verification(
                     f"Agent job {target_job_id} does not belong to workflow run {workflow_run_id}.",
                     details={"job_id": target_job_id, "workflow_run_id": workflow_run_id},
                 )
+        evidence_ids = evidence_ids_in_rubric(rubric_obj) if claims_rubric_v1(rubric_obj) else []
+        missing_evidence_ids = _missing_evidence_ids(conn, evidence_ids)
+        if missing_evidence_ids:
+            raise InvalidInputError(
+                "rubric-json references missing evidence.",
+                details={"missing_evidence_ids": missing_evidence_ids},
+            )
         verification_id = next_prefixed_id(conn, "verifications", "V")
         reasons_json = json.dumps(cleaned_reasons, ensure_ascii=False, sort_keys=True)
         conn.execute(
@@ -233,6 +255,7 @@ def record_verification(
                 "verifier_role": verifier_role,
                 "result": result,
                 "reasons": cleaned_reasons,
+                "rubric_contract_version": rubric_contract,
             },
         )
         conn.commit()
@@ -243,6 +266,7 @@ def record_verification(
             "target_job_id": target_job_id,
             "result": result,
             "reasons": cleaned_reasons,
+            "rubric_contract_version": rubric_contract,
         }
     finally:
         conn.close()
@@ -1002,6 +1026,11 @@ def _completion_with_closure(
 
 
 def _normalized_json_object(raw: str, field_name: str) -> str:
+    value = _json_object_from_raw(raw, field_name)
+    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+
+
+def _json_object_from_raw(raw: str, field_name: str) -> dict[str, Any]:
     try:
         value = json.loads(raw)
     except JSONDecodeError as exc:
@@ -1014,7 +1043,19 @@ def _normalized_json_object(raw: str, field_name: str) -> str:
             f"{field_name} must be a JSON object.",
             details={"field": field_name, "type": type(value).__name__},
         )
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return value
+
+
+def _missing_evidence_ids(conn, evidence_ids: list[str]) -> list[str]:
+    if not evidence_ids:
+        return []
+    placeholders = ", ".join("?" for _ in evidence_ids)
+    rows = conn.execute(
+        f"SELECT id FROM evidence WHERE id IN ({placeholders})",
+        tuple(evidence_ids),
+    ).fetchall()
+    found = {str(row["id"]) for row in rows}
+    return sorted(evidence_id for evidence_id in evidence_ids if evidence_id not in found)
 
 
 def _normalize_output_path(paths: ProjectPaths, output_path: str | None) -> str | None:

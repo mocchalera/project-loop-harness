@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from pathlib import Path
 import sqlite3
 import sys
 
@@ -29,7 +30,7 @@ from .decisions import (
     resolve_decision,
     waive_decision,
 )
-from .errors import DataStoreError, PclError
+from .errors import DataStoreError, InvalidInputError, PclError
 from .exporters import export_csv
 from .escalations import (
     cancel_escalation,
@@ -91,6 +92,7 @@ from .tasks import (
 )
 from . import update_check
 from .validators import validate_project
+from .verifications import VERIFICATION_RESULTS, list_verifications, read_verification
 from .workflow_proposals import (
     PROPOSAL_STATUSES,
     approve_workflow_proposal,
@@ -478,8 +480,20 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["approved", "rejected", "needs_human", "inconclusive"],
     )
     p_verification_record.add_argument("--verifier-role", default="human")
-    p_verification_record.add_argument("--rubric-json", default="{}")
+    rubric_source = p_verification_record.add_mutually_exclusive_group()
+    rubric_source.add_argument("--rubric-json", default=None)
+    rubric_source.add_argument("--rubric-file", default=None, help="Read verification rubric JSON from a file")
     p_verification_record.add_argument("--reason", action="append", required=True)
+    p_verification_list = verification_sub.add_parser("list")
+    p_verification_list.add_argument("--run", default=None, help="Filter by workflow run id")
+    p_verification_list.add_argument(
+        "--result",
+        choices=sorted(VERIFICATION_RESULTS),
+        default=None,
+        help=f"Filter by verification result: {_choices_help(VERIFICATION_RESULTS)}",
+    )
+    p_verification_read = verification_sub.add_parser("read")
+    p_verification_read.add_argument("verification_id")
 
     p_decision = sub.add_parser("decision", help="Manage human decisions")
     decision_sub = p_decision.add_subparsers(dest="decision_command", required=True)
@@ -673,6 +687,20 @@ def _print_error(error: PclError, *, json_output: bool = False) -> None:
     if isinstance(detail_warnings, list):
         for detail in detail_warnings:
             print(f"WARNING: {detail}", file=sys.stderr)
+
+
+def _rubric_json_argument(args) -> str:
+    if getattr(args, "rubric_file", None):
+        rubric_path = Path(args.rubric_file)
+        try:
+            return rubric_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise InvalidInputError(
+                f"Could not read rubric file: {args.rubric_file}",
+                details={"path": args.rubric_file},
+            ) from exc
+    rubric_json = getattr(args, "rubric_json", None)
+    return "{}" if rubric_json is None else rubric_json
 
 
 def _extract_global_options(argv: list[str] | None) -> tuple[list[str] | None, str | None, bool]:
@@ -1452,13 +1480,36 @@ def main(argv: list[str] | None = None) -> int:
                 result=args.result,
                 reasons=args.reason,
                 verifier_role=args.verifier_role,
-                rubric_json=args.rubric_json,
+                rubric_json=_rubric_json_argument(args),
                 target_job_id=args.target_job,
             )
             if json_output:
                 _print_json(result)
             else:
                 print(result["id"])
+            return 0
+
+        if args.command == "verification" and args.verification_command == "list":
+            verifications = list_verifications(paths, workflow_run_id=args.run, result=args.result)
+            if json_output:
+                _print_json({"ok": True, "verifications": verifications})
+            elif verifications:
+                for verification in verifications:
+                    print(
+                        f"{verification['id']} {verification['result']} "
+                        f"run={verification['workflow_run_id']} "
+                        f"target_job={verification['target_job_id'] or ''}"
+                    )
+            else:
+                print("No verifications")
+            return 0
+
+        if args.command == "verification" and args.verification_command == "read":
+            verification = read_verification(paths, args.verification_id)
+            if json_output:
+                _print_json({"ok": True, "verification": verification})
+            else:
+                print(to_pretty_json(verification))
             return 0
 
         if args.command == "decision" and args.decision_command == "open":
