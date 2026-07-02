@@ -51,7 +51,7 @@ def test_codex_plugin_manifest_shape() -> None:
     manifest = _json(PLUGIN / ".codex-plugin" / "plugin.json")
 
     assert manifest["name"] == "project-loop-harness"
-    assert manifest["version"] == "0.1.6"
+    assert manifest["version"] == "0.1.7"
     assert manifest["license"] == "MIT"
     assert manifest["skills"] == "./skills/"
     assert manifest["hooks"] == "./hooks/hooks.json"
@@ -108,7 +108,7 @@ def test_codex_plugin_marketplace_example_documents_runtime_boundary() -> None:
     marketplace = _json(PLUGIN / "marketplace.example.json")
 
     assert marketplace["name"] == "project-loop-harness"
-    assert marketplace["requires"]["pythonPackage"] == "project-loop-harness>=0.1.6"
+    assert marketplace["requires"]["pythonPackage"] == "project-loop-harness>=0.1.7"
     assert marketplace["requires"]["targetProjectInitialized"] is True
     assert "the Python pcl CLI" in marketplace["doesNotInstall"]
     assert "pcl --help" in marketplace["installTest"]
