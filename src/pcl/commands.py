@@ -18,6 +18,8 @@ from .workflow_proposals import next_reviewable_workflow_proposal
 
 
 FEATURE_STATUSES = {"discovered", "specified", "needs_test", "needs_fix", "passing", "done", "waived"}
+TASK_ACTIONABLE_STATUSES = {"todo", "ready"}
+TASK_COMPLETED_DEPENDENCY_STATUSES = {"done", "cancelled", "waived"}
 
 
 def _normalized_json_object(raw: str, field_name: str) -> str:
@@ -413,6 +415,9 @@ def next_action(paths: ProjectPaths) -> dict:
     checkpoint = _checkpoint_review_next_action(paths)
     if checkpoint is not None:
         return checkpoint
+    task = _task_next_action(paths)
+    if task is not None:
+        return task
     if status["open_goals"]:
         goal = status["open_goals"][0]
         return build_next_action(
@@ -750,6 +755,144 @@ def _checkpoint_review_next_action(paths: ProjectPaths) -> dict | None:
             "A checkpoint_review evidence record exists, and `pcl next` can resume normal goal routing."
         ),
     )
+
+
+def _task_next_action(paths: ProjectPaths) -> dict | None:
+    conn = connect(paths.db_path)
+    try:
+        in_progress = _next_considered_task(conn, statuses=("in_progress",))
+        if in_progress is not None:
+            task = _task_next_action_target(conn, dict(in_progress))
+            task_id = str(task["id"])
+            return build_next_action(
+                action_type="work_on_task",
+                command=f"pcl task read {task_id}",
+                reason=(
+                    "A task under an open goal is already in progress; finish that task before "
+                    "starting another backlog item."
+                ),
+                target=task,
+                priority=59,
+                blocking=False,
+                requires_human=False,
+                safe_to_run=True,
+                expected_after=f"Task {task_id} advances toward done.",
+            )
+
+        actionable = _next_actionable_task(conn)
+        if actionable is None:
+            return None
+        task = _task_next_action_target(conn, dict(actionable))
+        task_id = str(task["id"])
+        return build_next_action(
+            action_type="work_on_task",
+            command=f"pcl task read {task_id}",
+            reason=(
+                "This is the highest-priority ready task under an open goal with all "
+                "dependencies satisfied."
+            ),
+            target=task,
+            priority=59,
+            blocking=False,
+            requires_human=False,
+            safe_to_run=True,
+            expected_after=f"Task {task_id} advances toward done.",
+        )
+    finally:
+        conn.close()
+
+
+def _next_considered_task(conn, *, statuses: tuple[str, ...]):
+    placeholders = ", ".join("?" for _ in statuses)
+    return conn.execute(
+        f"""
+        SELECT
+          tasks.id,
+          tasks.title,
+          tasks.description,
+          tasks.status,
+          tasks.priority,
+          tasks.owner,
+          tasks.risk,
+          tasks.effort,
+          tasks.related_goal_id,
+          tasks.related_feature_id,
+          tasks.related_defect_id,
+          tasks.created_at,
+          tasks.updated_at,
+          goals.status AS related_goal_status
+        FROM tasks
+        JOIN goals ON goals.id = tasks.related_goal_id
+        WHERE goals.status IN ('open', 'active')
+          AND tasks.status IN ({placeholders})
+        ORDER BY tasks.priority, tasks.id
+        LIMIT 1
+        """,
+        tuple(statuses),
+    ).fetchone()
+
+
+def _next_actionable_task(conn):
+    status_placeholders = ", ".join("?" for _ in TASK_ACTIONABLE_STATUSES)
+    completed_placeholders = ", ".join("?" for _ in TASK_COMPLETED_DEPENDENCY_STATUSES)
+    return conn.execute(
+        f"""
+        SELECT
+          tasks.id,
+          tasks.title,
+          tasks.description,
+          tasks.status,
+          tasks.priority,
+          tasks.owner,
+          tasks.risk,
+          tasks.effort,
+          tasks.related_goal_id,
+          tasks.related_feature_id,
+          tasks.related_defect_id,
+          tasks.created_at,
+          tasks.updated_at,
+          goals.status AS related_goal_status
+        FROM tasks
+        JOIN goals ON goals.id = tasks.related_goal_id
+        WHERE goals.status IN ('open', 'active')
+          AND tasks.status IN ({status_placeholders})
+          AND NOT EXISTS (
+            SELECT 1
+            FROM task_dependencies
+            JOIN tasks AS dependency
+              ON dependency.id = task_dependencies.depends_on_task_id
+            WHERE task_dependencies.task_id = tasks.id
+              AND dependency.status NOT IN ({completed_placeholders})
+          )
+        ORDER BY tasks.priority, tasks.id
+        LIMIT 1
+        """,
+        tuple(sorted(TASK_ACTIONABLE_STATUSES)) + tuple(sorted(TASK_COMPLETED_DEPENDENCY_STATUSES)),
+    ).fetchone()
+
+
+def _task_next_action_target(conn, task: dict) -> dict:
+    dependency_rows = conn.execute(
+        """
+        SELECT depends_on_task_id
+        FROM task_dependencies
+        WHERE task_id = ?
+        ORDER BY depends_on_task_id
+        """,
+        (task["id"],),
+    ).fetchall()
+    dependent_rows = conn.execute(
+        """
+        SELECT task_id
+        FROM task_dependencies
+        WHERE depends_on_task_id = ?
+        ORDER BY task_id
+        """,
+        (task["id"],),
+    ).fetchall()
+    task["dependency_ids"] = [str(row["depends_on_task_id"]) for row in dependency_rows]
+    task["dependent_ids"] = [str(row["task_id"]) for row in dependent_rows]
+    return task
 
 
 def _unfinished_executor_next_action(paths: ProjectPaths) -> dict | None:

@@ -13,6 +13,18 @@ from .rubric import claims_rubric_v1
 from .validators import validate_project
 
 
+TASK_COMPLETED_DEPENDENCY_STATUSES = {"done", "cancelled", "waived"}
+TASK_STATUS_ORDER = {
+    "in_progress": 0,
+    "ready": 1,
+    "todo": 2,
+    "blocked": 3,
+    "done": 4,
+    "waived": 5,
+    "cancelled": 6,
+}
+
+
 def report_goal(paths: ProjectPaths, goal_id: str) -> dict[str, Any]:
     require_initialized(paths)
     _validate_identifier(goal_id, "goal_id")
@@ -28,6 +40,7 @@ def report_goal(paths: ProjectPaths, goal_id: str) -> dict[str, Any]:
         escalations = _escalations_for_runs(conn, run_ids)
         decisions = _decisions_for_escalations(conn, [str(escalation["id"]) for escalation in escalations])
         escalations = enrich_escalations_with_links(escalations, decisions)
+        tasks = _tasks_for_goal(conn, goal_id)
         test_cases = _test_cases_for_runs(conn, run_ids)
         user_stories = _stories_for_test_cases(conn, test_cases)
         features = _features_for_test_cases(conn, test_cases)
@@ -38,6 +51,7 @@ def report_goal(paths: ProjectPaths, goal_id: str) -> dict[str, Any]:
             *[("verification", verification["id"]) for verification in verifications],
             *[("escalation", escalation["id"]) for escalation in escalations],
             *[("decision", decision["id"]) for decision in decisions],
+            *[("task", task["id"]) for task in tasks],
             *[("feature", feature["id"]) for feature in features],
             *[("user_story", story["id"]) for story in user_stories],
             *[("test_case", test_case["id"]) for test_case in test_cases],
@@ -53,6 +67,7 @@ def report_goal(paths: ProjectPaths, goal_id: str) -> dict[str, Any]:
             "verifications": verifications,
             "escalations": escalations,
             "decisions": decisions,
+            "tasks": tasks,
             "features": features,
             "user_stories": user_stories,
             "test_cases": test_cases,
@@ -251,6 +266,7 @@ def _render_goal_report(data: dict[str, Any]) -> str:
         "## Completion",
         _json_block(goal.get("completion_json")),
         "",
+        *_goal_tasks_section(data["tasks"]),
         "## Workflow Runs",
         _table(data["workflow_runs"], ["id", "workflow_id", "status", "iteration", "started_at", "ended_at", "summary"]),
         "",
@@ -483,6 +499,16 @@ def _verification_rubric_rows(verifications: list[dict[str, Any]]) -> list[dict[
     return rows
 
 
+def _goal_tasks_section(tasks: list[dict[str, Any]]) -> list[str]:
+    if not tasks:
+        return []
+    return [
+        "## Tasks",
+        _table(tasks, ["id", "title", "status", "priority", "unmet_dependency_count"]),
+        "",
+    ]
+
+
 def _report_path(paths: ProjectPaths, kind: str, entity_id: str) -> Path:
     return paths.reports_dir / f"{kind}-{entity_id}.md"
 
@@ -553,6 +579,48 @@ def _decisions_for_escalations(conn, escalation_ids: list[str]) -> list[dict[str
         for decision in decisions
         if escalation_id_set.intersection(decision.get("linked_escalation_ids", []))
     ]
+
+
+def _tasks_for_goal(conn, goal_id: str) -> list[dict[str, Any]]:
+    status_order_sql = _task_status_order_sql("tasks.status")
+    completed_placeholders = ", ".join("?" for _ in TASK_COMPLETED_DEPENDENCY_STATUSES)
+    rows = _rows(
+        conn,
+        f"""
+        SELECT
+          tasks.id,
+          tasks.title,
+          tasks.status,
+          tasks.priority,
+          SUM(
+            CASE
+              WHEN task_dependencies.depends_on_task_id IS NOT NULL
+               AND dependency.status NOT IN ({completed_placeholders})
+              THEN 1
+              ELSE 0
+            END
+          ) AS unmet_dependency_count
+        FROM tasks
+        LEFT JOIN task_dependencies
+          ON task_dependencies.task_id = tasks.id
+        LEFT JOIN tasks AS dependency
+          ON dependency.id = task_dependencies.depends_on_task_id
+        WHERE tasks.related_goal_id = ?
+        GROUP BY tasks.id
+        ORDER BY {status_order_sql}, tasks.priority, tasks.id
+        """,
+        tuple(sorted(TASK_COMPLETED_DEPENDENCY_STATUSES)) + (goal_id,),
+    )
+    for row in rows:
+        row["unmet_dependency_count"] = int(row["unmet_dependency_count"] or 0)
+    return rows
+
+
+def _task_status_order_sql(column: str) -> str:
+    cases = " ".join(
+        f"WHEN '{status}' THEN {index}" for status, index in TASK_STATUS_ORDER.items()
+    )
+    return f"CASE {column} {cases} ELSE 99 END"
 
 
 def _stories_for_feature(conn, feature_id: str) -> list[dict[str, Any]]:

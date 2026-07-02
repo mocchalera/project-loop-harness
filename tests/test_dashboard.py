@@ -216,6 +216,82 @@ def test_dashboard_surfaces_failed_run_and_job_risks(tmp_path: Path) -> None:
     assert items_by_type["failed_agent_job"]["command"] == "pcl jobs read J-0001"
 
 
+def test_dashboard_renders_task_backlog_data_and_table(tmp_path: Path) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Backlog"]) == 0
+    task_specs = [
+        ("Todo task", "5", None),
+        ("In progress task", "99", "in_progress"),
+        ("Ready task", "1", "ready"),
+        ("Blocked task", "1", "blocked"),
+        ("Done dependency", "1", "done"),
+        ("Waived task", "1", "waived"),
+        ("Cancelled task", "1", "cancelled"),
+    ]
+    for index, (title, priority, status) in enumerate(task_specs, start=1):
+        assert main([
+            "--root",
+            str(tmp_path),
+            "task",
+            "create",
+            "--title",
+            title,
+            "--priority",
+            priority,
+            "--goal",
+            "G-0001",
+        ]) == 0
+        if status is not None:
+            task_id = f"T-{index:04d}"
+            assert main([
+                "--root",
+                str(tmp_path),
+                "task",
+                "status",
+                task_id,
+                status,
+                "--reason",
+                f"Set {status}",
+            ]) == 0
+    assert main(["--root", str(tmp_path), "task", "depend", "T-0001", "--on", "T-0005"]) == 0
+
+    assert main(["--root", str(tmp_path), "render"]) == 0
+
+    data = _read_dashboard_data(tmp_path)
+    html = _read_dashboard(tmp_path)
+    assert [task["id"] for task in data["tasks"]] == [
+        "T-0002",
+        "T-0003",
+        "T-0001",
+        "T-0004",
+        "T-0005",
+        "T-0006",
+        "T-0007",
+    ]
+    assert set(data["tasks"][0]) == {
+        "id",
+        "title",
+        "status",
+        "priority",
+        "owner",
+        "risk",
+        "effort",
+        "related_goal_id",
+        "related_feature_id",
+        "related_defect_id",
+        "dependency_ids",
+        "dependent_ids",
+        "created_at",
+        "updated_at",
+    }
+    tasks_by_id = {task["id"]: task for task in data["tasks"]}
+    assert tasks_by_id["T-0001"]["dependency_ids"] == ["T-0005"]
+    assert tasks_by_id["T-0005"]["dependent_ids"] == ["T-0001"]
+    assert "Task Backlog" in html
+    assert "In progress task" in html
+    assert '<a href="#row-T-0005">T-0005</a>' in html
+
+
 def test_dashboard_all_jobs_preserves_output_path_after_run_is_inactive(tmp_path: Path) -> None:
     assert main(["init", "--target", str(tmp_path)]) == 0
     assert main(["--root", str(tmp_path), "goal", "create", "--title", "Coverage"]) == 0

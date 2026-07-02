@@ -234,9 +234,14 @@ Priority order is fixed:
 7. open defect lifecycle
 8. workflow proposal review
 9. checkpoint review after several done features
-10. open goal continuation
-11. uncovered feature coverage
-12. create goal
+10. task backlog item under an open goal
+11. open goal continuation
+12. uncovered feature coverage
+13. create goal
+
+Task routing only considers tasks linked to an `open` or `active` goal through
+`related_goal_id`. Unlinked tasks stay visible in backlog surfaces, but `pcl
+next` intentionally does not route them in v1.
 
 ## Checkpoint Reviews
 
@@ -324,6 +329,7 @@ The current local runtime supports:
 - workflow run, goal, defect, escalation, and decision lifecycle commands;
 - escalation/decision linkage;
 - checkpoint review commands for commit/package, UX checklist, and next-priority pauses;
+- task-aware `pcl next` routing for goal-linked backlog items with satisfied dependencies;
 - strict validation invariants and audit-log integrity checks;
 - evidence-backed Markdown reports;
 - deterministic dashboard data and HTML with JSON artifact paths, a versioned data contract, evidence navigation, and risk/blocker summary;
@@ -364,6 +370,7 @@ agent-tasks/0037-executor-retry-resume.md
 ...
 agent-tasks/0062-task-backlog-entity.md
 agent-tasks/0063-structured-verification-rubric.md
+agent-tasks/0064-task-loop-integration.md
 ```
 
 Do not skip directly to MCP, plugin distribution, hosted services, or dynamic workflow generation before the CLI/runtime and project state layer are solid.

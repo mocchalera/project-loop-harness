@@ -279,6 +279,7 @@ def test_report_goal_and_run_are_deterministic_and_include_evidence(tmp_path: Pa
     assert "Workflow Runs" in first_goal
     assert "V-0001" in first_goal
     assert "goal_closed" in first_goal
+    assert "## Tasks" not in first_goal
 
     assert main(["--root", str(tmp_path), "report", "goal", "G-0001", "--json"]) == 0
     _json_output(capsys)
@@ -300,6 +301,58 @@ def test_report_goal_and_run_are_deterministic_and_include_evidence(tmp_path: Pa
     report_paths = [row["path"] for row in data["reports"]]
     assert ".project-loop/reports/goal-G-0001.md" in report_paths
     assert ".project-loop/reports/run-WR-0001.md" in report_paths
+
+
+def test_report_goal_includes_tasks_when_present(tmp_path: Path, capsys) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Backlog"]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "create",
+        "--title",
+        "Dependency task",
+        "--priority",
+        "20",
+        "--goal",
+        "G-0001",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "create",
+        "--title",
+        "Ready blocked task",
+        "--priority",
+        "10",
+        "--goal",
+        "G-0001",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "status",
+        "T-0002",
+        "ready",
+        "--reason",
+        "Ready after dependency",
+    ]) == 0
+    assert main(["--root", str(tmp_path), "task", "depend", "T-0002", "--on", "T-0001"]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "report", "goal", "G-0001", "--json"]) == 0
+    goal = _json_output(capsys)
+    report = Path(goal["path"]).read_text(encoding="utf-8")
+
+    assert [task["id"] for task in goal["report"]["tasks"]] == ["T-0002", "T-0001"]
+    assert goal["report"]["tasks"][0]["unmet_dependency_count"] == 1
+    assert goal["report"]["tasks"][1]["unmet_dependency_count"] == 0
+    assert "## Tasks" in report
+    assert "| T-0002 | Ready blocked task | ready | 10 | 1 |" in report
+    assert "| T-0001 | Dependency task | todo | 20 | 0 |" in report
 
 
 def test_report_run_renders_compact_rubric_v1_summary(tmp_path: Path, capsys) -> None:

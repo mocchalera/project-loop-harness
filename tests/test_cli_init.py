@@ -337,6 +337,31 @@ def test_export_csv_includes_reviewable_loop_state(tmp_path: Path, capsys) -> No
         "cli:pcl export csv",
     ]) == 0
     assert main(["--root", str(tmp_path), "goal", "create", "--title", "Export review"]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "create",
+        "--title",
+        "Export task dependency",
+        "--priority",
+        "20",
+        "--goal",
+        "G-0001",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "create",
+        "--title",
+        "Export dependent task",
+        "--priority",
+        "10",
+        "--goal",
+        "G-0001",
+    ]) == 0
+    assert main(["--root", str(tmp_path), "task", "depend", "T-0002", "--on", "T-0001"]) == 0
     assert main(["--root", str(tmp_path), "loop", "run", "feature_coverage", "--goal", "G-0001"]) == 0
 
     output_path = tmp_path / ".project-loop" / "evidence" / "agent-runs" / "J-0001" / "output.md"
@@ -401,6 +426,8 @@ def test_export_csv_includes_reviewable_loop_state(tmp_path: Path, capsys) -> No
         "features.csv",
         "user_stories.csv",
         "test_cases.csv",
+        "tasks.csv",
+        "task_dependencies.csv",
         "evidence.csv",
         "defects.csv",
         "decisions.csv",
@@ -415,6 +442,9 @@ def test_export_csv_includes_reviewable_loop_state(tmp_path: Path, capsys) -> No
     exports_dir = tmp_path / ".project-loop" / "exports"
     assert _csv_rows(exports_dir / "workflow_runs.csv")[0]["id"] == "WR-0001"
     assert _csv_rows(exports_dir / "agent_jobs.csv")[0]["id"] == "J-0001"
+    assert _csv_rows(exports_dir / "tasks.csv")[0]["id"] == "T-0001"
+    assert _csv_rows(exports_dir / "task_dependencies.csv")[0]["task_id"] == "T-0002"
+    assert _csv_rows(exports_dir / "task_dependencies.csv")[0]["depends_on_task_id"] == "T-0001"
     assert _csv_rows(exports_dir / "evidence.csv")[0]["id"] == "E-0001"
     assert _csv_rows(exports_dir / "verifications.csv")[0]["id"] == "V-0001"
     assert _csv_rows(exports_dir / "escalations.csv")[0]["id"] == "ESC-0001"
@@ -424,6 +454,13 @@ def test_export_csv_includes_reviewable_loop_state(tmp_path: Path, capsys) -> No
     assert any(row["event_type"] == "agent_output_ingested" for row in event_rows)
     assert (exports_dir / "workflow_proposals.csv").read_text(encoding="utf-8").startswith(
         "id,workflow_id,path,workflow_path,status,summary,review_summary,created_at,reviewed_at,"
+    )
+    assert (exports_dir / "tasks.csv").read_text(encoding="utf-8").startswith(
+        "id,title,description,status,priority,owner,risk,effort,related_goal_id,"
+        "related_feature_id,related_defect_id,created_at,updated_at"
+    )
+    assert (exports_dir / "task_dependencies.csv").read_text(encoding="utf-8").startswith(
+        "task_id,depends_on_task_id,created_at"
     )
 
 

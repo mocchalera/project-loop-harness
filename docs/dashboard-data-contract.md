@@ -26,6 +26,7 @@ The top-level object must contain:
 - `user_stories`
 - `test_cases`
 - `defects`
+- `tasks`
 - `goals`
 - `workflow_runs`
 - `workflow_proposals`
@@ -131,6 +132,23 @@ The top-level object must contain:
 - `status`
 - `last_run_id`
 - `evidence_id`
+- `updated_at`
+
+`tasks` rows:
+
+- `id`
+- `title`
+- `status`
+- `priority`
+- `owner`
+- `risk`
+- `effort`
+- `related_goal_id`
+- `related_feature_id`
+- `related_defect_id`
+- `dependency_ids`
+- `dependent_ids`
+- `created_at`
 - `updated_at`
 
 `current_goal`, when present:
