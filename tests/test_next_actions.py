@@ -202,6 +202,267 @@ def test_next_routes_checkpoint_review_before_more_goal_continuation(tmp_path: P
     assert resumed["command"] == "pcl loop run feature_coverage --goal G-0001"
 
 
+def test_next_routes_goal_linked_ready_task_before_goal_continuation(tmp_path: Path, capsys) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Task routing"]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "create",
+        "--title",
+        "Highest priority task",
+        "--priority",
+        "10",
+        "--goal",
+        "G-0001",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "status",
+        "T-0001",
+        "ready",
+        "--reason",
+        "Ready for routing",
+    ]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    action = _json_output(capsys)
+    _assert_guided_action(action)
+    assert action["type"] == "work_on_task"
+    assert action["command"] == "pcl task read T-0001"
+    assert action["priority"] == 59
+    assert action["blocking"] is False
+    assert action["requires_human"] is False
+    assert action["safe_to_run"] is True
+    assert action["run_policy"] == "agent_safe"
+    assert action["target"]["id"] == "T-0001"
+    assert action["target"]["related_goal_id"] == "G-0001"
+    assert "highest-priority ready task" in action["reason"]
+
+
+def test_next_routes_checkpoint_review_before_ready_task(tmp_path: Path, capsys) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Checkpoint beats tasks"]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "create",
+        "--title",
+        "Ready task",
+        "--priority",
+        "10",
+        "--goal",
+        "G-0001",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "status",
+        "T-0001",
+        "ready",
+        "--reason",
+        "Ready for routing",
+    ]) == 0
+    for index in range(1, 6):
+        assert main([
+            "--root",
+            str(tmp_path),
+            "feature",
+            "add",
+            "--name",
+            f"Feature {index}",
+            "--surface",
+            f"surface:{index}",
+        ]) == 0
+        assert main([
+            "--root",
+            str(tmp_path),
+            "feature",
+            "status",
+            f"F-000{index}",
+            "--status",
+            "done",
+            "--summary",
+            f"Feature {index} complete",
+            "--evidence",
+            f"Verification evidence for feature {index}",
+        ]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    action = _json_output(capsys)
+    _assert_guided_action(action)
+    assert action["type"] == "checkpoint_review"
+    assert action["priority"] == 58
+
+
+def test_next_prefers_in_progress_task_over_ready_task(tmp_path: Path, capsys) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Task routing"]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "create",
+        "--title",
+        "Ready task",
+        "--priority",
+        "1",
+        "--goal",
+        "G-0001",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "status",
+        "T-0001",
+        "ready",
+        "--reason",
+        "Ready for routing",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "create",
+        "--title",
+        "Started task",
+        "--priority",
+        "50",
+        "--goal",
+        "G-0001",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "status",
+        "T-0002",
+        "in_progress",
+        "--reason",
+        "Already started",
+    ]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    action = _json_output(capsys)
+    _assert_guided_action(action)
+    assert action["type"] == "work_on_task"
+    assert action["command"] == "pcl task read T-0002"
+    assert action["target"]["status"] == "in_progress"
+    assert "already in progress" in action["reason"]
+
+
+def test_next_skips_dependency_blocked_task(tmp_path: Path, capsys) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Task dependencies"]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "create",
+        "--title",
+        "Blocked top task",
+        "--priority",
+        "1",
+        "--goal",
+        "G-0001",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "status",
+        "T-0001",
+        "ready",
+        "--reason",
+        "Ready except dependency",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "create",
+        "--title",
+        "Unmet dependency",
+        "--priority",
+        "20",
+        "--goal",
+        "G-0001",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "create",
+        "--title",
+        "Available task",
+        "--priority",
+        "10",
+        "--goal",
+        "G-0001",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "status",
+        "T-0003",
+        "ready",
+        "--reason",
+        "No blockers",
+    ]) == 0
+    assert main(["--root", str(tmp_path), "task", "depend", "T-0001", "--on", "T-0002"]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    action = _json_output(capsys)
+    _assert_guided_action(action)
+    assert action["type"] == "work_on_task"
+    assert action["command"] == "pcl task read T-0003"
+    assert action["target"]["dependency_ids"] == []
+
+
+def test_next_ignores_unlinked_task(tmp_path: Path, capsys) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Task routing"]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "create",
+        "--title",
+        "Unlinked task",
+        "--priority",
+        "1",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "status",
+        "T-0001",
+        "ready",
+        "--reason",
+        "Ready but unlinked",
+    ]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    action = _json_output(capsys)
+    _assert_guided_action(action)
+    assert action["type"] == "continue_goal"
+    assert action["priority"] == 60
+    assert action["command"] == "pcl loop run feature_coverage --goal G-0001"
+
+
 def test_next_strict_validation_failure_uses_guided_schema_and_first_priority(tmp_path: Path, capsys) -> None:
     assert main(["init", "--target", str(tmp_path)]) == 0
     assert main(["--root", str(tmp_path), "goal", "create", "--title", "Coverage"]) == 0

@@ -21,6 +21,7 @@ TOP_LEVEL_KEYS = {
     "user_stories",
     "test_cases",
     "defects",
+    "tasks",
     "goals",
     "workflow_runs",
     "workflow_proposals",
@@ -155,6 +156,22 @@ VERIFICATION_KEYS = {
     "reasons_json",
     "created_at",
 }
+TASK_KEYS = {
+    "id",
+    "title",
+    "status",
+    "priority",
+    "owner",
+    "risk",
+    "effort",
+    "related_goal_id",
+    "related_feature_id",
+    "related_defect_id",
+    "dependency_ids",
+    "dependent_ids",
+    "created_at",
+    "updated_at",
+}
 
 
 def test_dashboard_data_contract_shape_for_active_loop(tmp_path: Path) -> None:
@@ -231,6 +248,7 @@ def test_dashboard_data_contract_shape_for_active_loop(tmp_path: Path) -> None:
     assert data["workflow_proposals"] == []
     assert data["user_stories"] == []
     assert data["test_cases"] == []
+    assert data["tasks"] == []
     assert VERIFICATION_KEYS <= set(data["verifications"][0])
     assert data["agent_jobs"][0]["evidence_ids"] == ["E-0001"]
     assert data["agent_jobs"][0]["latest_evidence_id"] == "E-0001"
@@ -268,6 +286,9 @@ def test_dashboard_data_contract_is_documented() -> None:
         "workflow_proposals",
         "user_stories",
         "test_cases",
+        "tasks",
+        "dependency_ids",
+        "dependent_ids",
         "must not be edited directly",
     ]:
         assert required in contract

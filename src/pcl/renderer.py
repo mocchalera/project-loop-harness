@@ -17,8 +17,17 @@ from .workflow_yaml import parse_workflow_yaml
 
 
 DASHBOARD_DATA_CONTRACT_VERSION = "dashboard-data/v1"
-ENTITY_ID_PREFIXES = ("D-", "DEC-", "E-", "ESC-", "F-", "G-", "J-", "TC-", "US-", "V-", "WR-")
+ENTITY_ID_PREFIXES = ("D-", "DEC-", "E-", "ESC-", "F-", "G-", "J-", "T-", "TC-", "US-", "V-", "WR-")
 SEVERITY_RANKS = {"none": 0, "low": 1, "medium": 2, "high": 3, "critical": 4}
+TASK_STATUS_ORDER = {
+    "in_progress": 0,
+    "ready": 1,
+    "todo": 2,
+    "blocked": 3,
+    "done": 4,
+    "waived": 5,
+    "cancelled": 6,
+}
 
 
 def _rows(conn, sql: str, params: tuple = ()) -> list[dict]:
@@ -134,6 +143,7 @@ def render_dashboard(paths: ProjectPaths) -> None:
                 LIMIT 50
                 """,
             ),
+            "tasks": _task_rows(conn),
             "goals": _rows(
                 conn,
                 """
@@ -257,6 +267,58 @@ def _report_rows(paths: ProjectPaths) -> list[dict[str, str]]:
             }
         )
     return rows
+
+
+def _task_rows(conn) -> list[dict[str, Any]]:
+    status_order_sql = _task_status_order_sql("tasks.status")
+    rows = _rows(
+        conn,
+        f"""
+        SELECT
+          id,
+          title,
+          status,
+          priority,
+          owner,
+          risk,
+          effort,
+          related_goal_id,
+          related_feature_id,
+          related_defect_id,
+          created_at,
+          updated_at
+        FROM tasks
+        ORDER BY {status_order_sql}, priority, id
+        """,
+    )
+    dependencies = _task_dependency_map(conn, source_column="task_id", related_column="depends_on_task_id")
+    dependents = _task_dependency_map(conn, source_column="depends_on_task_id", related_column="task_id")
+    for row in rows:
+        task_id = str(row["id"])
+        row["dependency_ids"] = dependencies.get(task_id, [])
+        row["dependent_ids"] = dependents.get(task_id, [])
+    return rows
+
+
+def _task_status_order_sql(column: str) -> str:
+    cases = " ".join(
+        f"WHEN '{status}' THEN {index}" for status, index in TASK_STATUS_ORDER.items()
+    )
+    return f"CASE {column} {cases} ELSE 99 END"
+
+
+def _task_dependency_map(conn, *, source_column: str, related_column: str) -> dict[str, list[str]]:
+    rows = conn.execute(
+        f"""
+        SELECT {source_column} AS task_id, {related_column} AS related_task_id
+        FROM task_dependencies
+        ORDER BY {source_column}, {related_column}
+        """
+    ).fetchall()
+    result: dict[str, list[str]] = {}
+    for row in rows:
+        result.setdefault(str(row["task_id"]), []).append(str(row["related_task_id"]))
+    return result
 
 
 def _enrich_navigation(paths: ProjectPaths, data: dict[str, Any]) -> None:
@@ -793,6 +855,25 @@ def _render_html(data: dict) -> str:
         "{{ user_stories_table }}": _table(data["user_stories"], ["id", "feature_id", "actor", "goal", "status", "updated_at"]),
         "{{ test_cases_table }}": _table(data["test_cases"], ["id", "feature_id", "story_id", "type", "status", "last_run_id", "evidence_id", "updated_at"]),
         "{{ defects_table }}": _table(data["defects"], ["id", "feature_id", "severity", "status", "expected", "actual", "updated_at"]),
+        "{{ tasks_table }}": _table(
+            data["tasks"],
+            [
+                "id",
+                "title",
+                "status",
+                "priority",
+                "owner",
+                "risk",
+                "effort",
+                "related_goal_id",
+                "related_feature_id",
+                "related_defect_id",
+                "dependency_ids",
+                "dependent_ids",
+                "created_at",
+                "updated_at",
+            ],
+        ),
         "{{ goals_table }}": _table(data["goals"], ["id", "title", "status", "updated_at"]),
         "{{ workflow_runs_table }}": _table(data["workflow_runs"], ["id", "workflow_id", "goal_id", "status", "iteration", "started_at", "summary"]),
         "{{ agent_jobs_table }}": _table(data["agent_jobs"], ["id", "workflow_run_id", "role", "status", "prompt_path", "output_path", "evidence_ids", "latest_evidence_id", "summary"]),
