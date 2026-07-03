@@ -1,0 +1,42 @@
+{
+  "changes_this_session": [],
+  "cwd": "/Users/mocchalera/Dev/project-loop-harness",
+  "duration_minutes": 0,
+  "ended_at": "2026-07-02T13:34:35Z",
+  "event_seq": 1,
+  "fork_count": 0,
+  "git": {
+    "branch": "main",
+    "last_commit": "bf4bb4e",
+    "uncommitted_changes": 0
+  },
+  "harness_mem": {
+    "healthy": true,
+    "last_checked": "2026-07-02T13:34:23Z",
+    "last_error": ""
+  },
+  "intent": "literal",
+  "last_event_id": "event-000001",
+  "memory_logged": true,
+  "orchestration": {
+    "max_state_retries": 3,
+    "retry_backoff_seconds": 10
+  },
+  "parent_session_id": null,
+  "plans": {
+    "completed_tasks": 0,
+    "exists": false,
+    "last_modified": 0,
+    "pending_tasks": 0,
+    "todo_tasks": 0,
+    "wip_tasks": 0
+  },
+  "project_name": "project-loop-harness",
+  "prompt_seq": 2,
+  "resume_token": "resume-1782999263483221000",
+  "session_id": "session-1782999263483208000",
+  "started_at": "2026-07-02T13:34:23Z",
+  "state": "stopped",
+  "state_version": 1,
+  "updated_at": "2026-07-02T13:34:31Z"
+}

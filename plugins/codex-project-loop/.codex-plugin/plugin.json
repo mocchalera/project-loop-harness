@@ -1,6 +1,6 @@
 {
   "name": "project-loop-harness",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "description": "Project-scoped agent development loops with SQLite memory, evidence tracking, and generated dashboards.",
   "author": {
     "name": "Project Loop Harness Contributors"

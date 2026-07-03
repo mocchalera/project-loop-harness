@@ -1,0 +1,100 @@
+{
+  "artifactType": "precompact-snapshot",
+  "context_reset": {
+    "policy": {
+      "mode": "auto",
+      "dryRun": false,
+      "thresholds": {
+        "wipTasks": 4,
+        "blockedTasks": 1,
+        "recentEdits": 8,
+        "failedChecks": 1,
+        "sessionAgeMinutes": 120
+      }
+    },
+    "recommended": true,
+    "summary": "Context reset recommended (auto): 20 recent edit count exceed threshold 8; 564 session age (minutes) exceed threshold 120",
+    "reasons": [
+      "20 recent edit count exceed threshold 8",
+      "564 session age (minutes) exceed threshold 120"
+    ],
+    "candidates": [
+      {
+        "key": "wip_tasks",
+        "label": "WIP task count",
+        "actual": 0,
+        "threshold": 4,
+        "triggered": false
+      },
+      {
+        "key": "blocked_tasks",
+        "label": "blocked task count",
+        "actual": 0,
+        "threshold": 1,
+        "triggered": false
+      },
+      {
+        "key": "recent_edits",
+        "label": "recent edit count",
+        "actual": 20,
+        "threshold": 8,
+        "triggered": true
+      },
+      {
+        "key": "failed_checks",
+        "label": "failed check count",
+        "actual": 0,
+        "threshold": 1,
+        "triggered": false
+      },
+      {
+        "key": "session_age_minutes",
+        "label": "session age (minutes)",
+        "actual": 564,
+        "threshold": 120,
+        "triggered": true
+      }
+    ],
+    "counters": {
+      "wipTasks": 0,
+      "blockedTasks": 0,
+      "recentEdits": 20,
+      "failedChecks": 0,
+      "sessionAgeMinutes": 564
+    }
+  },
+  "continuity": {
+    "plugin_first_workflow": true,
+    "resume_aware_effort_continuity": true,
+    "effort_hint": "medium",
+    "summary": "plugin-first workflow: enabled; resume-aware effort continuity: medium"
+  },
+  "legacy_version": "1.0.0",
+  "metrics": null,
+  "recentEdits": [
+    ".claude/memory/session-log.md",
+    ".claude/sessions/.last_inbox_check",
+    ".claude/sessions/active.json",
+    ".claude/sessions/broadcast.md",
+    ".claude/sessions/leases/b335630551682c19a781afebcf4d07bf978fb1f8ac04c6bf87428ed5106870f5.lock",
+    ".claude/sessions/leases/ebd22577507f708c9dc685a831b5d2471b632d2d4b0229999c537965ba480f6b.lock",
+    ".claude/state/changed-files.jsonl",
+    ".claude/state/instructions-loaded.jsonl",
+    ".claude/state/session-events.jsonl",
+    ".claude/state/session-events.jsonl.lock",
+    ".claude/state/session-skills-used.json",
+    ".claude/state/session.events.jsonl",
+    ".claude/state/session.json",
+    ".claude/state/sessions/session-1782999263483208000.events.jsonl",
+    ".claude/state/sessions/session-1782999263483208000.json",
+    ".claude/state/sessions/session-1782999402743642000.events.jsonl",
+    ".claude/state/sessions/session-1782999402743642000.json",
+    ".claude/state/sessions/session-1783001123069605000.events.jsonl",
+    ".claude/state/sessions/session-1783001123069605000.json",
+    ".claude/state/sessions/session-1783010022968186000.events.jsonl"
+  ],
+  "sessionId": "",
+  "timestamp": "2026-07-03T01:58:41Z",
+  "version": "1.0.0",
+  "wipTasks": null
+}

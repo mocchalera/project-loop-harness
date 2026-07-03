@@ -1,12 +1,12 @@
 {
   "name": "project-loop-harness",
-  "version": "0.1.7",
+  "version": "0.1.8",
   "displayName": "Project Loop Harness",
   "summary": "Use a local pcl runtime from Codex through a project-control-loop Skill.",
   "category": "Productivity",
   "license": "MIT",
   "requires": {
-    "pythonPackage": "project-loop-harness>=0.1.7",
+    "pythonPackage": "project-loop-harness>=0.1.8",
     "targetProjectInitialized": true
   },
   "doesNotInstall": [
