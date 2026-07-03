@@ -25,7 +25,7 @@ It is designed to let coding agents work through bounded loops while humans can 
 | Layer | Responsibility | Must not do |
 |---|---|---|
 | Skill | Teach agent how to use the harness | Mutate state directly |
-| CLI | Mutate state, validate, render, schedule | Become model-specific |
+| CLI | Mutate state, validate, render, schedule, and package read-only context | Become model-specific |
 | SQLite | Store current normalized state | Be hand-edited by agents |
 | JSONL | Preserve audit trail | Serve as query engine |
 | HTML | Human-readable view | Become source of truth or agent context |
@@ -87,3 +87,17 @@ Do not choose only one:
 Agent Skills are instructions. They cannot reliably guarantee migrations, validation, deterministic rendering, or guarded state transitions by themselves.
 
 The CLI is the runtime body. The Skill only tells agents how to use it.
+
+## Machine Context Packs
+
+`pcl context pack` is a read-only packaging surface for focused agent handoffs.
+It must not mutate SQLite, append events, write packs to disk, or parse
+generated dashboard HTML.
+
+Job packs and task packs share the additive `context-pack/v1` JSON contract.
+Job packs include lease fields and rubric-aware verification columns. Task
+packs include task dependencies, dependents, linked goal/feature/defect
+context, sibling tasks, and recent events.
+
+Role profiles affect which sections fit under a tight budget, but included
+sections are always rendered in canonical document order.

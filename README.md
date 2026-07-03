@@ -188,10 +188,15 @@ without making generated dashboard HTML a machine context source:
 ```bash
 pcl context pack --job J-0001
 pcl context pack --job J-0001 --role verifier --max-tokens 12000 --json
+pcl context pack --task T-0001 --json
 ```
 
 The JSON contract is `context-pack/v1`. It includes included/omitted section
-metadata, source commands, source paths, and the generated Markdown package.
+metadata, role profile selection, source commands, source paths, and the
+generated Markdown package. Job packs include lease fields and rubric-aware
+verification columns for `rubric/v1`; task packs include dependencies,
+dependents, linked goal/feature/defect context, sibling tasks, and recent
+events.
 See [docs/context-pack.md](docs/context-pack.md) for the contract shape and
 boundaries.
 
