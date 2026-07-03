@@ -22,7 +22,7 @@ from .commands import (
     set_feature_status,
     to_pretty_json,
 )
-from .context import DEFAULT_MAX_TOKENS, pack_context_for_job
+from .context import DEFAULT_MAX_TOKENS, pack_context_for_job, pack_context_for_task
 from .decisions import (
     list_decisions,
     open_decision,
@@ -515,9 +515,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_context = sub.add_parser("context", help="Build focused machine context packages")
     context_sub = p_context.add_subparsers(dest="context_command", required=True)
-    p_context_pack = context_sub.add_parser("pack", help="Build a focused context pack for an agent job")
+    p_context_pack = context_sub.add_parser("pack", help="Build a focused context pack for an agent job or task")
     context_pack_target = p_context_pack.add_mutually_exclusive_group(required=True)
     context_pack_target.add_argument("--job", dest="job_id", default=None, help="Agent job id to package")
+    context_pack_target.add_argument("--task", dest="task_id", default=None, help="Task id to package")
     p_context_pack.add_argument("--role", default=None, help="Reader role for this handoff")
     p_context_pack.add_argument(
         "--max-tokens",
@@ -1636,12 +1637,20 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "context" and args.context_command == "pack":
-            pack = pack_context_for_job(
-                paths,
-                job_id=args.job_id,
-                reader_role=args.role,
-                max_tokens=args.max_tokens,
-            )
+            if args.job_id:
+                pack = pack_context_for_job(
+                    paths,
+                    job_id=args.job_id,
+                    reader_role=args.role,
+                    max_tokens=args.max_tokens,
+                )
+            else:
+                pack = pack_context_for_task(
+                    paths,
+                    task_id=args.task_id,
+                    reader_role=args.role,
+                    max_tokens=args.max_tokens,
+                )
             if json_output:
                 _print_json({"ok": True, "context_pack": pack})
             else:

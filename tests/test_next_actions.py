@@ -233,7 +233,7 @@ def test_next_routes_goal_linked_ready_task_before_goal_continuation(tmp_path: P
     action = _json_output(capsys)
     _assert_guided_action(action)
     assert action["type"] == "work_on_task"
-    assert action["command"] == "pcl task read T-0001"
+    assert action["command"] == "pcl context pack --task T-0001 --json"
     assert action["priority"] == 59
     assert action["blocking"] is False
     assert action["requires_human"] is False
@@ -355,7 +355,7 @@ def test_next_prefers_in_progress_task_over_ready_task(tmp_path: Path, capsys) -
     action = _json_output(capsys)
     _assert_guided_action(action)
     assert action["type"] == "work_on_task"
-    assert action["command"] == "pcl task read T-0002"
+    assert action["command"] == "pcl context pack --task T-0002 --json"
     assert action["target"]["status"] == "in_progress"
     assert "already in progress" in action["reason"]
 
@@ -426,7 +426,7 @@ def test_next_skips_dependency_blocked_task(tmp_path: Path, capsys) -> None:
     action = _json_output(capsys)
     _assert_guided_action(action)
     assert action["type"] == "work_on_task"
-    assert action["command"] == "pcl task read T-0003"
+    assert action["command"] == "pcl context pack --task T-0003 --json"
     assert action["target"]["dependency_ids"] == []
 
 

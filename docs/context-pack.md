@@ -11,7 +11,10 @@ generated dashboard HTML, or reconstructing prompt/evidence paths manually.
 ```bash
 pcl context pack --job J-0001
 pcl context pack --job J-0001 --role verifier --max-tokens 12000 --json
+pcl context pack --task T-0001 --json
 ```
+
+Exactly one of `--job` or `--task` is required.
 
 ## Contract
 
@@ -24,6 +27,7 @@ JSON mode returns `context-pack/v1`:
     "contract_version": "context-pack/v1",
     "target": {"type": "agent_job", "id": "J-0001"},
     "reader_role": "verifier",
+    "role_profile": "verifier",
     "budget": {
       "max_tokens": 12000,
       "approx_char_limit": 48000,
@@ -44,10 +48,63 @@ JSON mode returns `context-pack/v1`:
 }
 ```
 
+Task packs use the same `context-pack/v1` contract with
+`"target": {"type": "task", "id": "T-0001"}`. This is an additive evolution of
+the v1 contract rather than a new contract version.
+
 `--max-tokens` is an approximate budget control. The command uses a fixed
 four-characters-per-token estimate so output is deterministic and dependency
 free. When the budget is too small, the command returns a truncated pack with
 `omitted_sections` metadata instead of failing.
+
+## Sections
+
+Job packs render included sections in canonical order:
+
+1. machine context rules
+2. target job
+3. workflow run
+4. goal
+5. jobs in this run
+6. verifications
+7. human queue
+8. evidence
+9. recent events
+10. agent prompt
+
+The target job table includes lease fields:
+`assigned_agent_id`, `attempts`, `lease_expires_at`, and
+`last_heartbeat_at`. The verifications table includes rubric-aware
+`confidence_score` and `evidence_completeness` columns when a row claims
+`rubric/v1`; rows without that contract leave those cells blank.
+
+Task packs render included sections in canonical order:
+
+1. machine context rules
+2. target task
+3. dependencies
+4. dependents
+5. goal
+6. related feature, when linked
+7. related defect, when linked
+8. sibling tasks, when a goal is linked
+9. recent events
+
+Task dependencies include a `satisfied` column. It is `yes` when the dependency
+task status is `done`, `cancelled`, or `waived`; otherwise it is `no`.
+
+## Role Profiles
+
+Section selection is role-aware under tight budgets. Sections are selected by
+profile priority, then rendered in canonical order.
+
+- `implementer` is the default job profile and follows canonical job order.
+- `verifier` prioritizes verifications, evidence, target job, and run jobs.
+- `pm` prioritizes goal, human queue, workflow run, and verifications.
+- Unknown or blank job roles fall back to `implementer`.
+- Task packs currently use the `default` profile.
+
+The selected profile name is returned as `role_profile`.
 
 ## Boundaries
 

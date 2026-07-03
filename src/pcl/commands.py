@@ -787,7 +787,7 @@ def _task_next_action(paths: ProjectPaths) -> dict | None:
             task_id = str(task["id"])
             return build_next_action(
                 action_type="work_on_task",
-                command=f"pcl task read {task_id}",
+                command=f"pcl context pack --task {task_id} --json",
                 reason=(
                     "A task under an open goal is already in progress; finish that task before "
                     "starting another backlog item."
@@ -797,7 +797,7 @@ def _task_next_action(paths: ProjectPaths) -> dict | None:
                 blocking=False,
                 requires_human=False,
                 safe_to_run=True,
-                expected_after=f"Task {task_id} advances toward done.",
+                expected_after=f"The task context pack is reviewed and task {task_id} advances toward done.",
             )
 
         actionable = _next_actionable_task(conn)
@@ -807,7 +807,7 @@ def _task_next_action(paths: ProjectPaths) -> dict | None:
         task_id = str(task["id"])
         return build_next_action(
             action_type="work_on_task",
-            command=f"pcl task read {task_id}",
+            command=f"pcl context pack --task {task_id} --json",
             reason=(
                 "This is the highest-priority ready task under an open goal with all "
                 "dependencies satisfied."
@@ -817,7 +817,7 @@ def _task_next_action(paths: ProjectPaths) -> dict | None:
             blocking=False,
             requires_human=False,
             safe_to_run=True,
-            expected_after=f"Task {task_id} advances toward done.",
+            expected_after=f"The task context pack is reviewed and task {task_id} advances toward done.",
         )
     finally:
         conn.close()

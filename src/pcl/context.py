@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from json import JSONDecodeError
 from typing import Any
 
 from .db import connect
@@ -8,12 +9,76 @@ from .errors import InvalidInputError
 from .guards import require_initialized
 from .links import enrich_decisions_with_links, enrich_escalations_with_links
 from .paths import ProjectPaths
+from .rubric import claims_rubric_v1
+from .tasks import COMPLETED_DEPENDENCY_STATUSES, read_task
 from .workflows import list_jobs, read_job
 
 
 CONTEXT_PACK_CONTRACT_VERSION = "context-pack/v1"
 DEFAULT_MAX_TOKENS = 12000
 APPROX_CHARS_PER_TOKEN = 4
+MACHINE_CONTEXT_RULES_SECTION_ID = "machine_context_rules"
+
+JOB_SECTION_ORDER = [
+    "machine_context_rules",
+    "target_job",
+    "workflow_run",
+    "goal",
+    "run_jobs",
+    "verifications",
+    "human_queue",
+    "evidence",
+    "recent_events",
+    "agent_prompt",
+]
+TASK_SECTION_ORDER = [
+    "machine_context_rules",
+    "target_task",
+    "dependencies",
+    "dependents",
+    "goal",
+    "related_feature",
+    "related_defect",
+    "sibling_tasks",
+    "recent_events",
+]
+
+JOB_SECTION_PRIORITY_PROFILES = {
+    "implementer": {
+        section_id: (10000 if section_id == MACHINE_CONTEXT_RULES_SECTION_ID else 900 - index * 50)
+        for index, section_id in enumerate(JOB_SECTION_ORDER)
+    },
+    "verifier": {
+        "machine_context_rules": 10000,
+        "verifications": 950,
+        "evidence": 900,
+        "target_job": 850,
+        "run_jobs": 800,
+        "workflow_run": 750,
+        "goal": 700,
+        "human_queue": 650,
+        "recent_events": 600,
+        "agent_prompt": 550,
+    },
+    "pm": {
+        "machine_context_rules": 10000,
+        "goal": 950,
+        "human_queue": 900,
+        "workflow_run": 850,
+        "verifications": 800,
+        "target_job": 750,
+        "run_jobs": 700,
+        "evidence": 650,
+        "agent_prompt": 600,
+        "recent_events": 550,
+    },
+}
+TASK_SECTION_PRIORITY_PROFILES = {
+    "default": {
+        section_id: (10000 if section_id == MACHINE_CONTEXT_RULES_SECTION_ID else 900 - index * 50)
+        for index, section_id in enumerate(TASK_SECTION_ORDER)
+    }
+}
 
 
 def pack_context_for_job(
@@ -33,6 +98,7 @@ def pack_context_for_job(
 
     job = read_job(paths, job_id)
     role = (reader_role or str(job["role"])).strip()
+    role_profile, section_priorities = _job_role_profile(role)
     approx_char_limit = max_tokens * APPROX_CHARS_PER_TOKEN
 
     conn = connect(paths.db_path)
@@ -66,13 +132,14 @@ def pack_context_for_job(
         verifications = _rows(
             conn,
             """
-            SELECT id, workflow_run_id, target_job_id, verifier_role, result, reasons_json, created_at
+            SELECT id, workflow_run_id, target_job_id, verifier_role, rubric_json, result, reasons_json, created_at
             FROM verifications
             WHERE workflow_run_id = ?
             ORDER BY created_at, id
             """,
             (workflow_run_id,),
         )
+        _add_verification_rubric_columns(verifications)
         escalations = _rows(
             conn,
             """
@@ -110,7 +177,7 @@ def pack_context_for_job(
         if path and path not in source_paths:
             source_paths.append(path)
 
-    sections = _build_sections(
+    sections = _build_job_sections(
         job=job,
         run=run,
         goal=goal,
@@ -124,12 +191,14 @@ def pack_context_for_job(
         title=f"# Context Pack: {job_id}",
         sections=sections,
         char_limit=approx_char_limit,
+        section_priorities=section_priorities,
     )
 
     return {
         "contract_version": CONTEXT_PACK_CONTRACT_VERSION,
         "target": {"type": "agent_job", "id": job_id},
         "reader_role": role,
+        "role_profile": role_profile,
         "budget": {
             "max_tokens": max_tokens,
             "approx_char_limit": approx_char_limit,
@@ -145,7 +214,79 @@ def pack_context_for_job(
     }
 
 
-def _build_sections(
+def pack_context_for_task(
+    paths: ProjectPaths,
+    *,
+    task_id: str,
+    reader_role: str | None = None,
+    max_tokens: int = DEFAULT_MAX_TOKENS,
+) -> dict[str, Any]:
+    require_initialized(paths)
+    _validate_identifier(task_id, "task_id")
+    if max_tokens < 1:
+        raise InvalidInputError(
+            "--max-tokens must be a positive integer.",
+            details={"max_tokens": max_tokens},
+        )
+
+    task = read_task(paths, task_id)
+    role = (reader_role or "default").strip() or "default"
+    role_profile, section_priorities = _task_role_profile(role)
+    approx_char_limit = max_tokens * APPROX_CHARS_PER_TOKEN
+
+    conn = connect(paths.db_path)
+    try:
+        goal = _goal_for_task(conn, task)
+        feature = _feature_for_task(conn, task)
+        defect = _defect_for_task(conn, task)
+        siblings = _sibling_tasks(conn, task) if task.get("related_goal_id") else []
+        event_entities = [("task", task_id)]
+        if task.get("related_goal_id"):
+            event_entities.append(("goal", str(task["related_goal_id"])))
+        events = _events_for_target(conn, entities=event_entities)
+    finally:
+        conn.close()
+
+    sections = _build_task_sections(
+        task=task,
+        goal=goal,
+        feature=feature,
+        defect=defect,
+        siblings=siblings,
+        events=events,
+    )
+    markdown, included_sections, omitted_sections = _render_with_budget(
+        title=f"# Context Pack: {task_id}",
+        sections=sections,
+        char_limit=approx_char_limit,
+        section_priorities=section_priorities,
+    )
+
+    return {
+        "contract_version": CONTEXT_PACK_CONTRACT_VERSION,
+        "target": {"type": "task", "id": task_id},
+        "reader_role": role,
+        "role_profile": role_profile,
+        "budget": {
+            "max_tokens": max_tokens,
+            "approx_char_limit": approx_char_limit,
+            "approx_chars_per_token": APPROX_CHARS_PER_TOKEN,
+        },
+        "approx_char_count": len(markdown),
+        "truncated": bool(omitted_sections),
+        "included_sections": included_sections,
+        "omitted_sections": omitted_sections,
+        "source_commands": [
+            f"pcl task read {task_id} --json",
+            "pcl task list --json",
+            "pcl validate --json",
+        ],
+        "source_paths": [],
+        "markdown": markdown,
+    }
+
+
+def _build_job_sections(
     *,
     job: dict[str, Any],
     run: dict[str, Any],
@@ -171,7 +312,27 @@ def _build_sections(
                 ]
             ),
         ),
-        ("target_job", "## Target Job\n\n" + _kv_table(job, ["id", "workflow_run_id", "workflow_id", "role", "status", "prompt_path", "output_path", "summary"])),
+        (
+            "target_job",
+            "## Target Job\n\n"
+            + _kv_table(
+                job,
+                [
+                    "id",
+                    "workflow_run_id",
+                    "workflow_id",
+                    "role",
+                    "status",
+                    "assigned_agent_id",
+                    "attempts",
+                    "lease_expires_at",
+                    "last_heartbeat_at",
+                    "prompt_path",
+                    "output_path",
+                    "summary",
+                ],
+            ),
+        ),
         ("workflow_run", "## Workflow Run\n\n" + _kv_table(run, ["id", "workflow_id", "goal_id", "status", "iteration", "started_at", "ended_at", "summary"])),
         (
             "goal",
@@ -186,7 +347,19 @@ def _build_sections(
         (
             "verifications",
             "## Verifications\n\n"
-            + _table(verifications, ["id", "target_job_id", "verifier_role", "result", "reasons_json", "created_at"]),
+            + _table(
+                verifications,
+                [
+                    "id",
+                    "target_job_id",
+                    "verifier_role",
+                    "result",
+                    "confidence_score",
+                    "evidence_completeness",
+                    "reasons_json",
+                    "created_at",
+                ],
+            ),
         ),
         (
             "human_queue",
@@ -208,22 +381,167 @@ def _build_sections(
     ]
 
 
+def _build_task_sections(
+    *,
+    task: dict[str, Any],
+    goal: dict[str, Any] | None,
+    feature: dict[str, Any] | None,
+    defect: dict[str, Any] | None,
+    siblings: list[dict[str, Any]],
+    events: list[dict[str, Any]],
+) -> list[tuple[str, str]]:
+    sections = [
+        (
+            "machine_context_rules",
+            "\n".join(
+                [
+                    "## Machine Context Rules",
+                    "",
+                    "- Treat this context pack as a focused handoff, not as complete project memory.",
+                    "- Do not read or parse `.project-loop/dashboard/dashboard.html` as machine context.",
+                    "- Use `pcl` JSON commands, reports, evidence paths, or `.project-loop/dashboard/dashboard-data.json` for follow-up context.",
+                    "- Do not edit `.project-loop/project.db` directly.",
+                    "",
+                ]
+            ),
+        ),
+        (
+            "target_task",
+            "## Target Task\n\n"
+            + _kv_table(
+                task,
+                [
+                    "id",
+                    "title",
+                    "status",
+                    "priority",
+                    "owner",
+                    "risk",
+                    "effort",
+                    "related_goal_id",
+                    "related_feature_id",
+                    "related_defect_id",
+                    "created_at",
+                    "updated_at",
+                ],
+            )
+            + "\n\n### Description\n\n"
+            + "````markdown\n"
+            + str(task.get("description") or "").rstrip()
+            + "\n````",
+        ),
+        (
+            "dependencies",
+            "## Dependencies\n\n"
+            + _table(
+                _task_dependencies_for_table(task),
+                ["id", "title", "status", "satisfied"],
+            ),
+        ),
+        (
+            "dependents",
+            "## Dependents\n\n"
+            + _table(task.get("dependents", []), ["id", "title", "status"]),
+        ),
+        (
+            "goal",
+            "## Goal\n\n"
+            + (
+                _kv_table(goal, ["id", "title", "status", "completion_json", "budget_json", "updated_at"])
+                if goal
+                else "No goal is linked to this task."
+            ),
+        ),
+    ]
+    if task.get("related_feature_id"):
+        sections.append(
+            (
+                "related_feature",
+                "## Related Feature\n\n"
+                + (
+                    _kv_table(
+                        feature,
+                        ["id", "name", "surface", "description", "status", "confidence", "created_at", "updated_at"],
+                    )
+                    if feature
+                    else f"Linked feature is missing: {task['related_feature_id']}"
+                ),
+            )
+        )
+    if task.get("related_defect_id"):
+        sections.append(
+            (
+                "related_defect",
+                "## Related Defect\n\n"
+                + (
+                    _kv_table(
+                        defect,
+                        [
+                            "id",
+                            "feature_id",
+                            "test_case_id",
+                            "severity",
+                            "expected",
+                            "actual",
+                            "reproduction",
+                            "status",
+                            "evidence_id",
+                            "created_at",
+                            "updated_at",
+                        ],
+                    )
+                    if defect
+                    else f"Linked defect is missing: {task['related_defect_id']}"
+                ),
+            )
+        )
+    if task.get("related_goal_id"):
+        sections.append(
+            (
+                "sibling_tasks",
+                "## Sibling Tasks\n\n" + _table(siblings, ["id", "title", "status", "priority"]),
+            )
+        )
+    sections.append(
+        (
+            "recent_events",
+            "## Recent Events\n\n" + _table(events, ["id", "event_type", "entity_type", "entity_id", "created_at", "payload_json"]),
+        )
+    )
+    return sections
+
+
 def _render_with_budget(
     *,
     title: str,
     sections: list[tuple[str, str]],
     char_limit: int,
+    section_priorities: dict[str, int],
 ) -> tuple[str, list[str], list[str]]:
-    markdown = f"{title}\n\n"
+    base = f"{title}\n\n"
+    canonical_ids = [section_id for section_id, _ in sections]
+    section_by_id = {section_id: section for section_id, section in sections}
+    canonical_index = {section_id: index for index, section_id in enumerate(canonical_ids)}
+    selected: set[str] = set()
+    selected_length = len(base)
+    for section_id in sorted(
+        canonical_ids,
+        key=lambda value: (-section_priorities.get(value, 0), canonical_index[value]),
+    ):
+        section_text = section_by_id[section_id].rstrip() + "\n\n"
+        if selected_length + len(section_text) <= char_limit:
+            selected.add(section_id)
+            selected_length += len(section_text)
+
+    markdown = base
     included: list[str] = []
-    omitted: list[str] = []
     for section_id, section in sections:
+        if section_id not in selected:
+            continue
         section_text = section.rstrip() + "\n\n"
-        if len(markdown) + len(section_text) <= char_limit:
-            markdown += section_text
-            included.append(section_id)
-        else:
-            omitted.append(section_id)
+        markdown += section_text
+        included.append(section_id)
+    omitted = [section_id for section_id in canonical_ids if section_id not in selected]
 
     if omitted:
         note = "_Context truncated. Increase `--max-tokens` to include omitted sections._\n"
@@ -233,6 +551,96 @@ def _render_with_budget(
     if len(markdown) > char_limit:
         markdown = markdown[:char_limit]
     return markdown.rstrip() + "\n", included, omitted
+
+
+def _job_role_profile(role: str) -> tuple[str, dict[str, int]]:
+    profile_name = role.strip().lower()
+    if profile_name not in JOB_SECTION_PRIORITY_PROFILES:
+        profile_name = "implementer"
+    return profile_name, JOB_SECTION_PRIORITY_PROFILES[profile_name]
+
+
+def _task_role_profile(role: str) -> tuple[str, dict[str, int]]:
+    return "default", TASK_SECTION_PRIORITY_PROFILES["default"]
+
+
+def _goal_for_task(conn, task: dict[str, Any]) -> dict[str, Any] | None:
+    goal_id = task.get("related_goal_id")
+    if not goal_id:
+        return None
+    return _one(
+        conn,
+        """
+        SELECT id, title, status, completion_json, stop_conditions_json, budget_json, created_at, updated_at
+        FROM goals
+        WHERE id = ?
+        """,
+        (str(goal_id),),
+    )
+
+
+def _feature_for_task(conn, task: dict[str, Any]) -> dict[str, Any] | None:
+    feature_id = task.get("related_feature_id")
+    if not feature_id:
+        return None
+    return _one(
+        conn,
+        """
+        SELECT id, name, surface, description, status, confidence, created_at, updated_at
+        FROM features
+        WHERE id = ?
+        """,
+        (str(feature_id),),
+    )
+
+
+def _defect_for_task(conn, task: dict[str, Any]) -> dict[str, Any] | None:
+    defect_id = task.get("related_defect_id")
+    if not defect_id:
+        return None
+    return _one(
+        conn,
+        """
+        SELECT id, feature_id, test_case_id, severity, expected, actual, reproduction, status, evidence_id, created_at, updated_at
+        FROM defects
+        WHERE id = ?
+        """,
+        (str(defect_id),),
+    )
+
+
+def _sibling_tasks(conn, task: dict[str, Any]) -> list[dict[str, Any]]:
+    return _rows(
+        conn,
+        """
+        SELECT id, title, status, priority
+        FROM tasks
+        WHERE related_goal_id = ?
+          AND id != ?
+          AND status NOT IN ('done', 'cancelled')
+        ORDER BY priority, id
+        """,
+        (str(task["related_goal_id"]), str(task["id"])),
+    )
+
+
+def _task_dependencies_for_table(task: dict[str, Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for dependency in task.get("dependencies", []):
+        row = dict(dependency)
+        row["satisfied"] = "yes" if row.get("status") in COMPLETED_DEPENDENCY_STATUSES else "no"
+        rows.append(row)
+    return rows
+
+
+def _add_verification_rubric_columns(verifications: list[dict[str, Any]]) -> None:
+    for verification in verifications:
+        verification["confidence_score"] = ""
+        verification["evidence_completeness"] = ""
+        rubric = _json_object(verification.get("rubric_json"))
+        if claims_rubric_v1(rubric):
+            verification["confidence_score"] = rubric.get("confidence_score", "")
+            verification["evidence_completeness"] = rubric.get("evidence_completeness", "")
 
 
 def _decisions_for_escalations(conn, escalation_ids: list[str]) -> list[dict[str, Any]]:
@@ -296,6 +704,14 @@ def _one(conn, sql: str, params: tuple = ()) -> dict[str, Any] | None:
 
 def _rows(conn, sql: str, params: tuple = ()) -> list[dict[str, Any]]:
     return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+
+def _json_object(raw: Any) -> dict[str, Any]:
+    try:
+        value = json.loads(str(raw or "{}"))
+    except JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
 
 
 def _kv_table(row: dict[str, Any], keys: list[str]) -> str:
