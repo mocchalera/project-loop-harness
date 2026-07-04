@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 import hashlib
 import json
 from json import JSONDecodeError
+from pathlib import Path
 import sqlite3
 from typing import Any
 
@@ -44,9 +45,26 @@ VERSIONED_REQUIRED_TABLES = {
 }
 
 ACTIVE_RUN_STATUSES = ("blocked", "queued", "running")
+TERMINAL_GOAL_STATUSES = ("cancelled", "closed")
+TERMINAL_RUN_STATUSES = ("cancelled", "failed", "passed")
+ACTIVE_JOB_STATUSES = ("blocked", "queued", "running")
+TERMINAL_TASK_STATUSES = ("cancelled", "done", "waived")
 TERMINAL_WORKFLOW_PROPOSAL_EVENT_TYPES = {
     "workflow_proposal_approved",
     "workflow_proposal_cancelled",
+}
+DECISION_BLOCK_TARGET_TABLES = {
+    "agent_job": "agent_jobs",
+    "defect": "defects",
+    "escalation": "escalations",
+    "evidence": "evidence",
+    "feature": "features",
+    "goal": "goals",
+    "task": "tasks",
+    "test_case": "test_cases",
+    "user_story": "user_stories",
+    "verification": "verifications",
+    "workflow_run": "workflow_runs",
 }
 
 
@@ -227,6 +245,9 @@ def _validate_strict_invariants(paths: ProjectPaths, conn: sqlite3.Connection, r
     _validate_verified_or_closed_defects(conn, result)
     _validate_terminal_test_cases(conn, result)
     _validate_duplicate_active_runs(conn, result)
+    _validate_terminal_parent_children(conn, result)
+    _validate_decision_block_links(conn, result)
+    _validate_local_artifact_paths(paths, conn, result)
 
 
 def _validate_verification_rubrics(
@@ -717,6 +738,194 @@ def _validate_duplicate_active_runs(conn: sqlite3.Connection, result: Validation
             result.add_error(
                 f"Duplicate active workflow runs for {target_type} {target_id}: {', '.join(run_ids)}."
             )
+
+
+def _validate_terminal_parent_children(conn: sqlite3.Connection, result: ValidationResult) -> None:
+    run_placeholders = ", ".join("?" for _ in ACTIVE_RUN_STATUSES)
+    terminal_goal_placeholders = ", ".join("?" for _ in TERMINAL_GOAL_STATUSES)
+    rows = conn.execute(
+        f"""
+        SELECT goals.id AS goal_id, goals.status AS goal_status,
+               workflow_runs.id AS workflow_run_id, workflow_runs.status AS workflow_run_status
+        FROM goals
+        JOIN workflow_runs ON workflow_runs.goal_id = goals.id
+        WHERE goals.status IN ({terminal_goal_placeholders})
+          AND workflow_runs.status IN ({run_placeholders})
+        ORDER BY goals.id, workflow_runs.id
+        """,
+        (*TERMINAL_GOAL_STATUSES, *ACTIVE_RUN_STATUSES),
+    ).fetchall()
+    for row in rows:
+        result.add_error(
+            f"Terminal goal {row['goal_id']} is {row['goal_status']} but has active "
+            f"workflow run {row['workflow_run_id']} ({row['workflow_run_status']})."
+        )
+
+    if table_exists(conn, "tasks"):
+        task_placeholders = ", ".join("?" for _ in TERMINAL_TASK_STATUSES)
+        rows = conn.execute(
+            f"""
+            SELECT goals.id AS goal_id, goals.status AS goal_status,
+                   tasks.id AS task_id, tasks.status AS task_status
+            FROM goals
+            JOIN tasks ON tasks.related_goal_id = goals.id
+            WHERE goals.status IN ({terminal_goal_placeholders})
+              AND tasks.status NOT IN ({task_placeholders})
+            ORDER BY goals.id, tasks.id
+            """,
+            (*TERMINAL_GOAL_STATUSES, *TERMINAL_TASK_STATUSES),
+        ).fetchall()
+        for row in rows:
+            result.add_error(
+                f"Terminal goal {row['goal_id']} is {row['goal_status']} but has non-terminal "
+                f"task {row['task_id']} ({row['task_status']})."
+            )
+
+    terminal_run_placeholders = ", ".join("?" for _ in TERMINAL_RUN_STATUSES)
+    active_job_placeholders = ", ".join("?" for _ in ACTIVE_JOB_STATUSES)
+    rows = conn.execute(
+        f"""
+        SELECT workflow_runs.id AS workflow_run_id, workflow_runs.status AS workflow_run_status,
+               agent_jobs.id AS agent_job_id, agent_jobs.status AS agent_job_status
+        FROM workflow_runs
+        JOIN agent_jobs ON agent_jobs.workflow_run_id = workflow_runs.id
+        WHERE workflow_runs.status IN ({terminal_run_placeholders})
+          AND agent_jobs.status IN ({active_job_placeholders})
+        ORDER BY workflow_runs.id, agent_jobs.id
+        """,
+        (*TERMINAL_RUN_STATUSES, *ACTIVE_JOB_STATUSES),
+    ).fetchall()
+    for row in rows:
+        result.add_error(
+            f"Terminal workflow run {row['workflow_run_id']} is {row['workflow_run_status']} "
+            f"but has active agent job {row['agent_job_id']} ({row['agent_job_status']})."
+        )
+
+
+def _validate_decision_block_links(conn: sqlite3.Connection, result: ValidationResult) -> None:
+    rows = conn.execute(
+        """
+        SELECT id, blocks_json
+        FROM decisions
+        ORDER BY id
+        """
+    ).fetchall()
+    for row in rows:
+        decision_id = str(row["id"])
+        try:
+            blocks = json.loads(str(row["blocks_json"] or "[]"))
+        except JSONDecodeError as exc:
+            result.add_error(f"Decision {decision_id} blocks_json is invalid JSON: {exc.msg}.")
+            continue
+        if not isinstance(blocks, list):
+            result.add_error(f"Decision {decision_id} blocks_json must be a JSON array.")
+            continue
+        for index, item in enumerate(blocks, start=1):
+            if not isinstance(item, dict):
+                result.add_error(f"Decision {decision_id} blocks_json item {index} must be an object.")
+                continue
+            target_type = item.get("type")
+            target_id = item.get("id")
+            if not isinstance(target_type, str) or not target_type or not isinstance(target_id, str) or not target_id:
+                result.add_error(
+                    f"Decision {decision_id} blocks_json item {index} must include string type and id."
+                )
+                continue
+            table_name = DECISION_BLOCK_TARGET_TABLES.get(target_type)
+            if table_name is None:
+                result.add_error(
+                    f"Decision {decision_id} blocks_json item {index} has unsupported type {target_type!r}."
+                )
+                continue
+            if not table_exists(conn, table_name):
+                result.add_error(
+                    f"Decision {decision_id} blocks_json item {index} uses unavailable type {target_type!r}."
+                )
+                continue
+            if conn.execute(f"SELECT 1 FROM {table_name} WHERE id = ?", (target_id,)).fetchone() is None:
+                result.add_error(
+                    f"Decision {decision_id} blocks_json references missing {target_type} {target_id}."
+                )
+
+
+def _validate_local_artifact_paths(
+    paths: ProjectPaths,
+    conn: sqlite3.Connection,
+    result: ValidationResult,
+) -> None:
+    evidence_rows = conn.execute(
+        """
+        SELECT id, path
+        FROM evidence
+        ORDER BY id
+        """
+    ).fetchall()
+    for row in evidence_rows:
+        _validate_local_artifact_path(
+            paths,
+            result,
+            owner=f"Evidence {row['id']}",
+            field_name="path",
+            path_value=str(row["path"] or ""),
+        )
+
+    job_rows = conn.execute(
+        """
+        SELECT id, prompt_path, output_path
+        FROM agent_jobs
+        ORDER BY id
+        """
+    ).fetchall()
+    for row in job_rows:
+        _validate_local_artifact_path(
+            paths,
+            result,
+            owner=f"Agent job {row['id']}",
+            field_name="prompt_path",
+            path_value=str(row["prompt_path"] or ""),
+        )
+        output_path = str(row["output_path"] or "")
+        if output_path:
+            _validate_local_artifact_path(
+                paths,
+                result,
+                owner=f"Agent job {row['id']}",
+                field_name="output_path",
+                path_value=output_path,
+            )
+
+
+def _validate_local_artifact_path(
+    paths: ProjectPaths,
+    result: ValidationResult,
+    *,
+    owner: str,
+    field_name: str,
+    path_value: str,
+) -> None:
+    normalized = path_value.strip()
+    if not normalized:
+        result.add_error(f"{owner} {field_name} is empty.")
+        return
+    if _is_virtual_or_external_path(normalized):
+        return
+    path = Path(normalized)
+    absolute_path = path if path.is_absolute() else paths.root / path
+    if not absolute_path.exists():
+        result.add_error(f"{owner} {field_name} does not exist: {normalized}.")
+    elif not absolute_path.is_file():
+        result.add_error(f"{owner} {field_name} is not a file: {normalized}.")
+
+
+def _is_virtual_or_external_path(value: str) -> bool:
+    if value.startswith("inline:"):
+        return True
+    if ":" not in value:
+        return False
+    scheme = value.split(":", 1)[0]
+    return bool(scheme) and scheme[0].isalpha() and all(
+        char.isalnum() or char in {"+", "-", "."} for char in scheme
+    )
 
 
 def _validate_task_invariants(conn: sqlite3.Connection, result: ValidationResult) -> None:
