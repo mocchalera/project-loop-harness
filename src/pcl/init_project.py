@@ -19,6 +19,7 @@ DEFAULT_DIRS = [
     "evidence/agent-runs",
     "evidence/test-results",
     "evidence/command-logs",
+    "evidence/context-receipts",
     "exports",
     "reports",
     "worktrees",

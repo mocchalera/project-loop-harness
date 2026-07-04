@@ -9,6 +9,14 @@ import sys
 from . import __version__
 from .agents import generate_agent_command, ingest_agent_run, read_job_prompt, read_job_prompt_handoff
 from .checkpoints import checkpoint_status, record_checkpoint
+from .code_index import (
+    GIT_DIFF_SENTINEL,
+    analyze_impact,
+    build_code_index,
+    code_index_status,
+    evaluate_retrieval,
+    search_code,
+)
 from .commands import (
     FEATURE_STATUSES,
     add_feature,
@@ -526,6 +534,32 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MAX_TOKENS,
         help="Approximate token budget for the generated Markdown package.",
     )
+
+    p_index = sub.add_parser("index", help="Build and inspect the code context index")
+    index_sub = p_index.add_subparsers(dest="index_command", required=True)
+    index_sub.add_parser("build", help="Build a gitignore-aware code index snapshot")
+    index_sub.add_parser("status", help="Inspect the latest code index snapshot")
+
+    p_code = sub.add_parser("code", help="Search indexed code context")
+    code_sub = p_code.add_subparsers(dest="code_command", required=True)
+    p_code_search = code_sub.add_parser("search", help="Run a lexical search over indexed files")
+    p_code_search.add_argument("query")
+    p_code_search.add_argument("--limit", type=int, default=50)
+
+    p_impact = sub.add_parser("impact", help="Explain likely code impact from a diff")
+    p_impact.add_argument(
+        "--diff",
+        dest="diff_source",
+        nargs="?",
+        const=GIT_DIFF_SENTINEL,
+        required=True,
+        help="Diff file to analyze, '-' for stdin, or omit the value to use git diff.",
+    )
+
+    p_eval = sub.add_parser("eval", help="Evaluate retrieval fixtures")
+    eval_sub = p_eval.add_subparsers(dest="eval_command", required=True)
+    p_eval_retrieval = eval_sub.add_parser("retrieval", help="Evaluate indexed retrieval")
+    p_eval_retrieval.add_argument("--fixture", required=True)
 
     p_verification = sub.add_parser("verification", help="Record verification results")
     verification_sub = p_verification.add_subparsers(dest="verification_command", required=True)
@@ -1655,6 +1689,51 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json({"ok": True, "context_pack": pack})
             else:
                 print(pack["markdown"], end="")
+            return 0
+
+        if args.command == "index" and args.index_command == "build":
+            result = build_code_index(paths)
+            if json_output:
+                _print_json(result)
+            else:
+                index = result["index"]
+                print(
+                    f"Indexed {index['file_count']} files "
+                    f"({index['indexed_bytes']} bytes), ignored {index['ignored_count']} paths"
+                )
+            return 0
+
+        if args.command == "index" and args.index_command == "status":
+            result = code_index_status(paths)
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result["index"]))
+            return 0
+
+        if args.command == "code" and args.code_command == "search":
+            result = search_code(paths, query=args.query, limit=args.limit)
+            if json_output:
+                _print_json(result)
+            else:
+                for item in result["search"]["results"]:
+                    print(f"{item['path']}:{item['lines'][0]} {item['snippet']}")
+            return 0
+
+        if args.command == "impact":
+            result = analyze_impact(paths, diff_source=args.diff_source)
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result["impact"]))
+            return 0
+
+        if args.command == "eval" and args.eval_command == "retrieval":
+            result = evaluate_retrieval(paths, fixture_path=args.fixture)
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result["evaluation"]))
             return 0
 
         if args.command == "verification" and args.verification_command == "record":

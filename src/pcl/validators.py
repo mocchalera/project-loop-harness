@@ -42,6 +42,10 @@ VERSIONED_REQUIRED_TABLES = {
     3: [
         "agents",
     ],
+    4: [
+        "code_index_runs",
+        "code_index_files",
+    ],
 }
 
 ACTIVE_RUN_STATUSES = ("blocked", "queued", "running")
