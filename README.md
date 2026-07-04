@@ -202,6 +202,32 @@ Markdown.
 See [docs/context-pack.md](docs/context-pack.md) for the contract shape and
 boundaries.
 
+## Explainable Code Context
+
+Build a local code context snapshot when an agent handoff needs auditable code
+candidate context:
+
+```bash
+pcl index build --json
+pcl index status --json
+pcl code search "context pack" --json
+pcl impact --diff --json
+pcl eval retrieval --fixture tests/fixtures/retrieval_v0.json --json
+```
+
+The index is dependency-free and explicit. It records file metadata, hashes for
+small text files, language, symbol-lite summaries, and test hints. It respects
+default local-state exclusions and gitignore rules, and it records omitted
+paths with reasons.
+
+`pcl impact --diff --json` returns `impact/v0` and writes a context receipt
+under `.project-loop/evidence/context-receipts/`, registered as normal
+evidence. Receipts use the fields `included_candidate_context`, `omitted`, and
+`staleness_warnings` to explain what PLH provided and why.
+
+See [docs/code-context.md](docs/code-context.md) for the index, impact,
+receipt, and retrieval-eval contracts.
+
 ## Guided Next Actions
 
 `pcl next` is the loop router. The JSON output keeps the original fields and adds stable guidance fields:
@@ -361,6 +387,7 @@ The current local runtime supports:
 - hardened Claude Code manual adapter instructions;
 - generic shell adapter command template;
 - read-only context packs for focused agent handoff;
+- explainable code context indexing, lexical code search, impact receipts, and retrieval evaluation;
 - validated agent output ingestion as evidence;
 - job-centric evidence linkage for ingested agent output;
 - verification recording;
@@ -413,6 +440,9 @@ agent-tasks/0063-structured-verification-rubric.md
 agent-tasks/0064-task-loop-integration.md
 agent-tasks/0065-dashboard-human-decisions.md
 agent-tasks/0066-agent-registry-lease.md
+agent-tasks/0067-context-pack-improvements.md
+agent-tasks/0068-context-token-estimator.md
+agent-tasks/0069-explainable-code-context-v0.md
 ```
 
 Do not skip directly to MCP, plugin distribution, hosted services, or dynamic workflow generation before the CLI/runtime and project state layer are solid.

@@ -4,7 +4,7 @@
 
 The database is created and upgraded through ordered SQL migrations in
 `src/pcl/db/migrations/`. `src/pcl/db/schema.sql` is the base v1 schema, while
-new installs currently apply migrations through schema version 3.
+new installs currently apply migrations through schema version 4.
 
 Core tables:
 
@@ -26,6 +26,8 @@ Core tables:
 - `evidence`
 - `verifications`
 - `escalations`
+- `code_index_runs`
+- `code_index_files`
 
 ## Entity relationships
 
@@ -56,6 +58,9 @@ Defect
 
 Decision / Escalation
   └─ blocks Goal, Feature, Defect, or WorkflowRun through JSON references
+
+CodeIndexRun
+  └─ CodeIndexFile
 ```
 
 ## ID prefixes
@@ -138,3 +143,26 @@ verification. Closing a goal requires explicit evidence text or an approved
 verification. Fixing, closing, or waiving a defect records evidence, and
 verifying a defect requires an approved verification tied to the defect repair
 workflow run.
+
+## Code Context Index
+
+Schema version 4 adds the approved explainable code context index:
+
+- `code_index_runs`: `id`, `root_path`, `created_at`, `git_head`,
+  `file_count`, `indexed_bytes`, `ignored_count`, `index_version`, `status`,
+  `summary_json`.
+- `code_index_files`: `id`, `index_run_id`, `path`, `language`, `size_bytes`,
+  `mtime`, `sha256`, `line_count`, `symbol_summary_json`, `test_hint_json`.
+
+The index is an explicit snapshot. The working tree remains the source of
+truth, and status/impact commands report staleness when the snapshot differs
+from current file metadata or Git HEAD.
+
+Ignored paths, hash-skip reasons for binary/large files, and language counts
+live in `code_index_runs.summary_json`. File-level symbol-lite and test-hint
+metadata live in JSON columns on `code_index_files`.
+
+Impact receipts are not a new table. `pcl impact --diff` writes a JSON artifact
+under `.project-loop/evidence/context-receipts/` and registers it through the
+existing `evidence` table with type `context_receipt`, plus an append-only
+event.

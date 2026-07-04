@@ -106,3 +106,18 @@ Role profiles affect which sections fit under a tight budget, but included
 sections are always rendered in canonical document order. Budget selection uses
 the deterministic `charclass/v1` estimator rather than parsing model-specific
 tokenizers or slicing generated Markdown after rendering.
+
+## Explainable Code Context
+
+`pcl index build` creates an explicit local snapshot of code files with
+gitignore-aware omissions, hashes for small text files, symbol-lite summaries,
+and test hints. The index lives in schema version 4 tables and appends an event
+for each build.
+
+The index is not source of truth. The working tree and Git state remain
+authoritative; `pcl index status` and `pcl impact` surface staleness warnings
+when the snapshot differs.
+
+`pcl impact --diff` writes a `context-receipt/v0` JSON artifact as normal
+evidence. The receipt records `included_candidate_context`, `omitted`, and
+`staleness_warnings` so later review can see what PLH provided and why.
