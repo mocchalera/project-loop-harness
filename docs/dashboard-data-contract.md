@@ -61,10 +61,40 @@ The top-level object must contain:
 - `expected_after`
 - `target`
 
+When `next_action.requires_human` is true, `next_action` may also include the
+same cockpit fields used by `human_decisions.items`:
+
+- `why_blocked`
+- `options`
+- `recommendation`
+- `recommendation_reason`
+- `related_evidence_paths`
+- `receipt_paths`
+
 `human_decisions`:
 
 - `count`
 - `items`
+
+All `human_decisions.items` rows include additive human-decision cockpit fields:
+
+- `why_blocked`
+- `options`
+- `recommendation`
+- `recommendation_reason`
+- `related_evidence_paths`
+- `receipt_paths`
+
+`human_decisions.items[].options` rows:
+
+- `label`
+- `command`
+- `why_safe`
+- `risk_if_run`
+
+`receipt_paths` is optional receipt metadata. It may be absent or empty until a
+receipt indexing feature exists; dashboard rendering must not depend on receipt
+discovery.
 
 `human_decisions.items` rows for open decisions:
 
@@ -342,8 +372,13 @@ The "Risk & Blockers" panel renders `risk_summary` near the top of the dashboard
 The "Needs Your Decision" panel renders `human_decisions` immediately after the
 validation/risk/next-action block. It is the consolidated export surface for
 human decision notifications. It includes enough ids, prompt text,
-recommendations, links, and commands for a consumer to render each item without
-joining against other dashboard sections.
+why-blocked text, recommendations, options, links, and commands for a consumer
+to render each item without joining against other dashboard sections.
+
+Decision options are informational command rows in the generated static HTML.
+Approve, reject, hold, and request-more-evidence choices must be rendered with
+equal visual weight; the dashboard must not create interactive buttons that run
+commands.
 
 Dashboard HTML chrome can be localized with `pcl render --locale ja` or
 `dashboard.locale: "ja"` in `pcl.yaml`. Locale selection affects only

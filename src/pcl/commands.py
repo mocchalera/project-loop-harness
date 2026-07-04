@@ -348,7 +348,7 @@ def build_next_action(
         requires_human=requires_human,
         safe_to_run=safe_to_run,
     )
-    return {
+    action = {
         "type": action_type,
         "command": command,
         "reason": reason,
@@ -363,6 +363,253 @@ def build_next_action(
             run_policy=run_policy,
             blocking=blocking,
         ),
+    }
+    if requires_human:
+        action.update(
+            human_decision_action_fields(
+                action_type=action_type,
+                command=command,
+                reason=reason,
+                target=target,
+                blocking=blocking,
+            )
+        )
+    return action
+
+
+def human_decision_action_fields(
+    *,
+    action_type: str,
+    command: str,
+    reason: str,
+    target: object,
+    blocking: bool,
+) -> dict:
+    return {
+        "why_blocked": _why_blocked(reason=reason, blocking=blocking),
+        "options": _human_next_action_options(
+            action_type=action_type,
+            command=command,
+            target=target,
+        ),
+        "recommendation": _action_recommendation(action_type=action_type, command=command, target=target),
+        "recommendation_reason": reason,
+        "related_evidence_paths": [],
+        "receipt_paths": [],
+    }
+
+
+def decision_options(decision_id: str) -> list[dict[str, str]]:
+    return [
+        _decision_option(
+            label="Approve",
+            command=(
+                f"pcl decision resolve {decision_id} --selected-option 'Approve recommended path' "
+                "--reason '<why this is acceptable>'"
+            ),
+            why_safe="Uses pcl to record the human choice and close the open decision.",
+            risk_if_run="The chosen option becomes durable loop state and may unblock follow-up work.",
+        ),
+        _decision_option(
+            label="Reject",
+            command=(
+                f"pcl decision resolve {decision_id} --selected-option 'Reject recommended path' "
+                "--reason '<why this should not proceed>'"
+            ),
+            why_safe="Uses pcl to record a durable rejection instead of leaving the decision implicit.",
+            risk_if_run="The rejection closes this decision; a new decision may be needed for an alternate path.",
+        ),
+        _decision_option(
+            label="Hold",
+            command=f"pcl decision waive {decision_id} --reason '<why this no longer blocks safe continuation>'",
+            why_safe="Uses pcl to mark the decision as waived with a required reason.",
+            risk_if_run="Waiving removes this item from the blocking queue without selecting an implementation path.",
+        ),
+        _decision_option(
+            label="Request more evidence",
+            command=f"pcl decision read {decision_id} --json",
+            why_safe="Read-only command; it does not mutate project-loop state.",
+            risk_if_run="The loop remains blocked until the decision is resolved or waived.",
+        ),
+    ]
+
+
+def escalation_options(
+    escalation_id: str,
+    *,
+    linked_decision_ids: list[str] | None = None,
+    workflow_run_id: str = "",
+) -> list[dict[str, str]]:
+    linked_decision_ids = linked_decision_ids or []
+    if linked_decision_ids:
+        approve_command = (
+            f"pcl escalation resolve {escalation_id} --decision {linked_decision_ids[0]} "
+            "--summary '<summary>'"
+        )
+        approve_why = "Uses pcl to resolve the escalation while preserving its linked decision reference."
+        approve_risk = "The escalation closes; any remaining disagreement must be captured in a new decision."
+    else:
+        approve_command = (
+            f"pcl decision open --escalation {escalation_id} "
+            f"--question 'Record the human decision for {escalation_id}' "
+            "--recommendation 'Choose the safe next step'"
+        )
+        approve_why = "Uses pcl to create the durable decision needed before resolving this escalation."
+        approve_risk = "The escalation remains open until the new decision is resolved and linked back."
+
+    evidence_command = f"pcl report run {workflow_run_id}" if workflow_run_id else f"pcl escalation read {escalation_id} --json"
+    return [
+        _decision_option(
+            label="Approve",
+            command=approve_command,
+            why_safe=approve_why,
+            risk_if_run=approve_risk,
+        ),
+        _decision_option(
+            label="Reject",
+            command=f"pcl escalation cancel {escalation_id} --summary '<why this should not proceed>'",
+            why_safe="Uses pcl to close the escalation as cancelled with an explicit summary.",
+            risk_if_run="Cancelling removes the escalation from the human queue without resolving linked work.",
+        ),
+        _decision_option(
+            label="Hold",
+            command=f"pcl escalation read {escalation_id} --json",
+            why_safe="Read-only command; it keeps the escalation open while reviewing context.",
+            risk_if_run="The blocking escalation remains open and will continue to appear as the next action.",
+        ),
+        _decision_option(
+            label="Request more evidence",
+            command=evidence_command,
+            why_safe="Read-only review command; it does not mutate project-loop state.",
+            risk_if_run="The escalation remains unresolved until a human records the outcome.",
+        ),
+    ]
+
+
+def verification_options(workflow_run_id: str) -> list[dict[str, str]]:
+    return [
+        _decision_option(
+            label="Approve",
+            command=(
+                f"pcl verification record --run {workflow_run_id} --result approved "
+                "--reason '<why the run is acceptable>'"
+            ),
+            why_safe="Uses pcl to record an explicit verification result for the run.",
+            risk_if_run="Approval may allow the workflow to complete if other terminal conditions are met.",
+        ),
+        _decision_option(
+            label="Reject",
+            command=(
+                f"pcl verification record --run {workflow_run_id} --result rejected "
+                "--reason '<why the run should not pass>'"
+            ),
+            why_safe="Uses pcl to record a durable rejection with a required reason.",
+            risk_if_run="The run remains failed or blocked until follow-up repair work is routed.",
+        ),
+        _decision_option(
+            label="Hold",
+            command=(
+                f"pcl verification record --run {workflow_run_id} --result inconclusive "
+                "--reason '<why the run cannot be decided yet>'"
+            ),
+            why_safe="Uses pcl to record that verification is deliberately inconclusive.",
+            risk_if_run="The workflow remains unresolved and may need another verification or escalation.",
+        ),
+        _decision_option(
+            label="Request more evidence",
+            command=f"pcl report run {workflow_run_id}",
+            why_safe="Read-only report command; it gathers run context without changing state.",
+            risk_if_run="The human-required state remains until a verification or escalation is recorded.",
+        ),
+    ]
+
+
+def generic_human_options(command: str, *, evidence_command: str = "pcl validate --json") -> list[dict[str, str]]:
+    return [
+        _decision_option(
+            label="Approve",
+            command=command,
+            why_safe="Uses the recommended pcl command instead of direct state mutation.",
+            risk_if_run="The command may change durable loop state; review the target before running it.",
+        ),
+        _decision_option(
+            label="Reject",
+            command="pcl next --json",
+            why_safe="Read-only command; it leaves durable loop state unchanged.",
+            risk_if_run="No rejection is recorded, so the same recommendation may remain next.",
+        ),
+        _decision_option(
+            label="Hold",
+            command="pcl next --json",
+            why_safe="Read-only command; it keeps the current state intact.",
+            risk_if_run="The loop may remain stopped until a human records a more durable outcome.",
+        ),
+        _decision_option(
+            label="Request more evidence",
+            command=evidence_command,
+            why_safe="Read-only review command; it does not mutate project-loop state.",
+            risk_if_run="The decision remains pending until an operator runs a state-changing pcl command.",
+        ),
+    ]
+
+
+def _human_next_action_options(
+    *,
+    action_type: str,
+    command: str,
+    target: object,
+) -> list[dict[str, str]]:
+    target_dict = target if isinstance(target, dict) else {}
+    target_id = str(target_dict.get("id") or "")
+    if action_type == "resolve_decision" and target_id:
+        return decision_options(target_id)
+    if action_type == "resolve_escalation" and target_id:
+        return escalation_options(
+            target_id,
+            linked_decision_ids=[str(item) for item in target_dict.get("linked_decision_ids", [])],
+            workflow_run_id=str(target_dict.get("workflow_run_id") or ""),
+        )
+    if action_type in {"open_escalation", "record_verification"}:
+        workflow_run_id = str(target_dict.get("id") or target_dict.get("workflow_run_id") or "")
+        if workflow_run_id:
+            return verification_options(workflow_run_id)
+    evidence_command = _evidence_command_for_target(target_dict)
+    return generic_human_options(command, evidence_command=evidence_command)
+
+
+def _evidence_command_for_target(target: dict) -> str:
+    workflow_run_id = str(target.get("workflow_run_id") or "")
+    if not workflow_run_id and str(target.get("id") or "").startswith("WR-"):
+        workflow_run_id = str(target.get("id"))
+    if workflow_run_id:
+        return f"pcl report run {workflow_run_id}"
+    return "pcl validate --json"
+
+
+def _action_recommendation(*, action_type: str, command: str, target: object) -> str:
+    if isinstance(target, dict) and str(target.get("recommendation") or "").strip():
+        return str(target["recommendation"]).strip()
+    if action_type == "resolve_decision":
+        return "Resolve or waive the open decision after reviewing the options."
+    if action_type == "resolve_escalation":
+        return "Record the human outcome for the open escalation."
+    if action_type in {"open_escalation", "record_verification"}:
+        return "Choose a verification outcome or open an escalation with the missing evidence."
+    return f"Run or decline the recommended command: {command}"
+
+
+def _why_blocked(*, reason: str, blocking: bool) -> str:
+    if blocking:
+        return reason
+    return "Human confirmation is required before this recommended state transition should run."
+
+
+def _decision_option(*, label: str, command: str, why_safe: str, risk_if_run: str) -> dict[str, str]:
+    return {
+        "label": label,
+        "command": command,
+        "why_safe": why_safe,
+        "risk_if_run": risk_if_run,
     }
 
 
