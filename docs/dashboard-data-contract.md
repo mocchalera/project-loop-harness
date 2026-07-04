@@ -177,6 +177,25 @@ The top-level object must contain:
 - `evidence_id`
 - `updated_at`
 
+`features` rows:
+
+- `id`
+- `name`
+- `surface`
+- `status`
+- `confidence`
+- `updated_at`
+
+`defects` rows:
+
+- `id`
+- `feature_id`
+- `severity`
+- `status`
+- `expected`
+- `actual`
+- `updated_at`
+
 `tasks` rows:
 
 - `id`
@@ -192,6 +211,13 @@ The top-level object must contain:
 - `dependency_ids`
 - `dependent_ids`
 - `created_at`
+- `updated_at`
+
+`goals` rows:
+
+- `id`
+- `title`
+- `status`
 - `updated_at`
 
 `current_goal`, when present:
@@ -214,12 +240,26 @@ The top-level object must contain:
 - `summary`
 - `budget`
 
+`workflow_runs` rows:
+
+- `id`
+- `workflow_id`
+- `goal_id`
+- `status`
+- `iteration`
+- `started_at`
+- `summary`
+
 `active_agent_jobs` and `agent_jobs` rows:
 
 - `id`
 - `workflow_run_id`
 - `role`
 - `status`
+- `assigned_agent_id`
+- `attempts`
+- `lease_expires_at`
+- `last_heartbeat_at`
 - `prompt_path`
 - `output_path`
 - `summary`
@@ -239,6 +279,29 @@ The top-level object must contain:
 - `result`
 - `reasons_json`
 - `created_at`
+
+`decisions` rows:
+
+- `id`
+- `status`
+- `question`
+- `recommendation`
+- `selected_option`
+- `reason`
+- `blocks_json`
+- `created_at`
+- `linked_escalation_ids`
+
+`escalations` rows:
+
+- `id`
+- `workflow_run_id`
+- `severity`
+- `question`
+- `recommendation`
+- `status`
+- `created_at`
+- `linked_decision_ids`
 
 `evidence` rows:
 

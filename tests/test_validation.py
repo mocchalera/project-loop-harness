@@ -504,6 +504,113 @@ def test_strict_validate_rejects_duplicate_active_runs_for_same_defect(tmp_path:
     assert "Duplicate active workflow runs for defect D-0001: WR-0001, WR-0002." in payload["errors"]
 
 
+def test_strict_validate_rejects_terminal_goal_with_non_terminal_task(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Cleanup"]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "create",
+        "--title",
+        "Still open",
+        "--goal",
+        "G-0001",
+    ]) == 0
+    capsys.readouterr()
+
+    _update_db(
+        tmp_path,
+        "UPDATE goals SET status = 'closed', completion_json = ? WHERE id = 'G-0001'",
+        (json.dumps({"closure": {"evidence": "Manual closure before corruption"}}),),
+    )
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 1
+    payload = _json_output(capsys)
+    assert "Terminal goal G-0001 is closed but has non-terminal task T-0001 (todo)." in payload["errors"]
+
+
+def test_strict_validate_rejects_terminal_workflow_run_with_active_job(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Coverage"]) == 0
+    assert main(["--root", str(tmp_path), "loop", "run", "feature_coverage", "--goal", "G-0001"]) == 0
+    capsys.readouterr()
+
+    _update_db(tmp_path, "UPDATE workflow_runs SET status = 'failed' WHERE id = 'WR-0001'")
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 1
+    payload = _json_output(capsys)
+    assert "Terminal workflow run WR-0001 is failed but has active agent job J-0001 (queued)." in payload["errors"]
+
+
+def test_strict_validate_rejects_decision_block_link_to_missing_entity(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "decision",
+        "open",
+        "--question",
+        "Which missing run should block us?",
+        "--recommendation",
+        "Fix the reference",
+        "--blocks-json",
+        json.dumps([{"type": "workflow_run", "id": "WR-9999"}]),
+    ]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "validate", "--json"]) == 0
+    assert _json_output(capsys)["ok"] is True
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 1
+    payload = _json_output(capsys)
+    assert "Decision DEC-0001 blocks_json references missing workflow_run WR-9999." in payload["errors"]
+
+
+def test_strict_validate_rejects_missing_local_evidence_artifact(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Coverage"]) == 0
+    assert main(["--root", str(tmp_path), "loop", "run", "feature_coverage", "--goal", "G-0001"]) == 0
+    output_path = tmp_path / ".project-loop" / "evidence" / "agent-runs" / "J-0001" / "output.md"
+    output_path.write_text(
+        "# Mapper result\n\n"
+        "## Findings\n\n"
+        "- Captured one agent result.\n\n"
+        "## Evidence\n\n"
+        "- `.project-loop/evidence/agent-runs/J-0001/prompt.md`\n",
+        encoding="utf-8",
+    )
+    assert main([
+        "--root",
+        str(tmp_path),
+        "ingest-agent-run",
+        ".project-loop/evidence/agent-runs/J-0001/output.md",
+    ]) == 0
+    capsys.readouterr()
+
+    output_path.unlink()
+
+    assert main(["--root", str(tmp_path), "validate", "--json"]) == 0
+    assert _json_output(capsys)["ok"] is True
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 1
+    payload = _json_output(capsys)
+    assert "Evidence E-0001 path does not exist: .project-loop/evidence/agent-runs/J-0001/output.md." in payload["errors"]
+    assert "Agent job J-0001 output_path does not exist: .project-loop/evidence/agent-runs/J-0001/output.md." in payload["errors"]
+
+
 def test_strict_validate_accepts_valid_closed_goal_and_defect(tmp_path: Path, capsys) -> None:
     assert main(["init", "--target", str(tmp_path)]) == 0
     assert main(["--root", str(tmp_path), "goal", "create", "--title", "Coverage"]) == 0

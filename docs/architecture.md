@@ -48,10 +48,13 @@ target-project/
    ├─ events.jsonl
    ├─ goals/
    ├─ workflows/
+   ├─ workflow-proposals/
    ├─ dashboard/
    ├─ evidence/
    ├─ exports/
    ├─ reports/
+   ├─ tmp/
+   ├─ cache/
    └─ worktrees/
 ```
 
@@ -100,4 +103,6 @@ packs include task dependencies, dependents, linked goal/feature/defect
 context, sibling tasks, and recent events.
 
 Role profiles affect which sections fit under a tight budget, but included
-sections are always rendered in canonical document order.
+sections are always rendered in canonical document order. Budget selection uses
+the deterministic `charclass/v1` estimator rather than parsing model-specific
+tokenizers or slicing generated Markdown after rendering.

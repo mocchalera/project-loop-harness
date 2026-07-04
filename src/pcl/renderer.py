@@ -115,7 +115,8 @@ def render_dashboard(paths: ProjectPaths, *, locale: str | None = None) -> None:
             "active_agent_jobs": _rows(
                 conn,
                 """
-                SELECT id, workflow_run_id, role, status, prompt_path, output_path, summary
+                SELECT id, workflow_run_id, role, status, assigned_agent_id, attempts,
+                       lease_expires_at, last_heartbeat_at, prompt_path, output_path, summary
                 FROM agent_jobs
                 WHERE workflow_run_id = ?
                 ORDER BY id
@@ -183,7 +184,8 @@ def render_dashboard(paths: ProjectPaths, *, locale: str | None = None) -> None:
             "agent_jobs": _rows(
                 conn,
                 """
-                SELECT id, workflow_run_id, role, status, prompt_path, output_path, summary
+                SELECT id, workflow_run_id, role, status, assigned_agent_id, attempts,
+                       lease_expires_at, last_heartbeat_at, prompt_path, output_path, summary
                 FROM agent_jobs
                 ORDER BY id
                 LIMIT 50
@@ -1137,7 +1139,20 @@ def _render_html(data: dict, *, locale: str = "en") -> str:
         ),
         "{{ active_agent_jobs_table }}": _table(
             data["active_agent_jobs"],
-            ["id", "role", "status", "prompt_path", "output_path", "evidence_ids", "latest_evidence_id", "summary"],
+            [
+                "id",
+                "role",
+                "status",
+                "assigned_agent_id",
+                "attempts",
+                "lease_expires_at",
+                "last_heartbeat_at",
+                "prompt_path",
+                "output_path",
+                "evidence_ids",
+                "latest_evidence_id",
+                "summary",
+            ],
             anchor_rows=False,
             strings=strings,
         ),
@@ -1194,7 +1209,21 @@ def _render_html(data: dict, *, locale: str = "en") -> str:
         ),
         "{{ agent_jobs_table }}": _table(
             data["agent_jobs"],
-            ["id", "workflow_run_id", "role", "status", "prompt_path", "output_path", "evidence_ids", "latest_evidence_id", "summary"],
+            [
+                "id",
+                "workflow_run_id",
+                "role",
+                "status",
+                "assigned_agent_id",
+                "attempts",
+                "lease_expires_at",
+                "last_heartbeat_at",
+                "prompt_path",
+                "output_path",
+                "evidence_ids",
+                "latest_evidence_id",
+                "summary",
+            ],
             strings=strings,
         ),
         "{{ verifications_table }}": _table(

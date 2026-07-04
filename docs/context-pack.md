@@ -28,12 +28,15 @@ JSON mode returns `context-pack/v1`:
     "target": {"type": "agent_job", "id": "J-0001"},
     "reader_role": "verifier",
     "role_profile": "verifier",
+    "token_estimator": "charclass/v1",
     "budget": {
       "max_tokens": 12000,
       "approx_char_limit": 48000,
-      "approx_chars_per_token": 4
+      "approx_chars_per_token": 4,
+      "token_estimator": "charclass/v1"
     },
     "approx_char_count": 1000,
+    "estimated_token_count": 320,
     "truncated": false,
     "included_sections": ["machine_context_rules", "target_job"],
     "omitted_sections": [],
@@ -52,10 +55,21 @@ Task packs use the same `context-pack/v1` contract with
 `"target": {"type": "task", "id": "T-0001"}`. This is an additive evolution of
 the v1 contract rather than a new contract version.
 
-`--max-tokens` is an approximate budget control. The command uses a fixed
-four-characters-per-token estimate so output is deterministic and dependency
-free. When the budget is too small, the command returns a truncated pack with
-`omitted_sections` metadata instead of failing.
+`--max-tokens` is an approximate budget control. Section selection uses the
+deterministic, dependency-free `charclass/v1` estimator:
+
+- ASCII word runs count as `ceil(length / 4)`;
+- CJK characters count one token each;
+- whitespace runs count one token each;
+- punctuation, symbols, and other non-whitespace characters count one token
+  each.
+
+The legacy `approx_char_limit` and `approx_chars_per_token` fields remain in
+`budget` for compatibility, but they are not the section-selection algorithm.
+`estimated_token_count` reports the estimator result for the final Markdown.
+When the budget is too small, the command returns a truncated pack with exact,
+deterministic `included_sections` and `omitted_sections` metadata instead of
+failing or slicing through a section.
 
 ## Sections
 

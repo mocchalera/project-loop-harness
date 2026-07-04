@@ -2,7 +2,9 @@
 
 ## Tables
 
-The initial schema is in `src/pcl/db/schema.sql`.
+The database is created and upgraded through ordered SQL migrations in
+`src/pcl/db/migrations/`. `src/pcl/db/schema.sql` is the base v1 schema, while
+new installs currently apply migrations through schema version 3.
 
 Core tables:
 
