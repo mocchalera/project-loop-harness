@@ -18,8 +18,10 @@
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin: 18px 0; }
     .panel { border-top: 1px solid #9994; padding-top: 14px; margin-top: 24px; }
     .panel-box { border: 1px solid #9994; border-radius: 8px; padding: 14px; }
+    .decision-panel { border: 2px solid #9996; border-radius: 8px; padding: 16px; }
     .decision-list { display: grid; gap: 12px; margin: 12px 0 18px; }
     .decision-card { border: 1px solid #9994; border-radius: 8px; padding: 14px; }
+    .decision-options { margin-top: 6px; }
     table { border-collapse: collapse; width: 100%; margin: 12px 0 24px; font-size: 14px; }
     th, td { border: 1px solid #9994; padding: 8px 10px; text-align: left; vertical-align: top; }
     th { background: #9992; }
@@ -74,7 +76,7 @@
     </div>
   </section>
 
-  <section class="panel">
+  <section class="panel decision-panel">
     <h2>{{ heading_needs_your_decision }}</h2>
     {{ human_decisions_block }}
   </section>

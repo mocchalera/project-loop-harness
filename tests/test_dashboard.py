@@ -23,6 +23,18 @@ def _json_output(capsys) -> dict:
     return json.loads(captured.out)
 
 
+COCKPIT_ITEM_KEYS = {
+    "why_blocked",
+    "options",
+    "recommendation",
+    "recommendation_reason",
+    "related_evidence_paths",
+    "receipt_paths",
+}
+COCKPIT_OPTION_KEYS = {"label", "command", "why_safe", "risk_if_run"}
+COCKPIT_OPTION_LABELS = ["Approve", "Reject", "Hold", "Request more evidence"]
+
+
 def _set_dashboard_locale(root: Path, locale: str) -> None:
     config_path = root / "pcl.yaml"
     text = config_path.read_text(encoding="utf-8")
@@ -151,7 +163,7 @@ def test_dashboard_surfaces_open_human_queue_risks(tmp_path: Path) -> None:
     assert items_by_type["open_decision"]["target"] == {"type": "decision", "id": "DEC-0001"}
     assert "Risk &amp; Blockers" in html
     assert "Needs Your Decision" in html
-    assert "pcl escalation resolve ESC-0001 --decision DEC-xxxx --summary" in html
+    assert "pcl decision open --escalation ESC-0001" in html
     assert "pcl decision resolve DEC-0001 --selected-option" in html
     assert "Open escalation ESC-0001" in html
     assert "Open decision DEC-0001" in html
@@ -169,6 +181,22 @@ def test_dashboard_human_decisions_contract_orders_and_links_items(tmp_path: Pat
         "--goal",
         "G-0001",
     ]) == 0
+    output_path = tmp_path / ".project-loop" / "evidence" / "agent-runs" / "J-0001" / "output.md"
+    output_path.write_text(
+        "# Mapper result\n\n"
+        "## Findings\n\n"
+        "- Captured evidence for a human decision.\n\n"
+        "## Evidence\n\n"
+        "- `.project-loop/evidence/agent-runs/J-0001/prompt.md`\n",
+        encoding="utf-8",
+    )
+    assert main([
+        "--root",
+        str(tmp_path),
+        "ingest-agent-run",
+        ".project-loop/evidence/agent-runs/J-0001/output.md",
+    ]) == 0
+    assert main(["--root", str(tmp_path), "report", "run", "WR-0001"]) == 0
     assert main([
         "--root",
         str(tmp_path),
@@ -230,6 +258,13 @@ def test_dashboard_human_decisions_contract_orders_and_links_items(tmp_path: Pat
     items_by_kind = {item["kind"]: item for item in items}
 
     assert human_decisions["count"] == 5
+    for item in items:
+        assert COCKPIT_ITEM_KEYS <= set(item)
+        assert [option["label"] for option in item["options"]] == COCKPIT_OPTION_LABELS
+        assert all(set(option) == COCKPIT_OPTION_KEYS for option in item["options"])
+        assert item["receipt_paths"] == []
+        assert item["why_blocked"]
+        assert item["recommendation_reason"]
     assert [(item["kind"], item.get("id")) for item in items[:2]] == [
         ("escalation", "ESC-0002"),
         ("escalation", "ESC-0001"),
@@ -237,8 +272,16 @@ def test_dashboard_human_decisions_contract_orders_and_links_items(tmp_path: Pat
     assert items[0]["severity"] == "high"
     assert items[1]["severity"] == "low"
     assert items_by_kind["decision"]["linked_escalation_ids"] == ["ESC-0002"]
+    assert items_by_kind["decision"]["related_evidence_paths"] == [
+        ".project-loop/evidence/agent-runs/J-0001/output.md",
+        ".project-loop/reports/run-WR-0001.md",
+    ]
     assert items_by_kind["decision"]["resolve_command"] == (
         "pcl decision resolve DEC-0001 --selected-option '<option>' --reason '<why>'"
+    )
+    assert items_by_kind["decision"]["options"][1]["command"] == (
+        "pcl decision resolve DEC-0001 --selected-option 'Reject recommended path' "
+        "--reason '<why this should not proceed>'"
     )
     assert items[0]["linked_decision_ids"] == ["DEC-0001"]
     assert items[0]["resolve_command"] == (
@@ -251,7 +294,7 @@ def test_dashboard_human_decisions_contract_orders_and_links_items(tmp_path: Pat
     )
     next_items = [item for item in items if item["kind"] == "next_action"]
     assert len(next_items) == 1
-    assert set(next_items[0]) == {"kind", "type", "command", "reason"}
+    assert COCKPIT_ITEM_KEYS <= set(next_items[0])
     assert next_items[0]["type"] == data["next_action"]["type"]
 
 
@@ -318,10 +361,45 @@ def test_dashboard_locale_flag_renders_japanese_and_is_deterministic(tmp_path: P
     assert "あなたの判断が必要です" in first_html
     assert "あなたの判断待ちはありません。" in first_html
     assert "Project Loop ダッシュボード" in first_html
+    assert "役割" in first_html
+    assert "プロンプトパス" in first_html
 
     assert main(["--root", str(tmp_path), "render", "--locale", "ja"]) == 0
     assert _read_dashboard(tmp_path) == first_html
     assert _read_dashboard_data(tmp_path) == first_data
+
+
+def test_dashboard_human_decision_cockpit_renders_japanese_chrome(tmp_path: Path) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "decision",
+        "open",
+        "--question",
+        "Which release path?",
+        "--recommendation",
+        "Use the reversible path",
+    ]) == 0
+
+    assert main(["--root", str(tmp_path), "render", "--locale", "ja"]) == 0
+
+    html = _read_dashboard(tmp_path)
+    data = _read_dashboard_data(tmp_path)
+    decision = data["human_decisions"]["items"][0]
+
+    assert '<html lang="ja">' in html
+    assert "あなたの判断が必要です" in html
+    assert "停止理由" in html
+    assert "推奨理由" in html
+    assert "選択肢" in html
+    assert "安全な理由" in html
+    assert "実行時のリスク" in html
+    assert "Approve" in html
+    assert "Reject" in html
+    assert "Hold" in html
+    assert "Request more evidence" in html
+    assert [option["label"] for option in decision["options"]] == COCKPIT_OPTION_LABELS
 
 
 def test_dashboard_locale_precedence_and_invalid_locale(tmp_path: Path, capsys) -> None:

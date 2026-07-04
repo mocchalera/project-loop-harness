@@ -59,6 +59,15 @@ GUIDED_ACTION_KEYS = {
     "human_guidance",
     "expected_after",
 }
+HUMAN_DECISION_ACTION_KEYS = {
+    "why_blocked",
+    "options",
+    "recommendation",
+    "recommendation_reason",
+    "related_evidence_paths",
+    "receipt_paths",
+}
+HUMAN_DECISION_OPTION_KEYS = {"label", "command", "why_safe", "risk_if_run"}
 
 
 def _json_output(capsys) -> dict:
@@ -524,6 +533,44 @@ def test_next_priority_order_for_human_and_workflow_actions(tmp_path: Path, caps
     assert workflow["type"] == "continue_workflow"
     assert workflow["priority"] == 40
     assert workflow["safe_to_run"] is True
+
+
+def test_next_json_human_decision_includes_cockpit_options(tmp_path: Path, capsys) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "decision",
+        "open",
+        "--question",
+        "Choose path",
+        "--recommendation",
+        "Pick safest",
+    ]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    action = _json_output(capsys)
+
+    _assert_guided_action(action)
+    assert HUMAN_DECISION_ACTION_KEYS <= set(action)
+    assert action["type"] == "resolve_decision"
+    assert action["why_blocked"] == "A human decision is open and blocks safe continuation."
+    assert action["recommendation"] == "Pick safest"
+    assert action["recommendation_reason"] == action["reason"]
+    assert action["related_evidence_paths"] == []
+    assert action["receipt_paths"] == []
+    assert [option["label"] for option in action["options"]] == [
+        "Approve",
+        "Reject",
+        "Hold",
+        "Request more evidence",
+    ]
+    assert all(set(option) == HUMAN_DECISION_OPTION_KEYS for option in action["options"])
+    assert action["options"][1]["command"] == (
+        "pcl decision resolve DEC-0001 --selected-option 'Reject recommended path' "
+        "--reason '<why this should not proceed>'"
+    )
 
 
 def test_next_routes_unfinished_executor_run_to_resume(tmp_path: Path, capsys) -> None:

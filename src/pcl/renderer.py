@@ -4,7 +4,7 @@ import html
 import json
 from typing import Any
 
-from .commands import next_action
+from .commands import decision_options, escalation_options, generic_human_options, next_action, verification_options
 from .db import connect, count_rows
 from .guards import require_initialized
 from .links import enrich_decisions_with_links, enrich_escalations_with_links
@@ -245,6 +245,7 @@ def render_dashboard(paths: ProjectPaths, *, locale: str | None = None) -> None:
         data["risk_summary"] = _risk_summary(data, risk_rows)
         data["human_decisions"] = _human_decisions(
             conn,
+            paths=paths,
             action=action,
             open_decisions=open_decisions,
             open_escalations=open_escalations,
@@ -468,6 +469,7 @@ def _risk_source_rows(conn) -> dict[str, list[dict[str, Any]]]:
 def _human_decisions(
     conn,
     *,
+    paths: ProjectPaths,
     action: dict[str, Any],
     open_decisions: list[dict[str, Any]],
     open_escalations: list[dict[str, Any]],
@@ -477,18 +479,25 @@ def _human_decisions(
     for decision in open_decisions:
         decision_id = str(decision.get("id", ""))
         items.append(
-            {
-                "kind": "decision",
-                "id": decision_id,
-                "question": str(decision.get("question", "")),
-                "recommendation": str(decision.get("recommendation", "")),
-                "created_at": str(decision.get("created_at", "")),
-                "resolve_command": (
-                    f"pcl decision resolve {decision_id} --selected-option '<option>' "
-                    "--reason '<why>'"
-                ),
-                "linked_escalation_ids": list(decision.get("linked_escalation_ids", [])),
-            }
+            _with_cockpit_fields(
+                {
+                    "kind": "decision",
+                    "id": decision_id,
+                    "question": str(decision.get("question", "")),
+                    "recommendation": str(decision.get("recommendation", "")),
+                    "created_at": str(decision.get("created_at", "")),
+                    "resolve_command": (
+                        f"pcl decision resolve {decision_id} --selected-option '<option>' "
+                        "--reason '<why>'"
+                    ),
+                    "linked_escalation_ids": list(decision.get("linked_escalation_ids", [])),
+                },
+                why_blocked=f"Open decision {decision_id} blocks safe continuation until a human records an outcome.",
+                options=decision_options(decision_id),
+                recommendation=str(decision.get("recommendation", "")),
+                recommendation_reason="This recommendation was recorded when the decision was opened.",
+                related_evidence_paths=_decision_related_evidence_paths(conn, paths, decision),
+            )
         )
 
     for escalation in open_escalations:
@@ -496,51 +505,273 @@ def _human_decisions(
         linked_decision_ids = list(escalation.get("linked_decision_ids", []))
         decision_id = linked_decision_ids[0] if linked_decision_ids else "DEC-xxxx"
         items.append(
-            {
-                "kind": "escalation",
-                "id": escalation_id,
-                "severity": str(escalation.get("severity", "")),
-                "question": str(escalation.get("question", "")),
-                "recommendation": str(escalation.get("recommendation", "")),
-                "created_at": str(escalation.get("created_at", "")),
-                "resolve_command": (
-                    f"pcl escalation resolve {escalation_id} --decision {decision_id} "
-                    "--summary '<summary>'"
+            _with_cockpit_fields(
+                {
+                    "kind": "escalation",
+                    "id": escalation_id,
+                    "severity": str(escalation.get("severity", "")),
+                    "question": str(escalation.get("question", "")),
+                    "recommendation": str(escalation.get("recommendation", "")),
+                    "created_at": str(escalation.get("created_at", "")),
+                    "resolve_command": (
+                        f"pcl escalation resolve {escalation_id} --decision {decision_id} "
+                        "--summary '<summary>'"
+                    ),
+                    "linked_decision_ids": linked_decision_ids,
+                },
+                why_blocked=f"Open escalation {escalation_id} requires a human outcome before the loop can continue safely.",
+                options=escalation_options(
+                    escalation_id,
+                    linked_decision_ids=[str(item) for item in linked_decision_ids],
+                    workflow_run_id=str(escalation.get("workflow_run_id") or ""),
                 ),
-                "linked_decision_ids": linked_decision_ids,
-            }
+                recommendation=str(escalation.get("recommendation", "")),
+                recommendation_reason="This recommendation was recorded when the escalation was opened.",
+                related_evidence_paths=_escalation_related_evidence_paths(conn, paths, escalation),
+            )
         )
 
     for verification in _active_needs_human_verifications(conn):
         verification_id = str(verification.get("id", ""))
         workflow_run_id = str(verification.get("workflow_run_id", ""))
         items.append(
-            {
-                "kind": "verification",
-                "id": verification_id,
-                "workflow_run_id": workflow_run_id,
-                "reasons": _json_string_list(verification.get("reasons_json")),
-                "created_at": str(verification.get("created_at", "")),
-                "resolve_command": (
-                    f"pcl escalation open --run {workflow_run_id} --severity high "
-                    "--question 'What human decision is needed?' "
-                    "--recommendation 'Review the needs_human verification and choose the next step'"
+            _with_cockpit_fields(
+                {
+                    "kind": "verification",
+                    "id": verification_id,
+                    "workflow_run_id": workflow_run_id,
+                    "reasons": _json_string_list(verification.get("reasons_json")),
+                    "created_at": str(verification.get("created_at", "")),
+                    "resolve_command": (
+                        f"pcl escalation open --run {workflow_run_id} --severity high "
+                        "--question 'What human decision is needed?' "
+                        "--recommendation 'Review the needs_human verification and choose the next step'"
+                    ),
+                },
+                why_blocked=(
+                    f"Verification {verification_id} is needs_human for workflow run {workflow_run_id}."
                 ),
-            }
+                options=verification_options(workflow_run_id),
+                recommendation="Choose a verification outcome or open an escalation for missing evidence.",
+                recommendation_reason="The verifier explicitly returned needs_human for this active workflow run.",
+                related_evidence_paths=_verification_related_evidence_paths(conn, paths, verification),
+            )
         )
 
     if action.get("requires_human") is True:
         items.append(
-            {
-                "kind": "next_action",
-                "type": str(action.get("type", "")),
-                "command": str(action.get("command", "")),
-                "reason": str(action.get("reason", "")),
-            }
+            _with_cockpit_fields(
+                {
+                    "kind": "next_action",
+                    "type": str(action.get("type", "")),
+                    "command": str(action.get("command", "")),
+                    "reason": str(action.get("reason", "")),
+                    "recommendation": str(action.get("recommendation", "")),
+                    "recommendation_reason": str(action.get("recommendation_reason", "")),
+                    "why_blocked": str(action.get("why_blocked", "")),
+                },
+                why_blocked=str(action.get("why_blocked") or action.get("reason") or ""),
+                options=_action_options(action),
+                recommendation=str(action.get("recommendation") or action.get("command") or ""),
+                recommendation_reason=str(action.get("recommendation_reason") or action.get("reason") or ""),
+                related_evidence_paths=_action_related_evidence_paths(conn, paths, action),
+            )
         )
 
     ordered = sorted(items, key=_human_decision_sort_key)
     return {"count": len(ordered), "items": ordered}
+
+
+def _with_cockpit_fields(
+    item: dict[str, Any],
+    *,
+    why_blocked: str,
+    options: list[dict[str, str]],
+    recommendation: str,
+    recommendation_reason: str,
+    related_evidence_paths: list[str],
+) -> dict[str, Any]:
+    enriched = dict(item)
+    enriched["why_blocked"] = why_blocked
+    enriched["options"] = _normalize_options(options)
+    enriched["recommendation"] = recommendation
+    enriched["recommendation_reason"] = recommendation_reason
+    enriched["related_evidence_paths"] = _unique_sorted_texts(related_evidence_paths)
+    enriched["receipt_paths"] = []
+    return enriched
+
+
+def _normalize_options(options: list[dict[str, str]]) -> list[dict[str, str]]:
+    normalized = []
+    for option in options:
+        normalized.append(
+            {
+                "label": str(option.get("label", "")),
+                "command": str(option.get("command", "")),
+                "why_safe": str(option.get("why_safe", "")),
+                "risk_if_run": str(option.get("risk_if_run", "")),
+            }
+        )
+    return normalized
+
+
+def _action_options(action: dict[str, Any]) -> list[dict[str, str]]:
+    options = action.get("options")
+    if isinstance(options, list):
+        return _normalize_options([option for option in options if isinstance(option, dict)])
+    return generic_human_options(str(action.get("command", "")))
+
+
+def _decision_related_evidence_paths(conn, paths: ProjectPaths, decision: dict[str, Any]) -> list[str]:
+    evidence_paths: list[str] = []
+    for block in _json_object_list(decision.get("blocks_json")):
+        block_type = str(block.get("type") or "")
+        block_id = str(block.get("id") or "")
+        if not block_type or not block_id:
+            continue
+        evidence_paths.extend(_related_paths_for_reference(conn, paths, block_type, block_id))
+    for escalation_id in decision.get("linked_escalation_ids", []):
+        evidence_paths.extend(_related_paths_for_reference(conn, paths, "escalation", str(escalation_id)))
+    return _unique_sorted_texts(evidence_paths)
+
+
+def _escalation_related_evidence_paths(conn, paths: ProjectPaths, escalation: dict[str, Any]) -> list[str]:
+    workflow_run_id = str(escalation.get("workflow_run_id") or "")
+    if not workflow_run_id:
+        return []
+    return _workflow_run_evidence_paths(conn, paths, workflow_run_id)
+
+
+def _verification_related_evidence_paths(conn, paths: ProjectPaths, verification: dict[str, Any]) -> list[str]:
+    evidence_paths = _workflow_run_evidence_paths(conn, paths, str(verification.get("workflow_run_id") or ""))
+    target_job_id = str(verification.get("target_job_id") or "")
+    if target_job_id:
+        evidence_paths.extend(_agent_job_evidence_paths(conn, [target_job_id]))
+    return _unique_sorted_texts(evidence_paths)
+
+
+def _action_related_evidence_paths(conn, paths: ProjectPaths, action: dict[str, Any]) -> list[str]:
+    target = action.get("target")
+    if not isinstance(target, dict):
+        return []
+    evidence_paths: list[str] = []
+    workflow_run_id = str(target.get("workflow_run_id") or "")
+    target_id = str(target.get("id") or "")
+    if not workflow_run_id and target_id.startswith("WR-"):
+        workflow_run_id = target_id
+    if workflow_run_id:
+        evidence_paths.extend(_workflow_run_evidence_paths(conn, paths, workflow_run_id))
+    verification_id = str(target.get("verification_id") or "")
+    if verification_id:
+        evidence_paths.extend(_related_paths_for_reference(conn, paths, "verification", verification_id))
+    return _unique_sorted_texts(evidence_paths)
+
+
+def _related_paths_for_reference(conn, paths: ProjectPaths, reference_type: str, reference_id: str) -> list[str]:
+    if reference_type == "evidence":
+        return _evidence_paths_by_ids(conn, [reference_id])
+    if reference_type == "agent_job":
+        return _agent_job_evidence_paths(conn, [reference_id])
+    if reference_type == "workflow_run":
+        return _workflow_run_evidence_paths(conn, paths, reference_id)
+    if reference_type == "verification":
+        row = conn.execute(
+            """
+            SELECT id, workflow_run_id, target_job_id, reasons_json
+            FROM verifications
+            WHERE id = ?
+            """,
+            (reference_id,),
+        ).fetchone()
+        return _verification_related_evidence_paths(conn, paths, dict(row)) if row else []
+    if reference_type == "escalation":
+        row = conn.execute(
+            """
+            SELECT id, workflow_run_id
+            FROM escalations
+            WHERE id = ?
+            """,
+            (reference_id,),
+        ).fetchone()
+        return _escalation_related_evidence_paths(conn, paths, dict(row)) if row else []
+    if reference_type in {"path", "report"}:
+        return [reference_id]
+    return []
+
+
+def _workflow_run_evidence_paths(conn, paths: ProjectPaths, workflow_run_id: str) -> list[str]:
+    if not workflow_run_id:
+        return []
+    evidence_paths: list[str] = []
+    report_path = paths.reports_dir / f"run-{workflow_run_id}.md"
+    if report_path.exists():
+        evidence_paths.append(str(report_path.relative_to(paths.root)))
+    job_rows = conn.execute(
+        """
+        SELECT id, workflow_run_id, role, status, prompt_path, output_path, summary
+        FROM agent_jobs
+        WHERE workflow_run_id = ?
+        ORDER BY id
+        """,
+        (workflow_run_id,),
+    ).fetchall()
+    jobs = [dict(row) for row in job_rows]
+    enrich_jobs_with_evidence(conn, jobs)
+    for job in jobs:
+        evidence_paths.extend(str(evidence.get("path", "")) for evidence in job.get("evidence", []))
+    return _unique_sorted_texts(evidence_paths)
+
+
+def _agent_job_evidence_paths(conn, job_ids: list[str]) -> list[str]:
+    if not job_ids:
+        return []
+    placeholders = ", ".join("?" for _ in job_ids)
+    rows = conn.execute(
+        f"""
+        SELECT id, workflow_run_id, role, status, prompt_path, output_path, summary
+        FROM agent_jobs
+        WHERE id IN ({placeholders})
+        ORDER BY id
+        """,
+        tuple(job_ids),
+    ).fetchall()
+    jobs = [dict(row) for row in rows]
+    enrich_jobs_with_evidence(conn, jobs)
+    evidence_paths: list[str] = []
+    for job in jobs:
+        evidence_paths.extend(str(evidence.get("path", "")) for evidence in job.get("evidence", []))
+    return _unique_sorted_texts(evidence_paths)
+
+
+def _evidence_paths_by_ids(conn, evidence_ids: list[str]) -> list[str]:
+    if not evidence_ids:
+        return []
+    unique_ids = _unique_sorted_texts(evidence_ids)
+    placeholders = ", ".join("?" for _ in unique_ids)
+    rows = conn.execute(
+        f"""
+        SELECT id, path
+        FROM evidence
+        WHERE id IN ({placeholders})
+        ORDER BY id
+        """,
+        tuple(unique_ids),
+    ).fetchall()
+    return [str(row["path"]) for row in rows]
+
+
+def _json_object_list(raw: object) -> list[dict[str, Any]]:
+    try:
+        value = json.loads(str(raw or "[]"))
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def _unique_sorted_texts(values: list[str]) -> list[str]:
+    return sorted({str(value) for value in values if str(value)})
 
 
 def _active_needs_human_verifications(conn) -> list[dict[str, Any]]:
@@ -551,6 +782,7 @@ def _active_needs_human_verifications(conn) -> list[dict[str, Any]]:
         SELECT
           verifications.id,
           verifications.workflow_run_id,
+          verifications.target_job_id,
           verifications.reasons_json,
           verifications.created_at
         FROM verifications
@@ -993,8 +1225,12 @@ def _human_decisions_block(human_decisions: dict[str, Any], strings: dict[str, s
         question = str(item.get("question", ""))
         reason = str(item.get("reason", ""))
         reasons = item.get("reasons", [])
+        why_blocked = str(item.get("why_blocked", ""))
         recommendation = str(item.get("recommendation", ""))
-        command = str(item.get("resolve_command") or item.get("command") or "")
+        recommendation_reason = str(item.get("recommendation_reason", ""))
+        related_evidence_paths = item.get("related_evidence_paths", [])
+        receipt_paths = item.get("receipt_paths", [])
+        options = item.get("options", [])
 
         if question:
             parts.append(
@@ -1005,6 +1241,11 @@ def _human_decisions_block(human_decisions: dict[str, Any], strings: dict[str, s
             parts.append(
                 f"<p><strong>{html.escape(strings['human_decision.reason'])}:</strong> "
                 f"{html.escape(reason)}</p>"
+            )
+        if why_blocked:
+            parts.append(
+                f"<p><strong>{html.escape(strings['human_decision.why_blocked'])}:</strong> "
+                f"{html.escape(why_blocked)}</p>"
             )
         if isinstance(reasons, list) and reasons:
             rendered_reasons = "".join(f"<li>{html.escape(str(reason))}</li>" for reason in reasons)
@@ -1017,11 +1258,22 @@ def _human_decisions_block(human_decisions: dict[str, Any], strings: dict[str, s
                 f"<p><strong>{html.escape(strings['human_decision.recommendation'])}:</strong> "
                 f"{html.escape(recommendation)}</p>"
             )
-        if command:
+        if recommendation_reason:
             parts.append(
-                f"<p><strong>{html.escape(strings['human_decision.resolve_command'])}:</strong></p>"
-                f"<pre><code>{html.escape(command)}</code></pre>"
+                f"<p><strong>{html.escape(strings['human_decision.recommendation_reason'])}:</strong> "
+                f"{html.escape(recommendation_reason)}</p>"
             )
+        if isinstance(related_evidence_paths, list) and related_evidence_paths:
+            parts.append(
+                f"<p><strong>{html.escape(strings['human_decision.related_evidence_paths'])}:</strong></p>"
+                f"{_path_list(related_evidence_paths)}"
+            )
+        if isinstance(receipt_paths, list) and receipt_paths:
+            parts.append(
+                f"<p><strong>{html.escape(strings['human_decision.receipt_paths'])}:</strong></p>"
+                f"{_path_list(receipt_paths)}"
+            )
+        parts.append(_human_decision_options_table(options, strings))
         parts.append("</article>")
     parts.append("</div>")
     return "".join(parts)
@@ -1034,6 +1286,46 @@ def _human_decision_title(item: dict[str, Any], strings: dict[str, str]) -> str:
     if item_id:
         return f"{html.escape(label)} <code>{html.escape(item_id)}</code>"
     return html.escape(label)
+
+
+def _human_decision_options_table(options: object, strings: dict[str, str]) -> str:
+    if not isinstance(options, list) or not options:
+        return ""
+    rows = []
+    for option in options:
+        if not isinstance(option, dict):
+            continue
+        label = html.escape(str(option.get("label", "")))
+        command = html.escape(str(option.get("command", "")))
+        why_safe = html.escape(str(option.get("why_safe", "")))
+        risk_if_run = html.escape(str(option.get("risk_if_run", "")))
+        rows.append(
+            "<tr>"
+            f"<td>{label}</td>"
+            f"<td><code>{command}</code></td>"
+            f"<td>{why_safe}</td>"
+            f"<td>{risk_if_run}</td>"
+            "</tr>"
+        )
+    if not rows:
+        return ""
+    headers = [
+        strings["human_decision.option.label"],
+        strings["human_decision.option.command"],
+        strings["human_decision.option.why_safe"],
+        strings["human_decision.option.risk_if_run"],
+    ]
+    head = "".join(f"<th>{html.escape(header)}</th>" for header in headers)
+    return (
+        f"<p><strong>{html.escape(strings['human_decision.options'])}:</strong></p>"
+        f"<table class=\"decision-options\"><thead><tr>{head}</tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody></table>"
+    )
+
+
+def _path_list(paths: list[object]) -> str:
+    items = "".join(f"<li>{_linked_scalar(path, 'path')}</li>" for path in paths)
+    return f"<ul>{items}</ul>"
 
 
 def _human_decision_details(item: dict[str, Any], strings: dict[str, str]) -> list[str]:
