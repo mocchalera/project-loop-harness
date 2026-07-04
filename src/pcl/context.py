@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from json import JSONDecodeError
+import math
 from typing import Any
 
 from .db import connect
@@ -16,7 +17,8 @@ from .workflows import list_jobs, read_job
 
 CONTEXT_PACK_CONTRACT_VERSION = "context-pack/v1"
 DEFAULT_MAX_TOKENS = 12000
-APPROX_CHARS_PER_TOKEN = 4
+TOKEN_ESTIMATOR = "charclass/v1"
+LEGACY_APPROX_CHARS_PER_TOKEN = 4
 MACHINE_CONTEXT_RULES_SECTION_ID = "machine_context_rules"
 
 JOB_SECTION_ORDER = [
@@ -99,7 +101,7 @@ def pack_context_for_job(
     job = read_job(paths, job_id)
     role = (reader_role or str(job["role"])).strip()
     role_profile, section_priorities = _job_role_profile(role)
-    approx_char_limit = max_tokens * APPROX_CHARS_PER_TOKEN
+    approx_char_limit = max_tokens * LEGACY_APPROX_CHARS_PER_TOKEN
 
     conn = connect(paths.db_path)
     try:
@@ -190,21 +192,25 @@ def pack_context_for_job(
     markdown, included_sections, omitted_sections = _render_with_budget(
         title=f"# Context Pack: {job_id}",
         sections=sections,
-        char_limit=approx_char_limit,
+        max_tokens=max_tokens,
         section_priorities=section_priorities,
     )
+    estimated_token_count = estimate_token_count(markdown)
 
     return {
         "contract_version": CONTEXT_PACK_CONTRACT_VERSION,
         "target": {"type": "agent_job", "id": job_id},
         "reader_role": role,
         "role_profile": role_profile,
+        "token_estimator": TOKEN_ESTIMATOR,
         "budget": {
             "max_tokens": max_tokens,
             "approx_char_limit": approx_char_limit,
-            "approx_chars_per_token": APPROX_CHARS_PER_TOKEN,
+            "approx_chars_per_token": LEGACY_APPROX_CHARS_PER_TOKEN,
+            "token_estimator": TOKEN_ESTIMATOR,
         },
         "approx_char_count": len(markdown),
+        "estimated_token_count": estimated_token_count,
         "truncated": bool(omitted_sections),
         "included_sections": included_sections,
         "omitted_sections": omitted_sections,
@@ -232,7 +238,7 @@ def pack_context_for_task(
     task = read_task(paths, task_id)
     role = (reader_role or "default").strip() or "default"
     role_profile, section_priorities = _task_role_profile(role)
-    approx_char_limit = max_tokens * APPROX_CHARS_PER_TOKEN
+    approx_char_limit = max_tokens * LEGACY_APPROX_CHARS_PER_TOKEN
 
     conn = connect(paths.db_path)
     try:
@@ -258,21 +264,25 @@ def pack_context_for_task(
     markdown, included_sections, omitted_sections = _render_with_budget(
         title=f"# Context Pack: {task_id}",
         sections=sections,
-        char_limit=approx_char_limit,
+        max_tokens=max_tokens,
         section_priorities=section_priorities,
     )
+    estimated_token_count = estimate_token_count(markdown)
 
     return {
         "contract_version": CONTEXT_PACK_CONTRACT_VERSION,
         "target": {"type": "task", "id": task_id},
         "reader_role": role,
         "role_profile": role_profile,
+        "token_estimator": TOKEN_ESTIMATOR,
         "budget": {
             "max_tokens": max_tokens,
             "approx_char_limit": approx_char_limit,
-            "approx_chars_per_token": APPROX_CHARS_PER_TOKEN,
+            "approx_chars_per_token": LEGACY_APPROX_CHARS_PER_TOKEN,
+            "token_estimator": TOKEN_ESTIMATOR,
         },
         "approx_char_count": len(markdown),
+        "estimated_token_count": estimated_token_count,
         "truncated": bool(omitted_sections),
         "included_sections": included_sections,
         "omitted_sections": omitted_sections,
@@ -515,7 +525,7 @@ def _render_with_budget(
     *,
     title: str,
     sections: list[tuple[str, str]],
-    char_limit: int,
+    max_tokens: int,
     section_priorities: dict[str, int],
 ) -> tuple[str, list[str], list[str]]:
     base = f"{title}\n\n"
@@ -523,15 +533,16 @@ def _render_with_budget(
     section_by_id = {section_id: section for section_id, section in sections}
     canonical_index = {section_id: index for index, section_id in enumerate(canonical_ids)}
     selected: set[str] = set()
-    selected_length = len(base)
+    selected_token_count = estimate_token_count(base)
     for section_id in sorted(
         canonical_ids,
         key=lambda value: (-section_priorities.get(value, 0), canonical_index[value]),
     ):
         section_text = section_by_id[section_id].rstrip() + "\n\n"
-        if selected_length + len(section_text) <= char_limit:
+        section_token_count = estimate_token_count(section_text)
+        if selected_token_count + section_token_count <= max_tokens:
             selected.add(section_id)
-            selected_length += len(section_text)
+            selected_token_count += section_token_count
 
     markdown = base
     included: list[str] = []
@@ -545,12 +556,48 @@ def _render_with_budget(
 
     if omitted:
         note = "_Context truncated. Increase `--max-tokens` to include omitted sections._\n"
-        if len(markdown) + len(note) <= char_limit:
+        if estimate_token_count(markdown + note) <= max_tokens:
             markdown += note
 
-    if len(markdown) > char_limit:
-        markdown = markdown[:char_limit]
     return markdown.rstrip() + "\n", included, omitted
+
+
+def estimate_token_count(text: str) -> int:
+    tokens = 0
+    ascii_word_length = 0
+    in_whitespace_run = False
+
+    def flush_ascii_word() -> None:
+        nonlocal ascii_word_length, tokens
+        if ascii_word_length:
+            tokens += max(1, math.ceil(ascii_word_length / 4))
+            ascii_word_length = 0
+
+    def flush_whitespace() -> None:
+        nonlocal in_whitespace_run, tokens
+        if in_whitespace_run:
+            tokens += 1
+            in_whitespace_run = False
+
+    for char in text:
+        if _is_ascii_word_char(char):
+            flush_whitespace()
+            ascii_word_length += 1
+            continue
+        flush_ascii_word()
+        if char.isspace():
+            in_whitespace_run = True
+            continue
+        flush_whitespace()
+        tokens += 1
+
+    flush_ascii_word()
+    flush_whitespace()
+    return tokens
+
+
+def _is_ascii_word_char(char: str) -> bool:
+    return char.isascii() and (char.isalnum() or char == "_")
 
 
 def _job_role_profile(role: str) -> tuple[str, dict[str, int]]:

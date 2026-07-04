@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from pcl.cli import main
+from pcl.context import TOKEN_ESTIMATOR, estimate_token_count
 
 
 def _json_output(capsys) -> dict:
@@ -172,8 +173,11 @@ def test_context_pack_for_job_returns_machine_handoff(tmp_path: Path, capsys) ->
     assert pack["target"] == {"type": "agent_job", "id": "J-0001"}
     assert pack["reader_role"] == "implementer"
     assert pack["role_profile"] == "implementer"
+    assert pack["token_estimator"] == TOKEN_ESTIMATOR
     assert pack["budget"]["max_tokens"] == 12000
     assert pack["budget"]["approx_char_limit"] == 48000
+    assert pack["budget"]["token_estimator"] == TOKEN_ESTIMATOR
+    assert pack["estimated_token_count"] == estimate_token_count(pack["markdown"])
     assert pack["truncated"] is False
     assert "target_job" in pack["included_sections"]
     assert "agent_prompt" in pack["included_sections"]
@@ -228,7 +232,7 @@ def test_context_pack_reports_truncation_metadata(tmp_path: Path, capsys) -> Non
     pack = _json_output(capsys)["context_pack"]
     assert pack["truncated"] is True
     assert pack["omitted_sections"]
-    assert pack["approx_char_count"] <= pack["budget"]["approx_char_limit"]
+    assert pack["estimated_token_count"] <= pack["budget"]["max_tokens"]
     assert pack["markdown"].startswith("# Context Pack: J-0001")
 
 
@@ -254,6 +258,9 @@ def test_context_pack_for_task_returns_task_handoff_with_dependencies(
     assert pack["target"] == {"type": "task", "id": "T-0002"}
     assert pack["reader_role"] == "default"
     assert pack["role_profile"] == "default"
+    assert pack["token_estimator"] == TOKEN_ESTIMATOR
+    assert pack["budget"]["token_estimator"] == TOKEN_ESTIMATOR
+    assert pack["estimated_token_count"] == estimate_token_count(pack["markdown"])
     assert pack["source_commands"] == [
         "pcl task read T-0002 --json",
         "pcl task list --json",
@@ -371,8 +378,81 @@ def test_context_pack_for_task_reports_truncation_metadata(
     pack = _json_output(capsys)["context_pack"]
     assert pack["truncated"] is True
     assert pack["omitted_sections"]
-    assert pack["approx_char_count"] <= pack["budget"]["approx_char_limit"]
+    assert pack["estimated_token_count"] <= pack["budget"]["max_tokens"]
     assert pack["markdown"].startswith("# Context Pack: T-0002")
+
+
+def test_charclass_token_estimator_counts_stable_character_classes() -> None:
+    assert estimate_token_count("abcd") == 1
+    assert estimate_token_count("abcde") == 2
+    assert estimate_token_count("hello world") == 5
+    assert estimate_token_count("漢字") == 2
+    assert estimate_token_count("a, b") == 4
+    assert estimate_token_count("a\n\nb") == 3
+
+
+def test_context_pack_for_job_tight_budget_omissions_match_markdown(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_job(tmp_path, capsys)
+
+    args = [
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--job",
+        "J-0001",
+        "--max-tokens",
+        "40",
+        "--json",
+    ]
+    assert main(args) == 0
+    first = _json_output(capsys)["context_pack"]
+    assert main(args) == 0
+    second = _json_output(capsys)["context_pack"]
+
+    assert first["included_sections"] == second["included_sections"]
+    assert first["omitted_sections"] == second["omitted_sections"]
+    assert first["estimated_token_count"] == estimate_token_count(first["markdown"])
+    assert first["estimated_token_count"] <= first["budget"]["max_tokens"]
+    for section_id in first["included_sections"]:
+        assert _section_heading(section_id) in first["markdown"]
+    for section_id in first["omitted_sections"]:
+        assert _section_heading(section_id) not in first["markdown"]
+
+
+def test_context_pack_for_task_tight_budget_omissions_match_markdown(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_task_context(tmp_path, capsys)
+
+    args = [
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0002",
+        "--max-tokens",
+        "45",
+        "--json",
+    ]
+    assert main(args) == 0
+    first = _json_output(capsys)["context_pack"]
+    assert main(args) == 0
+    second = _json_output(capsys)["context_pack"]
+
+    assert first["included_sections"] == second["included_sections"]
+    assert first["omitted_sections"] == second["omitted_sections"]
+    assert first["estimated_token_count"] == estimate_token_count(first["markdown"])
+    assert first["estimated_token_count"] <= first["budget"]["max_tokens"]
+    for section_id in first["included_sections"]:
+        assert _section_heading(section_id) in first["markdown"]
+    for section_id in first["omitted_sections"]:
+        assert _section_heading(section_id) not in first["markdown"]
 
 
 def test_context_pack_for_task_markdown_is_deterministic(
@@ -429,7 +509,7 @@ def test_context_pack_role_profiles_prioritize_sections_under_budget(
         "--job",
         "J-0001",
         "--max-tokens",
-        "200",
+        "360",
     ]
     assert main([*base_args, "--json"]) == 0
     default_pack = _json_output(capsys)["context_pack"]
@@ -549,3 +629,24 @@ def test_context_pack_verifications_render_rubric_columns(
     assert "evidence_completeness" in markdown
     assert "| V-0001 | J-0001 | human | inconclusive |  |  |" in markdown
     assert "| V-0002 | J-0001 | human | approved | 0.8 | partial |" in markdown
+
+
+def _section_heading(section_id: str) -> str:
+    return {
+        "machine_context_rules": "## Machine Context Rules",
+        "target_job": "## Target Job",
+        "workflow_run": "## Workflow Run",
+        "goal": "## Goal",
+        "run_jobs": "## Jobs In This Run",
+        "verifications": "## Verifications",
+        "human_queue": "## Human Queue",
+        "evidence": "## Evidence",
+        "recent_events": "## Recent Events",
+        "agent_prompt": "## Agent Prompt",
+        "target_task": "## Target Task",
+        "dependencies": "## Dependencies",
+        "dependents": "## Dependents",
+        "related_feature": "## Related Feature",
+        "related_defect": "## Related Defect",
+        "sibling_tasks": "## Sibling Tasks",
+    }[section_id]

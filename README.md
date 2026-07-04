@@ -192,11 +192,13 @@ pcl context pack --task T-0001 --json
 ```
 
 The JSON contract is `context-pack/v1`. It includes included/omitted section
-metadata, role profile selection, source commands, source paths, and the
-generated Markdown package. Job packs include lease fields and rubric-aware
-verification columns for `rubric/v1`; task packs include dependencies,
-dependents, linked goal/feature/defect context, sibling tasks, and recent
-events.
+metadata, role profile selection, `token_estimator: "charclass/v1"`,
+`estimated_token_count`, source commands, source paths, and the generated
+Markdown package. Job packs include lease fields and rubric-aware verification
+columns for `rubric/v1`; task packs include dependencies, dependents, linked
+goal/feature/defect context, sibling tasks, and recent events. Tight budgets
+omit whole sections deterministically rather than slicing through rendered
+Markdown.
 See [docs/context-pack.md](docs/context-pack.md) for the contract shape and
 boundaries.
 
