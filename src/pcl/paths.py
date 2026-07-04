@@ -45,6 +45,10 @@ class ProjectPaths:
         return self.loop_dir / "evidence"
 
     @property
+    def context_receipts_dir(self) -> Path:
+        return self.evidence_dir / "context-receipts"
+
+    @property
     def workflows_dir(self) -> Path:
         return self.loop_dir / "workflows"
 
