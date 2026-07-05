@@ -203,20 +203,51 @@ count. Rebuild with `pcl index build --json` after meaningful code changes.
         "path": "docs/context-pack.md",
         "lines": [1],
         "snippet": "# Context Pack",
-        "reason": "line contains all query terms"
+        "reason": "line contains all query terms",
+        "snapshot_consistency": "fresh",
+        "snapshot_consistency_reason": "current hash matches indexed hash"
       }
-    ]
+    ],
+    "staleness_warnings": {
+      "count": 0,
+      "affected_paths": []
+    },
+    "git_head_warning": null
   }
 }
 ```
 
 Search is lexical and uses the current working tree contents for files present
-in the latest index. Query terms match at file level, so terms may appear on
-different lines. Results are ranked deterministically by relevance:
+in the latest index. If an indexed file is missing or unreadable, search may
+match deterministic index metadata such as the path and symbol names so the
+result can still report that file-state boundary. Hash-skipped paths recorded
+in the latest snapshot summary may also appear when their current contents or
+snapshot metadata match. Query terms match at file level, so terms may appear
+on different lines. Results are ranked deterministically by relevance:
 definition-like code hits rank above prose mentions, source and test files get a
 small boost, prose files get a small penalty, and path order breaks ties.
 Search also re-applies sensitive path exclusions at query time so stale index
 rows from older builds cannot surface sensitive files.
+
+Each search result includes `snapshot_consistency`:
+
+- `fresh`: current file hash matches the indexed hash.
+- `modified_since_index`: the file exists, but the current hash differs from
+  the indexed hash.
+- `missing_from_worktree`: the path is in the latest snapshot but no longer
+  exists in the working tree.
+- `not_hashed`: the path is in the latest snapshot without an indexed hash,
+  such as a large or binary skip. These results include `hash_skipped_reason`
+  when the snapshot recorded one.
+
+The result-level `snapshot_consistency_reason` is a short file-state sentence,
+not a claim about whether an agent read or understood the file.
+`staleness_warnings.count` is the number of returned results whose
+`snapshot_consistency` is not `fresh`; `affected_paths` lists those result
+paths in result order. If the latest index run's Git HEAD differs from the
+current HEAD, `git_head_warning` is populated once with the previous/current
+hashes and the suggested command `pcl index build --json`. This is advisory;
+search never rebuilds the index automatically.
 
 ## Impact Contract
 
@@ -260,7 +291,8 @@ under `.project-loop/evidence/context-receipts/`.
 The receipt contract is `context-receipt/v0`. Its core fields are:
 
 - `included_candidate_context`: files PLH provided as candidate context, with
-  role, reason, confidence, language, and indexed hash when available.
+  role, reason, confidence, language, indexed hash when available, and
+  additive `snapshot_consistency` fields recorded at receipt time.
 - `omitted`: files PLH did not include and the recorded reason.
 - `sensitive_omitted_count`: the sensitive omission count from the index run.
 - `staleness_warnings`: conditions that make the snapshot less current than

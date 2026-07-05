@@ -1717,8 +1717,19 @@ def main(argv: list[str] | None = None) -> int:
             if json_output:
                 _print_json(result)
             else:
+                warning = result["search"].get("git_head_warning")
+                if warning:
+                    print(warning["message"])
                 for item in result["search"]["results"]:
-                    print(f"{item['path']}:{item['lines'][0]} {item['snippet']}")
+                    lines = item.get("lines") or []
+                    line = lines[0] if lines else 0
+                    print(f"{item['path']}:{line} {item['snippet']}")
+                    if item.get("snapshot_consistency") != "fresh":
+                        print(
+                            "  warning: "
+                            f"snapshot_consistency={item['snapshot_consistency']} "
+                            f"({item['snapshot_consistency_reason']})"
+                        )
             return 0
 
         if args.command == "impact":

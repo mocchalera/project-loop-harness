@@ -10,6 +10,7 @@ from typing import Any
 from .diff import _git_head
 from .scan import INDEX_VERSION, LARGE_FILE_BYTES, ScanResult
 from .scan import _scan_working_tree
+from .scan import _sha256_file
 from .test_hints import _attach_test_hints
 from ..db import connect, table_exists
 from ..errors import DataStoreError, InvalidInputError
@@ -41,6 +42,17 @@ class IndexSnapshot:
         return {
             str(item.get("path")): item
             for item in ignored
+            if isinstance(item, dict) and item.get("path")
+        }
+
+    @property
+    def hash_skipped_by_path(self) -> dict[str, dict[str, Any]]:
+        skipped = self.summary.get("hash_skipped", [])
+        if not isinstance(skipped, list):
+            return {}
+        return {
+            str(item.get("path")): item
+            for item in skipped
             if isinstance(item, dict) and item.get("path")
         }
 
@@ -298,6 +310,92 @@ def _staleness_warnings_for_snapshot(paths: ProjectPaths, snapshot: IndexSnapsho
             f"index={snapshot.run['ignored_count']}, current={len(current.ignored)}."
         )
     return warnings
+
+
+def _snapshot_consistency_for_path(
+    paths: ProjectPaths,
+    snapshot: IndexSnapshot,
+    path: str,
+) -> dict[str, Any]:
+    row = snapshot.files_by_path.get(path)
+    hash_skipped = snapshot.hash_skipped_by_path.get(path)
+    indexed_hash = row.get("sha256") if row else None
+    hash_skipped_reason = _hash_skipped_reason(row=row, hash_skipped=hash_skipped)
+    absolute_path = paths.root / path
+
+    if not absolute_path.exists():
+        return {
+            "snapshot_consistency": "missing_from_worktree",
+            "snapshot_consistency_reason": "file missing from working tree",
+        }
+    if indexed_hash is None:
+        reason = hash_skipped_reason or "indexed hash unavailable"
+        payload = {
+            "snapshot_consistency": "not_hashed",
+            "snapshot_consistency_reason": f"indexed path has no hash: {reason}",
+        }
+        if hash_skipped_reason:
+            payload["hash_skipped_reason"] = hash_skipped_reason
+        return payload
+    try:
+        current_hash = _sha256_file(absolute_path)
+    except OSError as exc:
+        return {
+            "snapshot_consistency": "modified_since_index",
+            "snapshot_consistency_reason": f"current file hash unavailable: {exc.__class__.__name__}",
+        }
+    if current_hash == indexed_hash:
+        return {
+            "snapshot_consistency": "fresh",
+            "snapshot_consistency_reason": "current hash matches indexed hash",
+        }
+    return {
+        "snapshot_consistency": "modified_since_index",
+        "snapshot_consistency_reason": "current hash differs from indexed hash",
+    }
+
+
+def _search_staleness_summary(results: list[dict[str, Any]]) -> dict[str, Any]:
+    affected_paths = [
+        str(item["path"])
+        for item in results
+        if item.get("snapshot_consistency") != "fresh"
+    ]
+    return {
+        "count": len(affected_paths),
+        "affected_paths": affected_paths,
+    }
+
+
+def _git_head_snapshot_warning(paths: ProjectPaths, snapshot: IndexSnapshot) -> dict[str, Any] | None:
+    index_git_head = snapshot.run.get("git_head")
+    current_git_head = _git_head(paths.root)
+    if not index_git_head or not current_git_head or index_git_head == current_git_head:
+        return None
+    return {
+        "code": "git_head_changed",
+        "message": (
+            "Git HEAD differs from the latest code index snapshot; "
+            "consider running `pcl index build --json`."
+        ),
+        "index_git_head": index_git_head,
+        "current_git_head": current_git_head,
+        "suggested_command": "pcl index build --json",
+    }
+
+
+def _hash_skipped_reason(
+    *,
+    row: dict[str, Any] | None,
+    hash_skipped: dict[str, Any] | None,
+) -> str | None:
+    for source in (row, hash_skipped):
+        if not source:
+            continue
+        reason = source.get("hash_skipped_reason") or source.get("ignored_reason")
+        if reason:
+            return str(reason)
+    return None
 
 
 def _counted_path_warning(prefix: str, paths: list[str], *, limit: int = 5) -> str:

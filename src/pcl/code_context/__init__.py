@@ -102,8 +102,11 @@ from .store import (
     _latest_snapshot,
     _load_required_snapshot,
     _next_numeric_suffix,
+    _git_head_snapshot_warning,
+    _search_staleness_summary,
     _staleness_warnings_for_snapshot,
     _summary_sensitive_omitted_count,
+    _snapshot_consistency_for_path,
     build_code_index,
     code_index_status,
 )
