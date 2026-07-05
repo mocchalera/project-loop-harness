@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import shutil
 
 from pcl.cli import main
 from pcl.db import connect
@@ -20,6 +21,8 @@ def _init_code_project(root: Path, capsys) -> None:
     (root / "docs").mkdir()
     (root / "assets").mkdir()
     (root / "node_modules").mkdir()
+    (root / ".claude" / "state").mkdir(parents=True)
+    (root / ".agents" / "skills" / "project-control-loop").mkdir(parents=True, exist_ok=True)
     (root / "src" / "pkg" / "calc.py").write_text(
         "\n".join(
             [
@@ -58,6 +61,11 @@ def _init_code_project(root: Path, capsys) -> None:
         encoding="utf-8",
     )
     (root / "docs" / "calc.md").write_text("# Calculator\n\n## Usage\n", encoding="utf-8")
+    (root / ".claude" / "state" / "session.json").write_text('{"noise": true}\n', encoding="utf-8")
+    (root / ".agents" / "skills" / "project-control-loop" / "SKILL.md").write_text(
+        "# Project Control Loop Skill\n",
+        encoding="utf-8",
+    )
     (root / "ignored.txt").write_text("ignored by gitignore\n", encoding="utf-8")
     (root / ".gitignore").write_text(
         (root / ".gitignore").read_text(encoding="utf-8") + "\nignored.txt\n",
@@ -82,6 +90,30 @@ def _synthetic_diff(root: Path) -> Path:
                 "+++ b/src/pkg/calc.py",
                 "@@ -1,3 +1,3 @@",
                 "+def helper(value: int) -> int:",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return diff_path
+
+
+def _historical_multifile_diff_with_pathlike_body_lines(root: Path) -> Path:
+    diff_path = root / "historical.diff"
+    diff_path.write_text(
+        "\n".join(
+            [
+                "diff --git a/README.md b/README.md",
+                "--- a/README.md",
+                "+++ b/README.md",
+                "@@ -1,3 +1,3 @@",
+                " The JSON contract is `context-pack/v1`. It includes included/omitted section",
+                " See [docs/context-pack.md](docs/context-pack.md) for the contract shape and",
+                "diff --git a/src/pcl/context.py b/src/pcl/context.py",
+                "--- a/src/pcl/context.py",
+                "+++ b/src/pcl/context.py",
+                "@@ -1,3 +1,3 @@",
+                " CONTEXT_PACK_CONTRACT_VERSION = \"context-pack/v1\"",
+                "+TOKEN_ESTIMATOR = \"charclass/v1\"",
             ]
         ),
         encoding="utf-8",
@@ -131,6 +163,10 @@ def test_index_build_records_gitignore_aware_snapshot_and_is_deterministic(
     assert md_symbols[0]["name"] == "Calculator"
 
     ignored = {item["path"]: item for item in index["ignored"]}
+    assert ".agents/" in ignored
+    assert ".claude/" in ignored
+    assert ignored[".agents/"]["ignored_reason"] == "code_index.exclude:.agents/"
+    assert ignored[".claude/"]["ignored_reason"] == "code_index.exclude:.claude/"
     assert ".project-loop/" in ignored
     assert "node_modules/" in ignored
     assert ignored["ignored.txt"]["ignored_reason"].startswith("gitignore:")
@@ -151,6 +187,25 @@ def test_index_build_records_gitignore_aware_snapshot_and_is_deterministic(
         conn.close()
 
 
+def test_code_index_excludes_can_be_overridden_from_pcl_yaml(tmp_path: Path, capsys) -> None:
+    _init_code_project(tmp_path, capsys)
+    config_path = tmp_path / "pcl.yaml"
+    config_text = config_path.read_text(encoding="utf-8").replace(
+        "code_index:\n  exclude:\n    - .claude/\n    - .agents/\n    - .codex/\n",
+        "code_index:\n  exclude: []\n",
+    )
+    config_path.write_text(config_text, encoding="utf-8")
+
+    index = _build_index(tmp_path, capsys)["index"]
+    files = {item["path"] for item in index["files"]}
+    ignored = {item["path"] for item in index["ignored"]}
+
+    assert ".agents/skills/project-control-loop/SKILL.md" in files
+    assert ".claude/state/session.json" in files
+    assert ".agents/" not in ignored
+    assert ".claude/" not in ignored
+
+
 def test_index_status_reports_staleness_after_file_change(tmp_path: Path, capsys) -> None:
     _init_code_project(tmp_path, capsys)
     _build_index(tmp_path, capsys)
@@ -167,7 +222,7 @@ def test_index_status_reports_staleness_after_file_change(tmp_path: Path, capsys
     assert any("Indexed file metadata changed" in warning for warning in stale["staleness_warnings"])
 
 
-def test_code_search_returns_lexical_matches(tmp_path: Path, capsys) -> None:
+def test_code_search_returns_ranked_file_level_matches(tmp_path: Path, capsys) -> None:
     _init_code_project(tmp_path, capsys)
     _build_index(tmp_path, capsys)
 
@@ -175,9 +230,10 @@ def test_code_search_returns_lexical_matches(tmp_path: Path, capsys) -> None:
     payload = _json_output(capsys)
 
     assert payload["search"]["contract_version"] == "code-search/v0"
-    assert payload["search"]["results"][0]["path"] == "tests/test_calc.py"
-    assert payload["search"]["results"][0]["lines"] == [4]
-    assert payload["search"]["results"][0]["reason"] == "line contains all query terms"
+    assert payload["search"]["results"][0]["path"] == "src/pkg/calc.py"
+    assert {1, 2} <= set(payload["search"]["results"][0]["lines"])
+    assert "definition-like hit" in payload["search"]["results"][0]["reason"]
+    assert payload["search"]["results"][1]["path"] == "tests/test_calc.py"
 
 
 def test_impact_writes_epistemically_honest_receipt_and_evidence(
@@ -236,6 +292,52 @@ def test_impact_writes_epistemically_honest_receipt_and_evidence(
         conn.close()
 
 
+def test_impact_diff_parser_ignores_pathlike_body_lines(tmp_path: Path, capsys) -> None:
+    _init_code_project(tmp_path, capsys)
+    _build_index(tmp_path, capsys)
+    diff_path = _historical_multifile_diff_with_pathlike_body_lines(tmp_path)
+
+    assert main(["--root", str(tmp_path), "impact", "--diff", str(diff_path), "--json"]) == 0
+    impact = _json_output(capsys)["impact"]
+
+    assert [item["path"] for item in impact["changed_files"]] == [
+        "README.md",
+        "src/pcl/context.py",
+    ]
+    assert not any("context-pack/v1" in item["path"] for item in impact["changed_files"])
+    assert not any("docs/context-pack.md" in item["path"] for item in impact["changed_files"])
+
+
+def test_impact_caps_candidates_and_records_omissions(tmp_path: Path, capsys) -> None:
+    _init_code_project(tmp_path, capsys)
+    for index in range(25):
+        (tmp_path / "tests" / f"test_calc_extra_{index:02d}.py").write_text(
+            "from pkg import calc\n\n"
+            f"def test_extra_{index:02d}():\n"
+            "    assert calc.helper(2) == 4\n",
+            encoding="utf-8",
+        )
+    for index in range(12):
+        (tmp_path / "docs" / f"calculator-noise-{index:02d}.md").write_text(
+            "# Calculator\n\nCalculator appears throughout common project prose.\n",
+            encoding="utf-8",
+        )
+    _build_index(tmp_path, capsys)
+    diff_path = _synthetic_diff(tmp_path)
+
+    assert main(["--root", str(tmp_path), "impact", "--diff", str(diff_path), "--json"]) == 0
+    impact = _json_output(capsys)["impact"]
+
+    assert len(impact["likely_impacted"]) == 20
+    assert any(item.get("omitted_type") == "likely_impacted_candidate" for item in impact["omitted"])
+    assert any(
+        item.get("omitted_type") == "lexical_symbol_reference" and item.get("symbol") == "Calculator"
+        for item in impact["omitted"]
+    )
+    assert impact["verification_suggestions"][0] == "python3 -m pytest"
+    assert all("test_calc_extra_00.py tests/test_calc_extra_01.py" not in item for item in impact["verification_suggestions"])
+
+
 def test_eval_retrieval_reports_precision_recall_and_missing_context(
     tmp_path: Path,
     capsys,
@@ -272,6 +374,31 @@ def test_eval_retrieval_reports_precision_recall_and_missing_context(
     assert evaluation["metrics"]["missing_critical_context"] == []
 
 
+def test_real_history_retrieval_fixture_beats_recorded_baseline(tmp_path: Path, capsys) -> None:
+    _copy_repo_subset_for_retrieval_eval(tmp_path)
+
+    assert main(["init", "--target", str(tmp_path), "--json"]) == 0
+    _json_output(capsys)
+    _build_index(tmp_path, capsys)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "eval",
+        "retrieval",
+        "--fixture",
+        "tests/fixtures/retrieval_real_history_v0.json",
+        "--json",
+    ]) == 0
+    evaluation = _json_output(capsys)["evaluation"]
+
+    assert evaluation["metrics"]["precision"] >= 0.2
+    assert evaluation["metrics"]["recall"] >= 0.8
+    assert evaluation["metrics"]["precision"] > 0.1429
+    assert evaluation["metrics"]["recall"] > 0.6667
+    assert evaluation["metrics"]["missing_critical_context"] == []
+
+
 def test_code_search_requires_existing_index(tmp_path: Path, capsys) -> None:
     assert main(["init", "--target", str(tmp_path), "--json"]) == 0
     _json_output(capsys)
@@ -280,3 +407,29 @@ def test_code_search_requires_existing_index(tmp_path: Path, capsys) -> None:
     payload = _json_output(capsys)
     assert payload["error"]["code"] == "invalid_input"
     assert "No code index run exists" in payload["error"]["message"]
+
+
+def _copy_repo_subset_for_retrieval_eval(target: Path) -> None:
+    source = Path(__file__).resolve().parents[1]
+    for relative in [
+        ".gitignore",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "README.md",
+        "pcl.yaml",
+        "pyproject.toml",
+        "agent-tasks",
+        "docs",
+        "src",
+        "tests",
+    ]:
+        source_path = source / relative
+        target_path = target / relative
+        if source_path.is_dir():
+            shutil.copytree(
+                source_path,
+                target_path,
+                ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".ruff_cache"),
+            )
+        else:
+            shutil.copy2(source_path, target_path)

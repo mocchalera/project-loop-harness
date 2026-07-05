@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass, field
 import fnmatch
 import hashlib
 import json
 from json import JSONDecodeError
+import math
 import os
 from pathlib import Path
 import re
@@ -33,6 +35,16 @@ RETRIEVAL_FIXTURE_VERSION = "retrieval-fixture/v0"
 GIT_DIFF_SENTINEL = "__git__"
 LARGE_FILE_BYTES = 1_000_000
 SEARCH_SNIPPET_CHARS = 220
+LIKELY_IMPACTED_LIMIT = 20
+TARGETED_TEST_SUGGESTION_LIMIT = 6
+LEXICAL_SYMBOL_MAX_DOCUMENT_FRACTION = 0.05
+LEXICAL_SYMBOL_MIN_DOCUMENT_LIMIT = 10
+
+DEFAULT_CODE_INDEX_EXCLUDES = (
+    ".claude/",
+    ".agents/",
+    ".codex/",
+)
 
 DEFAULT_IGNORED_NAMES = {
     ".git": "default_ignore:.git",
@@ -293,14 +305,14 @@ def code_index_status(paths: ProjectPaths) -> dict[str, Any]:
 
 def search_code(paths: ProjectPaths, *, query: str, limit: int = 50) -> dict[str, Any]:
     require_initialized(paths)
-    terms = [term.casefold() for term in query.split() if term.strip()]
+    terms = [_search_normalized(term) for term in query.split() if term.strip()]
     if not terms:
         raise InvalidInputError("Search query must not be empty.", details={"query": query})
     if limit < 1:
         raise InvalidInputError("--limit must be a positive integer.", details={"limit": limit})
 
     snapshot = _load_required_snapshot(paths)
-    results: list[dict[str, Any]] = []
+    ranked_results: list[tuple[tuple[int, str], dict[str, Any]]] = []
     for item in snapshot.files:
         path = str(item["path"])
         absolute_path = paths.root / path
@@ -308,19 +320,23 @@ def search_code(paths: ProjectPaths, *, query: str, limit: int = 50) -> dict[str
             lines = absolute_path.read_text(encoding="utf-8").splitlines()
         except (OSError, UnicodeDecodeError):
             continue
-        for line_number, line in enumerate(lines, start=1):
-            folded = line.casefold()
-            if all(term in folded for term in terms):
-                results.append(
-                    {
-                        "path": path,
-                        "lines": [line_number],
-                        "snippet": _snippet(line),
-                        "reason": "line contains all query terms",
-                    }
-                )
-                if len(results) >= limit:
-                    return _search_payload(query=query, limit=limit, results=results)
+        text = _search_normalized("\n".join(lines))
+        if not all(term in text for term in terms):
+            continue
+        score, reason_parts = _search_score(path=path, lines=lines, terms=terms)
+        result_lines, snippet = _search_result_lines(lines, terms)
+        ranked_results.append(
+            (
+                (-score, path),
+                {
+                    "path": path,
+                    "lines": result_lines,
+                    "snippet": snippet,
+                    "reason": "; ".join(reason_parts),
+                },
+            )
+        )
+    results = [item for _, item in sorted(ranked_results, key=lambda item: item[0])[:limit]]
     return _search_payload(query=query, limit=limit, results=results)
 
 
@@ -343,7 +359,8 @@ def analyze_impact(
     staleness_warnings = _staleness_warnings_for_snapshot(paths, snapshot)
     changed = _changed_file_entries(snapshot, changed_files)
     omitted = _omitted_changed_entries(snapshot, changed_files)
-    likely_impacted = _likely_impacted_entries(paths, snapshot, changed_files)
+    likely_impacted, candidate_omissions = _likely_impacted_entries(paths, snapshot, changed_files)
+    omitted.extend(candidate_omissions)
     verification_suggestions = _verification_suggestions(likely_impacted, staleness_warnings)
     impact = {
         "contract_version": IMPACT_CONTRACT_VERSION,
@@ -434,6 +451,7 @@ def evaluate_retrieval(paths: ProjectPaths, *, fixture_path: str) -> dict[str, A
 
 def _scan_working_tree(root: Path, *, include_text: bool) -> ScanResult:
     root = root.resolve()
+    configured_excludes = _code_index_exclude_patterns(root)
     ignored: list[IgnoredEntry] = []
     candidates: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
@@ -448,6 +466,10 @@ def _scan_working_tree(root: Path, *, include_text: bool) -> ScanResult:
             if reason:
                 ignored.append(IgnoredEntry(path=f"{rel}/", ignored_reason=reason))
                 continue
+            configured_reason = _configured_ignore_reason(f"{rel}/", configured_excludes)
+            if configured_reason:
+                ignored.append(IgnoredEntry(path=f"{rel}/", ignored_reason=configured_reason))
+                continue
             kept_dirnames.append(dirname)
         dirnames[:] = kept_dirnames
         for filename in filenames:
@@ -456,6 +478,10 @@ def _scan_working_tree(root: Path, *, include_text: bool) -> ScanResult:
             default_reason = _default_ignore_reason(rel)
             if default_reason:
                 ignored.append(IgnoredEntry(path=rel, ignored_reason=default_reason))
+                continue
+            configured_reason = _configured_ignore_reason(rel, configured_excludes)
+            if configured_reason:
+                ignored.append(IgnoredEntry(path=rel, ignored_reason=configured_reason))
                 continue
             candidates.append(path)
 
@@ -714,10 +740,12 @@ def _likely_impacted_entries(
     paths: ProjectPaths,
     snapshot: IndexSnapshot,
     changed_files: list[dict[str, str]],
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     changed_paths = {item["path"] for item in changed_files}
     files_by_path = snapshot.files_by_path
     candidates: dict[str, dict[str, Any]] = {}
+    omitted: list[dict[str, Any]] = []
+    omitted_symbol_keys: set[tuple[str, str]] = set()
 
     def add_candidate(path: str, *, reason: str, confidence: float, source_path: str) -> None:
         if path in changed_paths or path not in files_by_path:
@@ -751,6 +779,17 @@ def _likely_impacted_entries(
                 )
         for row in snapshot.files:
             row_path = str(row["path"])
+            if not _is_test_path(row_path):
+                continue
+            if _test_path_matches_changed_path(row_path, changed_path):
+                add_candidate(
+                    row_path,
+                    reason="test_hint:path_token_match",
+                    confidence=0.9,
+                    source_path=changed_path,
+                )
+        for row in snapshot.files:
+            row_path = str(row["path"])
             if row_path in changed_paths:
                 continue
             row_hint = row.get("test_hint") if isinstance(row.get("test_hint"), dict) else {}
@@ -770,6 +809,24 @@ def _likely_impacted_entries(
                     source_path=changed_path,
                 )
         for symbol_name in _symbol_names(changed_row)[:8]:
+            document_frequency = _document_frequency(paths.root, snapshot, symbol_name)
+            if _symbol_is_too_common(document_frequency, len(snapshot.files)):
+                key = (changed_path, symbol_name)
+                if key not in omitted_symbol_keys:
+                    omitted.append(
+                        {
+                            "omitted_type": "lexical_symbol_reference",
+                            "source_path": changed_path,
+                            "symbol": symbol_name,
+                            "reason": (
+                                "dropped common lexical symbol: "
+                                f"{document_frequency} indexed files mention it; "
+                                f"threshold is {_lexical_symbol_document_limit(len(snapshot.files))}"
+                            ),
+                        }
+                    )
+                    omitted_symbol_keys.add(key)
+                continue
             for row in snapshot.files:
                 row_path = str(row["path"])
                 if row_path in changed_paths or row_path in candidates:
@@ -781,7 +838,22 @@ def _likely_impacted_entries(
                         confidence=0.5,
                         source_path=changed_path,
                     )
-    return [candidates[path] for path in sorted(candidates)]
+    ranked = sorted(
+        candidates.values(),
+        key=lambda item: (-float(item["confidence"]), str(item["reason"]), str(item["path"])),
+    )
+    included = ranked[:LIKELY_IMPACTED_LIMIT]
+    for item in ranked[LIKELY_IMPACTED_LIMIT:]:
+        omitted.append(
+            {
+                "omitted_type": "likely_impacted_candidate",
+                "path": item["path"],
+                "source_path": item["source_path"],
+                "confidence": item["confidence"],
+                "reason": f"likely_impacted cap exceeded; top {LIKELY_IMPACTED_LIMIT} candidates included",
+            }
+        )
+    return included, omitted
 
 
 def _verification_suggestions(
@@ -795,7 +867,14 @@ def _verification_suggestions(
         if str(item.get("path", "")).endswith(".py") and _is_test_path(str(item.get("path", "")))
     ]
     if python_tests:
-        suggestions.append("python3 -m pytest " + " ".join(python_tests[:8]))
+        unique_tests = sorted(set(python_tests))
+        if len(unique_tests) <= TARGETED_TEST_SUGGESTION_LIMIT:
+            suggestions.append("python3 -m pytest " + " ".join(unique_tests))
+        else:
+            suggestions.append("python3 -m pytest")
+            suggestions.append(
+                f"Review {len(unique_tests)} candidate test files in likely_impacted before narrowing verification."
+            )
     else:
         suggestions.append("Review changed files and likely impacted candidate context before choosing verification.")
     if staleness_warnings:
@@ -1032,23 +1111,76 @@ def _git_diff(root: Path) -> str:
 
 def _parse_changed_files(diff_text: str) -> list[dict[str, str]]:
     by_path: dict[str, str] = {}
+    current_old_path = ""
+    current_new_path = ""
+    pending_source_path = ""
+    in_hunk = False
     for raw_line in diff_text.splitlines():
-        line = raw_line.strip()
-        if not line:
+        line = raw_line.rstrip("\n")
+        stripped = line.strip()
+        if not stripped:
             continue
-        if line.startswith("diff --git "):
-            parts = line.split()
+        if stripped.startswith("diff --git "):
+            parts = stripped.split()
             if len(parts) >= 4:
-                path = _normalize_diff_path(parts[3])
+                current_old_path = _normalize_diff_path(parts[2])
+                current_new_path = _normalize_diff_path(parts[3])
+                pending_source_path = ""
+                in_hunk = False
+                path = current_new_path or current_old_path
                 if path:
                     by_path.setdefault(path, "M")
             continue
-        if line.startswith("+++ "):
-            path = _normalize_diff_path(line[4:].strip())
+        if stripped.startswith("@@"):
+            in_hunk = True
+            continue
+        if stripped.startswith("rename from "):
+            pending_source_path = _normalize_diff_path(stripped.removeprefix("rename from ").strip())
+            continue
+        if stripped.startswith("rename to "):
+            path = _normalize_diff_path(stripped.removeprefix("rename to ").strip())
+            if path:
+                by_path[path] = "R"
+            elif pending_source_path:
+                by_path[pending_source_path] = "R"
+            pending_source_path = ""
+            continue
+        if stripped.startswith("copy from "):
+            pending_source_path = _normalize_diff_path(stripped.removeprefix("copy from ").strip())
+            continue
+        if stripped.startswith("copy to "):
+            path = _normalize_diff_path(stripped.removeprefix("copy to ").strip())
+            if path:
+                by_path[path] = "C"
+            elif pending_source_path:
+                by_path[pending_source_path] = "C"
+            pending_source_path = ""
+            continue
+        if stripped.startswith("new file mode"):
+            path = current_new_path or current_old_path
+            if path:
+                by_path[path] = "A"
+            continue
+        if stripped.startswith("deleted file mode"):
+            path = current_old_path or current_new_path
+            if path:
+                by_path[path] = "D"
+            continue
+        if not in_hunk and stripped.startswith("--- "):
+            path = _normalize_diff_path(stripped[4:].strip())
             if path:
                 by_path.setdefault(path, "M")
+                current_old_path = path
             continue
-        status_match = re.match(r"^([ACDMRTUXB])\s+(.+)$", line)
+        if not in_hunk and stripped.startswith("+++ "):
+            path = _normalize_diff_path(stripped[4:].strip())
+            if path:
+                by_path[path] = by_path.get(path, "M")
+                current_new_path = path
+            elif current_old_path:
+                by_path[current_old_path] = "D"
+            continue
+        status_match = re.match(r"^([ACDMRTUXB])\d*\s+(.+)$", stripped)
         if status_match:
             status = status_match.group(1)
             fields = status_match.group(2).split()
@@ -1056,10 +1188,6 @@ def _parse_changed_files(diff_text: str) -> list[dict[str, str]]:
             if path:
                 by_path[path] = status
             continue
-        if not line.startswith(("---", "@@", "+", "-")) and "/" in line:
-            path = _normalize_diff_path(line)
-            if path:
-                by_path.setdefault(path, "M")
     return [{"path": path, "status": by_path[path]} for path in sorted(by_path)]
 
 
@@ -1149,6 +1277,122 @@ def _default_ignore_reason(relative_path: str) -> str | None:
     for part in relative_path.split("/"):
         reason = DEFAULT_IGNORED_NAMES.get(part)
         if reason:
+            return reason
+    return None
+
+
+def _code_index_exclude_patterns(root: Path) -> list[tuple[str, str]]:
+    configured = _configured_code_index_excludes(root)
+    if configured is None:
+        return [
+            (pattern, f"default_code_index_exclude:{pattern}")
+            for pattern in DEFAULT_CODE_INDEX_EXCLUDES
+        ]
+    return [(pattern, f"code_index.exclude:{pattern}") for pattern in configured]
+
+
+def _configured_code_index_excludes(root: Path) -> list[str] | None:
+    config_path = root / "pcl.yaml"
+    if not config_path.exists():
+        return None
+    try:
+        lines = config_path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return None
+
+    in_code_index = False
+    in_exclude = False
+    code_index_indent = 0
+    exclude_indent = 0
+    values: list[str] = []
+    saw_exclude = False
+    for raw_line in lines:
+        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
+            continue
+        indent = len(raw_line) - len(raw_line.lstrip(" "))
+        stripped = raw_line.strip()
+        if indent == 0 and stripped.startswith("code_index:"):
+            in_code_index = True
+            in_exclude = False
+            code_index_indent = indent
+            continue
+        if in_code_index and indent <= code_index_indent and not stripped.startswith("-"):
+            break
+        if not in_code_index:
+            continue
+        if stripped.startswith("exclude:"):
+            saw_exclude = True
+            in_exclude = True
+            exclude_indent = indent
+            raw_value = stripped.split(":", 1)[1].strip()
+            if raw_value:
+                inline = _parse_inline_yaml_list(raw_value)
+                if inline is not None:
+                    values.extend(inline)
+                    in_exclude = False
+                else:
+                    value = _strip_yaml_string(raw_value)
+                    if value:
+                        values.append(value)
+            continue
+        if in_exclude:
+            if indent <= exclude_indent and not stripped.startswith("-"):
+                in_exclude = False
+                continue
+            if stripped.startswith("-"):
+                value = _strip_yaml_string(stripped[1:].strip())
+                if value:
+                    values.append(value)
+    if not saw_exclude:
+        return None
+    return _unique_nonempty(values)
+
+
+def _parse_inline_yaml_list(value: str) -> list[str] | None:
+    stripped = value.strip()
+    if stripped == "[]":
+        return []
+    if not stripped.startswith("[") or not stripped.endswith("]"):
+        return None
+    inner = stripped[1:-1].strip()
+    if not inner:
+        return []
+    return [_strip_yaml_string(part.strip()) for part in inner.split(",") if _strip_yaml_string(part.strip())]
+
+
+def _strip_yaml_string(value: str) -> str:
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
+        return value[1:-1]
+    return value
+
+
+def _unique_nonempty(values: list[str]) -> list[str]:
+    unique: list[str] = []
+    for value in values:
+        normalized = value.strip()
+        if normalized and normalized not in unique:
+            unique.append(normalized)
+    return unique
+
+
+def _configured_ignore_reason(relative_path: str, patterns: list[tuple[str, str]]) -> str | None:
+    normalized_path = relative_path.strip("/")
+    for pattern, reason in patterns:
+        normalized_pattern = pattern.strip()
+        if not normalized_pattern:
+            continue
+        pattern_without_slashes = normalized_pattern.strip("/")
+        if not pattern_without_slashes:
+            continue
+        if normalized_pattern.endswith("/"):
+            if normalized_path == pattern_without_slashes or normalized_path.startswith(pattern_without_slashes + "/"):
+                return reason
+            continue
+        if "/" not in pattern_without_slashes:
+            if any(fnmatch.fnmatch(part, pattern_without_slashes) for part in normalized_path.split("/")):
+                return reason
+            continue
+        if fnmatch.fnmatch(normalized_path, pattern_without_slashes):
             return reason
     return None
 
@@ -1299,9 +1543,11 @@ def _test_hint_for_file(item: IndexedFile, files: list[IndexedFile]) -> dict[str
         if _stem_key(possible_test.path) == source_stem:
             reasons.append("filename_match")
             confidence = max(confidence, 0.72)
-        if item.language == "python" and _python_test_imports_source(possible_test.text, item.path):
-            reasons.append("python_import")
-            confidence = max(confidence, 0.88)
+        if item.language == "python":
+            import_reasons = _python_test_import_reasons(possible_test.text, possible_test.path, item)
+            if import_reasons:
+                reasons.extend(import_reasons)
+                confidence = max(confidence, 0.88 if "python_import" in import_reasons else 0.76)
         if reasons:
             candidates[possible_test.path] = {
                 "path": possible_test.path,
@@ -1312,15 +1558,66 @@ def _test_hint_for_file(item: IndexedFile, files: list[IndexedFile]) -> dict[str
     return hint
 
 
-def _python_test_imports_source(test_text: str, source_path: str) -> bool:
-    module = _python_module_name(source_path)
+def _python_test_import_reasons(test_text: str, test_path: str, source: IndexedFile) -> list[str]:
+    module = _python_module_name(source.path)
     if not module:
+        return []
+    imported = _python_imported_modules(test_text)
+    reasons: list[str] = []
+    if any(imported_module == module or imported_module.startswith(module + ".") for imported_module in imported):
+        reasons.append("python_import")
+    if (
+        "python_import" not in reasons
+        and module.startswith("pcl.")
+        and "pcl.cli" in imported
+        and _test_path_matches_source_surface(test_path, source)
+    ):
+        reasons.append("python_import:pcl_cli_surface")
+    return reasons
+
+
+def _python_imported_modules(test_text: str) -> set[str]:
+    try:
+        tree = ast.parse(test_text)
+    except SyntaxError:
+        return set()
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imported.add(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module:
+                imported.add(node.module)
+                for alias in node.names:
+                    imported.add(f"{node.module}.{alias.name}")
+            else:
+                for alias in node.names:
+                    imported.add(alias.name)
+    return imported
+
+
+def _test_path_matches_source_surface(test_path: str, source: IndexedFile) -> bool:
+    test_tokens = _identifier_tokens(Path(test_path).stem)
+    source_tokens = _identifier_tokens(Path(source.path).stem)
+    for symbol_name in _symbol_names(source.to_public_dict()):
+        source_tokens.update(_identifier_tokens(symbol_name))
+    source_tokens.discard("test")
+    test_tokens.discard("test")
+    return bool(test_tokens & source_tokens)
+
+
+def _test_path_matches_changed_path(test_path: str, changed_path: str) -> bool:
+    if not _is_test_path(test_path):
         return False
-    parent, _, leaf = module.rpartition(".")
-    probes = [f"import {module}", f"from {module} import"]
-    if parent and leaf:
-        probes.append(f"from {parent} import {leaf}")
-    return any(probe in test_text for probe in probes)
+    test_tokens = _identifier_tokens(Path(test_path).stem)
+    changed_tokens: set[str] = set()
+    for part in Path(changed_path).parts:
+        changed_tokens.update(_identifier_tokens(Path(part).stem))
+    for noisy in {"src", "pcl", "test", "tests", "py"}:
+        test_tokens.discard(noisy)
+        changed_tokens.discard(noisy)
+    return bool(test_tokens and changed_tokens and test_tokens & changed_tokens)
 
 
 def _python_module_name(path: str) -> str:
@@ -1359,6 +1656,19 @@ def _stem_key(path: str) -> str:
     return stem
 
 
+def _identifier_tokens(value: str) -> set[str]:
+    tokens = {
+        token.casefold()
+        for token in re.split(r"[^A-Za-z0-9]+|(?<=[a-z])(?=[A-Z])", value)
+        if token
+    }
+    expanded: set[str] = set(tokens)
+    if "renderer" in expanded:
+        expanded.add("dashboard")
+        expanded.add("render")
+    return expanded
+
+
 def _symbol_names(row: dict[str, Any]) -> list[str]:
     summary = row.get("symbol_summary") if isinstance(row.get("symbol_summary"), dict) else {}
     symbols = summary.get("symbols") if isinstance(summary.get("symbols"), list) else []
@@ -1376,6 +1686,105 @@ def _file_mentions(path: Path, symbol_name: str) -> bool:
         return symbol_name in path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return False
+
+
+def _document_frequency(root: Path, snapshot: IndexSnapshot, value: str) -> int:
+    count = 0
+    for row in snapshot.files:
+        if _file_mentions(root / str(row["path"]), value):
+            count += 1
+    return count
+
+
+def _symbol_is_too_common(document_frequency: int, file_count: int) -> bool:
+    return document_frequency > _lexical_symbol_document_limit(file_count)
+
+
+def _lexical_symbol_document_limit(file_count: int) -> int:
+    fraction_limit = math.ceil(file_count * LEXICAL_SYMBOL_MAX_DOCUMENT_FRACTION)
+    return max(LEXICAL_SYMBOL_MIN_DOCUMENT_LIMIT, fraction_limit)
+
+
+def _search_score(*, path: str, lines: list[str], terms: list[str]) -> tuple[int, list[str]]:
+    score = 0
+    reason_parts = ["file contains all query terms"]
+    best_line_score = 0
+    has_all_terms_on_line = False
+    has_definition_hit = False
+    for line in lines:
+        line_score = _line_search_score(line, terms)
+        best_line_score = max(best_line_score, line_score)
+        folded = line.casefold()
+        if all(term in folded for term in terms):
+            has_all_terms_on_line = True
+        if (
+            not _is_test_path(path)
+            and _is_definition_like_line(line)
+            and any(term in _search_normalized(line) for term in terms)
+        ):
+            has_definition_hit = True
+    score += best_line_score
+    if has_all_terms_on_line:
+        score += 25
+        reason_parts.append("one line contains all query terms")
+    if has_definition_hit:
+        score += 60
+        reason_parts.append("definition-like hit")
+    if path.startswith("src/"):
+        score += 18
+        reason_parts.append("source file")
+    elif path.endswith(".py") and _is_test_path(path):
+        score += 14
+        reason_parts.append("test file")
+    elif path.startswith("docs/") or path.startswith("agent-tasks/") or path.endswith(".md"):
+        score -= 6
+        reason_parts.append("prose file")
+    score += sum(_search_normalized(Path(path).stem).count(term) for term in terms) * 4
+    return score, reason_parts
+
+
+def _search_result_lines(lines: list[str], terms: list[str]) -> tuple[list[int], str]:
+    scored: list[tuple[int, int, str]] = []
+    for line_number, line in enumerate(lines, start=1):
+        score = _line_search_score(line, terms)
+        if score > 0:
+            scored.append((-score, line_number, line))
+    if not scored:
+        return [], ""
+    best = sorted(scored)[:3]
+    line_numbers = sorted(line_number for _, line_number, _ in best)
+    return line_numbers, _snippet(best[0][2])
+
+
+def _line_search_score(line: str, terms: list[str]) -> int:
+    normalized = _search_normalized(line)
+    score = 0
+    matched_terms = 0
+    for term in terms:
+        count = normalized.count(term)
+        if count:
+            matched_terms += 1
+            score += min(count, 2) * 6
+    if matched_terms == len(terms):
+        score += 30
+    if _is_definition_like_line(line):
+        score += 20
+    return score
+
+
+def _search_normalized(value: str) -> str:
+    return value.replace("_", " ").replace("-", " ").casefold()
+
+
+def _is_definition_like_line(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped:
+        return False
+    if PYTHON_DEF_RE.match(stripped) or PYTHON_CLASS_RE.match(stripped):
+        return True
+    if JS_FUNCTION_RE.match(stripped) or JS_CLASS_RE.match(stripped) or JS_EXPORT_BINDING_RE.match(stripped):
+        return True
+    return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*\s*=", stripped))
 
 
 def _search_payload(*, query: str, limit: int, results: list[dict[str, Any]]) -> dict[str, Any]:
