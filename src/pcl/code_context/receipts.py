@@ -6,7 +6,7 @@ import sqlite3
 from typing import Any
 
 from .scan import _relative_path
-from .store import IndexSnapshot
+from .store import IndexSnapshot, _snapshot_consistency_for_path
 from ..db import connect
 from ..errors import DataStoreError
 from ..events import append_event
@@ -108,7 +108,7 @@ def _receipt_payload(
         "root_path": str(paths.root),
         "source_command": "pcl impact --diff",
         "index_run": impact["index_run"],
-        "included_candidate_context": _included_candidate_context(snapshot, impact),
+        "included_candidate_context": _included_candidate_context(paths, snapshot, impact),
         "omitted": impact["omitted"],
         "sensitive_omitted_count": impact["sensitive_omitted_count"],
         "staleness_warnings": impact["staleness_warnings"],
@@ -117,6 +117,7 @@ def _receipt_payload(
 
 
 def _included_candidate_context(
+    paths: ProjectPaths,
     snapshot: IndexSnapshot,
     impact: dict[str, Any],
 ) -> list[dict[str, Any]]:
@@ -126,26 +127,26 @@ def _included_candidate_context(
         if not item["indexed"]:
             continue
         row = files_by_path[str(item["path"])]
-        included.append(
-            {
-                "path": item["path"],
-                "role": "changed_file",
-                "reason": item["reason"],
-                "confidence": 1.0,
-                "language": row["language"],
-                "sha256": row["sha256"],
-            }
-        )
+        candidate = {
+            "path": item["path"],
+            "role": "changed_file",
+            "reason": item["reason"],
+            "confidence": 1.0,
+            "language": row["language"],
+            "sha256": row["sha256"],
+        }
+        candidate.update(_snapshot_consistency_for_path(paths, snapshot, str(item["path"])))
+        included.append(candidate)
     for item in impact["likely_impacted"]:
         row = files_by_path[str(item["path"])]
-        included.append(
-            {
-                "path": item["path"],
-                "role": "likely_impacted",
-                "reason": item["reason"],
-                "confidence": item["confidence"],
-                "language": row["language"],
-                "sha256": row["sha256"],
-            }
-        )
+        candidate = {
+            "path": item["path"],
+            "role": "likely_impacted",
+            "reason": item["reason"],
+            "confidence": item["confidence"],
+            "language": row["language"],
+            "sha256": row["sha256"],
+        }
+        candidate.update(_snapshot_consistency_for_path(paths, snapshot, str(item["path"])))
+        included.append(candidate)
     return included

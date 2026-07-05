@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import shutil
+import subprocess
 
 from pcl.cli import main
+from pcl.code_context.scan import LARGE_FILE_BYTES
+from pcl.code_context import store as code_context_store
 from pcl.db import connect
 
 FAKE_SECRET_TOKEN = "PCL_FAKE_TOKEN_0072_DO_NOT_LEAK"
@@ -180,6 +183,17 @@ def _diff_with_changed_test(root: Path) -> Path:
         encoding="utf-8",
     )
     return diff_path
+
+
+def _git(root: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", "-C", str(root), *args],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    return completed.stdout
 
 
 def test_index_build_records_gitignore_aware_snapshot_and_is_deterministic(
@@ -450,7 +464,135 @@ def test_code_search_returns_ranked_file_level_matches(tmp_path: Path, capsys) -
     assert payload["search"]["results"][0]["path"] == "src/pkg/calc.py"
     assert {1, 2} <= set(payload["search"]["results"][0]["lines"])
     assert "definition-like hit" in payload["search"]["results"][0]["reason"]
+    assert payload["search"]["results"][0]["snapshot_consistency"] == "fresh"
+    assert payload["search"]["staleness_warnings"] == {"count": 0, "affected_paths": []}
+    assert payload["search"]["git_head_warning"] is None
     assert payload["search"]["results"][1]["path"] == "tests/test_calc.py"
+
+
+def test_code_search_reports_snapshot_consistency_for_returned_results(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_code_project(tmp_path, capsys)
+    (tmp_path / "src" / "pkg" / "fresh_consistency.py").write_text(
+        "class SnapshotConsistencyFresh:\n    pass\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "src" / "pkg" / "modified_consistency.py").write_text(
+        "class SnapshotConsistencyModified:\n    pass\n",
+        encoding="utf-8",
+    )
+    missing_path = tmp_path / "src" / "pkg" / "missing_consistency.py"
+    missing_path.write_text(
+        "class SnapshotConsistencyMissing:\n    pass\n",
+        encoding="utf-8",
+    )
+    large_path = tmp_path / "assets" / "large-consistency.txt"
+    large_path.write_text(
+        "SnapshotConsistencyLarge\n" + ("x" * LARGE_FILE_BYTES),
+        encoding="utf-8",
+    )
+    _build_index(tmp_path, capsys)
+
+    (tmp_path / "src" / "pkg" / "modified_consistency.py").write_text(
+        "class SnapshotConsistencyModified:\n    changed = True\n",
+        encoding="utf-8",
+    )
+    missing_path.unlink()
+
+    assert main(["--root", str(tmp_path), "code", "search", "SnapshotConsistency", "--json"]) == 0
+    payload = _json_output(capsys)
+    results = {item["path"]: item for item in payload["search"]["results"]}
+
+    assert results["src/pkg/fresh_consistency.py"]["snapshot_consistency"] == "fresh"
+    assert results["src/pkg/modified_consistency.py"]["snapshot_consistency"] == "modified_since_index"
+    assert results["src/pkg/missing_consistency.py"]["snapshot_consistency"] == "missing_from_worktree"
+    assert results["assets/large-consistency.txt"]["snapshot_consistency"] == "not_hashed"
+    assert results["assets/large-consistency.txt"]["hash_skipped_reason"] == f"size>{LARGE_FILE_BYTES}"
+    assert payload["search"]["staleness_warnings"] == {
+        "count": 3,
+        "affected_paths": [
+            "src/pkg/modified_consistency.py",
+            "src/pkg/missing_consistency.py",
+            "assets/large-consistency.txt",
+        ],
+    }
+
+    field_values = [
+        value
+        for item in results.values()
+        for key, value in item.items()
+        if key.startswith("snapshot_consistency")
+    ]
+    serialized = json.dumps(field_values, sort_keys=True).lower()
+    assert "understood" not in serialized
+    assert "analyzed" not in serialized
+    assert "agent read" not in serialized
+
+    assert main(["--root", str(tmp_path), "code", "search", "SnapshotConsistency"]) == 0
+    text_output = capsys.readouterr().out
+    assert "warning: snapshot_consistency=modified_since_index" in text_output
+    assert "warning: snapshot_consistency=missing_from_worktree" in text_output
+    assert "warning: snapshot_consistency=not_hashed" in text_output
+
+
+def test_code_search_hashes_returned_results_only(tmp_path: Path, capsys, monkeypatch) -> None:
+    _init_code_project(tmp_path, capsys)
+    _build_index(tmp_path, capsys)
+    original_sha256_file = code_context_store._sha256_file
+    hashed_paths: list[str] = []
+
+    def counting_sha256_file(path: Path) -> str:
+        hashed_paths.append(path.relative_to(tmp_path).as_posix())
+        return original_sha256_file(path)
+
+    monkeypatch.setattr(code_context_store, "_sha256_file", counting_sha256_file)
+
+    assert main(["--root", str(tmp_path), "code", "search", "Calculator", "--limit", "1", "--json"]) == 0
+    payload = _json_output(capsys)
+
+    assert payload["search"]["result_count"] == 1
+    assert hashed_paths == [payload["search"]["results"][0]["path"]]
+
+
+def test_code_search_json_is_deterministic_on_unchanged_tree(tmp_path: Path, capsys) -> None:
+    _init_code_project(tmp_path, capsys)
+    _build_index(tmp_path, capsys)
+
+    assert main(["--root", str(tmp_path), "code", "search", "Calculator", "--json"]) == 0
+    first_output = capsys.readouterr().out
+    assert main(["--root", str(tmp_path), "code", "search", "Calculator", "--json"]) == 0
+    second_output = capsys.readouterr().out
+
+    assert first_output == second_output
+
+
+def test_code_search_suggests_reindex_when_git_head_moves(tmp_path: Path, capsys) -> None:
+    _init_code_project(tmp_path, capsys)
+    _git(tmp_path, "init")
+    _git(tmp_path, "config", "user.email", "pcl@example.test")
+    _git(tmp_path, "config", "user.name", "Project Loop Harness")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "initial")
+    _build_index(tmp_path, capsys)
+
+    (tmp_path / "docs" / "head-change.md").write_text("Calculator head change\n", encoding="utf-8")
+    _git(tmp_path, "add", "docs/head-change.md")
+    _git(tmp_path, "commit", "-m", "move head")
+
+    assert main(["--root", str(tmp_path), "code", "search", "Calculator", "--json"]) == 0
+    payload = _json_output(capsys)
+    warning = payload["search"]["git_head_warning"]
+
+    assert warning["code"] == "git_head_changed"
+    assert warning["suggested_command"] == "pcl index build --json"
+    assert warning["index_git_head"] != warning["current_git_head"]
+
+    assert main(["--root", str(tmp_path), "code", "search", "Calculator"]) == 0
+    text_output = capsys.readouterr().out
+    assert text_output.count("Git HEAD differs from the latest code index snapshot") == 1
+    assert "pcl index build --json" in text_output
 
 
 def test_impact_writes_epistemically_honest_receipt_and_evidence(
@@ -485,8 +627,16 @@ def test_impact_writes_epistemically_honest_receipt_and_evidence(
     assert "included_candidate_context" in receipt
     assert "omitted" in receipt
     assert "staleness_warnings" in receipt
+    included_snapshot_values = {
+        item["snapshot_consistency"]
+        for item in receipt["included_candidate_context"]
+    }
+    assert included_snapshot_values == {"fresh"}
+    for item in receipt["included_candidate_context"]:
+        assert "snapshot_consistency_reason" in item
     serialized = json.dumps(receipt, sort_keys=True).lower()
     assert "understood" not in serialized
+    assert "analyzed" not in serialized
     assert "agent read" not in serialized
 
     conn = connect(tmp_path / ".project-loop" / "project.db")
