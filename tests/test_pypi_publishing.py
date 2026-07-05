@@ -16,9 +16,9 @@ def test_pypi_publish_workflow_uses_trusted_publishing_without_tokens() -> None:
     assert "environment:\n      name: testpypi" in text
     assert "environment:\n      name: pypi" in text
     assert "repository-url: https://test.pypi.org/legacy/" in text
-    assert "python -m build --outdir .release-dist --sdist --wheel" in text
-    assert "python -m twine check .release-dist/*" in text
-    assert "path: .release-dist/*" in text
+    assert "python -m build --outdir release-dist --sdist --wheel" in text
+    assert "python -m twine check release-dist/*" in text
+    assert "path: release-dist/*" in text
     assert "secrets.PYPI" not in text
     assert "PYPI_TOKEN" not in text
     assert "TEST_PYPI_TOKEN" not in text
