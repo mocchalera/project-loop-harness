@@ -147,3 +147,79 @@ Only after static workflows are stable:
 - Add read-only context packs so PM agents can hand budget-aware goal, run, job,
   evidence, verification, human-queue, event, and prompt context to worker
   agents without using generated dashboard HTML as machine context.
+
+## Milestone 9: Loop entities and explainable code context
+
+Complete as of Task 0071 (released as v0.1.7 through v0.1.9).
+
+- Task/backlog entity, structured verification rubric, and task loop
+  integration.
+- Agent registry and job leases with explicit `pcl jobs reap`.
+- Context pack task packs, role profiles, and the deterministic
+  `charclass/v1` token estimator.
+- Human decision cockpit data (`why_blocked`, options, recommendation
+  reasons, related evidence) and Japanese dashboard chrome.
+- Explainable Code Context v0: `pcl index build/status`, `pcl code search`,
+  `pcl impact --diff` with `context-receipt/v0` evidence artifacts, and
+  `pcl eval retrieval` with fixture floors.
+
+## Milestone 10: Trust and safety hardening (v0.1.10)
+
+North star from here forward: move from "a CLI that can produce context
+receipts" to "the context control plane for AI-assisted development".
+Three pillars — Trust (receipts and safety boundaries), Integration
+(context pack as the single handoff surface), Judgment (low-friction human
+decisions). Safety and consistency come before any retrieval-quality work.
+
+- Task 0072: sensitive omission and safe index defaults; inherit
+  `agent_may_not_modify` patterns; `sensitive_omitted_count` in receipts.
+- Task 0073: split `code_index.py` into a `code_context/` package behind a
+  thin facade; pure refactor, byte-identical outputs.
+- Task 0074: per-result `snapshot_consistency` in `pcl code search` and in
+  receipts; staleness warnings reach search parity with impact.
+- Task 0075: explicit `diff_source` labeling; default worktree-vs-HEAD;
+  `--base <ref>`; empty-diff guidance.
+
+Sequencing: 0072 first (safety ships soonest), then 0073, then 0074 and
+0075 in parallel on the split modules. No schema migration, no
+dependencies.
+
+## Milestone 11: Code context integration (v0.2.0)
+
+The core of v0.2: receipts must appear in normal agent handoffs, not only
+when `pcl impact` is invoked explicitly. Receipt audience priority
+(decided 2026-07-05): the next agent first, the human second, CI third.
+
+- Context Pack v2 bridge: `pcl context pack --include-code-context` (or
+  equivalent) folds impact receipts, target-file summaries, and staleness
+  state into task/job packs under the existing token budget, with
+  `included_code_context`, `omitted_code_context`, and `receipt_paths`
+  made explicit.
+- Search/retrieval receipts: `pcl code search --receipt` records query,
+  normalized terms, candidate counts, included/omitted, and ranking
+  reasons as evidence artifacts that context packs can reference.
+
+## Milestone 12: Measurement and feedback (v0.2.x)
+
+- Retrieval eval suite hardening: at least five fixture kinds (code
+  change, docs-only, config-only, rename/move, secret omission),
+  precision / recall / missing-critical-context / false-positive /
+  token-cost metrics, baseline history, and a regression gate.
+- Verification suggestion feedback loop: suggestion IDs linked to executed
+  verification evidence with hit/miss/skipped visibility. Likely requires
+  a schema migration — design goes to human approval before work starts.
+
+## Milestone 13: Mission control thin UI (v0.3)
+
+- Receipt viewer in the dashboard (human-only boundary preserved; agents
+  keep using dashboard-data JSON and receipt artifacts).
+- Human decision cockpit v1: safety/cost/risk-ordered options, readable
+  Japanese that compresses meaning rather than translating labels, and
+  copy-ready `pcl` commands.
+
+## Semantic promotion gate
+
+Embeddings, Tree-sitter, call graphs, and semantic retrieval stay out
+until the Milestone 12 eval suite shows missing-critical-context rate
+failing to improve under lexical tuning across the full fixture set. The
+eval evidence, not enthusiasm, decides promotion.
