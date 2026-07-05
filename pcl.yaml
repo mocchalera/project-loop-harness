@@ -36,6 +36,8 @@ code_index:
     - .claude/
     - .agents/
     - .codex/
+  sensitive_exclude: []
+  sensitive_include_override: []
 
 loop:
   max_iterations_per_workflow: 3

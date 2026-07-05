@@ -54,6 +54,7 @@ pcl eval retrieval --fixture tests/fixtures/retrieval_v0.json --json
     "file_count": 2,
     "indexed_bytes": 1200,
     "ignored_count": 3,
+    "sensitive_omitted_count": 1,
     "language_counts": {"python": 2},
     "files": [
       {
@@ -75,6 +76,7 @@ pcl eval retrieval --fixture tests/fixtures/retrieval_v0.json --json
       }
     ],
     "ignored": [
+      {"path": ".env", "ignored_reason": "sensitive:.env"},
       {"path": ".project-loop/", "ignored_reason": "default_ignore:.project-loop"}
     ],
     "hash_skipped": [
@@ -94,8 +96,36 @@ The index is gitignore-aware when Git is available. In non-Git directories,
 PLH applies root `.gitignore` patterns it can evaluate with the standard
 library. Default exclusions include `.project-loop`, `.venv`, `node_modules`,
 `dist`, `.git`, Python caches, binary files, files larger than the v0 size
-limit, and common agent/session state directories such as `.claude/`,
-`.agents/`, and `.codex/`. Large, binary, and excluded paths are omitted from
+limit, common agent/session state directories such as `.claude/`, `.agents/`,
+and `.codex/`, and sensitive path patterns.
+
+The default sensitive path patterns are:
+
+- `.env`
+- `.env.*`
+- `*.pem`
+- `*.key`
+- `id_rsa`
+- `id_rsa.*`
+- `id_ed25519`
+- `id_ed25519.*`
+- `credentials*.json`
+- `.npmrc`
+- `.pypirc`
+- `*.p12`
+- `*.pfx`
+- `*.keystore`
+- `*.jks`
+- `.netrc`
+- `.aws/`
+- `secrets/`
+
+Sensitive paths are omitted before hashing or content reads. Their ignored
+entries use `ignored_reason: "sensitive:<pattern>"`. Patterns inherited from
+`permissions.agent_may_not_modify` use
+`ignored_reason: "sensitive:agent_may_not_modify"`.
+
+Large, binary, excluded, and sensitive paths are omitted from
 `code_index_files`; the skip reason is preserved in the run summary and command
 output.
 
@@ -106,11 +136,22 @@ code_index:
   exclude:
     - .claude/
     - .agents/
+  sensitive_exclude:
+    - private-config.json
+  sensitive_include_override:
+    - local-fixture.pem
 ```
 
 When `code_index.exclude` is present, that list replaces the default
 agent/session excludes. Use `exclude: []` only when the project deliberately
 wants those files indexed.
+
+`code_index.sensitive_exclude` adds project-specific sensitive path patterns.
+`code_index.sensitive_include_override` is an explicit opt-in escape hatch for
+fixtures or other known-safe files that match sensitive patterns. Every
+`pcl index build` with an override configured prints a warning to stderr, and
+the latest run summary records `sensitive_include_override` and
+`sensitive_include_override_used`.
 
 `symbol-summary/v0` is deliberately shallow:
 
@@ -133,6 +174,7 @@ not a coverage statement.
     "stale": false,
     "file_count": 10,
     "ignored_count": 4,
+    "sensitive_omitted_count": 1,
     "indexed_bytes": 4096,
     "last_run": {"id": "CI-0001", "index_version": "code-index/v0"},
     "current_git_head": "abc123",
@@ -173,6 +215,8 @@ in the latest index. Query terms match at file level, so terms may appear on
 different lines. Results are ranked deterministically by relevance:
 definition-like code hits rank above prose mentions, source and test files get a
 small boost, prose files get a small penalty, and path order breaks ties.
+Search also re-applies sensitive path exclusions at query time so stale index
+rows from older builds cannot surface sensitive files.
 
 ## Impact Contract
 
@@ -205,6 +249,7 @@ under `.project-loop/evidence/context-receipts/`.
     ],
     "verification_suggestions": ["python3 -m pytest tests/test_context.py"],
     "omitted": [],
+    "sensitive_omitted_count": 1,
     "staleness_warnings": [],
     "receipt_path": ".project-loop/evidence/context-receipts/e-0001-impact-v0.json",
     "evidence_id": "E-0001"
@@ -217,6 +262,7 @@ The receipt contract is `context-receipt/v0`. Its core fields are:
 - `included_candidate_context`: files PLH provided as candidate context, with
   role, reason, confidence, language, and indexed hash when available.
 - `omitted`: files PLH did not include and the recorded reason.
+- `sensitive_omitted_count`: the sensitive omission count from the index run.
 - `staleness_warnings`: conditions that make the snapshot less current than
   the working tree.
 

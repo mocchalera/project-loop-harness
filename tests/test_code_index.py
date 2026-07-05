@@ -7,6 +7,15 @@ import shutil
 from pcl.cli import main
 from pcl.db import connect
 
+FAKE_SECRET_TOKEN = "PCL_FAKE_TOKEN_0072_DO_NOT_LEAK"
+SENSITIVE_FIXTURE_FILES = {
+    ".env": f"API_TOKEN={FAKE_SECRET_TOKEN}\n",
+    "server.pem": f"-----BEGIN PRIVATE KEY-----\n{FAKE_SECRET_TOKEN}\n-----END PRIVATE KEY-----\n",
+    "id_rsa": f"-----BEGIN OPENSSH PRIVATE KEY-----\n{FAKE_SECRET_TOKEN}\n",
+    "credentials.json": json.dumps({"token": FAKE_SECRET_TOKEN}, sort_keys=True) + "\n",
+    ".npmrc": f"//registry.npmjs.org/:_authToken={FAKE_SECRET_TOKEN}\n",
+}
+
 
 def _json_output(capsys) -> dict:
     captured = capsys.readouterr()
@@ -97,6 +106,11 @@ def _synthetic_diff(root: Path) -> Path:
     return diff_path
 
 
+def _write_sensitive_fixture_files(root: Path) -> None:
+    for relative_path, content in SENSITIVE_FIXTURE_FILES.items():
+        (root / relative_path).write_text(content, encoding="utf-8")
+
+
 def _historical_multifile_diff_with_pathlike_body_lines(root: Path) -> Path:
     diff_path = root / "historical.diff"
     diff_path.write_text(
@@ -119,6 +133,30 @@ def _historical_multifile_diff_with_pathlike_body_lines(root: Path) -> Path:
         encoding="utf-8",
     )
     return diff_path
+
+
+def _latest_index_rows_blob(root: Path) -> str:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        runs = [
+            dict(row)
+            for row in conn.execute(
+                "SELECT id, summary_json FROM code_index_runs ORDER BY id"
+            ).fetchall()
+        ]
+        files = [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT path, language, sha256, symbol_summary_json, test_hint_json
+                FROM code_index_files
+                ORDER BY index_run_id, path
+                """
+            ).fetchall()
+        ]
+    finally:
+        conn.close()
+    return json.dumps({"files": files, "runs": runs}, sort_keys=True)
 
 
 def _diff_with_changed_test(root: Path) -> Path:
@@ -208,6 +246,162 @@ def test_index_build_records_gitignore_aware_snapshot_and_is_deterministic(
         assert event_count == 2
     finally:
         conn.close()
+
+
+def test_sensitive_files_are_omitted_from_index_search_and_receipts(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_code_project(tmp_path, capsys)
+    _write_sensitive_fixture_files(tmp_path)
+
+    index = _build_index(tmp_path, capsys)["index"]
+
+    assert index["sensitive_omitted_count"] == len(SENSITIVE_FIXTURE_FILES)
+    files = {item["path"] for item in index["files"]}
+    assert not (set(SENSITIVE_FIXTURE_FILES) & files)
+    ignored = {item["path"]: item for item in index["ignored"]}
+    assert set(SENSITIVE_FIXTURE_FILES) <= set(ignored)
+    assert ignored[".env"]["ignored_reason"] == "sensitive:agent_may_not_modify"
+    assert ignored["server.pem"]["ignored_reason"] == "sensitive:*.pem"
+    assert ignored["id_rsa"]["ignored_reason"] == "sensitive:id_rsa"
+    assert ignored["credentials.json"]["ignored_reason"] == "sensitive:credentials*.json"
+    assert ignored[".npmrc"]["ignored_reason"] == "sensitive:.npmrc"
+
+    serialized_symbols = json.dumps(
+        [item["symbol_summary"] for item in index["files"]],
+        sort_keys=True,
+    )
+    assert FAKE_SECRET_TOKEN not in serialized_symbols
+
+    assert main(["--root", str(tmp_path), "index", "build"]) == 0
+    build_text = capsys.readouterr().out
+    assert f"({len(SENSITIVE_FIXTURE_FILES)} sensitive)" in build_text
+
+    assert main(["--root", str(tmp_path), "index", "status", "--json"]) == 0
+    status = _json_output(capsys)["index"]
+    assert status["sensitive_omitted_count"] == len(SENSITIVE_FIXTURE_FILES)
+
+    assert main(["--root", str(tmp_path), "index", "status"]) == 0
+    status_text = capsys.readouterr().out
+    assert f'"sensitive_omitted_count": {len(SENSITIVE_FIXTURE_FILES)}' in status_text
+
+    assert FAKE_SECRET_TOKEN not in _latest_index_rows_blob(tmp_path)
+
+    assert main(["--root", str(tmp_path), "code", "search", FAKE_SECRET_TOKEN]) == 0
+    search_text = capsys.readouterr().out
+    assert search_text == ""
+    assert FAKE_SECRET_TOKEN not in search_text
+
+    diff_path = _synthetic_diff(tmp_path)
+    assert main(["--root", str(tmp_path), "impact", "--diff", str(diff_path), "--json"]) == 0
+    impact = _json_output(capsys)["impact"]
+    receipt = json.loads((tmp_path / impact["receipt_path"]).read_text(encoding="utf-8"))
+    assert receipt["sensitive_omitted_count"] == len(SENSITIVE_FIXTURE_FILES)
+    receipt_blob = json.dumps(receipt, sort_keys=True)
+    assert FAKE_SECRET_TOKEN not in receipt_blob
+    assert not any(path in receipt_blob for path in SENSITIVE_FIXTURE_FILES)
+
+
+def test_agent_may_not_modify_patterns_are_sensitive_excludes(tmp_path: Path, capsys) -> None:
+    _init_code_project(tmp_path, capsys)
+    (tmp_path / "private-config.yml").write_text(
+        f"token: {FAKE_SECRET_TOKEN}\n",
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "pcl.yaml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            "  agent_may_not_modify:\n",
+            "  agent_may_not_modify:\n    - private-config.yml\n",
+        ),
+        encoding="utf-8",
+    )
+
+    index = _build_index(tmp_path, capsys)["index"]
+    ignored = {item["path"]: item for item in index["ignored"]}
+
+    assert ignored["private-config.yml"]["ignored_reason"] == "sensitive:agent_may_not_modify"
+    assert "private-config.yml" not in {item["path"] for item in index["files"]}
+    assert index["sensitive_omitted_count"] == 1
+
+
+def test_code_index_sensitive_exclude_adds_project_patterns(tmp_path: Path, capsys) -> None:
+    _init_code_project(tmp_path, capsys)
+    (tmp_path / "fixture.secret").write_text(
+        f"token: {FAKE_SECRET_TOKEN}\n",
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "pcl.yaml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            "  sensitive_exclude: []\n",
+            "  sensitive_exclude:\n    - *.secret\n",
+        ),
+        encoding="utf-8",
+    )
+
+    index = _build_index(tmp_path, capsys)["index"]
+    ignored = {item["path"]: item for item in index["ignored"]}
+
+    assert ignored["fixture.secret"]["ignored_reason"] == "sensitive:*.secret"
+    assert "fixture.secret" not in {item["path"] for item in index["files"]}
+    assert index["sensitive_omitted_count"] == 1
+
+
+def test_sensitive_include_override_warns_records_and_search_still_guards_stale_rows(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_code_project(tmp_path, capsys)
+    (tmp_path / "server.pem").write_text(
+        f"fixture key material {FAKE_SECRET_TOKEN}\n",
+        encoding="utf-8",
+    )
+    config_path = tmp_path / "pcl.yaml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            "  sensitive_include_override: []\n",
+            "  sensitive_include_override:\n    - server.pem\n",
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["--root", str(tmp_path), "index", "build", "--json"]) == 0
+    captured = capsys.readouterr()
+    index = json.loads(captured.out)["index"]
+    assert "WARNING: code_index.sensitive_include_override is configured" in captured.err
+    assert "server.pem" in {item["path"] for item in index["files"]}
+    assert index["sensitive_omitted_count"] == 0
+
+    assert main(["--root", str(tmp_path), "index", "build", "--json"]) == 0
+    second_build = capsys.readouterr()
+    assert "WARNING: code_index.sensitive_include_override is configured" in second_build.err
+
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        summary = json.loads(
+            conn.execute(
+                "SELECT summary_json FROM code_index_runs ORDER BY id DESC LIMIT 1"
+            ).fetchone()["summary_json"]
+        )
+    finally:
+        conn.close()
+    assert summary["sensitive_include_override"] == ["server.pem"]
+    assert summary["sensitive_include_override_used"] is True
+
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            "  sensitive_include_override:\n    - server.pem\n",
+            "  sensitive_include_override: []\n",
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["--root", str(tmp_path), "code", "search", FAKE_SECRET_TOKEN]) == 0
+    search_text = capsys.readouterr().out
+    assert search_text == ""
+    assert FAKE_SECRET_TOKEN not in search_text
 
 
 def test_code_index_excludes_can_be_overridden_from_pcl_yaml(tmp_path: Path, capsys) -> None:
