@@ -885,6 +885,13 @@ def main(argv: list[str] | None = None) -> int:
             result = apply_migrations(paths)
             if json_output:
                 _print_json(result.to_dict())
+            elif result.metadata_repair is not None:
+                repair = result.metadata_repair
+                print(
+                    "Repaired metadata.schema_version from "
+                    f"{repair['from_schema_version']} to {repair['to_schema_version']}: "
+                    f"{repair['reason']}. This was a metadata repair, not a schema migration."
+                )
             elif result.applied:
                 for migration in result.applied:
                     print(f"Applied migration {migration.id}")
