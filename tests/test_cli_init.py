@@ -145,12 +145,14 @@ def test_init_dry_run_reports_nested_path_conflicts_and_human_output(
 
 
 def test_cli_version(capsys) -> None:
+    from pcl import __version__
+
     try:
         main(["--version"])
     except SystemExit as exc:
         assert exc.code == 0
 
-    assert capsys.readouterr().out.strip() == "pcl 0.1.9"
+    assert capsys.readouterr().out.strip() == f"pcl {__version__}"
 
 
 def test_render_is_deterministic_for_unchanged_state(tmp_path: Path, capsys) -> None:
