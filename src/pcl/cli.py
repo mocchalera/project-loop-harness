@@ -537,8 +537,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_index = sub.add_parser("index", help="Build and inspect the code context index")
     index_sub = p_index.add_subparsers(dest="index_command", required=True)
-    index_sub.add_parser("build", help="Build a gitignore-aware code index snapshot")
-    index_sub.add_parser("status", help="Inspect the latest code index snapshot")
+    p_index_build = index_sub.add_parser("build", help="Build a gitignore-aware code index snapshot")
+    p_index_build.add_argument(
+        "--include-files",
+        action="store_true",
+        help="Inline full per-file index detail in JSON output instead of the default summary.",
+    )
+    p_index_status = index_sub.add_parser("status", help="Inspect the latest code index snapshot")
+    p_index_status.add_argument(
+        "--include-files",
+        action="store_true",
+        help="Inline full per-file index detail in JSON output instead of the default summary.",
+    )
 
     p_code = sub.add_parser("code", help="Search indexed code context")
     code_sub = p_code.add_subparsers(dest="code_command", required=True)
@@ -668,6 +678,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _print_json(payload: object) -> None:
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
+
+def _impact_text_payload(impact: dict) -> tuple[dict, str | None]:
+    display = dict(impact)
+    excluded = display.pop("excluded_changed_files", [])
+    display["excluded_changed_file_count"] = len(excluded)
+    if not excluded:
+        return display, None
+    paths = [str(item.get("path", "")) for item in excluded if item.get("path")]
+    visible = ", ".join(paths[:5])
+    if len(paths) > 5:
+        visible += f", ... (+{len(paths) - 5} more)"
+    return display, f"Excluded changed files: {len(excluded)} ({visible})"
 
 
 def _format_next_explanation(action: dict) -> str:
@@ -1701,7 +1724,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "index" and args.index_command == "build":
-            result = build_code_index(paths)
+            result = build_code_index(paths, include_files=args.include_files)
             if json_output:
                 _print_json(result)
             else:
@@ -1714,7 +1737,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "index" and args.index_command == "status":
-            result = code_index_status(paths)
+            result = code_index_status(paths, include_files=args.include_files)
             if json_output:
                 _print_json(result)
             else:
@@ -1746,7 +1769,10 @@ def main(argv: list[str] | None = None) -> int:
             if json_output:
                 _print_json(result)
             else:
-                print(to_pretty_json(result["impact"]))
+                display, excluded_summary = _impact_text_payload(result["impact"])
+                print(to_pretty_json(display))
+                if excluded_summary:
+                    print(excluded_summary)
             return 0
 
         if args.command == "eval" and args.eval_command == "retrieval":

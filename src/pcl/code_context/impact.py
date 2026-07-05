@@ -6,7 +6,13 @@ from typing import Any
 
 from .diff import LoadedDiff, _load_diff, _parse_changed_files
 from .receipts import _record_context_receipt
-from .scan import _sensitive_ignore_reason, _sensitive_index_settings
+from .scan import (
+    _code_index_exclude_patterns,
+    _configured_ignore_reason,
+    _default_ignore_reason,
+    _sensitive_ignore_reason,
+    _sensitive_index_settings,
+)
 from .store import (
     IndexSnapshot,
     _load_required_snapshot,
@@ -59,17 +65,23 @@ def analyze_impact(
             ),
         }
 
-    changed = _changed_file_entries(paths, snapshot, changed_files)
-    omitted = _omitted_changed_entries(paths, snapshot, changed_files)
-    likely_impacted, candidate_omissions = _likely_impacted_entries(paths, snapshot, changed_files)
+    indexable_changed_files, excluded_changed_files = _split_indexable_changed_files(paths, changed_files)
+    changed = _changed_file_entries(paths, snapshot, indexable_changed_files)
+    omitted = _omitted_changed_entries(paths, snapshot, indexable_changed_files)
+    likely_impacted, candidate_omissions = _likely_impacted_entries(paths, snapshot, indexable_changed_files)
     omitted.extend(candidate_omissions)
-    verification_suggestions = _verification_suggestions(changed, likely_impacted, staleness_warnings)
+    verification_suggestions = _verification_suggestions_for_indexable_changes(
+        changed,
+        likely_impacted,
+        staleness_warnings,
+    )
     impact = {
         "contract_version": IMPACT_CONTRACT_VERSION,
         "diff_source": loaded_diff.diff_source,
         "diff_provenance": loaded_diff.provenance,
         "index_run": _index_run_payload(snapshot),
         "changed_files": changed,
+        "excluded_changed_files": excluded_changed_files,
         "likely_impacted": likely_impacted,
         "verification_suggestions": verification_suggestions,
         "omitted": omitted,
@@ -109,6 +121,7 @@ def _empty_impact_payload(
         "diff_provenance": loaded_diff.provenance,
         "index_run": _index_run_payload(snapshot),
         "changed_files": [],
+        "excluded_changed_files": [],
         "likely_impacted": [],
         "verification_suggestions": [],
         "omitted": [],
@@ -120,6 +133,47 @@ def _empty_impact_payload(
     if loaded_diff.base_ref is not None:
         impact["base_ref"] = loaded_diff.base_ref
     return impact
+
+
+def _split_indexable_changed_files(
+    paths: ProjectPaths,
+    changed_files: list[dict[str, str]],
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    indexable: list[dict[str, str]] = []
+    excluded: list[dict[str, str]] = []
+    for item in changed_files:
+        path = item["path"]
+        reason = _changed_file_exclusion_reason(paths, path)
+        if reason:
+            excluded.append({"path": path, "status": item["status"], "reason": reason})
+        else:
+            indexable.append(item)
+    return indexable, excluded
+
+
+def _changed_file_exclusion_reason(paths: ProjectPaths, path: str) -> str | None:
+    sensitive_reason = _sensitive_ignore_reason(path, _sensitive_index_settings(paths.root))
+    if sensitive_reason:
+        return sensitive_reason
+    default_reason = _default_ignore_reason(path)
+    if default_reason:
+        return default_reason
+    configured_reason = _configured_ignore_reason(path, _code_index_exclude_patterns(paths.root))
+    if configured_reason:
+        return configured_reason
+    return None
+
+
+def _verification_suggestions_for_indexable_changes(
+    changed_files: list[dict[str, Any]],
+    likely_impacted: list[dict[str, Any]],
+    staleness_warnings: list[str],
+) -> list[str]:
+    if changed_files or likely_impacted:
+        return _verification_suggestions(changed_files, likely_impacted, staleness_warnings)
+    if staleness_warnings:
+        return ["Run `pcl index build --json` to refresh the code index before relying on impact output."]
+    return []
 
 
 def _empty_diff_guidance(diff_source: str) -> dict[str, Any]:

@@ -67,6 +67,7 @@ def _record_context_receipt(
             "receipt_path": relative_receipt_path,
             "index_run_id": snapshot.run["id"],
             "changed_file_count": len(impact["changed_files"]),
+            "excluded_changed_file_count": len(impact.get("excluded_changed_files", [])),
             "included_candidate_context_count": len(receipt["included_candidate_context"]),
             "omitted_count": len(receipt["omitted"]),
         }
@@ -115,6 +116,7 @@ def _receipt_payload(
         "diff_provenance": impact.get("diff_provenance", {}),
         "index_run": impact["index_run"],
         "included_candidate_context": _included_candidate_context(paths, snapshot, impact),
+        "excluded_changed_files": impact.get("excluded_changed_files", []),
         "omitted": impact["omitted"],
         "sensitive_omitted_count": impact["sensitive_omitted_count"],
         "staleness_warnings": impact["staleness_warnings"],

@@ -89,7 +89,7 @@ def _init_code_project(root: Path, capsys) -> None:
 
 
 def _build_index(root: Path, capsys) -> dict:
-    assert main(["--root", str(root), "index", "build", "--json"]) == 0
+    assert main(["--root", str(root), "index", "build", "--json", "--include-files"]) == 0
     return _json_output(capsys)
 
 
@@ -240,6 +240,33 @@ def _diff_with_changed_test(root: Path) -> Path:
     return diff_path
 
 
+def _diff_with_excluded_session_noise(root: Path) -> Path:
+    diff_path = root / "excluded-session-noise.diff"
+    diff_path.write_text(
+        "\n".join(
+            [
+                "diff --git a/.claude/session-001.json b/.claude/session-001.json",
+                "--- a/.claude/session-001.json",
+                "+++ b/.claude/session-001.json",
+                "@@ -1 +1 @@",
+                '+{"session": 1}',
+                "diff --git a/.claude/session-002.json b/.claude/session-002.json",
+                "--- a/.claude/session-002.json",
+                "+++ b/.claude/session-002.json",
+                "@@ -1 +1 @@",
+                '+{"session": 2}',
+                "diff --git a/src/pkg/calc.py b/src/pkg/calc.py",
+                "--- a/src/pkg/calc.py",
+                "+++ b/src/pkg/calc.py",
+                "@@ -1,3 +1,3 @@",
+                "+def helper(value: int) -> int:",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return diff_path
+
+
 def test_index_build_records_gitignore_aware_snapshot_and_is_deterministic(
     tmp_path: Path,
     capsys,
@@ -256,8 +283,24 @@ def test_index_build_records_gitignore_aware_snapshot_and_is_deterministic(
     index = payload["index"]
     assert index["contract_version"] == "code-index/v0"
     assert index["event_appended"] is True
+    assert "files" not in index
+    assert "ignored" not in index
+    assert "hash_skipped" not in index
+    assert index["hash_skipped_count"] == 1
+    assert index["staleness_warnings"] == []
+    assert index["detail_path"] == ".project-loop/cache/code-index-detail.json"
 
-    files = {item["path"]: item for item in index["files"]}
+    detail_path = tmp_path / index["detail_path"]
+    detail = json.loads(detail_path.read_text(encoding="utf-8"))
+    assert detail["detail_path"] == index["detail_path"]
+
+    assert main(["--root", str(tmp_path), "index", "build", "--json", "--include-files"]) == 0
+    include_files_output = capsys.readouterr().out
+    include_index = json.loads(include_files_output)["index"]
+    assert len(first_output) < len(include_files_output)
+    assert include_index == json.loads(detail_path.read_text(encoding="utf-8"))
+
+    files = {item["path"]: item for item in include_index["files"]}
     assert "src/pkg/calc.py" in files
     assert files["src/pkg/calc.py"]["language"] == "python"
     assert len(files["src/pkg/calc.py"]["sha256"]) == 64
@@ -281,7 +324,7 @@ def test_index_build_records_gitignore_aware_snapshot_and_is_deterministic(
     md_symbols = files["docs/calc.md"]["symbol_summary"]["symbols"]
     assert md_symbols[0]["name"] == "Calculator"
 
-    ignored = {item["path"]: item for item in index["ignored"]}
+    ignored = {item["path"]: item for item in include_index["ignored"]}
     assert ".agents/" in ignored
     assert ".claude/" in ignored
     assert ignored[".agents/"]["ignored_reason"] == "code_index.exclude:.agents/"
@@ -299,9 +342,9 @@ def test_index_build_records_gitignore_aware_snapshot_and_is_deterministic(
         event_count = conn.execute(
             "SELECT COUNT(*) AS n FROM events WHERE event_type = 'code_index_built'"
         ).fetchone()["n"]
-        assert run_count == 2
-        assert file_count == index["file_count"] * 2
-        assert event_count == 2
+        assert run_count == 3
+        assert file_count == index["file_count"] * 3
+        assert event_count == 3
     finally:
         conn.close()
 
@@ -425,7 +468,7 @@ def test_sensitive_include_override_warns_records_and_search_still_guards_stale_
         encoding="utf-8",
     )
 
-    assert main(["--root", str(tmp_path), "index", "build", "--json"]) == 0
+    assert main(["--root", str(tmp_path), "index", "build", "--json", "--include-files"]) == 0
     captured = capsys.readouterr()
     index = json.loads(captured.out)["index"]
     assert "WARNING: code_index.sensitive_include_override is configured" in captured.err
@@ -488,6 +531,20 @@ def test_index_status_reports_staleness_after_file_change(tmp_path: Path, capsys
     assert main(["--root", str(tmp_path), "index", "status", "--json"]) == 0
     fresh = _json_output(capsys)["index"]
     assert fresh["stale"] is False
+    assert "files" not in fresh
+    assert "ignored" not in fresh
+    assert fresh["hash_skipped_count"] == 1
+    assert fresh["detail_path"] == ".project-loop/cache/code-index-detail.json"
+    status_detail = json.loads((tmp_path / fresh["detail_path"]).read_text(encoding="utf-8"))
+    assert "files" in status_detail
+    assert "ignored" in status_detail
+    assert status_detail["file_count"] == fresh["file_count"]
+
+    assert main(["--root", str(tmp_path), "index", "status", "--json", "--include-files"]) == 0
+    full_status = _json_output(capsys)["index"]
+    assert "files" in full_status
+    assert "ignored" in full_status
+    assert full_status == json.loads((tmp_path / full_status["detail_path"]).read_text(encoding="utf-8"))
 
     (tmp_path / "src" / "pkg" / "calc.py").write_text("def changed():\n    return 1\n", encoding="utf-8")
 
@@ -869,6 +926,71 @@ def test_impact_suggests_changed_test_files_first(tmp_path: Path, capsys) -> Non
         "tests/test_calc.py",
     ]
     assert impact["verification_suggestions"][0] == "python3 -m pytest tests/test_calc.py"
+
+
+def test_impact_splits_excluded_changed_files_from_indexable_candidates(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_code_project(tmp_path, capsys)
+    diff_path = _diff_with_excluded_session_noise(tmp_path)
+    _build_index(tmp_path, capsys)
+
+    assert main(["--root", str(tmp_path), "impact", "--diff", str(diff_path), "--json"]) == 0
+    impact = _json_output(capsys)["impact"]
+
+    assert [item["path"] for item in impact["changed_files"]] == ["src/pkg/calc.py"]
+    assert impact["excluded_changed_files"] == [
+        {"path": ".claude/session-001.json", "status": "M", "reason": "code_index.exclude:.claude/"},
+        {"path": ".claude/session-002.json", "status": "M", "reason": "code_index.exclude:.claude/"},
+    ]
+    assert not any(item["path"].startswith(".claude/") for item in impact["omitted"])
+    assert {item["source_path"] for item in impact["likely_impacted"]} == {"src/pkg/calc.py"}
+    assert any("python3 -m pytest tests/test_calc.py" in item for item in impact["verification_suggestions"])
+
+    receipt = json.loads((tmp_path / impact["receipt_path"]).read_text(encoding="utf-8"))
+    assert receipt["excluded_changed_files"] == impact["excluded_changed_files"]
+    assert [item["path"] for item in receipt["included_candidate_context"] if item["role"] == "changed_file"] == [
+        "src/pkg/calc.py"
+    ]
+
+    assert main(["--root", str(tmp_path), "impact", "--diff", str(diff_path)]) == 0
+    text = capsys.readouterr().out
+    assert "excluded_changed_file_count" in text
+    assert "Excluded changed files: 2 (.claude/session-001.json, .claude/session-002.json)" in text
+    assert '"excluded_changed_files"' not in text
+
+
+def test_impact_excluded_only_diff_does_not_emit_indexable_suggestions(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_code_project(tmp_path, capsys)
+    diff_path = tmp_path / "excluded-only.diff"
+    diff_path.write_text(
+        "\n".join(
+            [
+                "diff --git a/.claude/session-001.json b/.claude/session-001.json",
+                "--- a/.claude/session-001.json",
+                "+++ b/.claude/session-001.json",
+                "@@ -1 +1 @@",
+                '+{"session": 1}',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    _build_index(tmp_path, capsys)
+
+    assert main(["--root", str(tmp_path), "impact", "--diff", str(diff_path), "--json"]) == 0
+    impact = _json_output(capsys)["impact"]
+
+    assert impact["changed_files"] == []
+    assert impact["likely_impacted"] == []
+    assert impact["verification_suggestions"] == []
+    assert impact["omitted"] == []
+    assert impact["excluded_changed_files"] == [
+        {"path": ".claude/session-001.json", "status": "M", "reason": "code_index.exclude:.claude/"}
+    ]
 
 
 def test_impact_caps_candidates_and_records_omissions(tmp_path: Path, capsys) -> None:
