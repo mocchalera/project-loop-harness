@@ -2,9 +2,14 @@
 from __future__ import annotations
 
 from .diff import (
+    DEFAULT_DIFF_SOURCE,
     GIT_DIFF_SENTINEL,
+    PROVIDED_DIFF_SOURCE,
+    LoadedDiff,
     _fallback_gitignore_matches,
     _git_diff,
+    _git_command,
+    _git_diff_provenance,
     _git_head,
     _gitignore_pattern_matches,
     _gitignored_paths,
@@ -13,7 +18,9 @@ from .diff import (
     _normalize_diff_path,
     _parse_changed_files,
     _parse_git_check_ignore_output,
+    _provided_diff_provenance,
     _root_gitignore_patterns,
+    _validate_git_ref,
 )
 from .eval import (
     RETRIEVAL_EVAL_VERSION,

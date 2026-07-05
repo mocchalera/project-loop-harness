@@ -60,21 +60,25 @@ def _record_context_receipt(
                 utc_now_iso(),
             ),
         )
+        event_payload = {
+            "contract_version": CONTEXT_RECEIPT_VERSION,
+            "impact_contract_version": IMPACT_CONTRACT_VERSION,
+            "diff_source": impact["diff_source"],
+            "receipt_path": relative_receipt_path,
+            "index_run_id": snapshot.run["id"],
+            "changed_file_count": len(impact["changed_files"]),
+            "included_candidate_context_count": len(receipt["included_candidate_context"]),
+            "omitted_count": len(receipt["omitted"]),
+        }
+        if impact.get("base_ref") is not None:
+            event_payload["base_ref"] = impact["base_ref"]
         append_event(
             conn=conn,
             events_path=paths.events_path,
             event_type="context_receipt_recorded",
             entity_type="evidence",
             entity_id=evidence_id,
-            payload={
-                "contract_version": CONTEXT_RECEIPT_VERSION,
-                "impact_contract_version": IMPACT_CONTRACT_VERSION,
-                "receipt_path": relative_receipt_path,
-                "index_run_id": snapshot.run["id"],
-                "changed_file_count": len(impact["changed_files"]),
-                "included_candidate_context_count": len(receipt["included_candidate_context"]),
-                "omitted_count": len(receipt["omitted"]),
-            },
+            payload=event_payload,
         )
         conn.commit()
         return evidence_id, relative_receipt_path
@@ -100,13 +104,15 @@ def _receipt_payload(
     evidence_id: str,
     receipt_path: str,
 ) -> dict[str, Any]:
-    return {
+    payload = {
         "contract_version": CONTEXT_RECEIPT_VERSION,
         "created_at": utc_now_iso(),
         "evidence_id": evidence_id,
         "receipt_path": receipt_path,
         "root_path": str(paths.root),
         "source_command": "pcl impact --diff",
+        "diff_source": impact["diff_source"],
+        "diff_provenance": impact.get("diff_provenance", {}),
         "index_run": impact["index_run"],
         "included_candidate_context": _included_candidate_context(snapshot, impact),
         "omitted": impact["omitted"],
@@ -114,6 +120,9 @@ def _receipt_payload(
         "staleness_warnings": impact["staleness_warnings"],
         "verification_suggestions": impact["verification_suggestions"],
     }
+    if impact.get("base_ref") is not None:
+        payload["base_ref"] = impact["base_ref"]
+    return payload
 
 
 def _included_candidate_context(

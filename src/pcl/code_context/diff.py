@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import fnmatch
 from pathlib import Path
 import re
@@ -11,20 +12,63 @@ from ..paths import ProjectPaths
 
 
 GIT_DIFF_SENTINEL = "__git__"
+DEFAULT_DIFF_SOURCE = "worktree-vs-HEAD"
+PROVIDED_DIFF_SOURCE = "provided-diff"
 
 
-def _load_diff(paths: ProjectPaths, diff_source: str) -> tuple[str, str]:
+@dataclass(frozen=True)
+class LoadedDiff:
+    text: str
+    diff_source: str
+    base_ref: str | None
+    provenance: dict[str, str]
+
+
+def _load_diff(paths: ProjectPaths, diff_source: str, *, base_ref: str | None = None) -> LoadedDiff:
+    if base_ref and diff_source != GIT_DIFF_SENTINEL:
+        raise InvalidInputError(
+            "--base can only be used with `pcl impact --diff` without an explicit diff source.",
+            details={"base_ref": base_ref, "diff_source": diff_source},
+        )
+    if base_ref:
+        _validate_git_ref(paths.root, base_ref)
+        return LoadedDiff(
+            text=_git_diff(paths.root, base_ref=base_ref),
+            diff_source=f"worktree-vs-{base_ref}",
+            base_ref=base_ref,
+            provenance=_git_diff_provenance(base_ref=base_ref),
+        )
     if diff_source.startswith("inline:"):
-        return diff_source.removeprefix("inline:"), "fixture:inline"
+        return LoadedDiff(
+            text=diff_source.removeprefix("inline:"),
+            diff_source=PROVIDED_DIFF_SOURCE,
+            base_ref=None,
+            provenance=_provided_diff_provenance(source="inline-fixture"),
+        )
     if diff_source == GIT_DIFF_SENTINEL:
-        return _git_diff(paths.root), "git:diff"
+        return LoadedDiff(
+            text=_git_diff(paths.root, base_ref="HEAD"),
+            diff_source=DEFAULT_DIFF_SOURCE,
+            base_ref=None,
+            provenance=_git_diff_provenance(base_ref="HEAD"),
+        )
     if diff_source == "-":
-        return sys.stdin.read(), "stdin"
+        return LoadedDiff(
+            text=sys.stdin.read(),
+            diff_source=PROVIDED_DIFF_SOURCE,
+            base_ref=None,
+            provenance=_provided_diff_provenance(source="stdin"),
+        )
     path = Path(diff_source)
     if not path.is_absolute():
         path = paths.root / path
     try:
-        return path.read_text(encoding="utf-8"), str(path)
+        return LoadedDiff(
+            text=path.read_text(encoding="utf-8"),
+            diff_source=PROVIDED_DIFF_SOURCE,
+            base_ref=None,
+            provenance=_provided_diff_provenance(source=str(path)),
+        )
     except OSError as exc:
         raise InvalidInputError(
             f"Could not open diff source: {path}",
@@ -36,18 +80,17 @@ def _inline_diff_source(diff_text: str) -> str:
     return "inline:" + diff_text
 
 
-def _git_diff(root: Path) -> str:
-    commands = [
-        ["git", "-C", str(root), "diff", "--name-status", "HEAD", "--"],
-        ["git", "-C", str(root), "diff", "--name-status", "--"],
-    ]
-    for command in commands:
-        completed = subprocess.run(command, capture_output=True, check=False, text=True)
-        if completed.returncode == 0:
-            return completed.stdout
+def _git_diff(root: Path, *, base_ref: str = "HEAD") -> str:
+    command = _git_command(
+        root,
+        ["diff", "--no-ext-diff", "--no-textconv", "--name-status", base_ref, "--"],
+    )
+    completed = subprocess.run(command, capture_output=True, check=False, text=True)
+    if completed.returncode == 0:
+        return completed.stdout
     raise InvalidInputError(
-        "Could not obtain git diff for this project. Pass --diff <path> with a synthetic diff file.",
-        details={"root": str(root)},
+        f"Could not obtain worktree diff against {base_ref}.",
+        details={"root": str(root), "diff_source": f"worktree-vs-{base_ref}"},
     )
 
 
@@ -144,7 +187,7 @@ def _normalize_diff_path(value: str) -> str:
 
 def _git_head(root: Path) -> str | None:
     completed = subprocess.run(
-        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        _git_command(root, ["rev-parse", "HEAD"]),
         capture_output=True,
         check=False,
         text=True,
@@ -160,7 +203,7 @@ def _gitignored_paths(root: Path, relative_paths: list[str]) -> dict[str, str]:
         return {}
     input_text = "\0".join(relative_paths) + "\0"
     completed = subprocess.run(
-        ["git", "-C", str(root), "check-ignore", "--verbose", "-z", "--stdin"],
+        _git_command(root, ["check-ignore", "--verbose", "-z", "--stdin"]),
         capture_output=True,
         check=False,
         input=input_text,
@@ -213,3 +256,37 @@ def _gitignore_pattern_matches(pattern: str, path: str) -> bool:
     if "/" not in normalized:
         return any(part == normalized or fnmatch.fnmatch(part, normalized) for part in path.split("/"))
     return fnmatch.fnmatch(path, normalized)
+
+
+def _validate_git_ref(root: Path, ref: str) -> None:
+    completed = subprocess.run(
+        _git_command(root, ["rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}"]),
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    if completed.returncode != 0:
+        raise InvalidInputError(
+            f"Unknown git ref for --base: {ref}",
+            details={"base_ref": ref},
+        )
+
+
+def _git_command(root: Path, args: list[str]) -> list[str]:
+    return ["git", "-C", str(root), "-c", "core.pager=cat", "--no-pager", *args]
+
+
+def _git_diff_provenance(*, base_ref: str) -> dict[str, str]:
+    return {
+        "source": "local-git-worktree",
+        "attestation": "local-git",
+        "command_shape": f"git diff --no-ext-diff --no-textconv --name-status {base_ref} --",
+    }
+
+
+def _provided_diff_provenance(*, source: str) -> dict[str, str]:
+    return {
+        "source": source,
+        "attestation": "unattested",
+        "note": "PLH used caller-provided diff text and cannot attest that it matches the working tree.",
+    }

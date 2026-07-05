@@ -553,7 +553,16 @@ def build_parser() -> argparse.ArgumentParser:
         nargs="?",
         const=GIT_DIFF_SENTINEL,
         required=True,
-        help="Diff file to analyze, '-' for stdin, or omit the value to use git diff.",
+        help=(
+            "Diff file to analyze, '-' for stdin, or omit the value to compare "
+            "the working tree against HEAD."
+        ),
+    )
+    p_impact.add_argument(
+        "--base",
+        dest="base_ref",
+        default=None,
+        help="Compare the working tree against this git ref when --diff has no explicit source.",
     )
 
     p_eval = sub.add_parser("eval", help="Evaluate retrieval fixtures")
@@ -1722,7 +1731,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "impact":
-            result = analyze_impact(paths, diff_source=args.diff_source)
+            result = analyze_impact(paths, diff_source=args.diff_source, base_ref=args.base_ref)
             if json_output:
                 _print_json(result)
             else:

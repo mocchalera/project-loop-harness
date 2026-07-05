@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from .diff import _load_diff, _parse_changed_files
+from .diff import LoadedDiff, _load_diff, _parse_changed_files
 from .receipts import _record_context_receipt
 from .scan import _sensitive_ignore_reason, _sensitive_index_settings
 from .store import (
@@ -15,7 +15,6 @@ from .store import (
 )
 from .symbols import _file_mentions, _symbol_names
 from .test_hints import _is_test_path, _stem_key, _test_path_matches_changed_path
-from ..errors import InvalidInputError
 from ..guards import require_initialized
 from ..paths import ProjectPaths
 
@@ -39,34 +38,37 @@ def analyze_impact(
     paths: ProjectPaths,
     *,
     diff_source: str,
+    base_ref: str | None = None,
     write_receipt: bool = True,
 ) -> dict[str, Any]:
     require_initialized(paths)
     snapshot = _load_required_snapshot(paths)
-    diff_text, source_label = _load_diff(paths, diff_source)
-    changed_files = _parse_changed_files(diff_text)
-    if not changed_files:
-        raise InvalidInputError(
-            "Diff did not contain any changed files.",
-            details={"diff_source": source_label},
-        )
+    loaded_diff = _load_diff(paths, diff_source, base_ref=base_ref)
+    changed_files = _parse_changed_files(loaded_diff.text)
 
     staleness_warnings = _staleness_warnings_for_snapshot(paths, snapshot)
+    sensitive_omitted_count = _summary_sensitive_omitted_count(snapshot.summary)
+    if not changed_files:
+        return {
+            "ok": True,
+            "impact": _empty_impact_payload(
+                snapshot=snapshot,
+                loaded_diff=loaded_diff,
+                sensitive_omitted_count=sensitive_omitted_count,
+                staleness_warnings=staleness_warnings,
+            ),
+        }
+
     changed = _changed_file_entries(paths, snapshot, changed_files)
     omitted = _omitted_changed_entries(paths, snapshot, changed_files)
     likely_impacted, candidate_omissions = _likely_impacted_entries(paths, snapshot, changed_files)
     omitted.extend(candidate_omissions)
     verification_suggestions = _verification_suggestions(changed, likely_impacted, staleness_warnings)
-    sensitive_omitted_count = _summary_sensitive_omitted_count(snapshot.summary)
     impact = {
         "contract_version": IMPACT_CONTRACT_VERSION,
-        "diff_source": source_label,
-        "index_run": {
-            "id": snapshot.run["id"],
-            "git_head": snapshot.run.get("git_head"),
-            "created_at": snapshot.run["created_at"],
-            "index_version": snapshot.run["index_version"],
-        },
+        "diff_source": loaded_diff.diff_source,
+        "diff_provenance": loaded_diff.provenance,
+        "index_run": _index_run_payload(snapshot),
         "changed_files": changed,
         "likely_impacted": likely_impacted,
         "verification_suggestions": verification_suggestions,
@@ -75,11 +77,62 @@ def analyze_impact(
         "staleness_warnings": staleness_warnings,
         "receipt_path": None,
     }
+    if loaded_diff.base_ref is not None:
+        impact["base_ref"] = loaded_diff.base_ref
     if write_receipt:
         evidence_id, receipt_path = _record_context_receipt(paths, snapshot, impact)
         impact["evidence_id"] = evidence_id
         impact["receipt_path"] = receipt_path
     return {"ok": True, "impact": impact}
+
+
+def _index_run_payload(snapshot: IndexSnapshot) -> dict[str, Any]:
+    return {
+        "id": snapshot.run["id"],
+        "git_head": snapshot.run.get("git_head"),
+        "created_at": snapshot.run["created_at"],
+        "index_version": snapshot.run["index_version"],
+    }
+
+
+def _empty_impact_payload(
+    *,
+    snapshot: IndexSnapshot,
+    loaded_diff: LoadedDiff,
+    sensitive_omitted_count: int,
+    staleness_warnings: list[str],
+) -> dict[str, Any]:
+    guidance = _empty_diff_guidance(loaded_diff.diff_source)
+    impact = {
+        "contract_version": IMPACT_CONTRACT_VERSION,
+        "diff_source": loaded_diff.diff_source,
+        "diff_provenance": loaded_diff.provenance,
+        "index_run": _index_run_payload(snapshot),
+        "changed_files": [],
+        "likely_impacted": [],
+        "verification_suggestions": [],
+        "omitted": [],
+        "sensitive_omitted_count": sensitive_omitted_count,
+        "staleness_warnings": staleness_warnings,
+        "receipt_path": None,
+        "empty_diff_guidance": guidance,
+    }
+    if loaded_diff.base_ref is not None:
+        impact["base_ref"] = loaded_diff.base_ref
+    return impact
+
+
+def _empty_diff_guidance(diff_source: str) -> dict[str, Any]:
+    return {
+        "message": f"There is nothing to analyze for diff_source {diff_source}.",
+        "next_steps": [
+            "No context receipt was written because the stated diff has no changed files.",
+            "If HEAD equals the working tree, compare against a branch with "
+            "`pcl impact --diff --base <default-branch> --json`.",
+            "If the expected change is untracked, add it to Git or provide an explicit diff with "
+            "`pcl impact --diff - --json`.",
+        ],
+    }
 
 
 def _changed_file_entries(
