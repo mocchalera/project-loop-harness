@@ -31,7 +31,8 @@ Explain likely impact from a diff and write a context receipt:
 
 ```bash
 pcl impact --diff --json
-pcl impact --diff change.diff --json
+pcl impact --diff --base main --json
+git diff --no-ext-diff --no-textconv --name-status main -- | pcl impact --diff - --json
 ```
 
 Evaluate retrieval behavior against labels:
@@ -259,7 +260,12 @@ under `.project-loop/evidence/context-receipts/`.
   "ok": true,
   "impact": {
     "contract_version": "impact/v0",
-    "diff_source": "git:diff",
+    "diff_source": "worktree-vs-HEAD",
+    "diff_provenance": {
+      "source": "local-git-worktree",
+      "attestation": "local-git",
+      "command_shape": "git diff --no-ext-diff --no-textconv --name-status HEAD --"
+    },
     "index_run": {"id": "CI-0001", "index_version": "code-index/v0"},
     "changed_files": [
       {
@@ -288,8 +294,32 @@ under `.project-loop/evidence/context-receipts/`.
 }
 ```
 
+`diff_source` states what PLH compared:
+
+- `worktree-vs-HEAD`: the default for `pcl impact --diff`. PLH runs a
+  config-independent `git diff --no-ext-diff --no-textconv --name-status HEAD --`
+  shape and compares tracked staged and unstaged working-tree changes against
+  `HEAD`.
+- `worktree-vs-<ref>`: used by `pcl impact --diff --base <ref>`. PLH validates
+  `<ref>` as a commit-ish before diffing and records `base_ref` in both impact
+  JSON and the receipt.
+- `provided-diff`: used when the caller provides diff text with `--diff -` or a
+  diff file path. PLH records the source as caller-provided and cannot attest
+  that the text matches the current working tree.
+
+Untracked files are not part of `worktree-vs-HEAD` or `worktree-vs-<ref>`
+diffs. Future modes may add `--staged`, `--unstaged`, and
+`--include-untracked`, but those flags are not part of `impact/v0` today.
+
+If the stated diff is empty, PLH returns an `impact/v0` no-op payload with
+`empty_diff_guidance`, writes no receipt artifact, and suggests likely next
+operations such as comparing against a default branch or providing an explicit
+diff.
+
 The receipt contract is `context-receipt/v0`. Its core fields are:
 
+- `diff_source`: the same source label returned by `impact/v0`, with `base_ref`
+  when applicable.
 - `included_candidate_context`: files PLH provided as candidate context, with
   role, reason, confidence, language, indexed hash when available, and
   additive `snapshot_consistency` fields recorded at receipt time.

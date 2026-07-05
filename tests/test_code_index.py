@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 from pathlib import Path
 import shutil
@@ -90,6 +91,60 @@ def _init_code_project(root: Path, capsys) -> None:
 def _build_index(root: Path, capsys) -> dict:
     assert main(["--root", str(root), "index", "build", "--json"]) == 0
     return _json_output(capsys)
+
+
+def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [
+            "git",
+            "-C",
+            str(root),
+            "-c",
+            "core.pager=cat",
+            "-c",
+            "user.name=PCL Test",
+            "-c",
+            "user.email=pcl@example.test",
+            "--no-pager",
+            *args,
+        ],
+        capture_output=True,
+        check=True,
+        text=True,
+    )
+
+
+def _init_git_code_project(root: Path, capsys) -> None:
+    _init_code_project(root, capsys)
+    _git(root, "init")
+    _git(root, "add", ".")
+    _git(root, "commit", "-m", "initial")
+    _build_index(root, capsys)
+
+
+def _append_text(path: Path, text: str) -> None:
+    path.write_text(path.read_text(encoding="utf-8") + text, encoding="utf-8")
+
+
+def _assert_diff_source_in_impact_and_receipt(
+    root: Path,
+    impact: dict,
+    *,
+    diff_source: str,
+    base_ref: str | None = None,
+) -> dict:
+    assert impact["diff_source"] == diff_source
+    if base_ref is None:
+        assert "base_ref" not in impact
+    else:
+        assert impact["base_ref"] == base_ref
+    receipt = json.loads((root / impact["receipt_path"]).read_text(encoding="utf-8"))
+    assert receipt["diff_source"] == diff_source
+    if base_ref is None:
+        assert "base_ref" not in receipt
+    else:
+        assert receipt["base_ref"] == base_ref
+    return receipt
 
 
 def _synthetic_diff(root: Path) -> Path:
@@ -183,17 +238,6 @@ def _diff_with_changed_test(root: Path) -> Path:
         encoding="utf-8",
     )
     return diff_path
-
-
-def _git(root: Path, *args: str) -> str:
-    completed = subprocess.run(
-        ["git", "-C", str(root), *args],
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-    assert completed.returncode == 0, completed.stderr
-    return completed.stdout
 
 
 def test_index_build_records_gitignore_aware_snapshot_and_is_deterministic(
@@ -595,6 +639,141 @@ def test_code_search_suggests_reindex_when_git_head_moves(tmp_path: Path, capsys
     assert "pcl index build --json" in text_output
 
 
+def test_impact_default_diff_source_covers_staged_only_change(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_git_code_project(tmp_path, capsys)
+    _append_text(tmp_path / "src" / "pkg" / "calc.py", "\ndef staged_only():\n    return 1\n")
+    _git(tmp_path, "add", "src/pkg/calc.py")
+
+    assert main(["--root", str(tmp_path), "impact", "--diff", "--json"]) == 0
+    impact = _json_output(capsys)["impact"]
+
+    assert [item["path"] for item in impact["changed_files"]] == ["src/pkg/calc.py"]
+    _assert_diff_source_in_impact_and_receipt(
+        tmp_path,
+        impact,
+        diff_source="worktree-vs-HEAD",
+    )
+
+
+def test_impact_default_diff_source_covers_unstaged_only_change(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_git_code_project(tmp_path, capsys)
+    _append_text(tmp_path / "src" / "pkg" / "calc.py", "\ndef unstaged_only():\n    return 1\n")
+
+    assert main(["--root", str(tmp_path), "impact", "--diff", "--json"]) == 0
+    impact = _json_output(capsys)["impact"]
+
+    assert [item["path"] for item in impact["changed_files"]] == ["src/pkg/calc.py"]
+    _assert_diff_source_in_impact_and_receipt(
+        tmp_path,
+        impact,
+        diff_source="worktree-vs-HEAD",
+    )
+
+
+def test_impact_default_diff_source_covers_staged_and_unstaged_changes(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_git_code_project(tmp_path, capsys)
+    _append_text(tmp_path / "src" / "pkg" / "calc.py", "\ndef staged_change():\n    return 1\n")
+    _git(tmp_path, "add", "src/pkg/calc.py")
+    _append_text(tmp_path / "docs" / "calc.md", "\nMore usage notes.\n")
+
+    assert main(["--root", str(tmp_path), "impact", "--diff", "--json"]) == 0
+    impact = _json_output(capsys)["impact"]
+
+    assert {item["path"] for item in impact["changed_files"]} == {
+        "docs/calc.md",
+        "src/pkg/calc.py",
+    }
+    _assert_diff_source_in_impact_and_receipt(
+        tmp_path,
+        impact,
+        diff_source="worktree-vs-HEAD",
+    )
+
+
+def test_impact_base_ref_diff_source_records_base_ref(tmp_path: Path, capsys) -> None:
+    _init_code_project(tmp_path, capsys)
+    _git(tmp_path, "init")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "initial")
+    _append_text(tmp_path / "src" / "pkg" / "calc.py", "\ndef committed_change():\n    return 1\n")
+    _git(tmp_path, "add", "src/pkg/calc.py")
+    _git(tmp_path, "commit", "-m", "update calc")
+    _build_index(tmp_path, capsys)
+
+    assert main(["--root", str(tmp_path), "impact", "--diff", "--base", "HEAD~1", "--json"]) == 0
+    impact = _json_output(capsys)["impact"]
+
+    assert [item["path"] for item in impact["changed_files"]] == ["src/pkg/calc.py"]
+    _assert_diff_source_in_impact_and_receipt(
+        tmp_path,
+        impact,
+        diff_source="worktree-vs-HEAD~1",
+        base_ref="HEAD~1",
+    )
+
+
+def test_impact_piped_diff_source_is_provided_diff(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    _init_code_project(tmp_path, capsys)
+    _build_index(tmp_path, capsys)
+    monkeypatch.setattr("sys.stdin", io.StringIO(_synthetic_diff(tmp_path).read_text(encoding="utf-8")))
+
+    assert main(["--root", str(tmp_path), "impact", "--diff", "-", "--json"]) == 0
+    impact = _json_output(capsys)["impact"]
+    receipt = _assert_diff_source_in_impact_and_receipt(
+        tmp_path,
+        impact,
+        diff_source="provided-diff",
+    )
+
+    assert impact["diff_provenance"]["source"] == "stdin"
+    assert impact["diff_provenance"]["attestation"] == "unattested"
+    assert receipt["diff_provenance"]["source"] == "stdin"
+
+
+def test_impact_unknown_base_ref_returns_typed_error(tmp_path: Path, capsys) -> None:
+    _init_git_code_project(tmp_path, capsys)
+
+    assert main(["--root", str(tmp_path), "impact", "--diff", "--base", "missing-ref", "--json"]) == 2
+    payload = _json_output(capsys)
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert payload["error"]["details"]["base_ref"] == "missing-ref"
+    assert "Unknown git ref for --base: missing-ref" in payload["error"]["message"]
+    assert "fatal:" not in json.dumps(payload).lower()
+
+
+def test_impact_empty_default_diff_gives_guidance_without_receipt(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_git_code_project(tmp_path, capsys)
+
+    assert main(["--root", str(tmp_path), "impact", "--diff", "--json"]) == 0
+    impact = _json_output(capsys)["impact"]
+
+    assert impact["diff_source"] == "worktree-vs-HEAD"
+    assert impact["changed_files"] == []
+    assert impact["receipt_path"] is None
+    assert "evidence_id" not in impact
+    assert "nothing to analyze" in impact["empty_diff_guidance"]["message"].lower()
+    assert any("--base <default-branch>" in step for step in impact["empty_diff_guidance"]["next_steps"])
+    receipt_dir = tmp_path / ".project-loop" / "evidence" / "context-receipts"
+    assert not list(receipt_dir.glob("*.json"))
+
+
 def test_impact_writes_epistemically_honest_receipt_and_evidence(
     tmp_path: Path,
     capsys,
@@ -620,10 +799,12 @@ def test_impact_writes_epistemically_honest_receipt_and_evidence(
     assert any(item["path"] == "tests/test_calc.py" for item in impact["likely_impacted"])
     assert any("python3 -m pytest tests/test_calc.py" in item for item in impact["verification_suggestions"])
     assert impact["receipt_path"].startswith(".project-loop/evidence/context-receipts/")
+    assert impact["diff_source"] == "provided-diff"
 
     receipt_path = tmp_path / impact["receipt_path"]
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     assert receipt["contract_version"] == "context-receipt/v0"
+    assert receipt["diff_source"] == "provided-diff"
     assert "included_candidate_context" in receipt
     assert "omitted" in receipt
     assert "staleness_warnings" in receipt
