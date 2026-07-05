@@ -63,5 +63,21 @@ Give these tasks to coding agents in this order:
 59. `agent-tasks/0059-checkpoint-review-guidance.md`
 60. `agent-tasks/0060-pypi-trusted-publishing.md`
 61. `agent-tasks/0061-context-pack-v1.md`
+62. `agent-tasks/0062-task-backlog-entity.md`
+63. `agent-tasks/0063-structured-verification-rubric.md`
+64. `agent-tasks/0064-task-loop-integration.md`
+65. `agent-tasks/0065-dashboard-human-decisions.md`
+66. `agent-tasks/0066-agent-registry-lease.md`
+67. `agent-tasks/0067-context-pack-improvements.md`
+68. `agent-tasks/0068-trust-hardening.md`
+69. `agent-tasks/0069-explainable-code-context-v0.md`
+70. `agent-tasks/0070-human-decision-cockpit.md`
+71. `agent-tasks/0071-dogfood-impact-precision.md`
+72. `agent-tasks/0072-sensitive-omission.md`
+73. `agent-tasks/0073-code-context-module-split.md`
+74. `agent-tasks/0074-search-snapshot-consistency.md`
+75. `agent-tasks/0075-diff-source-modes.md`
+76. `agent-tasks/0076-schema-version-integrity.md`
+77. `agent-tasks/0077-index-output-budget-and-impact-noise.md`
 
 Do not start with MCP. Do not start with a hosted UI. The CLI/runtime must become reliable first.
