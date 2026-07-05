@@ -1699,7 +1699,8 @@ def main(argv: list[str] | None = None) -> int:
                 index = result["index"]
                 print(
                     f"Indexed {index['file_count']} files "
-                    f"({index['indexed_bytes']} bytes), ignored {index['ignored_count']} paths"
+                    f"({index['indexed_bytes']} bytes), ignored {index['ignored_count']} paths "
+                    f"({index['sensitive_omitted_count']} sensitive)"
                 )
             return 0
 

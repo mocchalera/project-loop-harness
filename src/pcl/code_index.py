@@ -46,6 +46,27 @@ DEFAULT_CODE_INDEX_EXCLUDES = (
     ".codex/",
 )
 
+DEFAULT_SENSITIVE_EXCLUDES = (
+    ".env",
+    ".env.*",
+    "*.pem",
+    "*.key",
+    "id_rsa",
+    "id_rsa.*",
+    "id_ed25519",
+    "id_ed25519.*",
+    "credentials*.json",
+    ".npmrc",
+    ".pypirc",
+    "*.p12",
+    "*.pfx",
+    "*.keystore",
+    "*.jks",
+    ".netrc",
+    ".aws/",
+    "secrets/",
+)
+
 DEFAULT_IGNORED_NAMES = {
     ".git": "default_ignore:.git",
     ".project-loop": "default_ignore:.project-loop",
@@ -142,6 +163,7 @@ class ScanResult:
     files: list[IndexedFile]
     ignored: list[IgnoredEntry]
     git_head: str | None
+    sensitive_include_override: tuple[str, ...] = ()
 
     @property
     def indexed_bytes(self) -> int:
@@ -153,6 +175,17 @@ class ScanResult:
         for item in self.files:
             counts[item.language] = counts.get(item.language, 0) + 1
         return dict(sorted(counts.items()))
+
+    @property
+    def sensitive_omitted_count(self) -> int:
+        return sum(1 for item in self.ignored if item.ignored_reason.startswith("sensitive:"))
+
+
+@dataclass(frozen=True)
+class SensitiveIndexSettings:
+    additional_patterns: tuple[str, ...] = ()
+    agent_may_not_modify_patterns: tuple[str, ...] = ()
+    include_override_patterns: tuple[str, ...] = ()
 
 
 @dataclass
@@ -179,7 +212,7 @@ class IndexSnapshot:
 
 def build_code_index(paths: ProjectPaths) -> dict[str, Any]:
     require_initialized(paths)
-    scan = _scan_working_tree(paths.root, include_text=True)
+    scan = _scan_working_tree(paths.root, include_text=True, warn_on_sensitive_override=True)
     _attach_test_hints(scan.files)
     summary = _index_summary(scan)
 
@@ -246,6 +279,7 @@ def build_code_index(paths: ProjectPaths) -> dict[str, Any]:
                 "file_count": len(scan.files),
                 "indexed_bytes": scan.indexed_bytes,
                 "ignored_count": len(scan.ignored),
+                "sensitive_omitted_count": scan.sensitive_omitted_count,
             },
         )
         conn.commit()
@@ -281,6 +315,7 @@ def code_index_status(paths: ProjectPaths) -> dict[str, Any]:
                 "stale": True,
                 "file_count": 0,
                 "ignored_count": 0,
+                "sensitive_omitted_count": 0,
                 "last_run": None,
                 "current_git_head": _git_head(paths.root),
                 "staleness_warnings": ["No code index run has been recorded."],
@@ -295,6 +330,7 @@ def code_index_status(paths: ProjectPaths) -> dict[str, Any]:
             "stale": bool(warnings),
             "file_count": int(snapshot.run["file_count"]),
             "ignored_count": int(snapshot.run["ignored_count"]),
+            "sensitive_omitted_count": _summary_sensitive_omitted_count(snapshot.summary),
             "indexed_bytes": int(snapshot.run["indexed_bytes"]),
             "last_run": snapshot.run,
             "current_git_head": _git_head(paths.root),
@@ -312,9 +348,12 @@ def search_code(paths: ProjectPaths, *, query: str, limit: int = 50) -> dict[str
         raise InvalidInputError("--limit must be a positive integer.", details={"limit": limit})
 
     snapshot = _load_required_snapshot(paths)
+    sensitive_settings = _sensitive_index_settings(paths.root)
     ranked_results: list[tuple[tuple[int, str], dict[str, Any]]] = []
     for item in snapshot.files:
         path = str(item["path"])
+        if _sensitive_ignore_reason(path, sensitive_settings):
+            continue
         absolute_path = paths.root / path
         try:
             lines = absolute_path.read_text(encoding="utf-8").splitlines()
@@ -357,11 +396,12 @@ def analyze_impact(
         )
 
     staleness_warnings = _staleness_warnings_for_snapshot(paths, snapshot)
-    changed = _changed_file_entries(snapshot, changed_files)
-    omitted = _omitted_changed_entries(snapshot, changed_files)
+    changed = _changed_file_entries(paths, snapshot, changed_files)
+    omitted = _omitted_changed_entries(paths, snapshot, changed_files)
     likely_impacted, candidate_omissions = _likely_impacted_entries(paths, snapshot, changed_files)
     omitted.extend(candidate_omissions)
     verification_suggestions = _verification_suggestions(changed, likely_impacted, staleness_warnings)
+    sensitive_omitted_count = _summary_sensitive_omitted_count(snapshot.summary)
     impact = {
         "contract_version": IMPACT_CONTRACT_VERSION,
         "diff_source": source_label,
@@ -375,6 +415,7 @@ def analyze_impact(
         "likely_impacted": likely_impacted,
         "verification_suggestions": verification_suggestions,
         "omitted": omitted,
+        "sensitive_omitted_count": sensitive_omitted_count,
         "staleness_warnings": staleness_warnings,
         "receipt_path": None,
     }
@@ -449,9 +490,17 @@ def evaluate_retrieval(paths: ProjectPaths, *, fixture_path: str) -> dict[str, A
     }
 
 
-def _scan_working_tree(root: Path, *, include_text: bool) -> ScanResult:
+def _scan_working_tree(
+    root: Path,
+    *,
+    include_text: bool,
+    warn_on_sensitive_override: bool = False,
+) -> ScanResult:
     root = root.resolve()
     configured_excludes = _code_index_exclude_patterns(root)
+    sensitive_settings = _sensitive_index_settings(root)
+    if warn_on_sensitive_override and sensitive_settings.include_override_patterns:
+        print(_sensitive_override_warning(sensitive_settings.include_override_patterns), file=sys.stderr)
     ignored: list[IgnoredEntry] = []
     candidates: list[Path] = []
     for dirpath, dirnames, filenames in os.walk(root):
@@ -462,6 +511,10 @@ def _scan_working_tree(root: Path, *, include_text: bool) -> ScanResult:
         for dirname in dirnames:
             child = current_dir / dirname
             rel = _relative_path(root, child)
+            sensitive_reason = _sensitive_ignore_reason(f"{rel}/", sensitive_settings)
+            if sensitive_reason:
+                ignored.append(IgnoredEntry(path=f"{rel}/", ignored_reason=sensitive_reason))
+                continue
             reason = DEFAULT_IGNORED_NAMES.get(dirname)
             if reason:
                 ignored.append(IgnoredEntry(path=f"{rel}/", ignored_reason=reason))
@@ -475,6 +528,10 @@ def _scan_working_tree(root: Path, *, include_text: bool) -> ScanResult:
         for filename in filenames:
             path = current_dir / filename
             rel = _relative_path(root, path)
+            sensitive_reason = _sensitive_ignore_reason(rel, sensitive_settings)
+            if sensitive_reason:
+                ignored.append(IgnoredEntry(path=rel, ignored_reason=sensitive_reason))
+                continue
             default_reason = _default_ignore_reason(rel)
             if default_reason:
                 ignored.append(IgnoredEntry(path=rel, ignored_reason=default_reason))
@@ -555,7 +612,12 @@ def _scan_working_tree(root: Path, *, include_text: bool) -> ScanResult:
         )
     files.sort(key=lambda item: item.path)
     ignored.sort(key=lambda item: item.path)
-    return ScanResult(files=files, ignored=ignored, git_head=_git_head(root))
+    return ScanResult(
+        files=files,
+        ignored=ignored,
+        git_head=_git_head(root),
+        sensitive_include_override=sensitive_settings.include_override_patterns,
+    )
 
 
 def _attach_test_hints(files: list[IndexedFile]) -> None:
@@ -566,6 +628,9 @@ def _attach_test_hints(files: list[IndexedFile]) -> None:
 def _index_summary(scan: ScanResult) -> dict[str, Any]:
     return {
         "contract_version": INDEX_VERSION,
+        "sensitive_omitted_count": scan.sensitive_omitted_count,
+        "sensitive_include_override": list(scan.sensitive_include_override),
+        "sensitive_include_override_used": bool(scan.sensitive_include_override),
         "ignored": [item.to_dict() for item in scan.ignored],
         "hash_skipped": [
             item.to_dict()
@@ -584,6 +649,7 @@ def _build_index_payload(*, paths: ProjectPaths, scan: ScanResult, summary: dict
         "file_count": len(scan.files),
         "indexed_bytes": scan.indexed_bytes,
         "ignored_count": len(scan.ignored),
+        "sensitive_omitted_count": summary["sensitive_omitted_count"],
         "language_counts": scan.language_counts,
         "files": [item.to_public_dict() for item in scan.files],
         "ignored": summary["ignored"],
@@ -693,45 +759,59 @@ def _counted_path_warning(prefix: str, paths: list[str], *, limit: int = 5) -> s
 
 
 def _changed_file_entries(
+    paths: ProjectPaths,
     snapshot: IndexSnapshot,
     changed_files: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
-    files_by_path = snapshot.files_by_path
+    files_by_path = _safe_snapshot_files_by_path(paths.root, snapshot)
+    sensitive_settings = _sensitive_index_settings(paths.root)
     entries: list[dict[str, Any]] = []
     for item in changed_files:
         path = item["path"]
         row = files_by_path.get(path)
+        sensitive_reason = _sensitive_ignore_reason(path, sensitive_settings)
+        if sensitive_reason:
+            row = None
+        reason = (
+            "changed file is present in the latest index"
+            if row
+            else "changed file is not present in the latest index"
+        )
+        if sensitive_reason:
+            reason = f"changed file is sensitive-excluded: {sensitive_reason}"
         entries.append(
             {
                 "path": path,
                 "status": item["status"],
                 "indexed": row is not None,
                 "language": row.get("language") if row else None,
-                "reason": "changed file is present in the latest index"
-                if row
-                else "changed file is not present in the latest index",
+                "reason": reason,
             }
         )
     return entries
 
 
 def _omitted_changed_entries(
+    paths: ProjectPaths,
     snapshot: IndexSnapshot,
     changed_files: list[dict[str, str]],
 ) -> list[dict[str, Any]]:
-    files_by_path = snapshot.files_by_path
+    files_by_path = _safe_snapshot_files_by_path(paths.root, snapshot)
     ignored_by_path = snapshot.ignored_by_path
+    sensitive_settings = _sensitive_index_settings(paths.root)
     omitted: list[dict[str, Any]] = []
     for item in changed_files:
         path = item["path"]
         if path in files_by_path:
             continue
+        sensitive_reason = _sensitive_ignore_reason(path, sensitive_settings)
         ignored = ignored_by_path.get(path)
-        reason = (
-            str(ignored.get("ignored_reason"))
-            if ignored and ignored.get("ignored_reason")
-            else "not present in latest index"
-        )
+        if sensitive_reason:
+            reason = sensitive_reason
+        elif ignored and ignored.get("ignored_reason"):
+            reason = str(ignored["ignored_reason"])
+        else:
+            reason = "not present in latest index"
         omitted.append({"path": path, "reason": reason})
     return omitted
 
@@ -742,7 +822,8 @@ def _likely_impacted_entries(
     changed_files: list[dict[str, str]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     changed_paths = {item["path"] for item in changed_files}
-    files_by_path = snapshot.files_by_path
+    files_by_path = _safe_snapshot_files_by_path(paths.root, snapshot)
+    snapshot_files = _safe_snapshot_files(paths.root, snapshot)
     candidates: dict[str, dict[str, Any]] = {}
     omitted: list[dict[str, Any]] = []
     omitted_symbol_keys: set[tuple[str, str]] = set()
@@ -777,7 +858,7 @@ def _likely_impacted_entries(
                     confidence=float(candidate.get("confidence") or 0.7),
                     source_path=changed_path,
                 )
-        for row in snapshot.files:
+        for row in snapshot_files:
             row_path = str(row["path"])
             if not _is_test_path(row_path):
                 continue
@@ -788,7 +869,7 @@ def _likely_impacted_entries(
                     confidence=0.9,
                     source_path=changed_path,
                 )
-        for row in snapshot.files:
+        for row in snapshot_files:
             row_path = str(row["path"])
             if row_path in changed_paths:
                 continue
@@ -810,7 +891,7 @@ def _likely_impacted_entries(
                 )
         for symbol_name in _symbol_names(changed_row)[:8]:
             document_frequency = _document_frequency(paths.root, snapshot, symbol_name)
-            if _symbol_is_too_common(document_frequency, len(snapshot.files)):
+            if _symbol_is_too_common(document_frequency, len(snapshot_files)):
                 key = (changed_path, symbol_name)
                 if key not in omitted_symbol_keys:
                     omitted.append(
@@ -827,7 +908,7 @@ def _likely_impacted_entries(
                     )
                     omitted_symbol_keys.add(key)
                 continue
-            for row in snapshot.files:
+            for row in snapshot_files:
                 row_path = str(row["path"])
                 if row_path in changed_paths or row_path in candidates:
                     continue
@@ -983,6 +1064,7 @@ def _receipt_payload(
         "index_run": impact["index_run"],
         "included_candidate_context": _included_candidate_context(snapshot, impact),
         "omitted": impact["omitted"],
+        "sensitive_omitted_count": impact["sensitive_omitted_count"],
         "staleness_warnings": impact["staleness_warnings"],
         "verification_suggestions": impact["verification_suggestions"],
     }
@@ -1294,7 +1376,7 @@ def _default_ignore_reason(relative_path: str) -> str | None:
 
 
 def _code_index_exclude_patterns(root: Path) -> list[tuple[str, str]]:
-    configured = _configured_code_index_excludes(root)
+    configured = _configured_yaml_list(root, "code_index", "exclude")
     if configured is None:
         return [
             (pattern, f"default_code_index_exclude:{pattern}")
@@ -1303,7 +1385,65 @@ def _code_index_exclude_patterns(root: Path) -> list[tuple[str, str]]:
     return [(pattern, f"code_index.exclude:{pattern}") for pattern in configured]
 
 
-def _configured_code_index_excludes(root: Path) -> list[str] | None:
+def _sensitive_index_settings(root: Path) -> SensitiveIndexSettings:
+    additional = _configured_yaml_list(root, "code_index", "sensitive_exclude") or []
+    agent_may_not_modify = _configured_yaml_list(root, "permissions", "agent_may_not_modify") or []
+    include_override = _configured_yaml_list(root, "code_index", "sensitive_include_override") or []
+    return SensitiveIndexSettings(
+        additional_patterns=tuple(additional),
+        agent_may_not_modify_patterns=tuple(agent_may_not_modify),
+        include_override_patterns=tuple(include_override),
+    )
+
+
+def _sensitive_ignore_reason(relative_path: str, settings: SensitiveIndexSettings) -> str | None:
+    if _matches_any_pattern(relative_path, settings.include_override_patterns):
+        return None
+    if _matches_any_pattern(relative_path, settings.agent_may_not_modify_patterns):
+        return "sensitive:agent_may_not_modify"
+    for pattern in (*DEFAULT_SENSITIVE_EXCLUDES, *settings.additional_patterns):
+        if _path_pattern_matches(pattern, relative_path):
+            return f"sensitive:{pattern}"
+    return None
+
+
+def _sensitive_override_warning(patterns: tuple[str, ...]) -> str:
+    joined = ", ".join(patterns)
+    return (
+        "WARNING: code_index.sensitive_include_override is configured; "
+        f"sensitive paths matching these patterns may be indexed: {joined}"
+    )
+
+
+def _safe_snapshot_files(root: Path, snapshot: IndexSnapshot) -> list[dict[str, Any]]:
+    settings = _sensitive_index_settings(root)
+    return [
+        item
+        for item in snapshot.files
+        if not _sensitive_ignore_reason(str(item["path"]), settings)
+    ]
+
+
+def _safe_snapshot_files_by_path(root: Path, snapshot: IndexSnapshot) -> dict[str, dict[str, Any]]:
+    return {str(item["path"]): item for item in _safe_snapshot_files(root, snapshot)}
+
+
+def _summary_sensitive_omitted_count(summary: dict[str, Any]) -> int:
+    value = summary.get("sensitive_omitted_count")
+    if isinstance(value, int):
+        return value
+    ignored = summary.get("ignored", [])
+    if not isinstance(ignored, list):
+        return 0
+    return sum(
+        1
+        for item in ignored
+        if isinstance(item, dict)
+        and str(item.get("ignored_reason", "")).startswith("sensitive:")
+    )
+
+
+def _configured_yaml_list(root: Path, section: str, key: str) -> list[str] | None:
     config_path = root / "pcl.yaml"
     if not config_path.exists():
         return None
@@ -1312,50 +1452,50 @@ def _configured_code_index_excludes(root: Path) -> list[str] | None:
     except OSError:
         return None
 
-    in_code_index = False
-    in_exclude = False
-    code_index_indent = 0
-    exclude_indent = 0
+    in_section = False
+    in_list = False
+    section_indent = 0
+    list_indent = 0
     values: list[str] = []
-    saw_exclude = False
+    saw_key = False
     for raw_line in lines:
         if not raw_line.strip() or raw_line.lstrip().startswith("#"):
             continue
         indent = len(raw_line) - len(raw_line.lstrip(" "))
         stripped = raw_line.strip()
-        if indent == 0 and stripped.startswith("code_index:"):
-            in_code_index = True
-            in_exclude = False
-            code_index_indent = indent
+        if indent == 0 and stripped.startswith(f"{section}:"):
+            in_section = True
+            in_list = False
+            section_indent = indent
             continue
-        if in_code_index and indent <= code_index_indent and not stripped.startswith("-"):
+        if in_section and indent <= section_indent and not stripped.startswith("-"):
             break
-        if not in_code_index:
+        if not in_section:
             continue
-        if stripped.startswith("exclude:"):
-            saw_exclude = True
-            in_exclude = True
-            exclude_indent = indent
+        if stripped.startswith(f"{key}:"):
+            saw_key = True
+            in_list = True
+            list_indent = indent
             raw_value = stripped.split(":", 1)[1].strip()
             if raw_value:
                 inline = _parse_inline_yaml_list(raw_value)
                 if inline is not None:
                     values.extend(inline)
-                    in_exclude = False
+                    in_list = False
                 else:
                     value = _strip_yaml_string(raw_value)
                     if value:
                         values.append(value)
             continue
-        if in_exclude:
-            if indent <= exclude_indent and not stripped.startswith("-"):
-                in_exclude = False
+        if in_list:
+            if indent <= list_indent and not stripped.startswith("-"):
+                in_list = False
                 continue
             if stripped.startswith("-"):
                 value = _strip_yaml_string(stripped[1:].strip())
                 if value:
                     values.append(value)
-    if not saw_exclude:
+    if not saw_key:
         return None
     return _unique_nonempty(values)
 
@@ -1388,25 +1528,34 @@ def _unique_nonempty(values: list[str]) -> list[str]:
 
 
 def _configured_ignore_reason(relative_path: str, patterns: list[tuple[str, str]]) -> str | None:
-    normalized_path = relative_path.strip("/")
     for pattern, reason in patterns:
-        normalized_pattern = pattern.strip()
-        if not normalized_pattern:
-            continue
-        pattern_without_slashes = normalized_pattern.strip("/")
-        if not pattern_without_slashes:
-            continue
-        if normalized_pattern.endswith("/"):
-            if normalized_path == pattern_without_slashes or normalized_path.startswith(pattern_without_slashes + "/"):
-                return reason
-            continue
-        if "/" not in pattern_without_slashes:
-            if any(fnmatch.fnmatch(part, pattern_without_slashes) for part in normalized_path.split("/")):
-                return reason
-            continue
-        if fnmatch.fnmatch(normalized_path, pattern_without_slashes):
+        if _path_pattern_matches(pattern, relative_path):
             return reason
     return None
+
+
+def _matches_any_pattern(relative_path: str, patterns: tuple[str, ...]) -> bool:
+    return any(_path_pattern_matches(pattern, relative_path) for pattern in patterns)
+
+
+def _path_pattern_matches(pattern: str, relative_path: str) -> bool:
+    normalized_path = relative_path.strip("/")
+    normalized_pattern = pattern.strip()
+    if not normalized_path or not normalized_pattern:
+        return False
+    pattern_without_slashes = normalized_pattern.strip("/")
+    if not pattern_without_slashes:
+        return False
+    if normalized_pattern.endswith("/"):
+        return normalized_path == pattern_without_slashes or normalized_path.startswith(
+            pattern_without_slashes + "/"
+        )
+    if "/" not in pattern_without_slashes:
+        return any(
+            fnmatch.fnmatch(part, pattern_without_slashes)
+            for part in normalized_path.split("/")
+        )
+    return fnmatch.fnmatch(normalized_path, pattern_without_slashes)
 
 
 def _detect_language(path: Path) -> str:
@@ -1702,7 +1851,7 @@ def _file_mentions(path: Path, symbol_name: str) -> bool:
 
 def _document_frequency(root: Path, snapshot: IndexSnapshot, value: str) -> int:
     count = 0
-    for row in snapshot.files:
+    for row in _safe_snapshot_files(root, snapshot):
         if _file_mentions(root / str(row["path"]), value):
             count += 1
     return count
