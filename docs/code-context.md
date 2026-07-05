@@ -13,12 +13,14 @@ Build an explicit snapshot:
 
 ```bash
 pcl index build --json
+pcl index build --json --include-files
 ```
 
 Inspect the latest snapshot:
 
 ```bash
 pcl index status --json
+pcl index status --json --include-files
 ```
 
 Run lexical search over indexed files:
@@ -43,7 +45,11 @@ pcl eval retrieval --fixture tests/fixtures/retrieval_v0.json --json
 
 ## Index Contract
 
-`pcl index build --json` returns `code-index/v0`.
+`pcl index build --json` returns a summary `code-index/v0` payload by
+default. This keeps agent-facing stdout small. The full per-file index detail
+is always written to the deterministic `detail_path` under `.project-loop/`.
+Use `--include-files` to restore the full inline payload when the caller really
+needs every file, ignored path, and hash-skip entry on stdout.
 
 ```json
 {
@@ -55,41 +61,63 @@ pcl eval retrieval --fixture tests/fixtures/retrieval_v0.json --json
     "file_count": 2,
     "indexed_bytes": 1200,
     "ignored_count": 3,
+    "hash_skipped_count": 1,
     "sensitive_omitted_count": 1,
     "language_counts": {"python": 2},
-    "files": [
-      {
-        "path": "src/pcl/context.py",
-        "language": "python",
-        "size_bytes": 100,
-        "mtime": 123456789,
-        "sha256": "abc123",
-        "line_count": 10,
-        "symbol_summary": {
-          "contract_version": "symbol-summary/v0",
-          "symbols": [{"type": "function", "name": "pack_context_for_job", "line": 1}]
-        },
-        "test_hint": {
-          "contract_version": "test-hint/v0",
-          "is_test": false,
-          "candidate_tests": [{"path": "tests/test_context.py", "reason": "filename_match"}]
-        }
-      }
-    ],
-    "ignored": [
-      {"path": ".env", "ignored_reason": "sensitive:.env"},
-      {"path": ".project-loop/", "ignored_reason": "default_ignore:.project-loop"}
-    ],
-    "hash_skipped": [
-      {
-        "path": "assets/logo.bin",
-        "ignored_reason": "binary_file",
-        "sha256": null,
-        "hash_skipped_reason": "binary_file"
-      }
-    ],
+    "staleness_warnings": [],
+    "detail_path": ".project-loop/cache/code-index-detail.json",
     "event_appended": true
   }
+}
+```
+
+`detail_path` and `--include-files` expose the full detail shape:
+
+```json
+{
+  "contract_version": "code-index/v0",
+  "root_path": "/path/to/project",
+  "git_head": "abc123",
+  "file_count": 2,
+  "indexed_bytes": 1200,
+  "ignored_count": 3,
+  "hash_skipped_count": 1,
+  "sensitive_omitted_count": 1,
+  "language_counts": {"python": 2},
+  "staleness_warnings": [],
+  "detail_path": ".project-loop/cache/code-index-detail.json",
+  "event_appended": true,
+  "files": [
+    {
+      "path": "src/pcl/context.py",
+      "language": "python",
+      "size_bytes": 100,
+      "mtime": 123456789,
+      "sha256": "abc123",
+      "line_count": 10,
+      "symbol_summary": {
+        "contract_version": "symbol-summary/v0",
+        "symbols": [{"type": "function", "name": "pack_context_for_job", "line": 1}]
+      },
+      "test_hint": {
+        "contract_version": "test-hint/v0",
+        "is_test": false,
+        "candidate_tests": [{"path": "tests/test_context.py", "reason": "filename_match"}]
+      }
+    }
+  ],
+  "ignored": [
+    {"path": ".env", "ignored_reason": "sensitive:.env"},
+    {"path": ".project-loop/", "ignored_reason": "default_ignore:.project-loop"}
+  ],
+  "hash_skipped": [
+    {
+      "path": "assets/logo.bin",
+      "ignored_reason": "binary_file",
+      "sha256": null,
+      "hash_skipped_reason": "binary_file"
+    }
+  ]
 }
 ```
 
@@ -165,7 +193,9 @@ not a coverage statement.
 
 ## Status Contract
 
-`pcl index status --json` returns the latest run plus staleness warnings:
+`pcl index status --json` returns a summary of the latest run plus staleness
+warnings and `detail_path`. Like build, `--include-files` inlines the full
+detail payload.
 
 ```json
 {
@@ -175,11 +205,14 @@ not a coverage statement.
     "stale": false,
     "file_count": 10,
     "ignored_count": 4,
+    "hash_skipped_count": 1,
     "sensitive_omitted_count": 1,
     "indexed_bytes": 4096,
+    "language_counts": {"python": 10},
     "last_run": {"id": "CI-0001", "index_version": "code-index/v0"},
     "current_git_head": "abc123",
-    "staleness_warnings": []
+    "staleness_warnings": [],
+    "detail_path": ".project-loop/cache/code-index-detail.json"
   }
 }
 ```
@@ -276,6 +309,13 @@ under `.project-loop/evidence/context-receipts/`.
         "reason": "changed file is present in the latest index"
       }
     ],
+    "excluded_changed_files": [
+      {
+        "path": ".claude/session-001.json",
+        "status": "M",
+        "reason": "code_index.exclude:.claude/"
+      }
+    ],
     "likely_impacted": [
       {
         "path": "tests/test_context.py",
@@ -293,6 +333,15 @@ under `.project-loop/evidence/context-receipts/`.
   }
 }
 ```
+
+`changed_files` contains only changed paths that are eligible for the code
+index. Changed paths that match `code_index.exclude`, default index excludes,
+or sensitive patterns are moved to `excluded_changed_files` with the exclusion
+reason. This keeps agent/session state noise out of candidate ranking without
+dropping it from the contract. `likely_impacted` and
+`verification_suggestions` are computed only from indexable changed files.
+Non-JSON text output prints excluded changed paths as a single summary line
+with the count and first few paths.
 
 `diff_source` states what PLH compared:
 
@@ -323,6 +372,8 @@ The receipt contract is `context-receipt/v0`. Its core fields are:
 - `included_candidate_context`: files PLH provided as candidate context, with
   role, reason, confidence, language, indexed hash when available, and
   additive `snapshot_consistency` fields recorded at receipt time.
+- `excluded_changed_files`: changed paths excluded from the index, with their
+  exclusion reason.
 - `omitted`: files PLH did not include and the recorded reason.
 - `sensitive_omitted_count`: the sensitive omission count from the index run.
 - `staleness_warnings`: conditions that make the snapshot less current than

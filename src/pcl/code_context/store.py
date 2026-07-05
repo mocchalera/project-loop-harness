@@ -9,6 +9,7 @@ from typing import Any
 
 from .diff import _git_head
 from .scan import INDEX_VERSION, LARGE_FILE_BYTES, ScanResult
+from .scan import _relative_path
 from .scan import _scan_working_tree
 from .scan import _sha256_file
 from .test_hints import _attach_test_hints
@@ -22,6 +23,9 @@ from ..timeutil import utc_now_iso
 
 
 ID_NUMBER_RE = re.compile(r"^[A-Z]+-(\d+)$")
+
+
+INDEX_DETAIL_RELATIVE_PATH = ".project-loop/cache/code-index-detail.json"
 
 
 @dataclass
@@ -57,7 +61,7 @@ class IndexSnapshot:
         }
 
 
-def build_code_index(paths: ProjectPaths) -> dict[str, Any]:
+def build_code_index(paths: ProjectPaths, *, include_files: bool = False) -> dict[str, Any]:
     require_initialized(paths)
     scan = _scan_working_tree(paths.root, include_text=True, warn_on_sensitive_override=True)
     _attach_test_hints(scan.files)
@@ -139,13 +143,15 @@ def build_code_index(paths: ProjectPaths) -> dict[str, Any]:
     finally:
         conn.close()
 
+    detail = _build_index_payload(paths=paths, scan=scan, summary=summary)
+    _write_index_detail(paths, detail)
     return {
         "ok": True,
-        "index": _build_index_payload(paths=paths, scan=scan, summary=summary),
+        "index": detail if include_files else _build_index_summary_payload(detail),
     }
 
 
-def code_index_status(paths: ProjectPaths) -> dict[str, Any]:
+def code_index_status(paths: ProjectPaths, *, include_files: bool = False) -> dict[str, Any]:
     require_initialized(paths)
     conn = connect(paths.db_path)
     try:
@@ -161,28 +167,24 @@ def code_index_status(paths: ProjectPaths) -> dict[str, Any]:
                 "contract_version": INDEX_VERSION,
                 "stale": True,
                 "file_count": 0,
+                "indexed_bytes": 0,
                 "ignored_count": 0,
+                "hash_skipped_count": 0,
                 "sensitive_omitted_count": 0,
+                "language_counts": {},
                 "last_run": None,
                 "current_git_head": _git_head(paths.root),
                 "staleness_warnings": ["No code index run has been recorded."],
+                "detail_path": None,
             },
         }
 
     warnings = _staleness_warnings_for_snapshot(paths, snapshot)
+    detail = _status_index_payload(paths=paths, snapshot=snapshot, staleness_warnings=warnings)
+    _write_index_detail(paths, detail)
     return {
         "ok": True,
-        "index": {
-            "contract_version": INDEX_VERSION,
-            "stale": bool(warnings),
-            "file_count": int(snapshot.run["file_count"]),
-            "ignored_count": int(snapshot.run["ignored_count"]),
-            "sensitive_omitted_count": _summary_sensitive_omitted_count(snapshot.summary),
-            "indexed_bytes": int(snapshot.run["indexed_bytes"]),
-            "last_run": snapshot.run,
-            "current_git_head": _git_head(paths.root),
-            "staleness_warnings": warnings,
-        },
+        "index": detail if include_files else _status_index_summary_payload(detail),
     }
 
 
@@ -210,12 +212,116 @@ def _build_index_payload(*, paths: ProjectPaths, scan: ScanResult, summary: dict
         "file_count": len(scan.files),
         "indexed_bytes": scan.indexed_bytes,
         "ignored_count": len(scan.ignored),
+        "hash_skipped_count": len(summary["hash_skipped"]),
         "sensitive_omitted_count": summary["sensitive_omitted_count"],
         "language_counts": scan.language_counts,
+        "staleness_warnings": [],
+        "detail_path": INDEX_DETAIL_RELATIVE_PATH,
         "files": [item.to_public_dict() for item in scan.files],
         "ignored": summary["ignored"],
         "hash_skipped": summary["hash_skipped"],
         "event_appended": True,
+    }
+
+
+def _build_index_summary_payload(detail: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "contract_version": detail["contract_version"],
+        "root_path": detail["root_path"],
+        "git_head": detail.get("git_head"),
+        "file_count": detail["file_count"],
+        "indexed_bytes": detail["indexed_bytes"],
+        "ignored_count": detail["ignored_count"],
+        "hash_skipped_count": detail["hash_skipped_count"],
+        "sensitive_omitted_count": detail["sensitive_omitted_count"],
+        "language_counts": detail["language_counts"],
+        "staleness_warnings": detail["staleness_warnings"],
+        "detail_path": detail["detail_path"],
+        "event_appended": detail["event_appended"],
+    }
+
+
+def _status_index_payload(
+    *,
+    paths: ProjectPaths,
+    snapshot: IndexSnapshot,
+    staleness_warnings: list[str],
+) -> dict[str, Any]:
+    ignored = snapshot.summary.get("ignored", [])
+    if not isinstance(ignored, list):
+        ignored = []
+    hash_skipped = snapshot.summary.get("hash_skipped", [])
+    if not isinstance(hash_skipped, list):
+        hash_skipped = []
+    language_counts = snapshot.summary.get("language_counts", {})
+    if not isinstance(language_counts, dict):
+        language_counts = {}
+    return {
+        "contract_version": INDEX_VERSION,
+        "stale": bool(staleness_warnings),
+        "file_count": int(snapshot.run["file_count"]),
+        "ignored_count": int(snapshot.run["ignored_count"]),
+        "hash_skipped_count": len(hash_skipped),
+        "sensitive_omitted_count": _summary_sensitive_omitted_count(snapshot.summary),
+        "indexed_bytes": int(snapshot.run["indexed_bytes"]),
+        "language_counts": dict(sorted(language_counts.items())),
+        "last_run": snapshot.run,
+        "current_git_head": _git_head(paths.root),
+        "staleness_warnings": staleness_warnings,
+        "detail_path": INDEX_DETAIL_RELATIVE_PATH,
+        "files": [_snapshot_file_public_payload(item) for item in snapshot.files],
+        "ignored": ignored,
+        "hash_skipped": hash_skipped,
+    }
+
+
+def _status_index_summary_payload(detail: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "contract_version": detail["contract_version"],
+        "stale": detail["stale"],
+        "file_count": detail["file_count"],
+        "ignored_count": detail["ignored_count"],
+        "hash_skipped_count": detail["hash_skipped_count"],
+        "sensitive_omitted_count": detail["sensitive_omitted_count"],
+        "indexed_bytes": detail["indexed_bytes"],
+        "language_counts": detail["language_counts"],
+        "last_run": detail["last_run"],
+        "current_git_head": detail["current_git_head"],
+        "staleness_warnings": detail["staleness_warnings"],
+        "detail_path": detail["detail_path"],
+    }
+
+
+def _write_index_detail(paths: ProjectPaths, detail: dict[str, Any]) -> str:
+    detail_path = paths.root / INDEX_DETAIL_RELATIVE_PATH
+    tmp_path = detail_path.with_suffix(".json.tmp")
+    try:
+        detail_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path.write_text(
+            json.dumps(detail, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        tmp_path.replace(detail_path)
+    except OSError as exc:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise DataStoreError(
+            f"Could not write code index detail artifact: {exc}",
+            details={"detail_path": INDEX_DETAIL_RELATIVE_PATH},
+        ) from exc
+    return _relative_path(paths.root, detail_path)
+
+
+def _snapshot_file_public_payload(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "path": item["path"],
+        "language": item["language"],
+        "size_bytes": item["size_bytes"],
+        "mtime": item["mtime"],
+        "sha256": item.get("sha256"),
+        "line_count": item["line_count"],
+        "symbol_summary": item["symbol_summary"],
+        "test_hint": item["test_hint"],
     }
 
 
