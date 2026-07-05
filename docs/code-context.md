@@ -93,9 +93,24 @@ pcl eval retrieval --fixture tests/fixtures/retrieval_v0.json --json
 The index is gitignore-aware when Git is available. In non-Git directories,
 PLH applies root `.gitignore` patterns it can evaluate with the standard
 library. Default exclusions include `.project-loop`, `.venv`, `node_modules`,
-`dist`, `.git`, Python caches, binary files, and files larger than the v0 size
-limit. Large or binary paths are omitted from `code_index_files`; the skip
-reason is preserved in the run summary and command output.
+`dist`, `.git`, Python caches, binary files, files larger than the v0 size
+limit, and common agent/session state directories such as `.claude/`,
+`.agents/`, and `.codex/`. Large, binary, and excluded paths are omitted from
+`code_index_files`; the skip reason is preserved in the run summary and command
+output.
+
+Projects can override the agent/session default list with `pcl.yaml`:
+
+```yaml
+code_index:
+  exclude:
+    - .claude/
+    - .agents/
+```
+
+When `code_index.exclude` is present, that list replaces the default
+agent/session excludes. Use `exclude: []` only when the project deliberately
+wants those files indexed.
 
 `symbol-summary/v0` is deliberately shallow:
 
@@ -154,7 +169,10 @@ count. Rebuild with `pcl index build --json` after meaningful code changes.
 ```
 
 Search is lexical and uses the current working tree contents for files present
-in the latest index.
+in the latest index. Query terms match at file level, so terms may appear on
+different lines. Results are ranked deterministically by relevance:
+definition-like code hits rank above prose mentions, source and test files get a
+small boost, prose files get a small penalty, and path order breaks ties.
 
 ## Impact Contract
 
@@ -204,6 +222,16 @@ The receipt contract is `context-receipt/v0`. Its core fields are:
 
 Receipts are evidence artifacts. They record PLH output and reasons; they do
 not make claims about agent cognition.
+
+`likely_impacted` is capped at the top 20 candidates by confidence and stable
+tie-breakers. Overflow candidates are recorded in `omitted` with
+`omitted_type: "likely_impacted_candidate"` instead of being silently dropped.
+Lexical symbol references are ignored when the symbol appears in more than
+`max(10 files, 5% of indexed files)`, because such symbols are too common to
+carry useful impact signal. Dropped symbols are recorded in `omitted` with
+`omitted_type: "lexical_symbol_reference"`. `verification_suggestions` lists a
+small targeted pytest command only when at most six candidate test files are
+present; broader sets fall back to `python3 -m pytest`.
 
 ## Retrieval Evaluation
 
