@@ -79,15 +79,15 @@ ruff check .
 pytest
 pcl validate --strict --json
 pcl render --json
-python -m build --sdist --wheel
-python -m twine check dist/*
+python -m build --outdir /tmp/pcl-release-dist --sdist --wheel
+python -m twine check /tmp/pcl-release-dist/*
 ```
 
 For local artifact smoke testing:
 
 ```bash
 python -m venv /tmp/pcl-wheel-smoke
-/tmp/pcl-wheel-smoke/bin/python -m pip install --no-index --find-links dist project-loop-harness==0.1.9
+/tmp/pcl-wheel-smoke/bin/python -m pip install --no-index --find-links /tmp/pcl-release-dist project-loop-harness==0.1.9
 /tmp/pcl-wheel-smoke/bin/pcl init --target /tmp/pcl-wheel-demo
 /tmp/pcl-wheel-smoke/bin/pcl validate --root /tmp/pcl-wheel-demo --strict
 /tmp/pcl-wheel-smoke/bin/pcl render --root /tmp/pcl-wheel-demo --json
