@@ -43,6 +43,8 @@ The next safe action is to read `.project-loop/reports/validation-strict.md` and
 | Lifecycle state gap | An active or terminal record is missing a required transition | Use the appropriate lifecycle command if the entity is still in a valid source state. |
 | Evidence or verification gap | A closed goal, passed run, or closed defect lacks required evidence | Add real evidence through the matching command path before terminal closure; do not invent evidence after the fact. |
 | Duplicate active workflow runs | Strict validation reports duplicate active runs for one goal or defect | Cancel the incorrect run with `pcl loop cancel WR-0001 --summary "..."`, then rerun strict validation. |
+| Schema metadata behind applied migrations | `pcl migrate status --json` reports `metadata_schema_version` lower than `max_applied_version`, `consistent: false`, and no pending migrations | Run `pcl migrate --root <project>` to repair metadata only. This appends `schema_metadata_repaired` and applies no DDL. |
+| Database ahead of binary | `pcl migrate status --json` warns that applied migrations or metadata are newer than the running binary | Upgrade `pcl`; do not run `pcl migrate` with the older binary. Read-only diagnostics can still be used. |
 | Audit-log integrity failure | DB and `events.jsonl` disagree, JSONL is invalid, or event order differs | Stop normal work, preserve both files, and escalate for human maintenance. |
 | Repeated workflow failure | The same run or defect repair keeps failing | Open an escalation instead of retrying indefinitely. |
 
@@ -65,6 +67,37 @@ pcl validate --json
 pcl validate --strict --json
 pcl render --json
 ```
+
+### Schema Metadata Repair
+
+If an older `pcl` binary runs `pcl migrate` against a newer database, it must
+not lower `metadata.schema_version`. A known failure mode is:
+
+- `schema_migrations` contains applied rows through version 4;
+- `metadata.schema_version` says `3`;
+- `pcl migrate status --json` has `pending: []` but `consistent: false`.
+
+This means the schema has already been applied and only the metadata stamp is
+behind. Read-only commands diagnose this state but do not repair it:
+
+```bash
+pcl migrate status --json
+pcl validate --strict --json
+```
+
+When `pending` is empty and metadata is behind the max applied migration, run:
+
+```bash
+pcl migrate --root <project>
+```
+
+The command repairs `metadata.schema_version` upward to the applied migration
+version, appends a `schema_metadata_repaired` event, and prints that this was a
+metadata repair, not a schema migration. It does not apply DDL.
+
+If status says the database is ahead of the running binary, upgrade `pcl`
+before running `pcl migrate`. The migrate command refuses that state to prevent
+another downgrade attempt.
 
 ## Do Not Repair By Hand
 

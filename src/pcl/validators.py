@@ -8,8 +8,8 @@ from pathlib import Path
 import sqlite3
 from typing import Any
 
-from .db import connect, get_metadata, table_exists
-from .errors import InvalidInputError
+from .db import connect, table_exists
+from .errors import DataStoreError, InvalidInputError
 from .migrations import migration_status
 from .paths import ProjectPaths
 from .rubric import claims_rubric_v1, evidence_ids_in_rubric, validate_rubric
@@ -130,34 +130,34 @@ def validate_project(
             if not table_exists(conn, table):
                 missing_tables.append(table)
                 result.add_error(f"Missing table: {table}")
-        schema_version = get_metadata(conn, "schema_version")
+        try:
+            status = migration_status(paths)
+        except DataStoreError as exc:
+            result.add_error(str(exc))
+            status = None
+        status_available = status is not None
+        schema_version = None if status is None else status.metadata_schema_version
         current_version: int | None = None
-        if schema_version is None:
+        if status_available and schema_version is None:
             result.add_error("Missing metadata.schema_version")
-        status = migration_status(paths)
+        if status is not None:
+            for warning in status.warnings:
+                if warning == "Missing metadata.schema_version.":
+                    continue
+                if status.is_ahead_of_binary:
+                    result.add_error(warning)
+                else:
+                    result.add_warning(warning)
         if schema_version is not None:
-            try:
-                current_version = int(schema_version)
-            except ValueError:
-                result.add_error(f"Invalid metadata.schema_version: {schema_version}")
-            else:
-                if current_version > status.latest_version:
-                    result.add_error(
-                        f"Unsupported schema_version {schema_version}; "
-                        f"latest supported is {status.latest_version}."
-                    )
-                elif current_version < status.latest_version:
-                    result.add_warning(
-                        f"Schema version {current_version} is behind latest "
-                        f"{status.latest_version}. Run `pcl migrate --root {paths.root}`."
-                    )
+            current_version = schema_version
+            if status is not None and not status.is_ahead_of_binary:
                 for version, tables in sorted(VERSIONED_REQUIRED_TABLES.items()):
                     if current_version >= version:
                         for table in tables:
                             if not table_exists(conn, table):
                                 missing_tables.append(table)
                                 result.add_error(f"Missing table: {table}")
-        if status.pending:
+        if status is not None and status.pending:
             pending = ", ".join(migration.id for migration in status.pending)
             result.add_warning(f"Pending migrations: {pending}. Run `pcl migrate --root {paths.root}`.")
         if not paths.root.joinpath("pcl.yaml").exists():
