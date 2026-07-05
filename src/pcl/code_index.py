@@ -361,7 +361,7 @@ def analyze_impact(
     omitted = _omitted_changed_entries(snapshot, changed_files)
     likely_impacted, candidate_omissions = _likely_impacted_entries(paths, snapshot, changed_files)
     omitted.extend(candidate_omissions)
-    verification_suggestions = _verification_suggestions(likely_impacted, staleness_warnings)
+    verification_suggestions = _verification_suggestions(changed, likely_impacted, staleness_warnings)
     impact = {
         "contract_version": IMPACT_CONTRACT_VERSION,
         "diff_source": source_label,
@@ -857,10 +857,22 @@ def _likely_impacted_entries(
 
 
 def _verification_suggestions(
+    changed_files: list[dict[str, Any]],
     likely_impacted: list[dict[str, Any]],
     staleness_warnings: list[str],
 ) -> list[str]:
     suggestions: list[str] = []
+    changed_python_tests = sorted(
+        {
+            str(item["path"])
+            for item in changed_files
+            if str(item.get("path", "")).endswith(".py")
+            and _is_test_path(str(item.get("path", "")))
+        }
+    )
+    if changed_python_tests:
+        suggestions.append("python3 -m pytest " + " ".join(changed_python_tests))
+
     python_tests = [
         str(item["path"])
         for item in likely_impacted
@@ -875,7 +887,7 @@ def _verification_suggestions(
             suggestions.append(
                 f"Review {len(unique_tests)} candidate test files in likely_impacted before narrowing verification."
             )
-    else:
+    elif not suggestions:
         suggestions.append("Review changed files and likely impacted candidate context before choosing verification.")
     if staleness_warnings:
         suggestions.append("Run `pcl index build --json` to refresh the code index before relying on impact output.")

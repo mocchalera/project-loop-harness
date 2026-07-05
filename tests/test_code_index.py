@@ -121,6 +121,29 @@ def _historical_multifile_diff_with_pathlike_body_lines(root: Path) -> Path:
     return diff_path
 
 
+def _diff_with_changed_test(root: Path) -> Path:
+    diff_path = root / "changed-test.diff"
+    diff_path.write_text(
+        "\n".join(
+            [
+                "diff --git a/src/pkg/calc.py b/src/pkg/calc.py",
+                "--- a/src/pkg/calc.py",
+                "+++ b/src/pkg/calc.py",
+                "@@ -1,3 +1,3 @@",
+                "+def helper(value: int) -> int:",
+                "diff --git a/tests/test_calc.py b/tests/test_calc.py",
+                "--- a/tests/test_calc.py",
+                "+++ b/tests/test_calc.py",
+                "@@ -1,3 +1,3 @@",
+                "+def test_helper():",
+                "+    assert calc.helper(2) == 4",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    return diff_path
+
+
 def test_index_build_records_gitignore_aware_snapshot_and_is_deterministic(
     tmp_path: Path,
     capsys,
@@ -306,6 +329,21 @@ def test_impact_diff_parser_ignores_pathlike_body_lines(tmp_path: Path, capsys) 
     ]
     assert not any("context-pack/v1" in item["path"] for item in impact["changed_files"])
     assert not any("docs/context-pack.md" in item["path"] for item in impact["changed_files"])
+
+
+def test_impact_suggests_changed_test_files_first(tmp_path: Path, capsys) -> None:
+    _init_code_project(tmp_path, capsys)
+    _build_index(tmp_path, capsys)
+    diff_path = _diff_with_changed_test(tmp_path)
+
+    assert main(["--root", str(tmp_path), "impact", "--diff", str(diff_path), "--json"]) == 0
+    impact = _json_output(capsys)["impact"]
+
+    assert [item["path"] for item in impact["changed_files"]] == [
+        "src/pkg/calc.py",
+        "tests/test_calc.py",
+    ]
+    assert impact["verification_suggestions"][0] == "python3 -m pytest tests/test_calc.py"
 
 
 def test_impact_caps_candidates_and_records_omissions(tmp_path: Path, capsys) -> None:
