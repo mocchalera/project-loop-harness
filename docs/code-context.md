@@ -111,7 +111,7 @@ needs every file, ignored path, and hash-skip entry on stdout.
       "mtime": 123456789,
       "sha256": "abc123",
       "line_count": 10,
-      "indexed_content": "def pack_context_for_job(...):\n    ...\n",
+      "token_estimate": 42,
       "symbol_summary": {
         "contract_version": "symbol-summary/v0",
         "symbols": [{"type": "function", "name": "pack_context_for_job", "line": 1}]
@@ -689,11 +689,15 @@ Metric fields:
 - `false_positive_rate`: `(retrieved - true_positives) / retrieved`; empty
   retrieved denominators yield `null`.
 - `token_cost_estimate`: deterministic `charclass/v1` estimate over retrieved
-  paths' `indexed_content` from `.project-loop/cache/code-index-detail.json`.
-  It is an estimate of indexed text volume, not a price or billing signal.
+  paths' per-file `token_estimate` integers from
+  `.project-loop/cache/code-index-detail.json`. The estimate is computed at
+  index build time from indexed text already in memory; the detail artifact does
+  not store raw file contents. It is an estimate of indexed text volume, not a
+  price or billing signal.
 - `token_cost_unestimated_paths`: retrieved paths that are absent from the
-  detail artifact's indexed content. They contribute `0` to the estimate and
-  are listed explicitly.
+  detail artifact or present without a `token_estimate`, including details
+  built by older versions. They contribute `0` to the estimate and are listed
+  explicitly.
 - `missing_critical_context`: labeled critical paths not retrieved.
 
 Task output may also include additive diagnostic fields used by adversarial

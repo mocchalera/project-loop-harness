@@ -8,7 +8,7 @@ import sqlite3
 from typing import Any
 
 from .diff import _git_head
-from .scan import INDEX_VERSION, LARGE_FILE_BYTES, ScanResult
+from .scan import INDEX_VERSION, LARGE_FILE_BYTES, IndexedFile, ScanResult
 from .scan import _relative_path
 from .scan import _scan_working_tree
 from .scan import _sha256_file
@@ -19,6 +19,7 @@ from ..events import append_event
 from ..guards import require_initialized
 from ..ids import next_prefixed_id
 from ..paths import ProjectPaths
+from ..token_estimation import estimate_token_count
 from ..timeutil import utc_now_iso
 
 
@@ -217,7 +218,7 @@ def _build_index_payload(*, paths: ProjectPaths, scan: ScanResult, summary: dict
         "language_counts": scan.language_counts,
         "staleness_warnings": [],
         "detail_path": INDEX_DETAIL_RELATIVE_PATH,
-        "files": [item.to_public_dict() for item in scan.files],
+        "files": [_build_file_public_payload(item) for item in scan.files],
         "ignored": summary["ignored"],
         "hash_skipped": summary["hash_skipped"],
         "event_appended": True,
@@ -256,7 +257,7 @@ def _status_index_payload(
     language_counts = snapshot.summary.get("language_counts", {})
     if not isinstance(language_counts, dict):
         language_counts = {}
-    indexed_content_by_path = _indexed_content_by_path_from_existing_detail(
+    token_estimate_by_path = _token_estimate_by_path_from_existing_detail(
         paths=paths,
         snapshot=snapshot,
     )
@@ -274,7 +275,7 @@ def _status_index_payload(
         "staleness_warnings": staleness_warnings,
         "detail_path": INDEX_DETAIL_RELATIVE_PATH,
         "files": [
-            _snapshot_file_public_payload(item, indexed_content_by_path=indexed_content_by_path)
+            _snapshot_file_public_payload(item, token_estimate_by_path=token_estimate_by_path)
             for item in snapshot.files
         ],
         "ignored": ignored,
@@ -297,6 +298,12 @@ def _status_index_summary_payload(detail: dict[str, Any]) -> dict[str, Any]:
         "staleness_warnings": detail["staleness_warnings"],
         "detail_path": detail["detail_path"],
     }
+
+
+def _build_file_public_payload(item: IndexedFile) -> dict[str, Any]:
+    payload = item.to_public_dict()
+    payload["token_estimate"] = estimate_token_count(item.text)
+    return payload
 
 
 def _write_index_detail(paths: ProjectPaths, detail: dict[str, Any]) -> str:
@@ -322,7 +329,7 @@ def _write_index_detail(paths: ProjectPaths, detail: dict[str, Any]) -> str:
 def _snapshot_file_public_payload(
     item: dict[str, Any],
     *,
-    indexed_content_by_path: dict[str, str] | None = None,
+    token_estimate_by_path: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     payload = {
         "path": item["path"],
@@ -334,18 +341,18 @@ def _snapshot_file_public_payload(
         "symbol_summary": item["symbol_summary"],
         "test_hint": item["test_hint"],
     }
-    if indexed_content_by_path is not None:
-        indexed_content = indexed_content_by_path.get(str(item["path"]))
-        if indexed_content is not None:
-            payload["indexed_content"] = indexed_content
+    if token_estimate_by_path is not None:
+        token_estimate = token_estimate_by_path.get(str(item["path"]))
+        if token_estimate is not None:
+            payload["token_estimate"] = token_estimate
     return payload
 
 
-def _indexed_content_by_path_from_existing_detail(
+def _token_estimate_by_path_from_existing_detail(
     *,
     paths: ProjectPaths,
     snapshot: IndexSnapshot,
-) -> dict[str, str]:
+) -> dict[str, int]:
     detail_path = paths.root / INDEX_DETAIL_RELATIVE_PATH
     try:
         detail = json.loads(detail_path.read_text(encoding="utf-8"))
@@ -357,13 +364,13 @@ def _indexed_content_by_path_from_existing_detail(
     if not isinstance(files, list):
         return {}
     snapshot_files = snapshot.files_by_path
-    indexed_content_by_path: dict[str, str] = {}
+    token_estimate_by_path: dict[str, int] = {}
     for item in files:
         if not isinstance(item, dict):
             continue
         path = str(item.get("path") or "")
-        indexed_content = item.get("indexed_content")
-        if not path or not isinstance(indexed_content, str):
+        token_estimate = item.get("token_estimate")
+        if not path or not isinstance(token_estimate, int) or isinstance(token_estimate, bool):
             continue
         snapshot_item = snapshot_files.get(path)
         if snapshot_item is None:
@@ -372,8 +379,8 @@ def _indexed_content_by_path_from_existing_detail(
         snapshot_sha = snapshot_item.get("sha256")
         if detail_sha and snapshot_sha and detail_sha != snapshot_sha:
             continue
-        indexed_content_by_path[path] = indexed_content
-    return indexed_content_by_path
+        token_estimate_by_path[path] = token_estimate
+    return token_estimate_by_path
 
 
 def _ensure_index_schema(conn: sqlite3.Connection) -> None:

@@ -28,13 +28,13 @@ from .store import (
 )
 from .search import search_code
 from .. import __version__
-from ..context import TOKEN_ESTIMATOR, estimate_token_count
 from ..db import connect
 from ..errors import EXIT_USAGE, DataStoreError, InvalidInputError, PclError
 from ..events import append_event
 from ..guards import require_initialized
 from ..ids import next_prefixed_id
 from ..paths import ProjectPaths
+from ..token_estimation import TOKEN_ESTIMATOR
 from ..timeutil import utc_now_iso
 
 
@@ -67,7 +67,7 @@ def evaluate_retrieval(paths: ProjectPaths, *, fixture_path: str) -> dict[str, A
             details={"fixture_path": fixture_path},
         )
 
-    indexed_content_by_path = _indexed_content_by_path(paths)
+    token_estimate_by_path = _token_estimate_by_path(paths)
     task_results: list[dict[str, Any]] = []
     true_positive_total = 0
     retrieved_total = 0
@@ -94,7 +94,7 @@ def evaluate_retrieval(paths: ProjectPaths, *, fixture_path: str) -> dict[str, A
         missing = sorted(critical - retrieved)
         token_cost = _token_cost_for_paths(
             retrieved,
-            indexed_content_by_path=indexed_content_by_path,
+            token_estimate_by_path=token_estimate_by_path,
         )
         for path in missing:
             missing_critical_context.append({"task_id": task_id, "path": path})
@@ -115,7 +115,7 @@ def evaluate_retrieval(paths: ProjectPaths, *, fixture_path: str) -> dict[str, A
             "false_positive_rate": _nullable_ratio(false_positive_count, len(retrieved)),
             "token_cost_estimate": token_cost["token_cost_estimate"],
             "token_cost_estimator": TOKEN_ESTIMATOR,
-            "token_cost_basis": "indexed_content",
+            "token_cost_basis": "index_detail_token_estimate",
             "token_cost_unestimated_paths": token_cost["token_cost_unestimated_paths"],
             "missing_critical_context": missing,
             "staleness_warnings": retrieval["staleness_warnings"],
@@ -149,7 +149,7 @@ def evaluate_retrieval(paths: ProjectPaths, *, fixture_path: str) -> dict[str, A
                 ),
                 "token_cost_estimate": token_cost_estimate_total,
                 "token_cost_estimator": TOKEN_ESTIMATOR,
-                "token_cost_basis": "indexed_content",
+                "token_cost_basis": "index_detail_token_estimate",
                 "token_cost_unestimated_paths": sorted(token_cost_unestimated_paths),
                 "missing_critical_context": missing_critical_context,
             },
@@ -845,23 +845,23 @@ def _nullable_ratio(numerator: int, denominator: int) -> float | None:
 def _token_cost_for_paths(
     paths: set[str],
     *,
-    indexed_content_by_path: dict[str, str],
+    token_estimate_by_path: dict[str, int],
 ) -> dict[str, Any]:
     token_cost_estimate = 0
     token_cost_unestimated_paths: list[str] = []
     for path in sorted(paths):
-        indexed_content = indexed_content_by_path.get(path)
-        if indexed_content is None:
+        token_estimate = token_estimate_by_path.get(path)
+        if token_estimate is None:
             token_cost_unestimated_paths.append(path)
             continue
-        token_cost_estimate += estimate_token_count(indexed_content)
+        token_cost_estimate += token_estimate
     return {
         "token_cost_estimate": token_cost_estimate,
         "token_cost_unestimated_paths": token_cost_unestimated_paths,
     }
 
 
-def _indexed_content_by_path(paths: ProjectPaths) -> dict[str, str]:
+def _token_estimate_by_path(paths: ProjectPaths) -> dict[str, int]:
     detail_path = paths.root / INDEX_DETAIL_RELATIVE_PATH
     try:
         detail = json.loads(detail_path.read_text(encoding="utf-8"))
@@ -872,15 +872,15 @@ def _indexed_content_by_path(paths: ProjectPaths) -> dict[str, str]:
     files = detail.get("files")
     if not isinstance(files, list):
         return {}
-    indexed_content_by_path: dict[str, str] = {}
+    token_estimate_by_path: dict[str, int] = {}
     for item in files:
         if not isinstance(item, dict):
             continue
         path = str(item.get("path") or "")
-        indexed_content = item.get("indexed_content")
-        if path and isinstance(indexed_content, str):
-            indexed_content_by_path[path] = indexed_content
-    return indexed_content_by_path
+        token_estimate = item.get("token_estimate")
+        if path and isinstance(token_estimate, int) and not isinstance(token_estimate, bool):
+            token_estimate_by_path[path] = token_estimate
+    return token_estimate_by_path
 
 
 def _load_receipt_evidence_row(paths: ProjectPaths, evidence_id: str) -> sqlite3.Row:

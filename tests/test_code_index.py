@@ -244,16 +244,16 @@ def _impact_equivalence_payload(root: Path, impact: dict) -> dict:
     }
 
 
-def _indexed_content_token_sum(root: Path, paths: list[str]) -> int:
+def _token_estimate_sum(root: Path, paths: list[str]) -> int:
     detail = json.loads(
         (root / ".project-loop" / "cache" / "code-index-detail.json").read_text(encoding="utf-8")
     )
-    indexed_content_by_path = {
-        item["path"]: item["indexed_content"]
+    token_estimate_by_path = {
+        item["path"]: item["token_estimate"]
         for item in detail["files"]
-        if "indexed_content" in item
+        if "token_estimate" in item
     }
-    return sum(estimate_token_count(indexed_content_by_path[path]) for path in paths)
+    return sum(token_estimate_by_path[path] for path in paths)
 
 
 def _synthetic_diff(root: Path) -> Path:
@@ -442,6 +442,12 @@ def test_index_build_records_gitignore_aware_snapshot_and_is_deterministic(
     assert "src/pkg/calc.py" in files
     assert files["src/pkg/calc.py"]["language"] == "python"
     assert len(files["src/pkg/calc.py"]["sha256"]) == 64
+    assert files["src/pkg/calc.py"]["token_estimate"] == estimate_token_count(
+        (tmp_path / "src" / "pkg" / "calc.py").read_text(encoding="utf-8")
+    )
+    assert all("indexed_content" not in item for item in include_index["files"])
+    assert "indexed_content" not in detail_path.read_text(encoding="utf-8")
+    assert "return left + right" not in detail_path.read_text(encoding="utf-8")
     symbol_names = {
         symbol["name"]
         for symbol in files["src/pkg/calc.py"]["symbol_summary"]["symbols"]
@@ -1561,12 +1567,12 @@ def test_eval_retrieval_reports_precision_recall_and_missing_context(
     )
     assert evaluation["metrics"]["token_cost_estimate"] > 0
     assert evaluation["metrics"]["token_cost_estimator"] == "charclass/v1"
-    assert evaluation["metrics"]["token_cost_basis"] == "indexed_content"
+    assert evaluation["metrics"]["token_cost_basis"] == "index_detail_token_estimate"
     assert evaluation["metrics"]["token_cost_unestimated_paths"] == []
     assert evaluation["metrics"]["missing_critical_context"] == []
     task = evaluation["tasks"][0]
     assert task["false_positive_rate"] == round(1 - task["precision"], 4)
-    assert task["token_cost_estimate"] == _indexed_content_token_sum(
+    assert task["token_cost_estimate"] == _token_estimate_sum(
         tmp_path,
         task["retrieved_paths"],
     )
@@ -1583,7 +1589,7 @@ def test_eval_retrieval_reports_null_false_positive_rate_and_unestimated_paths(
     detail = json.loads(detail_path.read_text(encoding="utf-8"))
     for item in detail["files"]:
         if item["path"] == "src/pkg/calc.py":
-            item.pop("indexed_content")
+            item.pop("token_estimate")
     detail_path.write_text(json.dumps(detail, sort_keys=True), encoding="utf-8")
     fixture_path = tmp_path / "retrieval_fixture_token_edges.json"
     fixture_path.write_text(
