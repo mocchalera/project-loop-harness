@@ -1067,7 +1067,7 @@ def test_context_pack_for_job_include_code_context_embeds_bounded_summary(
     assert code_context["excluded_changed_file_count"] == 0
     assert code_context["untracked_omission_warning"]
     assert code_context["sensitive_include_override_used"] is False
-    assert "status" not in code_context
+    assert code_context["status"] == "from_receipt"
     assert "safe_to_continue" not in json.dumps(code_context, sort_keys=True)
     assert pack["required_sections"] == ["machine_context_rules", "code_context_safety"]
     assert pack["required_sections_omitted"] == []
@@ -1105,6 +1105,7 @@ def test_context_pack_for_task_include_code_context_embeds_summary(
 
     pack = _json_output(capsys)["context_pack"]
     assert pack["code_context"]["contract_version"] == "code-context-summary/v0"
+    assert pack["code_context"]["status"] == "from_receipt"
     assert pack["code_context"]["relevance"] == {
         "target_type": "task",
         "target_id": "T-0001",
@@ -1254,7 +1255,7 @@ def test_context_pack_unavailable_code_context_keeps_unscoped_latest_relevance(
 
     pack = _json_output(capsys)["context_pack"]
     code_context = pack["code_context"]
-    assert "status" not in code_context
+    assert code_context["status"] == "receipt_unavailable"
     assert code_context["relevance"]["scope"] == "unscoped_latest"
     assert code_context["relevance"]["binding_strength"] == "none"
     assert "receipt_age" in code_context
@@ -1381,7 +1382,7 @@ def test_context_pack_include_code_context_without_receipt_suggests_next_action(
 
     pack = _json_output(capsys)["context_pack"]
     code_context = pack["code_context"]
-    assert "status" not in code_context
+    assert code_context["status"] == "missing_receipt"
     assert code_context["next_actions"] == [
         "pcl index build --json",
         "pcl impact --diff --json",

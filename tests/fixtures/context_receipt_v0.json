@@ -2,10 +2,12 @@
   "base_ref": "main",
   "changed_files": [
     {
-      "path": "src/pcl/cli.py"
+      "path": "src/pcl/cli.py",
+      "status": "M"
     },
     {
-      "path": "docs/code-context.md"
+      "path": "docs/code-context.md",
+      "status": "M"
     }
   ],
   "contract_version": "context-receipt/v0",
@@ -15,7 +17,8 @@
   "excluded_changed_files": [
     {
       "path": ".agents/session.json",
-      "reason": "code_index.exclude:.agents/"
+      "reason": "code_index.exclude:.agents/",
+      "status": "M"
     }
   ],
   "included_candidate_context": [

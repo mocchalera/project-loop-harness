@@ -14,7 +14,6 @@ from pcl.code_context import store as code_context_store
 from pcl.db import connect
 
 FAKE_SECRET_TOKEN = "PCL_FAKE_TOKEN_0072_DO_NOT_LEAK"
-FORBIDDEN_RECEIPT_SUMMARY_KEYS = {"status", "state", "lifecycle"}
 SENSITIVE_FIXTURE_FILES = {
     ".env": f"API_TOKEN={FAKE_SECRET_TOKEN}\n",
     "server.pem": f"-----BEGIN PRIVATE KEY-----\n{FAKE_SECRET_TOKEN}\n-----END PRIVATE KEY-----\n",
@@ -22,19 +21,6 @@ SENSITIVE_FIXTURE_FILES = {
     "credentials.json": json.dumps({"token": FAKE_SECRET_TOKEN}, sort_keys=True) + "\n",
     ".npmrc": f"//registry.npmjs.org/:_authToken={FAKE_SECRET_TOKEN}\n",
 }
-
-
-def _forbidden_keys(payload) -> set[str]:
-    found: set[str] = set()
-    if isinstance(payload, dict):
-        for key, value in payload.items():
-            if key in FORBIDDEN_RECEIPT_SUMMARY_KEYS:
-                found.add(key)
-            found.update(_forbidden_keys(value))
-    elif isinstance(payload, list):
-        for item in payload:
-            found.update(_forbidden_keys(item))
-    return found
 
 
 def _json_output(capsys) -> dict:
@@ -1220,9 +1206,15 @@ def test_impact_writes_epistemically_honest_receipt_and_evidence(
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     assert receipt["contract_version"] == "context-receipt/v0"
     assert receipt["diff_source"] == "provided-diff"
+    assert receipt["changed_files"] == impact["changed_files"]
+    assert receipt["changed_files"][0]["status"] == "M"
     assert "included_candidate_context" in receipt
     assert "omitted" in receipt
     assert "staleness_warnings" in receipt
+    assert all(
+        set(suggestion) == {"id", "command", "reason"}
+        for suggestion in receipt["verification_suggestions"]
+    )
     assert [item["id"] for item in receipt["verification_suggestions"]] == [
         f"{impact['evidence_id']}/VS-{index:02d}"
         for index in range(1, len(receipt["verification_suggestions"]) + 1)
@@ -1243,8 +1235,11 @@ def test_impact_writes_epistemically_honest_receipt_and_evidence(
     assert "analyzed" not in serialized
     assert "agent read" not in serialized
     summary = summarize_code_context_receipt(receipt)
-    assert _forbidden_keys(receipt) == set()
-    assert _forbidden_keys(summary) == set()
+    assert summary["status"] == "from_receipt"
+    assert all(
+        set(suggestion) <= {"id", "command", "reason"}
+        for suggestion in summary["verification_suggestions"]
+    )
 
     conn = connect(tmp_path / ".project-loop" / "project.db")
     try:
@@ -1319,8 +1314,8 @@ def test_impact_splits_excluded_changed_files_from_indexable_candidates(
 
     receipt = json.loads((tmp_path / impact["receipt_path"]).read_text(encoding="utf-8"))
     assert receipt["excluded_changed_files"] == [
-        {"path": ".claude/session-001.json", "reason": "code_index.exclude:.claude/"},
-        {"path": ".claude/session-002.json", "reason": "code_index.exclude:.claude/"},
+        {"path": ".claude/session-001.json", "status": "M", "reason": "code_index.exclude:.claude/"},
+        {"path": ".claude/session-002.json", "status": "M", "reason": "code_index.exclude:.claude/"},
     ]
     assert [item["path"] for item in receipt["included_candidate_context"] if item["role"] == "changed_file"] == [
         "src/pkg/calc.py"
@@ -1351,6 +1346,7 @@ def test_receipt_verification_suggestion_ids_are_deterministic() -> None:
     second = _receipt_verification_suggestions(evidence_id="E-0042", impact=impact)
 
     assert first == second
+    assert all(set(suggestion) == {"id", "command", "reason"} for suggestion in first)
     assert [item["id"] for item in first] == ["E-0042/VS-01", "E-0042/VS-02"]
 
 

@@ -53,6 +53,7 @@
   },
   "sensitive_include_override_used": false,
   "sensitive_omitted_count": 1,
+  "status": "from_receipt",
   "staleness_warnings": [
     "Indexed file metadata changed: src/pcl/cli.py."
   ],

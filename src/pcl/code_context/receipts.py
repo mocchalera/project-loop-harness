@@ -20,7 +20,6 @@ IMPACT_CONTRACT_VERSION = "impact/v0"
 
 CONTEXT_RECEIPT_VERSION = "context-receipt/v0"
 CONTEXT_RECEIPT_EVIDENCE_TYPE = "context_receipt"
-FORBIDDEN_RECEIPT_KEYS = {"status", "state", "lifecycle"}
 
 
 def latest_context_receipt_ref(paths: ProjectPaths) -> dict[str, str] | None:
@@ -189,7 +188,7 @@ def _receipt_payload(
         payload["untracked_included_paths"] = impact.get("untracked_included_paths", [])
     if impact.get("base_ref") is not None:
         payload["base_ref"] = impact["base_ref"]
-    return _strip_forbidden_receipt_keys(payload)
+    return payload
 
 
 def _receipt_verification_suggestions(
@@ -223,18 +222,6 @@ def _receipt_verification_suggestions(
             }
         )
     return suggestions
-
-
-def _strip_forbidden_receipt_keys(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: _strip_forbidden_receipt_keys(item)
-            for key, item in value.items()
-            if key not in FORBIDDEN_RECEIPT_KEYS
-        }
-    if isinstance(value, list):
-        return [_strip_forbidden_receipt_keys(item) for item in value]
-    return value
 
 
 def _text(value: Any) -> str | None:

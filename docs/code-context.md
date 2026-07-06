@@ -425,9 +425,11 @@ The receipt contract is `context-receipt/v0`. Its core fields are:
   includes untracked files.
 
 Receipts are evidence artifacts. They record PLH output and reasons; they do
-not make claims about agent cognition. Receipt and receipt-derived summary
-payloads do not include `status`, `state`, or `lifecycle` fields; suggestion
-state belongs outside immutable candidate presentations.
+not make claims about agent cognition. Verification suggestion objects carry
+only `id`, `command`, and `reason`; suggestion lifecycle state belongs outside
+immutable candidate presentations. Existing factual fields such as git file
+`status` on changed-file rows and summary availability `status` remain part of
+their contracts.
 
 Receipt `verification_suggestions` use object form:
 

@@ -7,21 +7,6 @@ from pcl.code_context.summary import (
     summarize_code_context_receipt,
 )
 
-FORBIDDEN_RECEIPT_SUMMARY_KEYS = {"status", "state", "lifecycle"}
-
-
-def _forbidden_keys(payload) -> set[str]:
-    found: set[str] = set()
-    if isinstance(payload, dict):
-        for key, value in payload.items():
-            if key in FORBIDDEN_RECEIPT_SUMMARY_KEYS:
-                found.add(key)
-            found.update(_forbidden_keys(value))
-    elif isinstance(payload, list):
-        for item in payload:
-            found.update(_forbidden_keys(item))
-    return found
-
 
 def test_summary_model_compacts_context_receipt() -> None:
     summary = summarize_code_context_receipt(
@@ -77,6 +62,7 @@ def test_summary_model_compacts_context_receipt() -> None:
     )
 
     assert summary["contract_version"] == CODE_CONTEXT_SUMMARY_VERSION
+    assert summary["status"] == "from_receipt"
     assert summary["receipt_ref"] == {
         "evidence_id": "E-0001",
         "receipt_path": ".project-loop/evidence/context-receipts/e-0001-impact-v0.json",
@@ -154,6 +140,7 @@ def test_summary_model_tolerates_missing_and_unknown_receipt_fields() -> None:
 
     assert summary == {
         "contract_version": CODE_CONTEXT_SUMMARY_VERSION,
+        "status": "from_receipt",
         "receipt_ref": {"evidence_id": None, "receipt_path": None, "created_at": None},
         "diff_source": "unknown",
         "index_run": None,
@@ -190,22 +177,36 @@ def test_summary_model_accepts_legacy_string_suggestions() -> None:
     ]
 
 
-def test_receipt_summary_payloads_do_not_carry_lifecycle_keys() -> None:
+def test_summary_suggestion_objects_keep_only_contract_keys() -> None:
     receipt = {
         "contract_version": "context-receipt/v0",
         "evidence_id": "E-0001",
+        "status": "receipt-level-fact-ignored-by-suggestion-contract",
         "verification_suggestions": [
             {
                 "id": "E-0001/VS-01",
                 "command": "python3 -m pytest tests/test_context.py",
                 "reason": "test_hint:filename_match",
+                "status": "candidate-state-must-not-propagate",
+                "state": "candidate-state-must-not-propagate",
+                "lifecycle": "candidate-state-must-not-propagate",
             }
         ],
     }
     summary = summarize_code_context_receipt(receipt)
 
-    assert _forbidden_keys(receipt) == set()
-    assert _forbidden_keys(summary) == set()
+    assert summary["status"] == "from_receipt"
+    assert summary["verification_suggestions"] == [
+        {
+            "id": "E-0001/VS-01",
+            "command": "python3 -m pytest tests/test_context.py",
+            "reason": "test_hint:filename_match",
+        }
+    ]
+    assert all(
+        set(suggestion) <= {"id", "command", "reason"}
+        for suggestion in summary["verification_suggestions"]
+    )
 
 
 def test_summary_wording_stays_epistemically_narrow() -> None:

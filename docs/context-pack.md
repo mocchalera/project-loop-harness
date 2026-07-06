@@ -142,12 +142,15 @@ are folded into `omitted_reason_counts`. The full
 the context pack.
 
 When no receipt exists, `--include-code-context` still succeeds and returns a
-`code_context` summary with empty receipt refs, a message, and next actions:
-`pcl index build --json` and `pcl impact --diff --json`. The same commands are
-exposed in `context_pack.suggested_refresh_commands`; they are not placed in
+`code_context` summary with `status: "missing_receipt"`, empty receipt refs, a
+message, and next actions: `pcl index build --json` and
+`pcl impact --diff --json`. The same commands are exposed in
+`context_pack.suggested_refresh_commands`; they are not placed in
 `source_commands`. The summary still includes `relevance` with
 `scope: "missing_receipt"` and `binding_strength: "none"`. Receipt-derived
-summaries do not carry `status`, `state`, or `lifecycle` fields.
+summaries carry availability `status` values such as `from_receipt`,
+`missing_receipt`, and `receipt_unavailable`; verification suggestion objects
+carry only `id`, `command`, and `reason`.
 
 `--max-tokens` is an approximate budget control. Section selection uses the
 deterministic, dependency-free `charclass/v1` estimator:

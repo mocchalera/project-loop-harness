@@ -714,7 +714,8 @@ def _code_context_relevance(
     target_type: str,
     target_id: str,
 ) -> dict[str, str]:
-    if _code_context_missing_receipt(summary):
+    status = str(summary.get("status") or "")
+    if status == "missing_receipt":
         return {
             "target_type": target_type,
             "target_id": target_id,
@@ -737,6 +738,7 @@ def _code_context_relevance(
 def _missing_code_context_summary() -> dict[str, Any]:
     return {
         "contract_version": CODE_CONTEXT_SUMMARY_VERSION,
+        "status": "missing_receipt",
         "receipt_ref": {"evidence_id": None, "receipt_path": None, "created_at": None},
         "diff_source": "unknown",
         "index_run": None,
@@ -765,6 +767,7 @@ def _unavailable_code_context_summary(
 ) -> dict[str, Any]:
     return {
         "contract_version": CODE_CONTEXT_SUMMARY_VERSION,
+        "status": "receipt_unavailable",
         "receipt_ref": receipt_ref,
         "diff_source": "unknown",
         "index_run": None,
@@ -798,7 +801,7 @@ def _code_context_receipt_path(summary: dict[str, Any]) -> str | None:
 
 def _code_context_sections(summary: dict[str, Any]) -> list[tuple[str, str]]:
     sections = [(CODE_CONTEXT_SAFETY_SECTION_ID, _render_code_context_safety_section(summary))]
-    if _code_context_needs_refresh_only(summary):
+    if summary.get("status") in {"missing_receipt", "receipt_unavailable"}:
         return sections
     sections.append(
         (
@@ -812,7 +815,8 @@ def _code_context_sections(summary: dict[str, Any]) -> list[tuple[str, str]]:
 
 def _render_code_context_safety_section(summary: dict[str, Any]) -> str:
     lines = ["## Code Context Safety", ""]
-    if _code_context_missing_receipt(summary):
+    status = str(summary.get("status") or "")
+    if status == "missing_receipt":
         lines.extend(
             [
                 "No context receipt evidence was found.",
@@ -824,7 +828,7 @@ def _render_code_context_safety_section(summary: dict[str, Any]) -> str:
             ]
         )
         return "\n".join(lines)
-    if _code_context_receipt_unavailable(summary):
+    if status == "receipt_unavailable":
         lines.extend(
             [
                 str(summary.get("message") or "Latest context receipt is unavailable."),
@@ -895,25 +899,7 @@ def _render_code_context_verification_section(summary: dict[str, Any]) -> str:
                 lines.append(f"- {display}")
     else:
         lines.append("None.")
-    if len(lines) == 2:
-        lines.append("None.")
     return "\n".join(lines)
-
-
-def _code_context_needs_refresh_only(summary: dict[str, Any]) -> bool:
-    return _code_context_missing_receipt(summary) or _code_context_receipt_unavailable(summary)
-
-
-def _code_context_missing_receipt(summary: dict[str, Any]) -> bool:
-    receipt_ref = summary.get("receipt_ref")
-    evidence_id = receipt_ref.get("evidence_id") if isinstance(receipt_ref, dict) else None
-    return not evidence_id and bool(summary.get("next_actions"))
-
-
-def _code_context_receipt_unavailable(summary: dict[str, Any]) -> bool:
-    receipt_ref = summary.get("receipt_ref")
-    evidence_id = receipt_ref.get("evidence_id") if isinstance(receipt_ref, dict) else None
-    return bool(evidence_id) and bool(summary.get("next_actions")) and bool(summary.get("message"))
 
 
 def _render_code_context_detail_section(summary: dict[str, Any]) -> str:

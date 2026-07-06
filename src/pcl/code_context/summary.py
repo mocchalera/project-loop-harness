@@ -30,6 +30,7 @@ def summarize_code_context_receipt(
 
     summary: dict[str, Any] = {
         "contract_version": CODE_CONTEXT_SUMMARY_VERSION,
+        "status": "from_receipt",
         "receipt_ref": {
             "evidence_id": _text(payload.get("evidence_id")),
             "receipt_path": _text(payload.get("receipt_path")),
