@@ -79,5 +79,8 @@ Give these tasks to coding agents in this order:
 75. `agent-tasks/0075-diff-source-modes.md`
 76. `agent-tasks/0076-schema-version-integrity.md`
 77. `agent-tasks/0077-index-output-budget-and-impact-noise.md`
+78. `agent-tasks/0078-context-pack-code-context-bridge.md`
+79. `agent-tasks/0079-receipt-human-summary.md`
+80. `agent-tasks/0080-retrieval-eval-gate.md`
 
 Do not start with MCP. Do not start with a hosted UI. The CLI/runtime must become reliable first.
