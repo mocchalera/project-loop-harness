@@ -31,6 +31,7 @@ from .eval import (
     _retrieved_paths_for_fixture_task,
     _string_set,
     evaluate_retrieval,
+    propose_retrieval_fixture,
 )
 from .impact import (
     IMPACT_CONTRACT_VERSION,

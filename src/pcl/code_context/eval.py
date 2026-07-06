@@ -3,20 +3,39 @@ from __future__ import annotations
 import json
 from json import JSONDecodeError
 from pathlib import Path
+import sqlite3
 from typing import Any
+import uuid
 
+from .receipts import (
+    CONTEXT_RECEIPT_EVIDENCE_TYPE,
+    CONTEXT_RECEIPT_VERSION,
+    resolve_context_receipt_path,
+)
 from .diff import _inline_diff_source
 from .impact import analyze_impact
 from .search import search_code
-from ..errors import InvalidInputError
+from ..db import connect
+from ..errors import EXIT_USAGE, DataStoreError, InvalidInputError, PclError
 from ..guards import require_initialized
 from ..paths import ProjectPaths
+from ..timeutil import utc_now_iso
 
 
 RETRIEVAL_EVAL_VERSION = "retrieval-eval/v0"
 
 
 RETRIEVAL_FIXTURE_VERSION = "retrieval-fixture/v0"
+
+
+class RetrievalFixtureError(PclError):
+    def __init__(self, message: str, *, code: str, details: dict[str, Any] | None = None) -> None:
+        super().__init__(
+            message=message,
+            code=code,
+            exit_code=EXIT_USAGE,
+            details=details or {},
+        )
 
 
 def evaluate_retrieval(paths: ProjectPaths, *, fixture_path: str) -> dict[str, Any]:
@@ -93,6 +112,73 @@ def evaluate_retrieval(paths: ProjectPaths, *, fixture_path: str) -> dict[str, A
                 "missing_critical_context": missing_critical_context,
             },
             "tasks": task_results,
+        },
+    }
+
+
+def propose_retrieval_fixture(
+    paths: ProjectPaths,
+    *,
+    receipt_evidence_id: str,
+    force: bool = False,
+) -> dict[str, Any]:
+    require_initialized(paths)
+    evidence_id = receipt_evidence_id.strip()
+    row = _load_receipt_evidence_row(paths, evidence_id)
+    receipt = _load_context_receipt_payload(paths, row)
+    output_path = _proposed_fixture_path(paths, evidence_id)
+    relative_output_path = _relative_to_root(paths, output_path)
+    if output_path.exists() and not force:
+        raise RetrievalFixtureError(
+            f"Proposed retrieval fixture already exists: {relative_output_path}. "
+            "Use --force to overwrite it after confirming no human labels will be lost.",
+            code="eval_fixture_candidate_exists",
+            details={
+                "receipt_evidence_id": evidence_id,
+                "output_path": relative_output_path,
+            },
+        )
+
+    candidate = _candidate_fixture_from_receipt(evidence_id=evidence_id, receipt=receipt)
+    serialized = json.dumps(candidate, ensure_ascii=False, sort_keys=True, indent=2) + "\n"
+    tmp_path = output_path.with_suffix(output_path.suffix + ".tmp")
+    try:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path.write_text(serialized, encoding="utf-8")
+        tmp_path.replace(output_path)
+        _append_jsonl_only_event(
+            paths,
+            event_type="eval_fixture_proposed",
+            entity_type="retrieval_fixture",
+            entity_id=relative_output_path,
+            payload={
+                "receipt_evidence_id": evidence_id,
+                "output_path": relative_output_path,
+            },
+        )
+    except OSError as exc:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        raise DataStoreError(
+            f"Could not write proposed retrieval fixture: {exc}",
+            details={
+                "receipt_evidence_id": evidence_id,
+                "output_path": relative_output_path,
+            },
+        ) from exc
+
+    return {
+        "ok": True,
+        "fixture": {
+            "contract_version": RETRIEVAL_FIXTURE_VERSION,
+            "path": relative_output_path,
+            "receipt_evidence_id": evidence_id,
+            "labels_status": "unlabeled",
+            "task_count": 1,
+            "force": force,
         },
     }
 
@@ -183,7 +269,32 @@ def _load_fixture(paths: ProjectPaths, fixture_path: str) -> dict[str, Any]:
             f"Unsupported retrieval fixture contract_version: {contract}",
             details={"expected": RETRIEVAL_FIXTURE_VERSION, "actual": contract},
         )
+    _reject_unlabeled_tasks(value, fixture_path=str(path))
     return value
+
+
+def _reject_unlabeled_tasks(fixture: dict[str, Any], *, fixture_path: str) -> None:
+    tasks = fixture.get("tasks")
+    if not isinstance(tasks, list):
+        return
+    for index, task in enumerate(tasks, start=1):
+        if not isinstance(task, dict):
+            continue
+        if task.get("labels_status") == "unlabeled":
+            raise RetrievalFixtureError(
+                "Retrieval fixture contains unlabeled proposed task "
+                f"{task.get('id') or f'task-{index}'}. Label expected_files, "
+                "expected_tests, and critical_context, then move the fixture into "
+                "tests/fixtures/ before running eval.",
+                code="eval_retrieval_unlabeled_fixture",
+                details={
+                    "fixture_path": fixture_path,
+                    "task_index": index,
+                    "task_id": task.get("id"),
+                    "labels_status": "unlabeled",
+                    "next_action": "Label the candidate and move it into tests/fixtures/.",
+                },
+            )
 
 
 def _resolve_fixture_path(paths: ProjectPaths, fixture_path: str) -> Path:
@@ -232,3 +343,184 @@ def _ratio(numerator: int, denominator: int) -> float:
     if denominator == 0:
         return 1.0 if numerator == 0 else 0.0
     return round(numerator / denominator, 4)
+
+
+def _load_receipt_evidence_row(paths: ProjectPaths, evidence_id: str) -> sqlite3.Row:
+    conn = connect(paths.db_path)
+    try:
+        row = conn.execute(
+            """
+            SELECT id, type, path, created_at
+            FROM evidence
+            WHERE id = ?
+            """,
+            (evidence_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        raise RetrievalFixtureError(
+            f"Evidence id not found: {evidence_id}.",
+            code="eval_fixture_unknown_evidence",
+            details={"receipt_evidence_id": evidence_id},
+        )
+    evidence_type = str(row["type"])
+    if evidence_type != CONTEXT_RECEIPT_EVIDENCE_TYPE:
+        raise RetrievalFixtureError(
+            f"Evidence {evidence_id} is type {evidence_type}, not context_receipt.",
+            code="eval_fixture_evidence_wrong_type",
+            details={
+                "receipt_evidence_id": evidence_id,
+                "evidence_type": evidence_type,
+                "expected_type": CONTEXT_RECEIPT_EVIDENCE_TYPE,
+            },
+        )
+    return row
+
+
+def _load_context_receipt_payload(paths: ProjectPaths, row: sqlite3.Row) -> dict[str, Any]:
+    receipt_path_value = str(row["path"] or "")
+    receipt_path = resolve_context_receipt_path(paths, receipt_path_value)
+    try:
+        payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, JSONDecodeError) as exc:
+        raise RetrievalFixtureError(
+            f"Context receipt artifact is unreadable for evidence {row['id']}: {receipt_path_value}.",
+            code="eval_fixture_unreadable_receipt",
+            details={
+                "receipt_evidence_id": str(row["id"]),
+                "receipt_path": receipt_path_value,
+            },
+        ) from exc
+    if not isinstance(payload, dict):
+        raise RetrievalFixtureError(
+            f"Context receipt artifact is not a JSON object for evidence {row['id']}: {receipt_path_value}.",
+            code="eval_fixture_unreadable_receipt",
+            details={
+                "receipt_evidence_id": str(row["id"]),
+                "receipt_path": receipt_path_value,
+            },
+        )
+    if payload.get("contract_version") != CONTEXT_RECEIPT_VERSION:
+        raise RetrievalFixtureError(
+            f"Context receipt artifact has an unsupported contract for evidence {row['id']}: {receipt_path_value}.",
+            code="eval_fixture_unreadable_receipt",
+            details={
+                "receipt_evidence_id": str(row["id"]),
+                "receipt_path": receipt_path_value,
+                "contract_version": payload.get("contract_version"),
+            },
+        )
+    return payload
+
+
+def _candidate_fixture_from_receipt(*, evidence_id: str, receipt: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "contract_version": RETRIEVAL_FIXTURE_VERSION,
+        "tasks": [
+            {
+                "id": f"{evidence_id.lower()}-retrieval",
+                "diff": _synthetic_diff_from_receipt(receipt),
+                "diff_synthesized_from_receipt": True,
+                "expected_files": [],
+                "expected_tests": [],
+                "critical_context": [],
+                "labels_status": "unlabeled",
+                "source_receipt": _source_receipt_payload(evidence_id=evidence_id, receipt=receipt),
+            }
+        ],
+    }
+
+
+def _source_receipt_payload(*, evidence_id: str, receipt: dict[str, Any]) -> dict[str, Any]:
+    source = {
+        "evidence_id": evidence_id,
+        "created_at": str(receipt.get("created_at") or ""),
+        "diff_source": str(receipt.get("diff_source") or ""),
+        "retrieved_candidate_paths": _retrieved_candidate_paths(receipt),
+    }
+    base_ref = receipt.get("base_ref")
+    if isinstance(base_ref, str) and base_ref.strip():
+        source["base_ref"] = base_ref
+    return source
+
+
+def _synthetic_diff_from_receipt(receipt: dict[str, Any]) -> str:
+    paths = _changed_file_paths(receipt)
+    sections: list[str] = []
+    for path in paths:
+        sections.extend(
+            [
+                f"diff --git a/{path} b/{path}",
+                f"--- a/{path}",
+                f"+++ b/{path}",
+                "@@ -1 +1 @@",
+                "-synthetic receipt fixture placeholder before",
+                "+synthetic receipt fixture placeholder after",
+            ]
+        )
+    return "\n".join(sections)
+
+
+def _changed_file_paths(receipt: dict[str, Any]) -> list[str]:
+    changed_files = receipt.get("changed_files")
+    if not isinstance(changed_files, list):
+        return []
+    paths: list[str] = []
+    seen: set[str] = set()
+    for item in changed_files:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip()
+        if path and path not in seen:
+            seen.add(path)
+            paths.append(path)
+    return paths
+
+
+def _retrieved_candidate_paths(receipt: dict[str, Any]) -> list[str]:
+    included = receipt.get("included_candidate_context")
+    if not isinstance(included, list):
+        return []
+    paths: list[str] = []
+    seen: set[str] = set()
+    for item in included:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip()
+        if path and path not in seen:
+            seen.add(path)
+            paths.append(path)
+    return paths
+
+
+def _proposed_fixture_path(paths: ProjectPaths, evidence_id: str) -> Path:
+    return paths.root / "fixtures" / "proposed" / f"{evidence_id.lower()}-retrieval.json"
+
+
+def _relative_to_root(paths: ProjectPaths, path: Path) -> str:
+    try:
+        return path.relative_to(paths.root).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _append_jsonl_only_event(
+    paths: ProjectPaths,
+    *,
+    event_type: str,
+    entity_type: str,
+    entity_id: str | None,
+    payload: dict[str, Any],
+) -> None:
+    record = {
+        "id": f"EV-{uuid.uuid4().hex[:12].upper()}",
+        "event_type": event_type,
+        "entity_type": entity_type,
+        "entity_id": entity_id,
+        "payload": payload,
+        "created_at": utc_now_iso(),
+    }
+    paths.events_path.parent.mkdir(parents=True, exist_ok=True)
+    with paths.events_path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
