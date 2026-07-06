@@ -215,6 +215,39 @@ def _write_code_context_receipt(root: Path, capsys) -> dict:
     return _json_output(capsys)["impact"]
 
 
+def _write_fresh_code_context_receipt(root: Path, capsys) -> dict:
+    app_path = root / "src" / "app.py"
+    app_path.write_text(
+        app_path.read_text(encoding="utf-8")
+        + "\n\ndef parting() -> str:\n    return 'bye'\n",
+        encoding="utf-8",
+    )
+    assert main(["--root", str(root), "index", "build", "--json"]) == 0
+    _json_output(capsys)
+    assert main(["--root", str(root), "impact", "--diff", "--json"]) == 0
+    return _json_output(capsys)["impact"]
+
+
+def _receipt_show_latest_recommended_commands(root: Path, capsys) -> list[str]:
+    assert main(["--root", str(root), "receipt", "show", "--latest"]) == 0
+    rendered = capsys.readouterr().out
+    lines = rendered.splitlines()
+    recommendation = lines[lines.index("## Next Recommended Command") + 1]
+    return [part.strip().strip("`") for part in recommendation.split(", then ")]
+
+
+def _receipt_show_latest_error_next_actions(root: Path, capsys) -> list[str]:
+    assert main([
+        "--root",
+        str(root),
+        "receipt",
+        "show",
+        "--latest",
+        "--json",
+    ]) == 2
+    return _json_output(capsys)["error"]["details"]["next_actions"]
+
+
 def _rubric_v1() -> str:
     return json.dumps(
         {
@@ -271,6 +304,7 @@ def test_context_pack_for_job_returns_machine_handoff(tmp_path: Path, capsys) ->
         "pcl prompt job J-0001 --json",
         "pcl validate --json",
     ]
+    assert "suggested_refresh_commands" not in pack
     assert ".project-loop/evidence/agent-runs/J-0001/prompt.md" in pack["source_paths"]
 
     markdown = pack["markdown"]
@@ -353,6 +387,7 @@ def test_context_pack_for_task_returns_task_handoff_with_dependencies(
         "pcl task list --json",
         "pcl validate --json",
     ]
+    assert "suggested_refresh_commands" not in pack
     assert pack["source_paths"] == []
     assert pack["included_sections"] == [
         "machine_context_rules",
@@ -1005,6 +1040,8 @@ def test_context_pack_for_job_include_code_context_embeds_bounded_summary(
     assert pack["required_sections_omitted"] == []
     assert "code_context_safety" in pack["included_sections"]
     assert impact["receipt_path"] in pack["source_paths"]
+    assert "pcl impact --diff --json" not in pack["source_commands"]
+    assert "suggested_refresh_commands" in pack
     assert "## Code Context Safety" in pack["markdown"]
     assert "Files included as candidate context:" in pack["markdown"]
     assert "understood" not in pack["markdown"].lower()
@@ -1036,6 +1073,8 @@ def test_context_pack_for_task_include_code_context_embeds_summary(
     assert pack["required_sections_omitted"] == []
     assert "code_context_safety" in pack["included_sections"]
     assert "code_context_detail" in pack["included_sections"]
+    assert "pcl impact --diff --json" not in pack["source_commands"]
+    assert "suggested_refresh_commands" in pack
 
 
 def test_context_pack_code_context_safety_survives_tight_budget(
@@ -1117,6 +1156,8 @@ def test_context_pack_without_code_context_flag_is_unchanged_by_receipts(
     assert after == before
     pack = after_payload["context_pack"]
     assert "code_context" not in pack
+    assert "suggested_refresh_commands" not in pack
+    assert "pcl impact --diff --json" not in pack["source_commands"]
     assert "code_context_safety" not in pack["included_sections"]
     assert "code_context_detail" not in pack["included_sections"]
     assert "## Code Context" not in pack["markdown"]
@@ -1155,6 +1196,12 @@ def test_context_pack_include_code_context_without_receipt_suggests_next_action(
         "pcl index build --json",
         "pcl impact --diff --json",
     ]
+    assert pack["suggested_refresh_commands"] == code_context["next_actions"]
+    assert pack["suggested_refresh_commands"] == _receipt_show_latest_error_next_actions(
+        tmp_path,
+        capsys,
+    )
+    assert "pcl impact --diff --json" not in pack["source_commands"]
     assert code_context["receipt_ref"] == {
         "evidence_id": None,
         "receipt_path": None,
@@ -1162,6 +1209,96 @@ def test_context_pack_include_code_context_without_receipt_suggests_next_action(
     }
     assert "code_context_safety" in pack["included_sections"]
     assert "No context receipt evidence was found." in pack["markdown"]
+
+
+def test_context_pack_source_commands_are_read_only_allowlisted_for_all_pack_kinds(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_job(tmp_path, capsys)
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "create",
+        "--title",
+        "Task handoff",
+    ]) == 0
+    capsys.readouterr()
+
+    pack_args = [
+        ["context", "pack", "--job", "J-0001", "--json"],
+        ["context", "pack", "--job", "J-0001", "--include-code-context", "--json"],
+        ["context", "pack", "--task", "T-0001", "--json"],
+        ["context", "pack", "--task", "T-0001", "--include-code-context", "--json"],
+    ]
+    allowed_read_only_commands = {
+        "pcl jobs read J-0001 --json",
+        "pcl prompt job J-0001 --json",
+        "pcl task read T-0001 --json",
+        "pcl task list --json",
+        "pcl validate --json",
+    }
+
+    observed_commands = []
+    for args in pack_args:
+        assert main(["--root", str(tmp_path), *args]) == 0
+        observed_commands.extend(_json_output(capsys)["context_pack"]["source_commands"])
+
+    assert observed_commands
+    assert set(observed_commands) == allowed_read_only_commands
+    for command in observed_commands:
+        assert command in allowed_read_only_commands
+        assert "pcl impact" not in command
+        assert "pcl index build" not in command
+
+
+def test_context_pack_suggested_refresh_commands_match_receipt_show_for_stale_receipt(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_task_code_project(tmp_path, capsys)
+    impact = _write_code_context_receipt(tmp_path, capsys)
+    assert impact["staleness_warnings"]
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0001",
+        "--include-code-context",
+        "--json",
+    ]) == 0
+
+    commands = _json_output(capsys)["context_pack"]["suggested_refresh_commands"]
+    assert commands == ["pcl index build --json", "pcl impact --diff --json"]
+    assert commands == _receipt_show_latest_recommended_commands(tmp_path, capsys)
+
+
+def test_context_pack_suggested_refresh_commands_match_receipt_show_for_fresh_receipt(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_task_code_project(tmp_path, capsys)
+    impact = _write_fresh_code_context_receipt(tmp_path, capsys)
+    assert impact["staleness_warnings"] == []
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0001",
+        "--include-code-context",
+        "--json",
+    ]) == 0
+
+    commands = _json_output(capsys)["context_pack"]["suggested_refresh_commands"]
+    assert commands == ["pcl impact --diff --json"]
+    assert commands == _receipt_show_latest_recommended_commands(tmp_path, capsys)
 
 
 def _section_heading(section_id: str) -> str:
