@@ -12,6 +12,7 @@ from pcl.context import TOKEN_ESTIMATOR, TRUNCATION_NOTE, estimate_token_count
 FIXED_NOW = "2026-07-06T01:30:00Z"
 FRESH_RECEIPT_CREATED_AT = "2026-07-06T01:00:00Z"
 STALE_RECEIPT_CREATED_AT = "2026-07-06T00:00:00Z"
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def _json_output(capsys) -> dict:
@@ -1066,6 +1067,7 @@ def test_context_pack_for_job_include_code_context_embeds_bounded_summary(
     assert code_context["excluded_changed_file_count"] == 0
     assert code_context["untracked_omission_warning"]
     assert code_context["sensitive_include_override_used"] is False
+    assert code_context["status"] == "from_receipt"
     assert "safe_to_continue" not in json.dumps(code_context, sort_keys=True)
     assert pack["required_sections"] == ["machine_context_rules", "code_context_safety"]
     assert pack["required_sections_omitted"] == []
@@ -1103,6 +1105,7 @@ def test_context_pack_for_task_include_code_context_embeds_summary(
 
     pack = _json_output(capsys)["context_pack"]
     assert pack["code_context"]["contract_version"] == "code-context-summary/v0"
+    assert pack["code_context"]["status"] == "from_receipt"
     assert pack["code_context"]["relevance"] == {
         "target_type": "task",
         "target_id": "T-0001",
@@ -1117,6 +1120,11 @@ def test_context_pack_for_task_include_code_context_embeds_summary(
         "created_at": FRESH_RECEIPT_CREATED_AT,
         "age_seconds": 1800,
     }
+    suggestions = pack["code_context"]["verification_suggestions"]
+    assert suggestions
+    assert suggestions[0]["id"].startswith(f"{impact['evidence_id']}/VS-")
+    assert suggestions[0]["command"] in pack["markdown"]
+    assert f"[{suggestions[0]['id']}]" in pack["markdown"]
     assert pack["required_sections"] == ["machine_context_rules", "code_context_safety"]
     assert pack["required_sections_omitted"] == []
     assert "code_context_safety" in pack["included_sections"]
@@ -1410,6 +1418,43 @@ def test_context_pack_include_code_context_without_receipt_suggests_next_action(
     assert "No context receipt evidence was found." in pack["markdown"]
     assert "- relevance: missing_receipt (binding: none)" in pack["markdown"]
     assert "- receipt age: unknown (created_at none)" in pack["markdown"]
+
+
+def test_context_pack_include_code_context_accepts_legacy_string_suggestion_receipt(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_task_code_project(tmp_path, capsys)
+    impact = _write_code_context_receipt(tmp_path, capsys)
+    legacy_receipt = json.loads(
+        (FIXTURES / "context_receipt_v0_legacy_string_suggestions.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    legacy_receipt["evidence_id"] = impact["evidence_id"]
+    legacy_receipt["receipt_path"] = impact["receipt_path"]
+    (tmp_path / impact["receipt_path"]).write_text(
+        json.dumps(legacy_receipt, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0001",
+        "--include-code-context",
+        "--json",
+    ]) == 0
+
+    pack = _json_output(capsys)["context_pack"]
+    assert pack["code_context"]["verification_suggestions"] == [
+        {"id": None, "command": "python3 -m pytest tests/test_cli.py"}
+    ]
+    assert "- python3 -m pytest tests/test_cli.py" in pack["markdown"]
+    assert "VS-01" not in pack["markdown"]
 
 
 def test_context_pack_source_commands_are_read_only_allowlisted_for_all_pack_kinds(

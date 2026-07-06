@@ -175,7 +175,42 @@ def test_receipt_summary_human_rendering_order_and_wording() -> None:
     assert "safe_to_continue" not in lower
     assert "verdict" not in lower
     assert "- receipt age: 1800s (created_at 2026-07-05T00:01:00Z)" in rendered
+    assert "- python3 -m pytest tests/test_cli.py [E-0007/VS-01]" in rendered
     assert "relevance" not in lower
+
+
+def test_receipt_show_legacy_string_suggestions_render_without_id_noise(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path), "--json"]) == 0
+    _json_output(capsys)
+    receipt_path = FIXTURES / "context_receipt_v0_legacy_string_suggestions.json"
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "receipt",
+        "show",
+        str(receipt_path),
+        "--json",
+    ]) == 0
+    summary = _json_output(capsys)
+    assert summary["verification_suggestions"] == [
+        {"id": None, "command": "python3 -m pytest tests/test_cli.py"}
+    ]
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "receipt",
+        "show",
+        str(receipt_path),
+    ]) == 0
+    human = capsys.readouterr().out
+    assert "- python3 -m pytest tests/test_cli.py" in human
+    assert "VS-01" not in human
+    assert "[none]" not in human
 
 
 def test_receipt_show_human_output_includes_age_and_never_relevance(

@@ -59,6 +59,10 @@
   ],
   "untracked_omission_warning": "Untracked files are not included in this diff source; add them to Git or provide an explicit diff with `pcl impact --diff - --json`.",
   "verification_suggestions": [
-    "python3 -m pytest tests/test_cli.py"
+    {
+      "command": "python3 -m pytest tests/test_cli.py",
+      "id": "E-0007/VS-01",
+      "reason": "test_hint:filename_match"
+    }
   ]
 }

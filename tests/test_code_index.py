@@ -7,6 +7,7 @@ import shutil
 import subprocess
 
 from pcl.cli import main
+from pcl.code_context.receipts import _receipt_verification_suggestions
 from pcl.code_context.scan import LARGE_FILE_BYTES
 from pcl.code_context.summary import recommended_refresh_commands, summarize_code_context_receipt
 from pcl.code_context import store as code_context_store
@@ -1205,9 +1206,23 @@ def test_impact_writes_epistemically_honest_receipt_and_evidence(
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     assert receipt["contract_version"] == "context-receipt/v0"
     assert receipt["diff_source"] == "provided-diff"
+    assert receipt["changed_files"] == impact["changed_files"]
+    assert receipt["changed_files"][0]["status"] == "M"
     assert "included_candidate_context" in receipt
     assert "omitted" in receipt
     assert "staleness_warnings" in receipt
+    assert all(
+        set(suggestion) == {"id", "command", "reason"}
+        for suggestion in receipt["verification_suggestions"]
+    )
+    assert [item["id"] for item in receipt["verification_suggestions"]] == [
+        f"{impact['evidence_id']}/VS-{index:02d}"
+        for index in range(1, len(receipt["verification_suggestions"]) + 1)
+    ]
+    assert [item["command"] for item in receipt["verification_suggestions"]] == impact[
+        "verification_suggestions"
+    ]
+    assert receipt["verification_suggestions"][0]["reason"]
     included_snapshot_values = {
         item["snapshot_consistency"]
         for item in receipt["included_candidate_context"]
@@ -1219,6 +1234,12 @@ def test_impact_writes_epistemically_honest_receipt_and_evidence(
     assert "understood" not in serialized
     assert "analyzed" not in serialized
     assert "agent read" not in serialized
+    summary = summarize_code_context_receipt(receipt)
+    assert summary["status"] == "from_receipt"
+    assert all(
+        set(suggestion) <= {"id", "command", "reason"}
+        for suggestion in summary["verification_suggestions"]
+    )
 
     conn = connect(tmp_path / ".project-loop" / "project.db")
     try:
@@ -1292,7 +1313,10 @@ def test_impact_splits_excluded_changed_files_from_indexable_candidates(
     assert any("python3 -m pytest tests/test_calc.py" in item for item in impact["verification_suggestions"])
 
     receipt = json.loads((tmp_path / impact["receipt_path"]).read_text(encoding="utf-8"))
-    assert receipt["excluded_changed_files"] == impact["excluded_changed_files"]
+    assert receipt["excluded_changed_files"] == [
+        {"path": ".claude/session-001.json", "status": "M", "reason": "code_index.exclude:.claude/"},
+        {"path": ".claude/session-002.json", "status": "M", "reason": "code_index.exclude:.claude/"},
+    ]
     assert [item["path"] for item in receipt["included_candidate_context"] if item["role"] == "changed_file"] == [
         "src/pkg/calc.py"
     ]
@@ -1302,6 +1326,28 @@ def test_impact_splits_excluded_changed_files_from_indexable_candidates(
     assert "excluded_changed_file_count" in text
     assert "Excluded changed files: 2 (.claude/session-001.json, .claude/session-002.json)" in text
     assert '"excluded_changed_files"' not in text
+
+
+def test_receipt_verification_suggestion_ids_are_deterministic() -> None:
+    impact = {
+        "_verification_suggestion_items": [
+            {
+                "command": "python3 -m pytest tests/test_calc.py",
+                "reason": "test_hint:path_token_match",
+            },
+            {
+                "command": "pcl index build --json",
+                "reason": "staleness_warnings",
+            },
+        ]
+    }
+
+    first = _receipt_verification_suggestions(evidence_id="E-0042", impact=impact)
+    second = _receipt_verification_suggestions(evidence_id="E-0042", impact=impact)
+
+    assert first == second
+    assert all(set(suggestion) == {"id", "command", "reason"} for suggestion in first)
+    assert [item["id"] for item in first] == ["E-0042/VS-01", "E-0042/VS-02"]
 
 
 def test_impact_excluded_only_diff_does_not_emit_indexable_suggestions(

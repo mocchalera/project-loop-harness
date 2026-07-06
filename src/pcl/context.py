@@ -7,6 +7,7 @@ from typing import Any
 
 from .code_context.summary import (
     CODE_CONTEXT_SUMMARY_VERSION,
+    format_verification_suggestion_for_display,
     recommended_refresh_commands,
     refresh_replay,
     render_receipt_age_lines,
@@ -893,7 +894,9 @@ def _render_code_context_verification_section(summary: dict[str, Any]) -> str:
     lines = ["## Code Context Verification Suggestions", ""]
     if isinstance(suggestions, list) and suggestions:
         for suggestion in suggestions:
-            lines.append(f"- {_stringify(suggestion)}")
+            display = format_verification_suggestion_for_display(suggestion)
+            if display:
+                lines.append(f"- {display}")
     else:
         lines.append("None.")
     return "\n".join(lines)

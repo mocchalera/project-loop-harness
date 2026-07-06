@@ -178,7 +178,10 @@ def _receipt_payload(
         "omitted": impact["omitted"],
         "sensitive_omitted_count": impact["sensitive_omitted_count"],
         "staleness_warnings": impact["staleness_warnings"],
-        "verification_suggestions": impact["verification_suggestions"],
+        "verification_suggestions": _receipt_verification_suggestions(
+            evidence_id=evidence_id,
+            impact=impact,
+        ),
     }
     if impact.get("untracked_included_count") is not None:
         payload["untracked_included_count"] = impact["untracked_included_count"]
@@ -186,6 +189,46 @@ def _receipt_payload(
     if impact.get("base_ref") is not None:
         payload["base_ref"] = impact["base_ref"]
     return payload
+
+
+def _receipt_verification_suggestions(
+    *,
+    evidence_id: str,
+    impact: dict[str, Any],
+) -> list[dict[str, str]]:
+    suggestion_items = impact.get("_verification_suggestion_items")
+    if not isinstance(suggestion_items, list):
+        suggestion_items = [
+            {
+                "command": item,
+                "reason": "impact:verification_suggestion",
+            }
+            for item in impact.get("verification_suggestions", [])
+        ]
+
+    suggestions: list[dict[str, str]] = []
+    for index, item in enumerate(suggestion_items, start=1):
+        if not isinstance(item, dict):
+            continue
+        command = _text(item.get("command"))
+        reason = _text(item.get("reason"))
+        if command is None or reason is None:
+            continue
+        suggestions.append(
+            {
+                "id": f"{evidence_id}/VS-{index:02d}",
+                "command": command,
+                "reason": reason,
+            }
+        )
+    return suggestions
+
+
+def _text(value: Any) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
 
 
 def _included_candidate_context(

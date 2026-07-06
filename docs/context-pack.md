@@ -104,6 +104,12 @@ The summary contains compact fields such as `diff_source`,
 Candidate rows use the phrase `included as candidate context`; the summary
 does not make cognition claims about those files.
 
+`code_context.verification_suggestions` is additive over the original
+command-only display: each summary item carries `id` and `command`, plus
+`reason` when the receipt has object-form suggestions. Legacy string-list
+receipt suggestions are still accepted and appear with `id: null`. Markdown
+keeps the command first and may append the ID at the end.
+
 `relevance` is stamped by the context-pack builder because it knows the pack
 target and the receipt selection method. It is not produced by the pure receipt
 summarizer. In v0.1.12, the only shipping selection scopes are:
@@ -136,11 +142,15 @@ are folded into `omitted_reason_counts`. The full
 the context pack.
 
 When no receipt exists, `--include-code-context` still succeeds and returns a
-`code_context` summary with `status: "missing_receipt"` plus next actions:
-`pcl index build --json` and `pcl impact --diff --json`. The same commands are
-exposed in `context_pack.suggested_refresh_commands`; they are not placed in
+`code_context` summary with `status: "missing_receipt"`, empty receipt refs, a
+message, and next actions: `pcl index build --json` and
+`pcl impact --diff --json`. The same commands are exposed in
+`context_pack.suggested_refresh_commands`; they are not placed in
 `source_commands`. The summary still includes `relevance` with
-`scope: "missing_receipt"` and `binding_strength: "none"`.
+`scope: "missing_receipt"` and `binding_strength: "none"`. Receipt-derived
+summaries carry availability `status` values such as `from_receipt`,
+`missing_receipt`, and `receipt_unavailable`; verification suggestion objects
+carry only `id`, `command`, and `reason`.
 
 `--max-tokens` is an approximate budget control. Section selection uses the
 deterministic, dependency-free `charclass/v1` estimator:
