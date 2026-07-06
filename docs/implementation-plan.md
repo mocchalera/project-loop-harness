@@ -207,13 +207,31 @@ only when `pcl impact` is invoked explicitly. Receipt audience priority
 
 ## Milestone 12: Measurement and feedback (v0.2.x)
 
+Design approved 2026-07-06 — see `docs/verification-feedback-design.md`
+for the full contract shapes, refinements, and approval record.
+
+- Verification suggestion feedback loop: `E-xxxx/VS-nn` suggestion IDs
+  (no status field in receipts — receipts stay immutable candidate
+  presentations), migration 005 `verification_feedback` append-only
+  event table (approved), `pcl verify feedback` with in-receipt ID
+  validation, and observable-rate metrics only (`execution_rate`,
+  `executed_pass_rate`, `executed_fail_rate`,
+  `feedback_coverage_rate`) — no hit/miss framing; usefulness labels
+  are a later optional human layer.
+- Dogfood-to-fixture workflow (approved scope amendment):
+  `pcl eval fixture propose --from-receipt` emits unlabeled fixture
+  candidates into a staging area; humans fill expected labels;
+  sequenced before baseline record/compare.
 - Retrieval eval suite hardening: at least five fixture kinds (code
   change, docs-only, config-only, rename/move, secret omission),
   precision / recall / missing-critical-context / false-positive /
-  token-cost metrics, baseline history, and a regression gate.
-- Verification suggestion feedback loop: suggestion IDs linked to executed
-  verification evidence with hit/miss/skipped visibility. Likely requires
-  a schema migration — design goes to human approval before work starts.
+  token-cost metrics, and baseline history with full provenance
+  (fixture hash, git HEAD, index run/detail hash, code_context config
+  hash, pcl version, eval contract version).
+- Regression gate: metric thresholds stay advisory until the 5-kind
+  fixture set and observed baseline variance exist; eval
+  infrastructure integrity failures (schema corruption, eval command
+  failure, fixture contract violations) are blocking.
 
 ## Milestone 13: Mission control thin UI (v0.3)
 

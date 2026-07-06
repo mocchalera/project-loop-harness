@@ -1,14 +1,14 @@
-# v0.2.x Design Draft: Measurement and Feedback (Milestone 12)
+# v0.2.x Design: Measurement and Feedback (Milestone 12)
 
-Status: **DRAFT — pending human approval. No implementation starts
-until this document is approved.** A possible schema migration (005)
-falls under `require_human_approval: database_migration` in
-`pcl.yaml`, which is why this design is written down before any task
-is filed.
+Status: **APPROVED 2026-07-06 (human approval, with refinements
+below).** Migration 005 is approved under
+`require_human_approval: database_migration`. Implementation starts
+after the v0.1.12 Bridge Reliability release; task 0087 may start
+immediately after it.
 
 Scope: Milestone 12 in `docs/implementation-plan.md` (retrieval eval
-suite hardening + verification suggestion feedback loop), plus one
-proposed scope amendment (dogfood-to-fixture workflow).
+suite hardening + verification suggestion feedback loop), plus the
+approved scope amendment (dogfood-to-fixture workflow).
 
 ## Why this milestone exists
 
@@ -21,14 +21,14 @@ Two purposes, in priority order:
    fed by real usage.
 2. **Closing the suggestion loop.** v0.1.11 delivers verification
    suggestions into context packs; today they are advice with no
-   record of whether anyone acted on them. Without executed/hit/miss
+   record of whether anyone acted on them. Without executed/skipped
    visibility, PLH cannot evaluate its own suggestions.
 
 An eval whose fixtures do not grow from dogfood examples is not
-credible. That is the reasoning behind the proposed scope amendment
-below.
+credible. That is why the dogfood-to-fixture workflow is in scope and
+sequenced BEFORE baseline record/compare.
 
-## Part 1: Verification suggestion IDs
+## Part 1: Verification suggestion IDs (approved)
 
 ### Current state
 
@@ -37,7 +37,7 @@ list of strings (`receipts.py` → `_receipt_payload`;
 `summary.py` passes them through with `_string_list`). Nothing can
 reference an individual suggestion.
 
-### Proposal
+### Design
 
 Evolve the receipt payload (receipt contract is v0/unstable; the
 `code-context-summary/v0` isolation layer shields `context-pack/v1`
@@ -48,38 +48,74 @@ consumers — this is exactly what the isolation layer was built for):
   {
     "id": "E-0001/VS-01",
     "command": "python3 -m pytest tests/test_context.py",
-    "reason": "test_hint:path_token_match",
-    "status": "suggested"
+    "reason": "test_hint:path_token_match"
   }
 ]
 ```
 
-- **ID scheme**: `<receipt evidence_id>/VS-<nn>`, deterministic within
-  a receipt, ordinal by position. No new DB sequence, no migration
-  needed for minting, and the receipt reference is embedded in the ID
-  itself.
+- **ID scheme (approved)**: `<receipt evidence_id>/VS-<nn>`,
+  deterministic within a receipt, ordinal by position. No new DB
+  sequence, no migration needed for minting, and the receipt
+  reference is embedded in the ID itself.
+- **No `status` field in the receipt (approved refinement).** A
+  receipt is an immutable candidate presentation; suggestion state
+  lives exclusively in the `verification_feedback` table. Nothing in
+  the receipt or summary implies a lifecycle.
 - `summary.py` and `pcl receipt show` render `command` (display is
   unchanged for humans) and carry `id` in the JSON summary.
 - Backward compatibility: `summarize_code_context_receipt` accepts
   both string-list (old receipts on disk) and object-list forms; old
   receipts summarize as objects with `id: null`.
 
-## Part 2: Verification feedback recording
+## Part 2: Verification feedback recording (approved — Option A)
 
-### What we need to record
+### Storage: migration 005, append-only event table
 
-For a given suggestion: was it executed, skipped, or never seen; if
-executed, what happened; and which evidence backs that claim.
+**Approved with the refinement that this is an append-only feedback
+EVENT table, not a current-state table.** Multiple feedback rows per
+suggestion are allowed by design; there is deliberately NO
+`UNIQUE(suggestion_id)`. "Latest feedback" and "no feedback recorded"
+are derived at read time, never stored.
 
-```json
-"verification_feedback": {
-  "suggestion_id": "E-0001/VS-01",
-  "status": "executed",        // executed | skipped | not_applicable
-  "result": "passed",          // passed | failed | inconclusive (executed only)
-  "evidence_id": "E-0009",
-  "created_at": "..."
-}
+```sql
+CREATE TABLE IF NOT EXISTS verification_feedback (
+  id TEXT PRIMARY KEY,
+  suggestion_id TEXT NOT NULL,
+  receipt_evidence_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('executed', 'skipped', 'not_applicable')),
+  result TEXT CHECK(result IN ('passed', 'failed', 'inconclusive')),
+  supporting_evidence_id TEXT,
+  note TEXT,
+  created_at TEXT NOT NULL,
+  CHECK(
+    (status = 'executed' AND result IS NOT NULL AND supporting_evidence_id IS NOT NULL)
+    OR (status != 'executed' AND result IS NULL)
+  ),
+  FOREIGN KEY(receipt_evidence_id) REFERENCES evidence(id),
+  FOREIGN KEY(supporting_evidence_id) REFERENCES evidence(id)
+);
 ```
+
+Approved field semantics:
+
+- `executed` REQUIRES `result` and `supporting_evidence_id`.
+- `skipped` / `not_applicable` carry `result: NULL`.
+- There is NO `never_seen` status: PLH cannot observe non-observation.
+  A suggestion with zero feedback rows is displayed as "no feedback
+  recorded" — a derived state, not a stored claim.
+
+Recording is CLI-only (never raw SQL):
+
+```bash
+pcl verify feedback --suggestion E-0001/VS-01 --status executed \
+  --result passed --evidence E-0009
+```
+
+- **Referential honesty (approved refinement):** `pcl verify feedback`
+  loads the receipt referenced by the suggestion ID prefix and
+  verifies the suggestion ID actually exists in that receipt's
+  payload before recording; unknown IDs are a typed error.
+- Every insert also appends a JSONL event (standard audit trail).
 
 Epistemic boundary (same discipline as receipts): `executed` +
 `result` are claims by the caller recording the feedback, backed by
@@ -87,67 +123,63 @@ the referenced evidence artifact. PLH does not verify the command was
 actually run; it stores the claim and its evidence pointer. Vocabulary
 must not drift into "verified safe".
 
-### Storage options
+### Metric vocabulary (approved refinement)
 
-**Option A — migration 005, new table `verification_feedback`.**
-Columns: `id`, `suggestion_id`, `receipt_evidence_id`, `status`,
-`result`, `evidence_id`, `created_at`, FKs to `evidence`. Recorded via
-a new CLI verb (e.g. `pcl verify feedback --suggestion E-0001/VS-01
---status executed --result passed --evidence E-0009`), never raw SQL.
-- Pros: cheap aggregation for eval baselines (hit/miss rates per
-  reason, per fixture kind); consistent with how every other loop
-  entity is stored; queryable from dashboard-data.
-- Cons: requires migration 005 and human approval; one more table.
+v0.2.0 exposes ONLY observable rates; suggestion usefulness is NOT a
+v0.2.0 metric:
 
-**Option B — no migration: feedback as a new evidence type
-(`verification_feedback`) with a JSON artifact + JSONL event.**
-- Pros: zero schema risk; fits "evidence + audit trail" philosophy.
-- Cons: aggregation means scanning JSON artifacts; hit/miss metrics
-  and baseline history become file-crawling jobs; dashboard-data
-  integration is awkward. Experience with `code_index_*` (which got
-  tables for exactly this reason) suggests we would migrate later
-  anyway.
+- `execution_rate`: suggestions with ≥1 `executed` feedback / total
+  suggestions with any feedback opportunity window (definition fixed
+  in the task spec).
+- `executed_pass_rate` / `executed_fail_rate`: over `executed`
+  feedback events.
+- `feedback_coverage_rate`: suggestions with ≥1 feedback row of any
+  status / total suggestions issued.
 
-**Recommendation: Option A** (migration 005), on the grounds that the
-whole point of Milestone 12 is aggregate measurement, and measuring
-over ad-hoc JSON files is the thing PLH's SQLite-state principle
-exists to avoid. Approval decision requested.
+Do NOT call `passed`/`failed` "hit"/"miss". `passed` does not mean the
+suggestion was useless (a passing suggested test can still have been
+worth running). Usefulness judgments are a later, optional human
+labeling layer, not a computed v0.2 metric.
 
-## Part 3: Eval baseline history and regression gate
+## Part 3: Eval baseline history and regression gate (approved)
 
 - `pcl eval retrieval --record-baseline`: stores the eval result as
   evidence (JSON artifact under
-  `.project-loop/evidence/retrieval-eval/`) plus an event; the
-  baseline is identified by fixture file + fixture content hash +
-  `pcl` version.
+  `.project-loop/evidence/retrieval-eval/`) plus an event.
+- Baseline artifact provenance (approved refinement — all fields
+  required): fixture path + fixture content hash, target repo git
+  HEAD, index run id + index detail hash, code_context config hash
+  (the effective `code_index` config subtree), `pcl` version, and
+  eval contract version (`retrieval-eval/v0`).
 - `pcl eval retrieval --compare-baseline`: compares current metrics to
   the latest recorded baseline for the same fixture hash; reports
   per-metric deltas.
-- Gate policy (staged, matching 0080's advisory stance):
-  - v0.2.0: comparison output is advisory evidence in CI (like
-    today's advisory eval step).
-  - Promotion to a blocking gate happens only after baseline history
-    exists for the full 5-kind fixture set and thresholds are chosen
-    from observed variance, not guessed.
+- Gate policy (approved):
+  - Metric thresholds (precision / recall / missing-critical-context /
+    false-positive / token-cost) stay ADVISORY until the 5-kind
+    fixture set exists and observed variance across baseline history
+    justifies thresholds.
+  - Eval INFRASTRUCTURE integrity failures ARE blocking: schema
+    corruption, eval command failure, fixture contract violations.
+    Broken measurement is not advisory.
 - Metrics per fixture kind (code change, docs-only, config-only,
   rename/move, secret omission): precision, recall,
   missing-critical-context rate, false-positive rate, token cost
   (estimated tokens of included candidate context).
 
-## Part 4 (scope amendment, needs approval): dogfood-to-fixture
-
-Proposed addition to Milestone 12:
+## Part 4: Dogfood-to-fixture (approved scope amendment)
 
 - `pcl eval fixture propose --from-receipt <evidence-id>`: generates a
   `retrieval-fixture/v0` candidate from a real receipt — changed
-  files, retrieved candidates, and a placeholder `expected` block the
-  human fills in (what actually mattered, what was missed).
-- Candidates land in a `fixtures/proposed/` staging area; adoption
-  into `tests/fixtures/` is a human review step (labels are human
-  judgments by definition).
-- Rationale: the 2026-07-05 dogfood session produced exactly this kind
-  of example by hand (`retrieval_real_history_v0.json`); this command
-  makes the pipeline repeatable so fixture growth tracks real usage.
+  files, retrieved candidates, and EMPTY `expected_files` /
+  `expected_tests` / `critical_context` blocks plus
+  `labels_status: "unlabeled"`.
+- **PLH never fabricates ground-truth labels (approved refinement).**
+  The proposed fixture must be visibly unlabeled; filling the expected
+  blocks is a human review step by definition.
+- Candidates land in a staging area (`fixtures/proposed/`); adoption
+  into `tests/fixtures/` is a manual move after human labeling. No
+  auto-adoption path exists.
 
 ## Explicitly out of scope for v0.2.x
 
@@ -155,24 +187,45 @@ Unchanged from the promotion gate: embeddings, Tree-sitter
 requirement, call graphs, semantic retrieval, hosted search,
 content-based secret scanning, automatic go/no-go verdicts. Also out:
 automatic execution of suggested verification commands (recording is
-manual/CLI-driven; auto-execution is a different trust conversation).
+manual/CLI-driven; auto-execution is a different trust conversation),
+and computed "suggestion usefulness" metrics (optional human labels
+come later).
 
-## Sequencing
+## Sequencing (approved order)
 
-1. 0087 (proposed): suggestion IDs + summary/show compatibility — no
-   migration, can start immediately after v0.1.12.
-2. 0088 (proposed): migration 005 + `pcl verify feedback` — **blocked
-   on approval of this document**.
-3. 0089 (proposed): baseline record/compare + CI advisory comparison.
-4. 0090 (proposed): dogfood-to-fixture command — blocked on the scope
-   amendment decision.
+1. **0087**: suggestion IDs + summary/show compatibility — no
+   migration; may start immediately after v0.1.12.
+2. **0088**: migration 005 (`verification_feedback` append-only event
+   table) + `pcl verify feedback` with in-receipt suggestion ID
+   validation + observable-rate metrics.
+3. **0089**: dogfood-to-fixture propose command (staging area,
+   unlabeled candidates) — deliberately BEFORE baseline work so
+   baseline history grows over a fixture set that is already being
+   fed by dogfood.
+4. **0090**: baseline record/compare with full provenance + CI
+   advisory comparison (infrastructure failures blocking, metric
+   thresholds advisory).
 
-## Decisions requested from the human
+## Approval record
 
-1. Storage: approve Option A (migration 005 `verification_feedback`
-   table) or direct us to Option B (evidence-only, no migration).
-2. Approve the dogfood-to-fixture scope amendment to Milestone 12.
-3. Confirm the staged gate policy (advisory first, thresholds from
-   observed variance).
-4. Confirm the suggestion ID scheme (`<evidence_id>/VS-<nn>`,
-   receipt-scoped, deterministic).
+Approved 2026-07-06 with the following refinements, all incorporated
+above:
+
+1. Option A confirmed; table is append-only event log, no
+   `UNIQUE(suggestion_id)`; `executed` requires `result` +
+   `supporting_evidence_id`; no `never_seen` status (derived display
+   only).
+2. Dogfood-to-fixture officially added to Milestone 12; staging-only,
+   human-labeled, sequenced before baseline record/compare.
+3. Advisory-first gate confirmed; eval infrastructure integrity
+   failures may block; baseline artifacts carry full provenance
+   (fixture hash, git HEAD, index run/detail hash, code_context
+   config hash, pcl version, eval contract version).
+4. `E-xxxx/VS-nn` ID scheme confirmed; no `status` field in receipt
+   payloads (receipts are immutable candidate presentations; state
+   lives in `verification_feedback`); `pcl verify feedback` validates
+   suggestion existence in the referenced receipt.
+5. Metric vocabulary limited to observable rates (`execution_rate`,
+   `executed_pass_rate`, `executed_fail_rate`,
+   `feedback_coverage_rate`); no hit/miss framing; usefulness is a
+   future optional human label.
