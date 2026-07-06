@@ -346,6 +346,13 @@ pcl escalation resolve --root /tmp/pcl-demo ESC-0001 --decision DEC-0001 --summa
 
 Escalations and decisions are linked through `decisions.blocks_json` and event payloads. Dashboard rows and reports show `linked_escalation_ids` and `linked_decision_ids`.
 
+To record caller feedback for a context receipt suggestion, quote the suggestion ID:
+
+```bash
+pcl verification feedback --root /tmp/pcl-demo --suggestion 'E-0001/VS-01' --status executed --result passed --evidence E-0009
+pcl verification stats --root /tmp/pcl-demo --json
+```
+
 ## Reports And Dashboard
 
 Generated artifacts are review surfaces, not sources of truth:
@@ -400,6 +407,7 @@ The current local runtime supports:
 - validated agent output ingestion as evidence;
 - job-centric evidence linkage for ingested agent output;
 - verification recording;
+- context receipt suggestion feedback and read-only feedback stats;
 - structured `rubric/v1` verification metadata with inline/file recording and read-only inspection;
 - workflow run, goal, defect, escalation, and decision lifecycle commands;
 - escalation/decision linkage;
