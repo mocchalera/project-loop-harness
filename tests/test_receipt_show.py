@@ -4,14 +4,18 @@ import json
 from pathlib import Path
 import subprocess
 
+import pcl.cli as cli_module
 from pcl.cli import main
 from pcl.code_context.summary import (
     render_receipt_summary,
+    summary_with_receipt_age,
     summarize_code_context_receipt,
 )
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
+FIXED_NOW = "2026-07-06T01:30:00Z"
+STALE_RECEIPT_CREATED_AT = "2026-07-06T00:00:00Z"
 
 
 def _json_output(capsys) -> dict:
@@ -68,14 +72,26 @@ def _create_code_receipt(root: Path, capsys) -> dict:
     return _json_output(capsys)["impact"]
 
 
+def _set_receipt_created_at(root: Path, impact: dict, created_at: str) -> None:
+    receipt_path = root / impact["receipt_path"]
+    payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    payload["created_at"] = created_at
+    receipt_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+
+
 def test_receipt_show_json_matches_golden_summary_fixture(
     tmp_path: Path,
     capsys,
+    monkeypatch,
 ) -> None:
     assert main(["init", "--target", str(tmp_path), "--json"]) == 0
     _json_output(capsys)
     receipt_path = FIXTURES / "context_receipt_v0.json"
-    expected = json.loads((FIXTURES / "code_context_summary_v0.json").read_text())
+    expected = summary_with_receipt_age(
+        json.loads((FIXTURES / "code_context_summary_v0.json").read_text()),
+        now="2026-07-05T00:31:00Z",
+    )
+    monkeypatch.setattr(cli_module, "utc_now_iso", lambda: "2026-07-05T00:31:00Z")
 
     assert main([
         "--root",
@@ -92,10 +108,15 @@ def test_receipt_show_json_matches_golden_summary_fixture(
 def test_receipt_show_evidence_path_and_latest_refs_use_shared_model(
     tmp_path: Path,
     capsys,
+    monkeypatch,
 ) -> None:
     impact = _create_code_receipt(tmp_path, capsys)
     receipt_payload = json.loads((tmp_path / impact["receipt_path"]).read_text())
-    expected = summarize_code_context_receipt(receipt_payload)
+    expected = summary_with_receipt_age(
+        summarize_code_context_receipt(receipt_payload),
+        now=FIXED_NOW,
+    )
+    monkeypatch.setattr(cli_module, "utc_now_iso", lambda: FIXED_NOW)
 
     assert main([
         "--root",
@@ -123,10 +144,15 @@ def test_receipt_show_evidence_path_and_latest_refs_use_shared_model(
     assert f"- evidence_id: {impact['evidence_id']}" in human
     assert f"- receipt_path: {impact['receipt_path']}" in human
     assert "- diff_source: worktree-vs-HEAD" in human
+    assert "- receipt age:" in human
+    assert "relevance" not in human.lower()
 
 
 def test_receipt_summary_human_rendering_order_and_wording() -> None:
-    summary = json.loads((FIXTURES / "code_context_summary_v0.json").read_text())
+    summary = summary_with_receipt_age(
+        json.loads((FIXTURES / "code_context_summary_v0.json").read_text()),
+        now="2026-07-05T00:31:00Z",
+    )
 
     rendered = render_receipt_summary(summary)
 
@@ -148,6 +174,25 @@ def test_receipt_summary_human_rendering_order_and_wording() -> None:
     assert "analyzed" not in lower
     assert "safe_to_continue" not in lower
     assert "verdict" not in lower
+    assert "- receipt age: 1800s (created_at 2026-07-05T00:01:00Z)" in rendered
+    assert "relevance" not in lower
+
+
+def test_receipt_show_human_output_includes_age_and_never_relevance(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    impact = _create_code_receipt(tmp_path, capsys)
+    _set_receipt_created_at(tmp_path, impact, STALE_RECEIPT_CREATED_AT)
+    monkeypatch.setattr(cli_module, "utc_now_iso", lambda: FIXED_NOW)
+
+    assert main(["--root", str(tmp_path), "receipt", "show", "--latest"]) == 0
+
+    human = capsys.readouterr().out
+    assert f"- receipt age: 5400s (created_at {STALE_RECEIPT_CREATED_AT})" in human
+    assert "- age warning: Receipt age is 5400s, above the provisional 3600s threshold." in human
+    assert "relevance" not in human.lower()
 
 
 def test_receipt_show_bad_id_returns_typed_guidance(

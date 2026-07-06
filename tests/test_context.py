@@ -4,8 +4,14 @@ import json
 from pathlib import Path
 import subprocess
 
+import pcl.cli as cli_module
 from pcl.cli import main
 from pcl.context import TOKEN_ESTIMATOR, TRUNCATION_NOTE, estimate_token_count
+
+
+FIXED_NOW = "2026-07-06T01:30:00Z"
+FRESH_RECEIPT_CREATED_AT = "2026-07-06T01:00:00Z"
+STALE_RECEIPT_CREATED_AT = "2026-07-06T00:00:00Z"
 
 
 def _json_output(capsys) -> dict:
@@ -213,6 +219,13 @@ def _write_code_context_receipt(root: Path, capsys) -> dict:
     )
     assert main(["--root", str(root), "impact", "--diff", "--json"]) == 0
     return _json_output(capsys)["impact"]
+
+
+def _set_receipt_created_at(root: Path, impact: dict, created_at: str) -> None:
+    receipt_path = root / impact["receipt_path"]
+    payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    payload["created_at"] = created_at
+    receipt_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
 
 
 def _write_fresh_code_context_receipt(root: Path, capsys) -> dict:
@@ -996,9 +1009,12 @@ def test_context_pack_verifications_render_rubric_columns(
 def test_context_pack_for_job_include_code_context_embeds_bounded_summary(
     tmp_path: Path,
     capsys,
+    monkeypatch,
 ) -> None:
     _create_job_code_project(tmp_path, capsys)
     impact = _write_code_context_receipt(tmp_path, capsys)
+    _set_receipt_created_at(tmp_path, impact, FRESH_RECEIPT_CREATED_AT)
+    monkeypatch.setattr(cli_module, "utc_now_iso", lambda: FIXED_NOW)
 
     assert main([
         "--root",
@@ -1017,8 +1033,23 @@ def test_context_pack_for_job_include_code_context_embeds_bounded_summary(
     assert code_context["receipt_ref"] == {
         "evidence_id": impact["evidence_id"],
         "receipt_path": impact["receipt_path"],
-        "created_at": code_context["receipt_ref"]["created_at"],
+        "created_at": FRESH_RECEIPT_CREATED_AT,
     }
+    assert code_context["relevance"] == {
+        "target_type": "agent_job",
+        "target_id": "J-0001",
+        "scope": "unscoped_latest",
+        "binding_strength": "none",
+        "reason": (
+            "The most recent context receipt was selected by recency; it was not "
+            "created for this target."
+        ),
+    }
+    assert code_context["receipt_age"] == {
+        "created_at": FRESH_RECEIPT_CREATED_AT,
+        "age_seconds": 1800,
+    }
+    assert "age_warning" not in code_context
     assert code_context["diff_source"] == "worktree-vs-HEAD"
     assert code_context["changed_file_count"] == 1
     assert code_context["included_total"] >= 1
@@ -1052,9 +1083,12 @@ def test_context_pack_for_job_include_code_context_embeds_bounded_summary(
 def test_context_pack_for_task_include_code_context_embeds_summary(
     tmp_path: Path,
     capsys,
+    monkeypatch,
 ) -> None:
     _create_task_code_project(tmp_path, capsys)
-    _write_code_context_receipt(tmp_path, capsys)
+    impact = _write_code_context_receipt(tmp_path, capsys)
+    _set_receipt_created_at(tmp_path, impact, FRESH_RECEIPT_CREATED_AT)
+    monkeypatch.setattr(cli_module, "utc_now_iso", lambda: FIXED_NOW)
 
     assert main([
         "--root",
@@ -1069,6 +1103,20 @@ def test_context_pack_for_task_include_code_context_embeds_summary(
 
     pack = _json_output(capsys)["context_pack"]
     assert pack["code_context"]["contract_version"] == "code-context-summary/v0"
+    assert pack["code_context"]["relevance"] == {
+        "target_type": "task",
+        "target_id": "T-0001",
+        "scope": "unscoped_latest",
+        "binding_strength": "none",
+        "reason": (
+            "The most recent context receipt was selected by recency; it was not "
+            "created for this target."
+        ),
+    }
+    assert pack["code_context"]["receipt_age"] == {
+        "created_at": FRESH_RECEIPT_CREATED_AT,
+        "age_seconds": 1800,
+    }
     assert pack["required_sections"] == ["machine_context_rules", "code_context_safety"]
     assert pack["required_sections_omitted"] == []
     assert "code_context_safety" in pack["included_sections"]
@@ -1077,12 +1125,145 @@ def test_context_pack_for_task_include_code_context_embeds_summary(
     assert "suggested_refresh_commands" in pack
 
 
+def test_context_pack_code_context_receipt_age_fresh_in_json_and_safety_section(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    _create_task_code_project(tmp_path, capsys)
+    impact = _write_code_context_receipt(tmp_path, capsys)
+    _set_receipt_created_at(tmp_path, impact, FRESH_RECEIPT_CREATED_AT)
+    monkeypatch.setattr(cli_module, "utc_now_iso", lambda: FIXED_NOW)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0001",
+        "--include-code-context",
+        "--json",
+    ]) == 0
+
+    pack = _json_output(capsys)["context_pack"]
+    code_context = pack["code_context"]
+    assert code_context["receipt_age"] == {
+        "created_at": FRESH_RECEIPT_CREATED_AT,
+        "age_seconds": 1800,
+    }
+    assert "age_warning" not in code_context
+    assert f"- receipt age: 1800s (created_at {FRESH_RECEIPT_CREATED_AT})" in pack["markdown"]
+    assert "- age warning:" not in pack["markdown"]
+
+
+def test_context_pack_code_context_receipt_age_stale_warns_in_json_and_safety_section(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    _create_task_code_project(tmp_path, capsys)
+    impact = _write_code_context_receipt(tmp_path, capsys)
+    _set_receipt_created_at(tmp_path, impact, STALE_RECEIPT_CREATED_AT)
+    monkeypatch.setattr(cli_module, "utc_now_iso", lambda: FIXED_NOW)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0001",
+        "--include-code-context",
+        "--json",
+    ]) == 0
+
+    pack = _json_output(capsys)["context_pack"]
+    code_context = pack["code_context"]
+    assert code_context["receipt_age"] == {
+        "created_at": STALE_RECEIPT_CREATED_AT,
+        "age_seconds": 5400,
+    }
+    assert code_context["age_warning"] == (
+        "Receipt age is 5400s, above the provisional 3600s threshold."
+    )
+    assert f"- receipt age: 5400s (created_at {STALE_RECEIPT_CREATED_AT})" in pack["markdown"]
+    assert "- age warning: Receipt age is 5400s, above the provisional 3600s threshold." in pack["markdown"]
+
+
+def test_context_pack_code_context_receipt_age_unparsable_warns_in_json_and_safety_section(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    _create_task_code_project(tmp_path, capsys)
+    impact = _write_code_context_receipt(tmp_path, capsys)
+    _set_receipt_created_at(tmp_path, impact, "not-a-timestamp")
+    monkeypatch.setattr(cli_module, "utc_now_iso", lambda: FIXED_NOW)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0001",
+        "--include-code-context",
+        "--json",
+    ]) == 0
+
+    pack = _json_output(capsys)["context_pack"]
+    code_context = pack["code_context"]
+    assert code_context["receipt_age"] == {"created_at": "not-a-timestamp"}
+    assert "age_seconds" not in code_context["receipt_age"]
+    assert code_context["age_warning"] == (
+        "Receipt age could not be computed because created_at is missing or unparsable."
+    )
+    assert "- receipt age: unknown (created_at not-a-timestamp)" in pack["markdown"]
+    assert "- age warning: Receipt age could not be computed" in pack["markdown"]
+
+
+def test_context_pack_unavailable_code_context_keeps_unscoped_latest_relevance(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    _create_task_code_project(tmp_path, capsys)
+    impact = _write_code_context_receipt(tmp_path, capsys)
+    _set_receipt_created_at(tmp_path, impact, STALE_RECEIPT_CREATED_AT)
+    (tmp_path / impact["receipt_path"]).write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(cli_module, "utc_now_iso", lambda: FIXED_NOW)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0001",
+        "--include-code-context",
+        "--json",
+    ]) == 0
+
+    pack = _json_output(capsys)["context_pack"]
+    code_context = pack["code_context"]
+    assert code_context["status"] == "receipt_unavailable"
+    assert code_context["relevance"]["scope"] == "unscoped_latest"
+    assert code_context["relevance"]["binding_strength"] == "none"
+    assert "receipt_age" in code_context
+    assert "Latest context receipt could not be loaded: JSONDecodeError." in pack["markdown"]
+    assert "- relevance: unscoped_latest (binding: none)" in pack["markdown"]
+
+
 def test_context_pack_code_context_safety_survives_tight_budget(
     tmp_path: Path,
     capsys,
+    monkeypatch,
 ) -> None:
     _create_task_code_project(tmp_path, capsys)
-    _write_code_context_receipt(tmp_path, capsys)
+    impact = _write_code_context_receipt(tmp_path, capsys)
+    _set_receipt_created_at(tmp_path, impact, STALE_RECEIPT_CREATED_AT)
+    monkeypatch.setattr(cli_module, "utc_now_iso", lambda: FIXED_NOW)
 
     assert main([
         "--root",
@@ -1120,6 +1301,8 @@ def test_context_pack_code_context_safety_survives_tight_budget(
     assert "code_context_detail" in pack["omitted_sections"]
     assert "## Code Context Safety" in pack["markdown"]
     assert "## Code Context Detail" not in pack["markdown"]
+    assert "- relevance: unscoped_latest (binding: none)" in pack["markdown"]
+    assert f"- receipt age: 5400s (created_at {STALE_RECEIPT_CREATED_AT})" in pack["markdown"]
     assert "diff_source=worktree-vs-HEAD" in pack["markdown"]
     assert "sensitive_omitted_count=0" in pack["markdown"]
     assert "excluded_changed_file_count=0" in pack["markdown"]
@@ -1207,8 +1390,19 @@ def test_context_pack_include_code_context_without_receipt_suggests_next_action(
         "receipt_path": None,
         "created_at": None,
     }
+    assert code_context["relevance"] == {
+        "target_type": "task",
+        "target_id": "T-0001",
+        "scope": "missing_receipt",
+        "binding_strength": "none",
+        "reason": "No context receipt was available for this pack target.",
+    }
+    assert code_context["receipt_age"] == {"created_at": None}
+    assert "could not be computed" in code_context["age_warning"]
     assert "code_context_safety" in pack["included_sections"]
     assert "No context receipt evidence was found." in pack["markdown"]
+    assert "- relevance: missing_receipt (binding: none)" in pack["markdown"]
+    assert "- receipt age: unknown (created_at none)" in pack["markdown"]
 
 
 def test_context_pack_source_commands_are_read_only_allowlisted_for_all_pack_kinds(
