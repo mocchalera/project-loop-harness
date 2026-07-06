@@ -134,7 +134,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - uses: owner/project-loop-harness/.github/actions/project-loop-validate@v0.1.9
+      - uses: owner/project-loop-harness/.github/actions/project-loop-validate@v0.1.11
         with:
           root: "."
           strict: "true"

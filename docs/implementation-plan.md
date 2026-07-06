@@ -184,20 +184,26 @@ Sequencing: 0072 first (safety ships soonest), then 0073, then 0074 and
 0075 in parallel on the split modules. No schema migration, no
 dependencies.
 
-## Milestone 11: Code context integration (v0.2.0)
+## Milestone 11: Code context integration and receipt triage (v0.1.11)
 
-The core of v0.2: receipts must appear in normal agent handoffs, not only
-when `pcl impact` is invoked explicitly. Receipt audience priority
+Complete as of Task 0081. Receipts now appear in normal agent handoffs, not
+only when `pcl impact` is invoked explicitly. Receipt audience priority
 (decided 2026-07-05): the next agent first, the human second, CI third.
 
-- Context Pack v2 bridge: `pcl context pack --include-code-context` (or
-  equivalent) folds impact receipts, target-file summaries, and staleness
-  state into task/job packs under the existing token budget, with
-  `included_code_context`, `omitted_code_context`, and `receipt_paths`
-  made explicit.
-- Search/retrieval receipts: `pcl code search --receipt` records query,
-  normalized terms, candidate counts, included/omitted, and ranking
-  reasons as evidence artifacts that context packs can reference.
+- Task 0078: `pcl context pack --include-code-context` bridges the latest
+  `context-receipt/v0` through a shared `code-context-summary/v0` isolation
+  layer, with non-droppable safety facts for omission, staleness, diff source,
+  and receipt references.
+- Task 0079: `pcl receipt show` renders context receipts for 30-second human
+  triage while reusing the same summary model as context packs.
+- Task 0080: retrieval eval fixtures gained adversarial coverage and CI now
+  runs retrieval eval as advisory evidence only, never as a metric threshold
+  release gate.
+- Task 0081: `pcl impact` gained explicit diff modes for staged, unstaged,
+  untracked, all-changes, and automatic base selection while preserving the
+  default mode.
+- Still out of scope: embeddings, Tree-sitter, call graphs, hosted search,
+  secret scanning, and automatic go/no-go verdicts.
 
 ## Milestone 12: Measurement and feedback (v0.2.x)
 
