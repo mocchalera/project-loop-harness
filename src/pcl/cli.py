@@ -15,6 +15,7 @@ from .code_index import (
     build_code_index,
     code_index_status,
     evaluate_retrieval,
+    propose_retrieval_fixture,
     search_code,
 )
 from .commands import (
@@ -618,6 +619,23 @@ def build_parser() -> argparse.ArgumentParser:
     eval_sub = p_eval.add_subparsers(dest="eval_command", required=True)
     p_eval_retrieval = eval_sub.add_parser("retrieval", help="Evaluate indexed retrieval")
     p_eval_retrieval.add_argument("--fixture", required=True)
+    p_eval_fixture = eval_sub.add_parser("fixture", help="Manage retrieval fixture candidates")
+    eval_fixture_sub = p_eval_fixture.add_subparsers(dest="eval_fixture_command", required=True)
+    p_eval_fixture_propose = eval_fixture_sub.add_parser(
+        "propose",
+        help="Propose an unlabeled retrieval fixture from a context receipt.",
+    )
+    p_eval_fixture_propose.add_argument(
+        "--from-receipt",
+        required=True,
+        dest="from_receipt",
+        help="Context receipt evidence ID to stage as an unlabeled fixture candidate.",
+    )
+    p_eval_fixture_propose.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing proposed candidate after confirming no human labels will be lost.",
+    )
 
     p_verification = sub.add_parser("verification", help="Record verification results")
     verification_sub = p_verification.add_subparsers(dest="verification_command", required=True)
@@ -1883,6 +1901,22 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json(result)
             else:
                 print(to_pretty_json(result["evaluation"]))
+            return 0
+
+        if (
+            args.command == "eval"
+            and args.eval_command == "fixture"
+            and args.eval_fixture_command == "propose"
+        ):
+            result = propose_retrieval_fixture(
+                paths,
+                receipt_evidence_id=args.from_receipt,
+                force=args.force,
+            )
+            if json_output:
+                _print_json(result)
+            else:
+                print(result["fixture"]["path"])
             return 0
 
         if args.command == "verification" and args.verification_command == "record":

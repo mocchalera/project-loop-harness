@@ -629,6 +629,29 @@ Task fields:
   `assertion_note`, and `must_not_retrieve`, are metadata and are ignored by
   the evaluator.
 
+Dogfood receipts become fixture candidates through a staging workflow:
+
+```bash
+pcl eval fixture propose --from-receipt E-0001 --json
+```
+
+The command reads a real `context_receipt` evidence row and writes an
+UNLABELED `retrieval-fixture/v0` candidate to repo-root `fixtures/proposed/`.
+That directory is a Git-tracked source staging area, not `.project-loop/`
+runtime state. The candidate has one task, a synthetic unified diff touching
+the receipt's `changed_files` paths, `diff_synthesized_from_receipt: true`, and
+source receipt provenance (`evidence_id`, `created_at`, `diff_source`,
+optional `base_ref`, and retrieved candidate paths). The synthetic diff is only
+a replay handle because receipts do not store original diff text.
+
+PLH never fabricates ground-truth labels. Proposed tasks carry
+`labels_status: "unlabeled"` and empty `expected_files`, `expected_tests`, and
+`critical_context` arrays. `pcl eval retrieval` refuses these candidates with a
+typed error. A human must inspect the source receipt, fill the expected and
+critical arrays, remove or change the unlabeled marker, and manually adopt the
+fixture into `tests/fixtures/` with a normal Git move. There is no auto-labeling
+or auto-adoption path.
+
 Fixture evolution is additive in v0:
 
 - New optional fields may be added without a version bump.

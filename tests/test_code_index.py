@@ -28,6 +28,13 @@ def _json_output(capsys) -> dict:
     return json.loads(captured.out)
 
 
+def _assert_json_error(capsys, code: str) -> dict:
+    payload = _json_output(capsys)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == code
+    return payload
+
+
 def _init_code_project(root: Path, capsys) -> None:
     assert main(["init", "--target", str(root), "--json"]) == 0
     _json_output(capsys)
@@ -116,6 +123,58 @@ def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _insert_evidence_row(
+    root: Path,
+    *,
+    evidence_id: str,
+    evidence_type: str,
+    path: str,
+    created_at: str = "2026-07-06T00:00:00Z",
+) -> None:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        conn.execute(
+            """
+            INSERT INTO evidence(id, type, path, command, summary, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (evidence_id, evidence_type, path, "test setup", "Test evidence.", created_at),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _event_count(root: Path) -> int:
+    return len((root / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines())
+
+
+def _sqlite_event_count(root: Path) -> int:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        row = conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()
+        return int(row["n"])
+    finally:
+        conn.close()
+
+
+def _sqlite_events_by_type(root: Path, event_type: str) -> list[dict]:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, event_type, entity_type, entity_id, payload_json
+            FROM events
+            WHERE event_type = ?
+            ORDER BY rowid
+            """,
+            (event_type,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
 def _init_git_code_project(root: Path, capsys) -> None:
     _init_code_project(root, capsys)
     _git(root, "init")
@@ -190,6 +249,12 @@ def _synthetic_diff(root: Path) -> Path:
         encoding="utf-8",
     )
     return diff_path
+
+
+def _write_context_receipt_from_impact(root: Path, capsys) -> dict:
+    _build_index(root, capsys)
+    assert main(["--root", str(root), "impact", "--diff", str(_synthetic_diff(root)), "--json"]) == 0
+    return _json_output(capsys)["impact"]
 
 
 def _write_sensitive_fixture_files(root: Path) -> None:
@@ -1512,6 +1577,280 @@ def test_eval_retrieval_rejects_invalid_json_fixture_with_typed_error(
 
     assert payload["error"]["code"] == "invalid_input"
     assert "valid JSON" in payload["error"]["message"]
+
+
+def test_eval_fixture_propose_from_receipt_is_deterministic_and_unlabeled(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_code_project(tmp_path, capsys)
+    impact = _write_context_receipt_from_impact(tmp_path, capsys)
+    receipt = json.loads((tmp_path / impact["receipt_path"]).read_text(encoding="utf-8"))
+    before_jsonl_events = _event_count(tmp_path)
+    before_sqlite_events = _sqlite_event_count(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "eval",
+        "fixture",
+        "propose",
+        "--from-receipt",
+        impact["evidence_id"],
+        "--json",
+    ]) == 0
+    result = _json_output(capsys)["fixture"]
+    candidate_path = tmp_path / result["path"]
+    first_bytes = candidate_path.read_bytes()
+
+    assert result == {
+        "contract_version": "retrieval-fixture/v0",
+        "force": False,
+        "labels_status": "unlabeled",
+        "path": f"fixtures/proposed/{impact['evidence_id'].lower()}-retrieval.json",
+        "receipt_evidence_id": impact["evidence_id"],
+        "task_count": 1,
+    }
+    assert _event_count(tmp_path) == before_jsonl_events + 1
+    assert _sqlite_event_count(tmp_path) == before_sqlite_events + 1
+    event = json.loads(
+        (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines()[-1]
+    )
+    assert event["event_type"] == "eval_fixture_proposed"
+    assert event["payload"] == {
+        "output_path": result["path"],
+        "receipt_evidence_id": impact["evidence_id"],
+    }
+
+    candidate = json.loads(first_bytes)
+    assert candidate["contract_version"] == "retrieval-fixture/v0"
+    assert len(candidate["tasks"]) == 1
+    task = candidate["tasks"][0]
+    assert task["id"] == f"{impact['evidence_id'].lower()}-retrieval"
+    assert task["labels_status"] == "unlabeled"
+    assert task["expected_files"] == []
+    assert task["expected_tests"] == []
+    assert task["critical_context"] == []
+    assert task["diff_synthesized_from_receipt"] is True
+    assert task["diff"].count("diff --git") == len(receipt["changed_files"])
+    assert "diff --git a/src/pkg/calc.py b/src/pkg/calc.py" in task["diff"]
+    assert task["source_receipt"] == {
+        "created_at": receipt["created_at"],
+        "diff_source": receipt["diff_source"],
+        "evidence_id": impact["evidence_id"],
+        "retrieved_candidate_paths": [
+            item["path"] for item in receipt["included_candidate_context"]
+        ],
+    }
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "eval",
+        "fixture",
+        "propose",
+        "--from-receipt",
+        impact["evidence_id"],
+        "--force",
+        "--json",
+    ]) == 0
+    _json_output(capsys)
+    assert candidate_path.read_bytes() == first_bytes
+
+
+def test_eval_fixture_propose_preserves_strict_audit_log_integrity(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_code_project(tmp_path, capsys)
+    impact = _write_context_receipt_from_impact(tmp_path, capsys)
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
+    assert _json_output(capsys)["ok"] is True
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "eval",
+        "fixture",
+        "propose",
+        "--from-receipt",
+        impact["evidence_id"],
+        "--json",
+    ]) == 0
+    output_path = _json_output(capsys)["fixture"]["path"]
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
+    assert _json_output(capsys)["ok"] is True
+
+    db_events = _sqlite_events_by_type(tmp_path, "eval_fixture_proposed")
+    assert len(db_events) == 1
+    db_event = db_events[0]
+    assert db_event["entity_type"] == "retrieval_fixture"
+    assert db_event["entity_id"] == output_path
+    assert json.loads(db_event["payload_json"]) == {
+        "output_path": output_path,
+        "receipt_evidence_id": impact["evidence_id"],
+    }
+
+    jsonl_events = []
+    for line in (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines():
+        event = json.loads(line)
+        if event.get("event_type") == "eval_fixture_proposed":
+            jsonl_events.append(event)
+    assert len(jsonl_events) == 1
+    jsonl_event = jsonl_events[0]
+    assert jsonl_event["id"] == db_event["id"]
+    assert jsonl_event["entity_id"] == output_path
+    assert jsonl_event["payload"] == json.loads(db_event["payload_json"])
+
+
+def test_eval_retrieval_rejects_proposed_unlabeled_candidate_until_labeled(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_code_project(tmp_path, capsys)
+    impact = _write_context_receipt_from_impact(tmp_path, capsys)
+    assert main([
+        "--root",
+        str(tmp_path),
+        "eval",
+        "fixture",
+        "propose",
+        "--from-receipt",
+        impact["evidence_id"],
+        "--json",
+    ]) == 0
+    candidate_path = tmp_path / _json_output(capsys)["fixture"]["path"]
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "eval",
+        "retrieval",
+        "--fixture",
+        str(candidate_path),
+        "--json",
+    ]) == 2
+    error = _assert_json_error(capsys, "eval_retrieval_unlabeled_fixture")
+    assert "Label expected_files, expected_tests, and critical_context" in error["error"]["message"]
+    assert "tests/fixtures/" in error["error"]["message"]
+
+    candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+    task = candidate["tasks"][0]
+    task["labels_status"] = "labeled"
+    task["expected_files"] = ["src/pkg/calc.py"]
+    task["critical_context"] = ["src/pkg/calc.py"]
+    candidate_path.write_text(json.dumps(candidate, sort_keys=True), encoding="utf-8")
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "eval",
+        "retrieval",
+        "--fixture",
+        str(candidate_path),
+        "--json",
+    ]) == 0
+    evaluation = _json_output(capsys)["evaluation"]
+    assert evaluation["contract_version"] == "retrieval-eval/v0"
+    assert evaluation["metrics"]["recall"] == 1.0
+    assert evaluation["tasks"][0]["expected_files"] == ["src/pkg/calc.py"]
+
+
+def test_eval_fixture_propose_typed_errors_write_nothing(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path), "--json"]) == 0
+    _json_output(capsys)
+    before_events = _event_count(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "eval",
+        "fixture",
+        "propose",
+        "--from-receipt",
+        "E-9999",
+        "--json",
+    ]) == 2
+    _assert_json_error(capsys, "eval_fixture_unknown_evidence")
+    assert not (tmp_path / "fixtures" / "proposed" / "e-9999-retrieval.json").exists()
+    assert _event_count(tmp_path) == before_events
+
+    _insert_evidence_row(
+        tmp_path,
+        evidence_id="E-0001",
+        evidence_type="command_result",
+        path="inline:E-0001",
+    )
+    assert main([
+        "--root",
+        str(tmp_path),
+        "eval",
+        "fixture",
+        "propose",
+        "--from-receipt",
+        "E-0001",
+        "--json",
+    ]) == 2
+    _assert_json_error(capsys, "eval_fixture_evidence_wrong_type")
+    assert not (tmp_path / "fixtures" / "proposed" / "e-0001-retrieval.json").exists()
+    assert _event_count(tmp_path) == before_events
+
+    invalid_receipt = ".project-loop/evidence/context-receipts/e-0002-impact-v0.json"
+    receipt_path = tmp_path / invalid_receipt
+    receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    receipt_path.write_text("{not json", encoding="utf-8")
+    _insert_evidence_row(
+        tmp_path,
+        evidence_id="E-0002",
+        evidence_type="context_receipt",
+        path=invalid_receipt,
+    )
+    assert main([
+        "--root",
+        str(tmp_path),
+        "eval",
+        "fixture",
+        "propose",
+        "--from-receipt",
+        "E-0002",
+        "--json",
+    ]) == 2
+    _assert_json_error(capsys, "eval_fixture_unreadable_receipt")
+    assert not (tmp_path / "fixtures" / "proposed" / "e-0002-retrieval.json").exists()
+    assert _event_count(tmp_path) == before_events
+
+
+def test_eval_fixture_propose_existing_candidate_requires_force_and_preserves_file(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_code_project(tmp_path, capsys)
+    impact = _write_context_receipt_from_impact(tmp_path, capsys)
+    candidate_path = tmp_path / "fixtures" / "proposed" / f"{impact['evidence_id'].lower()}-retrieval.json"
+    candidate_path.parent.mkdir(parents=True)
+    candidate_path.write_text('{"labels_status":"human-edited"}\n', encoding="utf-8")
+    before_bytes = candidate_path.read_bytes()
+    before_events = _event_count(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "eval",
+        "fixture",
+        "propose",
+        "--from-receipt",
+        impact["evidence_id"],
+        "--json",
+    ]) == 2
+    _assert_json_error(capsys, "eval_fixture_candidate_exists")
+
+    assert candidate_path.read_bytes() == before_bytes
+    assert _event_count(tmp_path) == before_events
 
 
 def test_adversarial_eval_secret_like_paths_are_omitted(tmp_path: Path, capsys) -> None:
