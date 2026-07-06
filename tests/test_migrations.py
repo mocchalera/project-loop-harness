@@ -325,6 +325,26 @@ def test_old_db_without_migrations_table_can_be_upgraded(tmp_path: Path, capsys)
     assert "migration_applied" in events
 
 
+def test_migrate_stamps_current_pcl_version_in_metadata(tmp_path: Path, capsys) -> None:
+    import pcl
+
+    _create_old_v1_db(tmp_path)
+
+    assert main(["--root", str(tmp_path), "migrate", "--json"]) == 0
+    _json_output(capsys)
+
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        row = conn.execute(
+            "SELECT value FROM metadata WHERE key = 'pcl_version'"
+        ).fetchone()
+        assert row is not None
+        assert row["value"] == pcl.__version__
+        assert row["value"] != "0.1.0"
+    finally:
+        conn.close()
+
+
 def test_existing_v1_database_with_migration_metadata_upgrades_to_004(tmp_path: Path, capsys) -> None:
     _create_migrated_v1_db(tmp_path)
 

@@ -5,6 +5,7 @@ import hashlib
 import re
 from importlib import resources
 
+from . import __version__ as PCL_VERSION
 from .db import connect, get_metadata, table_exists
 from .errors import DataStoreError, ProjectNotInitializedError
 from .events import append_event
@@ -326,7 +327,7 @@ def apply_migrations(paths: ProjectPaths) -> MigrationResult:
                 )
                 conn.execute(
                     "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
-                    ("pcl_version", "0.1.0"),
+                    ("pcl_version", PCL_VERSION),
                 )
             if table_exists(conn, "events"):
                 append_event(
