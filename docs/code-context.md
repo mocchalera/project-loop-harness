@@ -154,6 +154,10 @@ entries use `ignored_reason: "sensitive:<pattern>"`. Patterns inherited from
 `permissions.agent_may_not_modify` use
 `ignored_reason: "sensitive:agent_may_not_modify"`.
 
+PLH is not a secret scanner. These omissions are conservative path-based guard
+rails for agent handoffs, not a guarantee that arbitrary secret material has
+been detected everywhere in a repository.
+
 Large, binary, excluded, and sensitive paths are omitted from
 `code_index_files`; the skip reason is preserved in the run summary and command
 output.
@@ -381,6 +385,53 @@ The receipt contract is `context-receipt/v0`. Its core fields are:
 
 Receipts are evidence artifacts. They record PLH output and reasons; they do
 not make claims about agent cognition.
+
+## Context Pack Bridge
+
+`pcl context pack --include-code-context` links the latest context receipt into
+normal task and job handoffs without inlining the receipt body.
+
+The context pack resolves the newest evidence row with type `context_receipt`,
+loads its JSON artifact, and converts it through a stable
+`code-context-summary/v0` isolation layer. The summary is embedded under
+`context_pack.code_context`; the original receipt remains referenced by
+`receipt_ref.evidence_id`, `receipt_ref.receipt_path`, and the pack's
+`source_paths`.
+
+The summary is tolerant of missing or future receipt fields. Its stable safety
+facts are:
+
+- `diff_source`
+- `receipt_ref` with `evidence_id`, `receipt_path`, and `created_at`
+- `sensitive_omitted_count`
+- `staleness_warnings`
+- `excluded_changed_file_count`
+- `untracked_omission_warning`
+
+These facts are rendered in the opt-in `Code Context Safety` section with the
+same pinned-priority budget mechanism used by `machine_context_rules`.
+
+Additional summary fields include `changed_file_count`, `included_total`,
+bounded `included_candidate_context_top` rows, `omitted_reason_counts`,
+`verification_suggestions`, and `sensitive_include_override_used`. Candidate
+wording is `included as candidate context`; PLH does not make cognition claims
+about those files. `included_candidate_context_top` contains at most the top 10
+paths by default; omitted receipt rows are aggregated by reason. The summary
+does not embed the full `included_candidate_context` or `omitted` receipt
+arrays.
+
+In context-pack markdown, `Code Context Safety` is non-droppable under the
+existing section priority mechanism. `Code Context Verification Suggestions`
+and `Code Context Detail` are ordinary budgeted sections. For verifier job
+packs, verification suggestions have higher priority than the candidate
+listing.
+
+If no receipt exists, the command still returns a valid context pack with
+`code_context.status: "missing_receipt"` and next actions:
+`pcl index build --json` followed by `pcl impact --diff --json`.
+
+The bridge does not add schema, rebuild the index, run impact automatically,
+make continuation claims, or expose a `safe_to_continue` field.
 
 `likely_impacted` is capped at the top 20 candidates by confidence and stable
 tie-breakers. Overflow candidates are recorded in `omitted` with

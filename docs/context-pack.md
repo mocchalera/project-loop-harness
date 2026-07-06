@@ -12,6 +12,7 @@ generated dashboard HTML, or reconstructing prompt/evidence paths manually.
 pcl context pack --job J-0001
 pcl context pack --job J-0001 --role verifier --max-tokens 12000 --json
 pcl context pack --task T-0001 --json
+pcl context pack --task T-0001 --include-code-context --json
 ```
 
 Exactly one of `--job` or `--task` is required.
@@ -55,6 +56,33 @@ Task packs use the same `context-pack/v1` contract with
 `"target": {"type": "task", "id": "T-0001"}`. This is an additive evolution of
 the v1 contract rather than a new contract version.
 
+`--include-code-context` is opt-in. Without the flag, context packs do not look
+for code-context receipts and keep the same v1 payload shape. With the flag,
+the pack resolves the latest `context_receipt` evidence row, loads that receipt
+artifact, and embeds only a stable `code-context-summary/v0` under
+`context_pack.code_context`. The receipt body is never inlined; it is referenced
+through `code_context.receipt_ref.evidence_id`,
+`code_context.receipt_ref.receipt_path`, and `source_paths`.
+
+The summary contains compact fields such as `diff_source`,
+`receipt_ref`, `changed_file_count`, `excluded_changed_file_count`,
+`sensitive_omitted_count`, `staleness_warnings`,
+`untracked_omission_warning`, `included_total`,
+`included_candidate_context_top`, `omitted_reason_counts`,
+`verification_suggestions`, and `sensitive_include_override_used`.
+Candidate rows use the phrase `included as candidate context`; the summary
+does not make cognition claims about those files.
+
+The summary is bounded. `included_candidate_context_top` contains at most the
+top 10 candidate paths by default plus `included_total`; omitted receipt rows
+are folded into `omitted_reason_counts`. The full
+`included_candidate_context` and `omitted` receipt arrays are not embedded in
+the context pack.
+
+When no receipt exists, `--include-code-context` still succeeds and returns a
+`code_context` summary with `status: "missing_receipt"` plus next actions:
+`pcl index build --json` and `pcl impact --diff --json`.
+
 `--max-tokens` is an approximate budget control. Section selection uses the
 deterministic, dependency-free `charclass/v1` estimator:
 
@@ -76,15 +104,18 @@ failing or slicing through a section.
 Job packs render included sections in canonical order:
 
 1. machine context rules
-2. target job
-3. workflow run
-4. goal
-5. jobs in this run
-6. verifications
-7. human queue
-8. evidence
-9. recent events
-10. agent prompt
+2. code context safety, only when `--include-code-context` is used
+3. code context verification suggestions, only when available through `--include-code-context`
+4. code context detail, only when available through `--include-code-context`
+5. target job
+6. workflow run
+7. goal
+8. jobs in this run
+9. verifications
+10. human queue
+11. evidence
+12. recent events
+13. agent prompt
 
 The target job table includes lease fields:
 `assigned_agent_id`, `attempts`, `lease_expires_at`, and
@@ -95,14 +126,17 @@ The target job table includes lease fields:
 Task packs render included sections in canonical order:
 
 1. machine context rules
-2. target task
-3. dependencies
-4. dependents
-5. goal
-6. related feature, when linked
-7. related defect, when linked
-8. sibling tasks, when a goal is linked
-9. recent events
+2. code context safety, only when `--include-code-context` is used
+3. code context verification suggestions, only when available through `--include-code-context`
+4. code context detail, only when available through `--include-code-context`
+5. target task
+6. dependencies
+7. dependents
+8. goal
+9. related feature, when linked
+10. related defect, when linked
+11. sibling tasks, when a goal is linked
+12. recent events
 
 Task dependencies include a `satisfied` column. It is `yes` when the dependency
 task status is `done`, `cancelled`, or `waived`; otherwise it is `no`.
@@ -117,6 +151,11 @@ profile priority, then rendered in canonical order.
 - `pm` prioritizes goal, human queue, workflow run, and verifications.
 - Unknown or blank job roles fall back to `implementer`.
 - Task packs currently use the `default` profile.
+- `machine_context_rules` and the opt-in `code_context_safety` section are
+  pinned at the highest section priority so safety facts are selected before
+  ordinary task or job detail under tight budgets.
+- For verifier job packs, `code_context_verification_suggestions` has higher
+  priority than `code_context_detail`.
 
 The selected profile name is returned as `role_profile`.
 
@@ -127,6 +166,9 @@ The selected profile name is returned as `role_profile`.
 - It does not execute external agents.
 - It does not add or require schema migrations.
 - It does not read or parse `.project-loop/dashboard/dashboard.html`.
+- It does not run `pcl index build` or `pcl impact`; `--include-code-context`
+  reads the latest existing receipt evidence only.
+- It does not inline the full context receipt body.
 
 Agents should use `pcl` JSON commands, reports, evidence paths, or
 `.project-loop/dashboard/dashboard-data.json` for follow-up machine context.

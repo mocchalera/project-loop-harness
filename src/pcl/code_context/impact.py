@@ -104,6 +104,7 @@ def _index_run_payload(snapshot: IndexSnapshot) -> dict[str, Any]:
         "git_head": snapshot.run.get("git_head"),
         "created_at": snapshot.run["created_at"],
         "index_version": snapshot.run["index_version"],
+        "sensitive_include_override_used": bool(snapshot.summary.get("sensitive_include_override_used")),
     }
 
 

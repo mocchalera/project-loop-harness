@@ -534,6 +534,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_MAX_TOKENS,
         help="Approximate token budget for the generated Markdown package.",
     )
+    p_context_pack.add_argument(
+        "--include-code-context",
+        action="store_true",
+        help="Include the latest code context receipt summary when available.",
+    )
 
     p_index = sub.add_parser("index", help="Build and inspect the code context index")
     index_sub = p_index.add_subparsers(dest="index_command", required=True)
@@ -1716,6 +1721,7 @@ def main(argv: list[str] | None = None) -> int:
                     job_id=args.job_id,
                     reader_role=args.role,
                     max_tokens=args.max_tokens,
+                    include_code_context=args.include_code_context,
                 )
             else:
                 pack = pack_context_for_task(
@@ -1723,6 +1729,7 @@ def main(argv: list[str] | None = None) -> int:
                     task_id=args.task_id,
                     reader_role=args.role,
                     max_tokens=args.max_tokens,
+                    include_code_context=args.include_code_context,
                 )
             if json_output:
                 _print_json({"ok": True, "context_pack": pack})
