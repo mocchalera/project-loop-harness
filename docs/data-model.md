@@ -4,7 +4,7 @@
 
 The database is created and upgraded through ordered SQL migrations in
 `src/pcl/db/migrations/`. `src/pcl/db/schema.sql` is the base v1 schema, while
-new installs currently apply migrations through schema version 4.
+new installs currently apply migrations through schema version 5.
 
 Core tables:
 
@@ -28,6 +28,7 @@ Core tables:
 - `escalations`
 - `code_index_runs`
 - `code_index_files`
+- `verification_feedback`
 
 ## Entity relationships
 
@@ -61,6 +62,9 @@ Decision / Escalation
 
 CodeIndexRun
   └─ CodeIndexFile
+
+ContextReceiptEvidence
+  └─ VerificationFeedback
 ```
 
 ## ID prefixes
@@ -166,3 +170,40 @@ Impact receipts are not a new table. `pcl impact --diff` writes a JSON artifact
 under `.project-loop/evidence/context-receipts/` and registers it through the
 existing `evidence` table with type `context_receipt`, plus an append-only
 event.
+
+## Verification Feedback
+
+Schema version 5 adds `verification_feedback`, an append-only event table for
+caller feedback about context receipt suggestions:
+
+```sql
+CREATE TABLE IF NOT EXISTS verification_feedback (
+  id TEXT PRIMARY KEY,
+  suggestion_id TEXT NOT NULL,
+  receipt_evidence_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('executed', 'skipped', 'not_applicable')),
+  result TEXT CHECK(result IN ('passed', 'failed', 'inconclusive')),
+  supporting_evidence_id TEXT,
+  note TEXT,
+  created_at TEXT NOT NULL,
+  CHECK(
+    (status = 'executed' AND result IS NOT NULL AND supporting_evidence_id IS NOT NULL)
+    OR (status != 'executed' AND result IS NULL)
+  ),
+  FOREIGN KEY(receipt_evidence_id) REFERENCES evidence(id),
+  FOREIGN KEY(supporting_evidence_id) REFERENCES evidence(id)
+);
+```
+
+There is deliberately no `UNIQUE(suggestion_id)`: multiple feedback rows for one
+suggestion are legal. Commands append a new row and a JSONL event rather than
+rewriting prior feedback.
+
+`receipt_evidence_id` points to the `context_receipt` evidence row named by the
+suggestion ID prefix, such as `E-0001` in `E-0001/VS-01`.
+`supporting_evidence_id` points to an evidence row backing the caller's claim
+when one is supplied; it is required for `executed`.
+
+Receipts and summaries do not store feedback status. Displays derive "no
+feedback recorded" at read time when a suggestion has zero feedback rows, and
+derive the latest feedback from row order when multiple rows exist.

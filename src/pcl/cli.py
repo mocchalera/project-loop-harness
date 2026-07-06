@@ -105,6 +105,7 @@ from .tasks import (
 )
 from . import update_check
 from .validators import validate_project
+from .verification_feedback import record_verification_feedback, verification_feedback_stats
 from .verifications import VERIFICATION_RESULTS, list_verifications, read_verification
 from .workflow_proposals import (
     PROPOSAL_STATUSES,
@@ -643,6 +644,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_verification_read = verification_sub.add_parser("read")
     p_verification_read.add_argument("verification_id")
+    p_verification_feedback = verification_sub.add_parser(
+        "feedback",
+        help="Record a caller claim about a receipt suggestion.",
+        epilog=(
+            "Example: pcl verification feedback --suggestion 'E-0001/VS-01' "
+            "--status executed --result passed --evidence E-0009"
+        ),
+    )
+    p_verification_feedback.add_argument(
+        "--suggestion",
+        required=True,
+        help="Quoted suggestion ID from a context receipt, for example 'E-0001/VS-01'.",
+    )
+    p_verification_feedback.add_argument(
+        "--status",
+        required=True,
+        help="Caller claim status: executed, skipped, or not_applicable.",
+    )
+    p_verification_feedback.add_argument(
+        "--result",
+        default=None,
+        help="Caller-stated result for executed feedback: passed, failed, or inconclusive.",
+    )
+    p_verification_feedback.add_argument(
+        "--evidence",
+        default=None,
+        help="Evidence ID backing the caller claim; required for executed feedback.",
+    )
+    p_verification_feedback.add_argument("--note", default=None)
+    verification_sub.add_parser("stats", help="Read feedback rates for receipt suggestions.")
 
     p_decision = sub.add_parser("decision", help="Manage human decisions")
     decision_sub = p_decision.add_subparsers(dest="decision_command", required=True)
@@ -1891,6 +1922,29 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json({"ok": True, "verification": verification})
             else:
                 print(to_pretty_json(verification))
+            return 0
+
+        if args.command == "verification" and args.verification_command == "feedback":
+            result = record_verification_feedback(
+                paths,
+                suggestion_id=args.suggestion,
+                status=args.status,
+                result=args.result,
+                supporting_evidence_id=args.evidence,
+                note=args.note,
+            )
+            if json_output:
+                _print_json(result)
+            else:
+                print(result["feedback"]["id"])
+            return 0
+
+        if args.command == "verification" and args.verification_command == "stats":
+            result = verification_feedback_stats(paths)
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result["stats"]))
             return 0
 
         if args.command == "decision" and args.decision_command == "open":

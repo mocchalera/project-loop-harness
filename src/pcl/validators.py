@@ -46,6 +46,9 @@ VERSIONED_REQUIRED_TABLES = {
         "code_index_runs",
         "code_index_files",
     ],
+    5: [
+        "verification_feedback",
+    ],
 }
 
 ACTIVE_RUN_STATUSES = ("blocked", "queued", "running")
@@ -244,6 +247,7 @@ def _validate_strict_invariants(paths: ProjectPaths, conn: sqlite3.Connection, r
     _validate_audit_log_integrity(paths, conn, result)
     _validate_workflow_proposals(paths, conn, result)
     _validate_foreign_keys(conn, result)
+    _validate_verification_feedback_references(conn, result)
     _validate_closed_goals(conn, result)
     _validate_passed_workflow_runs(conn, result)
     _validate_verified_or_closed_defects(conn, result)
@@ -566,6 +570,35 @@ def _validate_foreign_keys(conn: sqlite3.Connection, result: ValidationResult) -
             "Foreign key violation: "
             f"{data.get('table')} rowid {data.get('rowid')} references {data.get('parent')}."
         )
+
+
+def _validate_verification_feedback_references(
+    conn: sqlite3.Connection,
+    result: ValidationResult,
+) -> None:
+    if not table_exists(conn, "verification_feedback"):
+        return
+    rows = conn.execute(
+        """
+        SELECT id, receipt_evidence_id, supporting_evidence_id
+        FROM verification_feedback
+        ORDER BY created_at, id
+        """
+    ).fetchall()
+    for row in rows:
+        feedback_id = str(row["id"])
+        receipt_evidence_id = str(row["receipt_evidence_id"] or "")
+        if not receipt_evidence_id or _evidence_type(conn, receipt_evidence_id) is None:
+            result.add_error(
+                f"Verification feedback {feedback_id} references missing receipt evidence "
+                f"{receipt_evidence_id or '<empty>'}."
+            )
+        supporting_evidence_id = row["supporting_evidence_id"]
+        if supporting_evidence_id and _evidence_type(conn, str(supporting_evidence_id)) is None:
+            result.add_error(
+                f"Verification feedback {feedback_id} references missing supporting evidence "
+                f"{supporting_evidence_id}."
+            )
 
 
 def _validate_closed_goals(conn: sqlite3.Connection, result: ValidationResult) -> None:

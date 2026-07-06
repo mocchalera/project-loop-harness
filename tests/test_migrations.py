@@ -125,12 +125,14 @@ def _create_migrated_v2_db(root: Path) -> None:
     )
 
 
-def _create_migrated_v4_db_with_metadata(root: Path, schema_version: int) -> None:
+def _create_migrated_db_with_metadata(root: Path, *, schema_version: int, applied_through: int) -> None:
     loop_dir = root / ".project-loop"
     loop_dir.mkdir(parents=True)
     conn = connect(loop_dir / "project.db")
     try:
         for migration in migrations_module.discover_migrations():
+            if migration.version > applied_through:
+                continue
             conn.executescript(migration.sql)
             conn.execute(
                 """
@@ -161,6 +163,14 @@ def _create_migrated_v4_db_with_metadata(root: Path, schema_version: int) -> Non
     (root / ".agents" / "skills" / "project-control-loop" / "SKILL.md").write_text(
         "# Skill\n", encoding="utf-8"
     )
+
+
+def _create_migrated_v4_db_with_metadata(root: Path, schema_version: int = 4) -> None:
+    _create_migrated_db_with_metadata(root, schema_version=schema_version, applied_through=4)
+
+
+def _create_migrated_v5_db_with_metadata(root: Path, schema_version: int = 5) -> None:
+    _create_migrated_db_with_metadata(root, schema_version=schema_version, applied_through=5)
 
 
 def _schema_definitions(root: Path) -> list[tuple[str, str, str | None]]:
@@ -196,6 +206,7 @@ def test_discover_migrations() -> None:
         "002_tasks",
         "003_agent_registry",
         "004_code_index",
+        "005_verification_feedback",
     ]
     assert all(migration.checksum for migration in migrations)
 
@@ -213,11 +224,12 @@ def test_init_records_latest_migration(tmp_path: Path, capsys) -> None:
             {"version": 2, "name": "tasks"},
             {"version": 3, "name": "agent_registry"},
             {"version": 4, "name": "code_index"},
+            {"version": 5, "name": "verification_feedback"},
         ]
         schema_version = conn.execute(
             "SELECT value FROM metadata WHERE key = 'schema_version'"
         ).fetchone()
-        assert schema_version["value"] == "4"
+        assert schema_version["value"] == "5"
     finally:
         conn.close()
 
@@ -231,13 +243,13 @@ def test_migrate_status_reports_fresh_project_without_mutating(tmp_path: Path, c
     payload = _json_output(capsys)
 
     assert payload["ok"] is True
-    assert payload["applied_versions"] == [1, 2, 3, 4]
+    assert payload["applied_versions"] == [1, 2, 3, 4, 5]
     assert payload["pending"] == []
-    assert payload["latest_version"] == 4
-    assert payload["current_schema_version"] == 4
+    assert payload["latest_version"] == 5
+    assert payload["current_schema_version"] == 5
     assert payload["has_migrations_table"] is True
-    assert payload["metadata_schema_version"] == 4
-    assert payload["max_applied_version"] == 4
+    assert payload["metadata_schema_version"] == 5
+    assert payload["max_applied_version"] == 5
     assert payload["consistent"] is True
     assert payload["warnings"] == []
     assert (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8") == before_events
@@ -252,11 +264,11 @@ def test_migrate_status_flag_reports_without_mutating(tmp_path: Path, capsys) ->
     payload = _json_output(capsys)
 
     assert payload["ok"] is True
-    assert payload["applied_versions"] == [1, 2, 3, 4]
+    assert payload["applied_versions"] == [1, 2, 3, 4, 5]
     assert payload["pending"] == []
-    assert payload["latest_version"] == 4
-    assert payload["metadata_schema_version"] == 4
-    assert payload["max_applied_version"] == 4
+    assert payload["latest_version"] == 5
+    assert payload["metadata_schema_version"] == 5
+    assert payload["max_applied_version"] == 5
     assert payload["consistent"] is True
     assert payload["warnings"] == []
     assert (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8") == before_events
@@ -275,8 +287,9 @@ def test_migrate_status_reports_pending_old_db_without_applying(tmp_path: Path, 
         "002_tasks",
         "003_agent_registry",
         "004_code_index",
+        "005_verification_feedback",
     ]
-    assert payload["latest_version"] == 4
+    assert payload["latest_version"] == 5
     assert payload["current_schema_version"] == 1
     assert payload["has_migrations_table"] is False
     assert not (tmp_path / ".project-loop" / "events.jsonl").exists()
@@ -289,13 +302,14 @@ def test_old_db_without_migrations_table_can_be_upgraded(tmp_path: Path, capsys)
     doctor = _json_output(capsys)
     assert doctor["ok"] is True
     assert any(
-        "Pending migrations: 001_initial, 002_tasks, 003_agent_registry, 004_code_index" in warning
+        "Pending migrations: 001_initial, 002_tasks, 003_agent_registry, 004_code_index, "
+        "005_verification_feedback" in warning
         for warning in doctor["warnings"]
     )
 
     assert main(["--root", str(tmp_path), "migrate", "--json"]) == 0
     migrated = _json_output(capsys)
-    assert [migration["version"] for migration in migrated["applied"]] == [1, 2, 3, 4]
+    assert [migration["version"] for migration in migrated["applied"]] == [1, 2, 3, 4, 5]
 
     conn = connect(tmp_path / ".project-loop" / "project.db")
     try:
@@ -305,6 +319,7 @@ def test_old_db_without_migrations_table_can_be_upgraded(tmp_path: Path, capsys)
             {"version": 2, "name": "tasks"},
             {"version": 3, "name": "agent_registry"},
             {"version": 4, "name": "code_index"},
+            {"version": 5, "name": "verification_feedback"},
         ]
         task_table = conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'tasks'"
@@ -315,9 +330,13 @@ def test_old_db_without_migrations_table_can_be_upgraded(tmp_path: Path, capsys)
         index_files_table = conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'code_index_files'"
         ).fetchone()
+        feedback_table = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'verification_feedback'"
+        ).fetchone()
         assert task_table is not None
         assert index_runs_table is not None
         assert index_files_table is not None
+        assert feedback_table is not None
     finally:
         conn.close()
 
@@ -345,18 +364,18 @@ def test_migrate_stamps_current_pcl_version_in_metadata(tmp_path: Path, capsys) 
         conn.close()
 
 
-def test_existing_v1_database_with_migration_metadata_upgrades_to_004(tmp_path: Path, capsys) -> None:
+def test_existing_v1_database_with_migration_metadata_upgrades_to_005(tmp_path: Path, capsys) -> None:
     _create_migrated_v1_db(tmp_path)
 
     assert main(["--root", str(tmp_path), "migrate", "status", "--json"]) == 0
     status = _json_output(capsys)
     assert status["applied_versions"] == [1]
-    assert [migration["version"] for migration in status["pending"]] == [2, 3, 4]
+    assert [migration["version"] for migration in status["pending"]] == [2, 3, 4, 5]
     assert status["current_schema_version"] == 1
 
     assert main(["--root", str(tmp_path), "migrate", "--json"]) == 0
     migrated = _json_output(capsys)
-    assert [migration["version"] for migration in migrated["applied"]] == [2, 3, 4]
+    assert [migration["version"] for migration in migrated["applied"]] == [2, 3, 4, 5]
 
     conn = connect(tmp_path / ".project-loop" / "project.db")
     try:
@@ -366,11 +385,12 @@ def test_existing_v1_database_with_migration_metadata_upgrades_to_004(tmp_path: 
             {"version": 2, "name": "tasks"},
             {"version": 3, "name": "agent_registry"},
             {"version": 4, "name": "code_index"},
+            {"version": 5, "name": "verification_feedback"},
         ]
         schema_version = conn.execute(
             "SELECT value FROM metadata WHERE key = 'schema_version'"
         ).fetchone()
-        assert schema_version["value"] == "4"
+        assert schema_version["value"] == "5"
         task_table = conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'tasks'"
         ).fetchone()
@@ -386,34 +406,38 @@ def test_existing_v1_database_with_migration_metadata_upgrades_to_004(tmp_path: 
         index_files_table = conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'code_index_files'"
         ).fetchone()
+        feedback_table = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'verification_feedback'"
+        ).fetchone()
         assert task_table is not None
         assert dependency_table is not None
         assert agents_table is not None
         assert index_runs_table is not None
         assert index_files_table is not None
+        assert feedback_table is not None
     finally:
         conn.close()
 
 
-def test_existing_v2_database_with_migration_metadata_upgrades_to_004(tmp_path: Path, capsys) -> None:
+def test_existing_v2_database_with_migration_metadata_upgrades_to_005(tmp_path: Path, capsys) -> None:
     _create_migrated_v2_db(tmp_path)
 
     assert main(["--root", str(tmp_path), "migrate", "status", "--json"]) == 0
     status = _json_output(capsys)
     assert status["applied_versions"] == [1, 2]
-    assert [migration["version"] for migration in status["pending"]] == [3, 4]
+    assert [migration["version"] for migration in status["pending"]] == [3, 4, 5]
     assert status["current_schema_version"] == 2
 
     assert main(["--root", str(tmp_path), "migrate", "--json"]) == 0
     migrated = _json_output(capsys)
-    assert [migration["version"] for migration in migrated["applied"]] == [3, 4]
+    assert [migration["version"] for migration in migrated["applied"]] == [3, 4, 5]
 
     conn = connect(tmp_path / ".project-loop" / "project.db")
     try:
         schema_version = conn.execute(
             "SELECT value FROM metadata WHERE key = 'schema_version'"
         ).fetchone()
-        assert schema_version["value"] == "4"
+        assert schema_version["value"] == "5"
         agents_table = conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agents'"
         ).fetchone()
@@ -423,6 +447,9 @@ def test_existing_v2_database_with_migration_metadata_upgrades_to_004(tmp_path: 
         index_files_table = conn.execute(
             "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'code_index_files'"
         ).fetchone()
+        feedback_table = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'verification_feedback'"
+        ).fetchone()
         columns = {
             str(row["name"])
             for row in conn.execute("PRAGMA table_info(agent_jobs)").fetchall()
@@ -430,6 +457,7 @@ def test_existing_v2_database_with_migration_metadata_upgrades_to_004(tmp_path: 
         assert agents_table is not None
         assert index_runs_table is not None
         assert index_files_table is not None
+        assert feedback_table is not None
         assert {
             "assigned_agent_id",
             "lease_expires_at",
@@ -440,12 +468,90 @@ def test_existing_v2_database_with_migration_metadata_upgrades_to_004(tmp_path: 
         conn.close()
 
 
+def test_existing_v4_database_with_migration_metadata_upgrades_to_005(tmp_path: Path, capsys) -> None:
+    _create_migrated_v4_db_with_metadata(tmp_path)
+
+    assert main(["--root", str(tmp_path), "migrate", "status", "--json"]) == 0
+    status = _json_output(capsys)
+    assert status["applied_versions"] == [1, 2, 3, 4]
+    assert [migration["version"] for migration in status["pending"]] == [5]
+    assert status["current_schema_version"] == 4
+
+    assert main(["--root", str(tmp_path), "migrate", "--json"]) == 0
+    migrated = _json_output(capsys)
+    assert [migration["version"] for migration in migrated["applied"]] == [5]
+
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        schema_version = conn.execute(
+            "SELECT value FROM metadata WHERE key = 'schema_version'"
+        ).fetchone()
+        assert schema_version["value"] == "5"
+        table_sql = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'verification_feedback'"
+        ).fetchone()
+        assert table_sql["sql"] == """CREATE TABLE verification_feedback (
+  id TEXT PRIMARY KEY,
+  suggestion_id TEXT NOT NULL,
+  receipt_evidence_id TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('executed', 'skipped', 'not_applicable')),
+  result TEXT CHECK(result IN ('passed', 'failed', 'inconclusive')),
+  supporting_evidence_id TEXT,
+  note TEXT,
+  created_at TEXT NOT NULL,
+  CHECK(
+    (status = 'executed' AND result IS NOT NULL AND supporting_evidence_id IS NOT NULL)
+    OR (status != 'executed' AND result IS NULL)
+  ),
+  FOREIGN KEY(receipt_evidence_id) REFERENCES evidence(id),
+  FOREIGN KEY(supporting_evidence_id) REFERENCES evidence(id)
+)"""
+        rows = conn.execute("SELECT version, name FROM schema_migrations ORDER BY version").fetchall()
+        assert [dict(row) for row in rows] == [
+            {"version": 1, "name": "initial"},
+            {"version": 2, "name": "tasks"},
+            {"version": 3, "name": "agent_registry"},
+            {"version": 4, "name": "code_index"},
+            {"version": 5, "name": "verification_feedback"},
+        ]
+        columns = {
+            str(row["name"]): {
+                "type": str(row["type"]),
+                "notnull": int(row["notnull"]),
+                "pk": int(row["pk"]),
+            }
+            for row in conn.execute("PRAGMA table_info(verification_feedback)").fetchall()
+        }
+        assert columns == {
+            "id": {"type": "TEXT", "notnull": 0, "pk": 1},
+            "suggestion_id": {"type": "TEXT", "notnull": 1, "pk": 0},
+            "receipt_evidence_id": {"type": "TEXT", "notnull": 1, "pk": 0},
+            "status": {"type": "TEXT", "notnull": 1, "pk": 0},
+            "result": {"type": "TEXT", "notnull": 0, "pk": 0},
+            "supporting_evidence_id": {"type": "TEXT", "notnull": 0, "pk": 0},
+            "note": {"type": "TEXT", "notnull": 0, "pk": 0},
+            "created_at": {"type": "TEXT", "notnull": 1, "pk": 0},
+        }
+        indexes = conn.execute("PRAGMA index_list(verification_feedback)").fetchall()
+        assert [str(row["origin"]) for row in indexes] == ["pk"]
+        fks = {
+            (str(row["from"]), str(row["table"]), str(row["to"]))
+            for row in conn.execute("PRAGMA foreign_key_list(verification_feedback)").fetchall()
+        }
+        assert fks == {
+            ("receipt_evidence_id", "evidence", "id"),
+            ("supporting_evidence_id", "evidence", "id"),
+        }
+    finally:
+        conn.close()
+
+
 def test_migrate_is_idempotent(tmp_path: Path, capsys) -> None:
     _create_old_v1_db(tmp_path)
 
     assert main(["--root", str(tmp_path), "migrate", "--json"]) == 0
     first = _json_output(capsys)
-    assert len(first["applied"]) == 4
+    assert len(first["applied"]) == 5
 
     assert main(["--root", str(tmp_path), "migrate", "--json"]) == 0
     second = _json_output(capsys)
@@ -453,26 +559,26 @@ def test_migrate_is_idempotent(tmp_path: Path, capsys) -> None:
     assert second["pending_before"] == []
 
     events = (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8")
-    assert events.count("migration_applied") == 4
+    assert events.count("migration_applied") == 5
 
 
 def test_metadata_schema_version_behind_applied_is_diagnosed_and_repaired(
     tmp_path: Path,
     capsys,
 ) -> None:
-    _create_migrated_v4_db_with_metadata(tmp_path, schema_version=3)
+    _create_migrated_v5_db_with_metadata(tmp_path, schema_version=4)
     before_schema = _schema_definitions(tmp_path)
 
     assert main(["--root", str(tmp_path), "migrate", "status", "--json"]) == 0
     status = _json_output(capsys)
-    assert status["applied_versions"] == [1, 2, 3, 4]
+    assert status["applied_versions"] == [1, 2, 3, 4, 5]
     assert status["pending"] == []
-    assert status["current_schema_version"] == 3
-    assert status["metadata_schema_version"] == 3
-    assert status["max_applied_version"] == 4
+    assert status["current_schema_version"] == 4
+    assert status["metadata_schema_version"] == 4
+    assert status["max_applied_version"] == 5
     assert status["consistent"] is False
     assert any(
-        "metadata.schema_version 3 is behind applied migration 4" in warning
+        "metadata.schema_version 4 is behind applied migration 5" in warning
         and f"pcl migrate --root {tmp_path}" in warning
         for warning in status["warnings"]
     )
@@ -481,7 +587,7 @@ def test_metadata_schema_version_behind_applied_is_diagnosed_and_repaired(
     validate = _json_output(capsys)
     assert validate["ok"] is True
     assert any(
-        "metadata.schema_version 3 is behind applied migration 4" in warning
+        "metadata.schema_version 4 is behind applied migration 5" in warning
         and f"pcl migrate --root {tmp_path}" in warning
         for warning in validate["warnings"]
     )
@@ -490,7 +596,7 @@ def test_metadata_schema_version_behind_applied_is_diagnosed_and_repaired(
     strict = _json_output(capsys)
     assert strict["ok"] is False
     assert any(
-        "metadata.schema_version 3 is behind applied migration 4" in error
+        "metadata.schema_version 4 is behind applied migration 5" in error
         and f"pcl migrate --root {tmp_path}" in error
         for error in strict["errors"]
     )
@@ -501,13 +607,13 @@ def test_metadata_schema_version_behind_applied_is_diagnosed_and_repaired(
     assert migrated["pending_before"] == []
     assert migrated["metadata_repaired"] is True
     assert migrated["metadata_repair"] == {
-        "from_schema_version": 3,
-        "to_schema_version": 4,
+        "from_schema_version": 4,
+        "to_schema_version": 5,
         "reason": "metadata.schema_version was behind schema_migrations; no DDL was run",
         "schema_migration_applied": False,
     }
     assert _schema_definitions(tmp_path) == before_schema
-    assert _metadata_schema_version(tmp_path) == "4"
+    assert _metadata_schema_version(tmp_path) == "5"
 
     conn = connect(tmp_path / ".project-loop" / "project.db")
     try:
@@ -516,7 +622,7 @@ def test_metadata_schema_version_behind_applied_is_diagnosed_and_repaired(
             "SELECT event_type, payload_json FROM events WHERE event_type = ?",
             ("schema_metadata_repaired",),
         ).fetchall()
-        assert [int(row["version"]) for row in migration_rows] == [1, 2, 3, 4]
+        assert [int(row["version"]) for row in migration_rows] == [1, 2, 3, 4, 5]
         assert len(repair_events) == 1
         assert "no DDL was run" in str(repair_events[0]["payload_json"])
     finally:
@@ -526,8 +632,8 @@ def test_metadata_schema_version_behind_applied_is_diagnosed_and_repaired(
 
     assert main(["--root", str(tmp_path), "migrate", "status", "--json"]) == 0
     repaired_status = _json_output(capsys)
-    assert repaired_status["metadata_schema_version"] == 4
-    assert repaired_status["max_applied_version"] == 4
+    assert repaired_status["metadata_schema_version"] == 5
+    assert repaired_status["max_applied_version"] == 5
     assert repaired_status["consistent"] is True
     assert repaired_status["warnings"] == []
 
@@ -543,29 +649,29 @@ def test_migrate_refuses_database_ahead_of_running_binary(
     capsys,
     monkeypatch,
 ) -> None:
-    _create_migrated_v4_db_with_metadata(tmp_path, schema_version=4)
+    _create_migrated_v5_db_with_metadata(tmp_path, schema_version=5)
     actual_migrations = migrations_module.discover_migrations()
-    monkeypatch.setattr(migrations_module, "discover_migrations", lambda: actual_migrations[:3])
+    monkeypatch.setattr(migrations_module, "discover_migrations", lambda: actual_migrations[:4])
     before_events = (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8")
 
     assert main(["--root", str(tmp_path), "migrate", "status", "--json"]) == 0
     status = _json_output(capsys)
-    assert status["latest_version"] == 3
-    assert status["metadata_schema_version"] == 4
-    assert status["max_applied_version"] == 4
+    assert status["latest_version"] == 4
+    assert status["metadata_schema_version"] == 5
+    assert status["max_applied_version"] == 5
     assert status["consistent"] is False
     assert any("unknown to this pcl binary" in warning for warning in status["warnings"])
 
     assert main(["--root", str(tmp_path), "migrate", "--json"]) == 4
     payload = _json_output(capsys)
     assert payload["error"]["code"] == "schema_version_ahead"
-    assert "Database schema version 4 is ahead" in payload["error"]["message"]
-    assert "latest migration 3" in payload["error"]["message"]
-    assert payload["error"]["details"]["latest_version"] == 3
-    assert payload["error"]["details"]["metadata_schema_version"] == 4
-    assert payload["error"]["details"]["max_applied_version"] == 4
-    assert payload["error"]["details"]["unknown_applied_versions"] == [4]
-    assert _metadata_schema_version(tmp_path) == "4"
+    assert "Database schema version 5 is ahead" in payload["error"]["message"]
+    assert "latest migration 4" in payload["error"]["message"]
+    assert payload["error"]["details"]["latest_version"] == 4
+    assert payload["error"]["details"]["metadata_schema_version"] == 5
+    assert payload["error"]["details"]["max_applied_version"] == 5
+    assert payload["error"]["details"]["unknown_applied_versions"] == [5]
+    assert _metadata_schema_version(tmp_path) == "5"
     assert (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8") == before_events
 
 
