@@ -37,6 +37,15 @@ pcl impact --diff --base main --json
 git diff --no-ext-diff --no-textconv --name-status main -- | pcl impact --diff - --json
 ```
 
+Show a compact context receipt summary:
+
+```bash
+pcl receipt show E-0001
+pcl receipt show .project-loop/evidence/context-receipts/e-0001-impact-v0.json
+pcl receipt show --latest
+pcl receipt show E-0001 --json
+```
+
 Evaluate retrieval behavior against labels:
 
 ```bash
@@ -385,6 +394,57 @@ The receipt contract is `context-receipt/v0`. Its core fields are:
 
 Receipts are evidence artifacts. They record PLH output and reasons; they do
 not make claims about agent cognition.
+
+## Receipt Summary
+
+`pcl receipt show <ref>` renders a receipt through the shared
+`code-context-summary/v0` model. `<ref>` can be a `context_receipt` evidence id
+such as `E-0001`, an absolute receipt path, or a path relative to the project
+root. `pcl receipt show --latest` resolves the newest `context_receipt`
+evidence row.
+
+Default output is ordered for fast human triage:
+
+```text
+# Context Receipt Summary
+
+## Receipt
+- evidence_id: E-0001
+- receipt_path: .project-loop/evidence/context-receipts/e-0001-impact-v0.json
+- created_at: 2026-07-05T00:01:00Z
+- diff_source: worktree-vs-main
+- base_ref: main
+
+## Counts
+changed: 2; excluded changed: 1; sensitive omitted: 1
+
+## Staleness Warnings
+- Indexed file metadata changed: src/pcl/cli.py.
+
+## Untracked Omission Warning
+Untracked files are not included in this diff source; add them to Git or provide an explicit diff with `pcl impact --diff - --json`.
+
+## Included Candidate Context
+included_total: 2
+- src/pcl/cli.py: included as candidate context; role=changed_file; reason=changed file is present in the latest index; snapshot_consistency=modified_since_index
+- tests/test_cli.py: included as candidate context; role=likely_impacted; reason=test_hint:filename_match; snapshot_consistency=fresh
+
+## Omitted Reason Counts
+- lexical symbol too common: 2
+- not present in latest index: 1
+
+## Verification Suggestions
+- python3 -m pytest tests/test_cli.py
+
+## Next Recommended Command
+`pcl index build --json`, then `pcl impact --diff --json`
+```
+
+`pcl receipt show --json` prints the `code-context-summary/v0` payload itself,
+without wrapping it in a new command-specific shape. The human receipt view and
+the optional `context_pack.code_context` section both derive from the same
+summary model; neither path inlines the full receipt body or adds a
+`safe_to_continue` field.
 
 ## Context Pack Bridge
 

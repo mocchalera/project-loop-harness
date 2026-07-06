@@ -58,6 +58,98 @@ def summarize_code_context_receipt(
     return summary
 
 
+def render_receipt_summary(summary: dict[str, Any]) -> str:
+    """Render a code-context-summary/v0 payload for fast human triage."""
+    payload = summary if isinstance(summary, dict) else {}
+    receipt_ref = payload.get("receipt_ref")
+    if not isinstance(receipt_ref, dict):
+        receipt_ref = {}
+
+    lines = [
+        "# Context Receipt Summary",
+        "",
+        "## Receipt",
+        f"- evidence_id: {_display(receipt_ref.get('evidence_id'))}",
+        f"- receipt_path: {_display(receipt_ref.get('receipt_path'))}",
+        f"- created_at: {_display(receipt_ref.get('created_at'))}",
+        f"- diff_source: {_display(payload.get('diff_source'))}",
+        f"- base_ref: {_display(payload.get('base_ref'))}",
+        "",
+        "## Counts",
+        "changed: "
+        f"{_display(payload.get('changed_file_count'))}; "
+        "excluded changed: "
+        f"{_display(payload.get('excluded_changed_file_count'))}; "
+        "sensitive omitted: "
+        f"{_display(payload.get('sensitive_omitted_count'))}",
+        "",
+        "## Staleness Warnings",
+    ]
+
+    staleness_warnings = _string_list(payload.get("staleness_warnings"))
+    if staleness_warnings:
+        lines.extend(f"- {warning}" for warning in staleness_warnings)
+    else:
+        lines.append("None.")
+
+    lines.extend(["", "## Untracked Omission Warning"])
+    untracked_warning = _text(payload.get("untracked_omission_warning"))
+    lines.append(untracked_warning or "None.")
+
+    lines.extend(
+        [
+            "",
+            "## Included Candidate Context",
+            f"included_total: {_display(payload.get('included_total'))}",
+        ]
+    )
+    candidates = _dict_list(payload.get("included_candidate_context_top"))
+    if candidates:
+        for item in candidates:
+            lines.append(_candidate_line(item))
+    else:
+        lines.append("None.")
+
+    lines.extend(["", "## Omitted Reason Counts"])
+    omitted_reason_counts = payload.get("omitted_reason_counts")
+    if isinstance(omitted_reason_counts, dict) and omitted_reason_counts:
+        for reason, count in omitted_reason_counts.items():
+            lines.append(f"- {_display(reason)}: {_display(count)}")
+    else:
+        lines.append("None.")
+
+    lines.extend(["", "## Verification Suggestions"])
+    verification_suggestions = _string_list(payload.get("verification_suggestions"))
+    if verification_suggestions:
+        lines.extend(f"- {suggestion}" for suggestion in verification_suggestions)
+    else:
+        lines.append("None.")
+
+    lines.extend(["", "## Next Recommended Command", _next_recommended_command(payload)])
+    return "\n".join(lines).rstrip() + "\n"
+
+
+def _candidate_line(item: dict[str, Any]) -> str:
+    path = _display(item.get("path"))
+    role = _display(item.get("role"))
+    selection = _display(item.get("selection") or "included as candidate context")
+    reason = _display(item.get("reason"))
+    snapshot_consistency = _display(item.get("snapshot_consistency"))
+    return (
+        f"- {path}: {selection}; role={role}; reason={reason}; "
+        f"snapshot_consistency={snapshot_consistency}"
+    )
+
+
+def _next_recommended_command(summary: dict[str, Any]) -> str:
+    next_actions = _string_list(summary.get("next_actions"))
+    if next_actions:
+        return ", then ".join(f"`{action}`" for action in next_actions)
+    if _string_list(summary.get("staleness_warnings")):
+        return "`pcl index build --json`, then `pcl impact --diff --json`"
+    return "`pcl impact --diff --json`"
+
+
 def _candidate_summary(item: dict[str, Any]) -> dict[str, Any]:
     summary: dict[str, Any] = {
         "path": _text(item.get("path")),
@@ -161,6 +253,11 @@ def _number(value: Any) -> int | float | None:
         return float(str(value))
     except (TypeError, ValueError):
         return None
+
+
+def _display(value: Any) -> str:
+    text = _text(value)
+    return text if text is not None else "none"
 
 
 def _without_empty_values(payload: dict[str, Any]) -> dict[str, Any]:

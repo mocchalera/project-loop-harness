@@ -31,6 +31,7 @@ from .commands import (
     to_pretty_json,
 )
 from .context import DEFAULT_MAX_TOKENS, pack_context_for_job, pack_context_for_task
+from .code_context.summary import render_receipt_summary
 from .decisions import (
     list_decisions,
     open_decision,
@@ -69,6 +70,7 @@ from .lifecycle import (
 from .migrations import apply_migrations, migration_status
 from .paths import resolve_paths
 from .renderer import render_dashboard
+from .receipt_show import receipt_summary_for_ref
 from .registry import AGENT_STATUSES, list_agents, read_agent, register_agent, retire_agent, update_agent
 from .reports import report_defect, report_feature, report_goal, report_run, report_validation
 from .stories import (
@@ -538,6 +540,16 @@ def build_parser() -> argparse.ArgumentParser:
         "--include-code-context",
         action="store_true",
         help="Include the latest code context receipt summary when available.",
+    )
+
+    p_receipt = sub.add_parser("receipt", help="Inspect code context receipts")
+    receipt_sub = p_receipt.add_subparsers(dest="receipt_command", required=True)
+    p_receipt_show = receipt_sub.add_parser("show", help="Render a context receipt summary")
+    p_receipt_show.add_argument("ref", nargs="?", help="Context receipt evidence id or receipt path")
+    p_receipt_show.add_argument(
+        "--latest",
+        action="store_true",
+        help="Show the most recent context_receipt evidence row.",
     )
 
     p_index = sub.add_parser("index", help="Build and inspect the code context index")
@@ -1735,6 +1747,14 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json({"ok": True, "context_pack": pack})
             else:
                 print(pack["markdown"], end="")
+            return 0
+
+        if args.command == "receipt" and args.receipt_command == "show":
+            summary = receipt_summary_for_ref(paths, ref=args.ref, latest=args.latest)
+            if json_output:
+                _print_json(summary)
+            else:
+                print(render_receipt_summary(summary), end="")
             return 0
 
         if args.command == "index" and args.index_command == "build":

@@ -51,9 +51,13 @@ from .impact import (
 )
 from .receipts import (
     CONTEXT_RECEIPT_VERSION,
+    CONTEXT_RECEIPT_EVIDENCE_TYPE,
+    evidence_ref_by_id,
     _included_candidate_context,
+    latest_context_receipt_ref,
     _receipt_payload,
     _record_context_receipt,
+    resolve_context_receipt_path,
 )
 from .scan import (
     DEFAULT_CODE_INDEX_EXCLUDES,
@@ -119,6 +123,7 @@ from .store import (
 )
 from .summary import (
     CODE_CONTEXT_SUMMARY_VERSION,
+    render_receipt_summary,
     summarize_code_context_receipt,
 )
 from .symbols import (
