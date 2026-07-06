@@ -11,6 +11,7 @@ from pcl.code_context.receipts import _receipt_verification_suggestions
 from pcl.code_context.scan import LARGE_FILE_BYTES
 from pcl.code_context.summary import recommended_refresh_commands, summarize_code_context_receipt
 from pcl.code_context import store as code_context_store
+from pcl.context import estimate_token_count
 from pcl.db import connect
 
 FAKE_SECRET_TOKEN = "PCL_FAKE_TOKEN_0072_DO_NOT_LEAK"
@@ -158,6 +159,15 @@ def _sqlite_event_count(root: Path) -> int:
         conn.close()
 
 
+def _evidence_count(root: Path) -> int:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        row = conn.execute("SELECT COUNT(*) AS n FROM evidence").fetchone()
+        return int(row["n"])
+    finally:
+        conn.close()
+
+
 def _sqlite_events_by_type(root: Path, event_type: str) -> list[dict]:
     conn = connect(root / ".project-loop" / "project.db")
     try:
@@ -234,6 +244,18 @@ def _impact_equivalence_payload(root: Path, impact: dict) -> dict:
     }
 
 
+def _indexed_content_token_sum(root: Path, paths: list[str]) -> int:
+    detail = json.loads(
+        (root / ".project-loop" / "cache" / "code-index-detail.json").read_text(encoding="utf-8")
+    )
+    indexed_content_by_path = {
+        item["path"]: item["indexed_content"]
+        for item in detail["files"]
+        if "indexed_content" in item
+    }
+    return sum(estimate_token_count(indexed_content_by_path[path]) for path in paths)
+
+
 def _synthetic_diff(root: Path) -> Path:
     diff_path = root / "change.diff"
     diff_path.write_text(
@@ -249,6 +271,29 @@ def _synthetic_diff(root: Path) -> Path:
         encoding="utf-8",
     )
     return diff_path
+
+
+def _write_calc_retrieval_fixture(root: Path) -> Path:
+    fixture_path = root / "retrieval_fixture_baseline.json"
+    fixture_path.write_text(
+        json.dumps(
+            {
+                "contract_version": "retrieval-fixture/v0",
+                "tasks": [
+                    {
+                        "id": "calc-impact",
+                        "diff": _synthetic_diff(root).read_text(encoding="utf-8"),
+                        "expected_files": ["src/pkg/calc.py"],
+                        "expected_tests": ["tests/test_calc.py"],
+                        "critical_context": ["src/pkg/calc.py", "tests/test_calc.py"],
+                    }
+                ],
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    return fixture_path
 
 
 def _write_context_receipt_from_impact(root: Path, capsys) -> dict:
@@ -1510,7 +1555,76 @@ def test_eval_retrieval_reports_precision_recall_and_missing_context(
     assert evaluation["contract_version"] == "retrieval-eval/v0"
     assert evaluation["metrics"]["precision"] > 0
     assert evaluation["metrics"]["recall"] == 1.0
+    assert evaluation["metrics"]["false_positive_rate"] == round(
+        1 - evaluation["metrics"]["precision"],
+        4,
+    )
+    assert evaluation["metrics"]["token_cost_estimate"] > 0
+    assert evaluation["metrics"]["token_cost_estimator"] == "charclass/v1"
+    assert evaluation["metrics"]["token_cost_basis"] == "indexed_content"
+    assert evaluation["metrics"]["token_cost_unestimated_paths"] == []
     assert evaluation["metrics"]["missing_critical_context"] == []
+    task = evaluation["tasks"][0]
+    assert task["false_positive_rate"] == round(1 - task["precision"], 4)
+    assert task["token_cost_estimate"] == _indexed_content_token_sum(
+        tmp_path,
+        task["retrieved_paths"],
+    )
+    assert task["token_cost_unestimated_paths"] == []
+
+
+def test_eval_retrieval_reports_null_false_positive_rate_and_unestimated_paths(
+    tmp_path: Path,
+    capsys,
+    ) -> None:
+    _init_code_project(tmp_path, capsys)
+    _build_index(tmp_path, capsys)
+    detail_path = tmp_path / ".project-loop" / "cache" / "code-index-detail.json"
+    detail = json.loads(detail_path.read_text(encoding="utf-8"))
+    for item in detail["files"]:
+        if item["path"] == "src/pkg/calc.py":
+            item.pop("indexed_content")
+    detail_path.write_text(json.dumps(detail, sort_keys=True), encoding="utf-8")
+    fixture_path = tmp_path / "retrieval_fixture_token_edges.json"
+    fixture_path.write_text(
+        json.dumps(
+            {
+                "contract_version": "retrieval-fixture/v0",
+                "tasks": [
+                    {
+                        "id": "empty-retrieval",
+                        "query": "NoSuchCalculatorTerm",
+                        "expected_files": [],
+                        "expected_tests": [],
+                        "critical_context": [],
+                    },
+                    {
+                        "id": "detail-content-missing",
+                        "query": "Calculator",
+                        "expected_files": ["src/pkg/calc.py"],
+                        "expected_tests": [],
+                        "critical_context": [],
+                    },
+                ],
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["--root", str(tmp_path), "eval", "retrieval", "--fixture", str(fixture_path), "--json"]) == 0
+    evaluation = _json_output(capsys)["evaluation"]
+    empty = _eval_task(evaluation, "empty-retrieval")
+    missing_content = _eval_task(evaluation, "detail-content-missing")
+
+    assert empty["retrieved_paths"] == []
+    assert empty["false_positive_rate"] is None
+    assert empty["token_cost_estimate"] == 0
+    assert empty["token_cost_unestimated_paths"] == []
+    assert "src/pkg/calc.py" in missing_content["retrieved_paths"]
+    assert missing_content["token_cost_estimate"] > 0
+    assert missing_content["token_cost_unestimated_paths"] == ["src/pkg/calc.py"]
+    assert evaluation["metrics"]["token_cost_unestimated_paths"] == ["src/pkg/calc.py"]
 
 
 def test_eval_retrieval_ignores_unknown_fixture_fields(tmp_path: Path, capsys) -> None:
@@ -1924,6 +2038,232 @@ def test_real_history_retrieval_fixture_beats_recorded_baseline(tmp_path: Path, 
     assert evaluation["metrics"]["precision"] > 0.1429
     assert evaluation["metrics"]["recall"] > 0.6667
     assert evaluation["metrics"]["missing_critical_context"] == []
+
+
+def test_synthetic_retrieval_fixture_covers_code_docs_and_config_kinds(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _copy_repo_subset_for_retrieval_eval(tmp_path)
+
+    assert main(["init", "--target", str(tmp_path), "--json"]) == 0
+    _json_output(capsys)
+    _build_index(tmp_path, capsys)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "eval",
+        "retrieval",
+        "--fixture",
+        "tests/fixtures/retrieval_v0.json",
+        "--json",
+    ]) == 0
+    evaluation = _json_output(capsys)["evaluation"]
+
+    floors = {
+        "code-index-impact-service": {"precision": 0.5, "recall": 1.0},
+        "docs-only-code-context-contract": {"precision": 0.04, "recall": 1.0},
+        "config-only-code-index-settings": {"precision": 0.04, "recall": 1.0},
+    }
+    assert {task["id"] for task in evaluation["tasks"]} == set(floors)
+    for task_id, floor in floors.items():
+        task = _eval_task(evaluation, task_id)
+        assert task["precision"] >= floor["precision"]
+        assert task["recall"] >= floor["recall"]
+        assert task["missing_critical_context"] == []
+        assert task["token_cost_estimate"] > 0
+        assert task["token_cost_unestimated_paths"] == []
+
+
+def test_eval_retrieval_record_baseline_is_durable_and_deterministic(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_git_code_project(tmp_path, capsys)
+    fixture_path = _write_calc_retrieval_fixture(tmp_path)
+    before_jsonl_events = _event_count(tmp_path)
+    before_sqlite_events = _sqlite_event_count(tmp_path)
+    before_evidence = _evidence_count(tmp_path)
+
+    args = [
+        "--root",
+        str(tmp_path),
+        "eval",
+        "retrieval",
+        "--fixture",
+        str(fixture_path),
+        "--record-baseline",
+        "--json",
+    ]
+    assert main(args) == 0
+    first = _json_output(capsys)
+    assert main(args) == 0
+    second = _json_output(capsys)
+
+    first_artifact = json.loads((tmp_path / first["baseline"]["evidence_path"]).read_text(encoding="utf-8"))
+    assert first_artifact == first
+    assert first["evaluation"]["metrics"] == second["evaluation"]["metrics"]
+    assert first["evaluation"]["tasks"] == second["evaluation"]["tasks"]
+    assert first["baseline"]["baseline_provenance"] == second["baseline"]["baseline_provenance"]
+    assert first["baseline"]["evidence_id"] != second["baseline"]["evidence_id"]
+    provenance = first["baseline"]["baseline_provenance"]
+    assert set(provenance) == {
+        "fixture_path",
+        "fixture_content_hash",
+        "git_head",
+        "index_run_id",
+        "index_detail_hash",
+        "code_context_config_hash",
+        "pcl_version",
+        "eval_contract_version",
+    }
+    assert provenance["fixture_path"] == "retrieval_fixture_baseline.json"
+    assert provenance["eval_contract_version"] == "retrieval-eval/v0"
+    assert len(provenance["fixture_content_hash"]) == 64
+    assert len(provenance["index_detail_hash"]) == 64
+
+    assert _event_count(tmp_path) == before_jsonl_events + 2
+    assert _sqlite_event_count(tmp_path) == before_sqlite_events + 2
+    assert _evidence_count(tmp_path) == before_evidence + 2
+    db_events = _sqlite_events_by_type(tmp_path, "retrieval_eval_baseline_recorded")
+    assert len(db_events) == 2
+    assert db_events[-1]["entity_type"] == "evidence"
+    assert db_events[-1]["entity_id"] == second["baseline"]["evidence_id"]
+    assert json.loads(db_events[-1]["payload_json"]) == {
+        "contract_version": "retrieval-eval/v0",
+        "evidence_path": second["baseline"]["evidence_path"],
+        "fixture_path": "retrieval_fixture_baseline.json",
+        "fixture_content_hash": provenance["fixture_content_hash"],
+        "index_run_id": provenance["index_run_id"],
+        "index_detail_hash": provenance["index_detail_hash"],
+        "task_count": 1,
+    }
+    jsonl_events = [
+        json.loads(line)
+        for line in (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        if json.loads(line).get("event_type") == "retrieval_eval_baseline_recorded"
+    ]
+    assert len(jsonl_events) == 2
+    assert jsonl_events[-1]["id"] == db_events[-1]["id"]
+    assert jsonl_events[-1]["payload"] == json.loads(db_events[-1]["payload_json"])
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
+    assert _json_output(capsys)["ok"] is True
+
+
+def test_eval_retrieval_compare_baseline_reports_deltas_and_rejects_hash_mismatch(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_git_code_project(tmp_path, capsys)
+    fixture_path = _write_calc_retrieval_fixture(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "eval",
+        "retrieval",
+        "--fixture",
+        str(fixture_path),
+        "--record-baseline",
+        "--json",
+    ]) == 0
+    baseline = _json_output(capsys)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "eval",
+        "retrieval",
+        "--fixture",
+        str(fixture_path),
+        "--compare-baseline",
+        "--json",
+    ]) == 0
+    comparison = _json_output(capsys)["comparison"]
+    assert comparison["baseline_provenance"] == baseline["baseline"]["baseline_provenance"]
+    assert comparison["current_provenance"]["fixture_content_hash"] == comparison["fixture_content_hash"]
+    assert comparison["metrics"]["delta"] == {
+        "precision": 0.0,
+        "recall": 0.0,
+        "missing_critical_context_count": 0,
+        "false_positive_rate": 0.0,
+        "token_cost_estimate": 0,
+    }
+    assert "pass" not in json.dumps(comparison).lower()
+    assert "verdict" not in json.dumps(comparison).lower()
+
+    edited_fixture = json.loads(fixture_path.read_text(encoding="utf-8"))
+    edited_fixture["metadata"] = {"changed": True}
+    fixture_path.write_text(json.dumps(edited_fixture, sort_keys=True), encoding="utf-8")
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "eval",
+        "retrieval",
+        "--fixture",
+        str(fixture_path),
+        "--compare-baseline",
+        "--json",
+    ]) == 2
+    error = _assert_json_error(capsys, "eval_baseline_not_comparable")["error"]
+    assert "fixture_content_hash mismatch" in error["message"]
+    assert error["details"]["reason"] == "fixture_content_hash_mismatch"
+    assert error["details"]["nearest_baseline"]["evidence_id"] == baseline["baseline"]["evidence_id"]
+
+
+def test_eval_retrieval_record_baseline_missing_provenance_writes_nothing(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_code_project(tmp_path, capsys)
+    _git(tmp_path, "init")
+    _git(tmp_path, "add", ".")
+    _git(tmp_path, "commit", "-m", "initial")
+    fixture_path = _write_calc_retrieval_fixture(tmp_path)
+    before_jsonl_events = _event_count(tmp_path)
+    before_sqlite_events = _sqlite_event_count(tmp_path)
+    before_evidence = _evidence_count(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "eval",
+        "retrieval",
+        "--fixture",
+        str(fixture_path),
+        "--record-baseline",
+        "--json",
+    ]) == 2
+    _assert_json_error(capsys, "eval_baseline_missing_index_run")
+    assert _event_count(tmp_path) == before_jsonl_events
+    assert _sqlite_event_count(tmp_path) == before_sqlite_events
+    assert _evidence_count(tmp_path) == before_evidence
+    assert not (tmp_path / ".project-loop" / "evidence" / "retrieval-eval").exists()
+
+    _build_index(tmp_path, capsys)
+    _git(tmp_path, "rev-parse", "--git-dir")
+    shutil.rmtree(tmp_path / ".git")
+    before_jsonl_events = _event_count(tmp_path)
+    before_sqlite_events = _sqlite_event_count(tmp_path)
+    before_evidence = _evidence_count(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "eval",
+        "retrieval",
+        "--fixture",
+        str(fixture_path),
+        "--record-baseline",
+        "--json",
+    ]) == 2
+    _assert_json_error(capsys, "eval_baseline_missing_git_head")
+    assert _event_count(tmp_path) == before_jsonl_events
+    assert _sqlite_event_count(tmp_path) == before_sqlite_events
+    assert _evidence_count(tmp_path) == before_evidence
 
 
 def test_code_search_requires_existing_index(tmp_path: Path, capsys) -> None:

@@ -30,8 +30,10 @@ from .eval import (
     _resolve_fixture_path,
     _retrieved_paths_for_fixture_task,
     _string_set,
+    compare_retrieval_baseline,
     evaluate_retrieval,
     propose_retrieval_fixture,
+    record_retrieval_baseline,
 )
 from .impact import (
     IMPACT_CONTRACT_VERSION,

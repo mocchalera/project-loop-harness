@@ -127,6 +127,7 @@ class IndexedFile:
             "mtime": self.mtime,
             "sha256": self.sha256,
             "line_count": self.line_count,
+            "indexed_content": self.text,
             "symbol_summary": self.symbol_summary,
             "test_hint": self.test_hint,
         }

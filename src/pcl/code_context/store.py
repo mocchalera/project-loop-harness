@@ -256,6 +256,10 @@ def _status_index_payload(
     language_counts = snapshot.summary.get("language_counts", {})
     if not isinstance(language_counts, dict):
         language_counts = {}
+    indexed_content_by_path = _indexed_content_by_path_from_existing_detail(
+        paths=paths,
+        snapshot=snapshot,
+    )
     return {
         "contract_version": INDEX_VERSION,
         "stale": bool(staleness_warnings),
@@ -269,7 +273,10 @@ def _status_index_payload(
         "current_git_head": _git_head(paths.root),
         "staleness_warnings": staleness_warnings,
         "detail_path": INDEX_DETAIL_RELATIVE_PATH,
-        "files": [_snapshot_file_public_payload(item) for item in snapshot.files],
+        "files": [
+            _snapshot_file_public_payload(item, indexed_content_by_path=indexed_content_by_path)
+            for item in snapshot.files
+        ],
         "ignored": ignored,
         "hash_skipped": hash_skipped,
     }
@@ -312,8 +319,12 @@ def _write_index_detail(paths: ProjectPaths, detail: dict[str, Any]) -> str:
     return _relative_path(paths.root, detail_path)
 
 
-def _snapshot_file_public_payload(item: dict[str, Any]) -> dict[str, Any]:
-    return {
+def _snapshot_file_public_payload(
+    item: dict[str, Any],
+    *,
+    indexed_content_by_path: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    payload = {
         "path": item["path"],
         "language": item["language"],
         "size_bytes": item["size_bytes"],
@@ -323,6 +334,46 @@ def _snapshot_file_public_payload(item: dict[str, Any]) -> dict[str, Any]:
         "symbol_summary": item["symbol_summary"],
         "test_hint": item["test_hint"],
     }
+    if indexed_content_by_path is not None:
+        indexed_content = indexed_content_by_path.get(str(item["path"]))
+        if indexed_content is not None:
+            payload["indexed_content"] = indexed_content
+    return payload
+
+
+def _indexed_content_by_path_from_existing_detail(
+    *,
+    paths: ProjectPaths,
+    snapshot: IndexSnapshot,
+) -> dict[str, str]:
+    detail_path = paths.root / INDEX_DETAIL_RELATIVE_PATH
+    try:
+        detail = json.loads(detail_path.read_text(encoding="utf-8"))
+    except (OSError, JSONDecodeError):
+        return {}
+    if not isinstance(detail, dict):
+        return {}
+    files = detail.get("files")
+    if not isinstance(files, list):
+        return {}
+    snapshot_files = snapshot.files_by_path
+    indexed_content_by_path: dict[str, str] = {}
+    for item in files:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "")
+        indexed_content = item.get("indexed_content")
+        if not path or not isinstance(indexed_content, str):
+            continue
+        snapshot_item = snapshot_files.get(path)
+        if snapshot_item is None:
+            continue
+        detail_sha = item.get("sha256")
+        snapshot_sha = snapshot_item.get("sha256")
+        if detail_sha and snapshot_sha and detail_sha != snapshot_sha:
+            continue
+        indexed_content_by_path[path] = indexed_content
+    return indexed_content_by_path
 
 
 def _ensure_index_schema(conn: sqlite3.Connection) -> None:

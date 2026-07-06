@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import json
 from pathlib import Path
 import subprocess
@@ -23,22 +24,29 @@ ADVERSARIAL_SENSITIVE_FILES = {
 }
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    args = _parse_args(argv)
+    root = Path(args.root).resolve()
+    fixtures = args.fixtures or [
+        str(root / "tests/fixtures/retrieval_v0.json"),
+        str(root / "tests/fixtures/retrieval_real_history_v0.json"),
+    ]
     fixture_summaries: list[dict[str, Any]] = []
-    _init_project(REPO_ROOT)
-    _build_index(REPO_ROOT)
-    for fixture in [
-        "tests/fixtures/retrieval_v0.json",
-        "tests/fixtures/retrieval_real_history_v0.json",
-    ]:
-        fixture_summaries.append(_evaluate_fixture(REPO_ROOT, fixture))
+    _init_project(root)
+    _build_index(root)
+    for fixture in fixtures:
+        fixture_summaries.append(_evaluate_fixture(root, fixture))
 
-    with tempfile.TemporaryDirectory(prefix="pcl-retrieval-adversarial-") as temp_dir:
-        adversarial_root = Path(temp_dir)
-        _prepare_adversarial_project(adversarial_root)
-        fixture_summaries.append(
-            _evaluate_fixture(adversarial_root, str(REPO_ROOT / "tests/fixtures/retrieval_adversarial_v0.json"))
-        )
+    if not args.skip_adversarial:
+        with tempfile.TemporaryDirectory(prefix="pcl-retrieval-adversarial-") as temp_dir:
+            adversarial_root = Path(temp_dir)
+            _prepare_adversarial_project(adversarial_root)
+            fixture_summaries.append(
+                _evaluate_fixture(
+                    adversarial_root,
+                    str(REPO_ROOT / "tests/fixtures/retrieval_adversarial_v0.json"),
+                )
+            )
 
     print(
         json.dumps(
@@ -46,6 +54,9 @@ def main() -> int:
                 "ok": True,
                 "mode": "advisory",
                 "note": "Metric values are reported for trend review; fixture or eval crashes fail this command.",
+                "baseline_note": (
+                    "Baseline comparisons are advisory when present; metric deltas do not fail this command."
+                ),
                 "fixtures": fixture_summaries,
             },
             indent=2,
@@ -53,6 +64,14 @@ def main() -> int:
         )
     )
     return 0
+
+
+def _parse_args(argv: list[str] | None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--root", default=str(REPO_ROOT))
+    parser.add_argument("--fixture", action="append", dest="fixtures", default=None)
+    parser.add_argument("--skip-adversarial", action="store_true")
+    return parser.parse_args(argv)
 
 
 def _prepare_adversarial_project(root: Path) -> None:
@@ -113,6 +132,9 @@ def _evaluate_fixture(root: Path, fixture: str) -> dict[str, Any]:
     adversarial = _adversarial_summary(evaluation["tasks"])
     if adversarial:
         summary["adversarial"] = adversarial
+    comparison = _compare_fixture_if_baseline_exists(root, fixture)
+    if comparison:
+        summary["baseline_comparison"] = comparison
     return summary
 
 
@@ -132,20 +154,49 @@ def _adversarial_summary(tasks: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def _run_pcl(args: list[str]) -> dict[str, Any]:
-    completed = subprocess.run(
+    completed = _run_pcl_completed(args)
+    if completed.returncode != 0:
+        _print_completed_output(completed)
+        raise SystemExit(completed.returncode)
+    return json.loads(completed.stdout)
+
+
+def _run_pcl_completed(args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
         [PYTHON, "-m", "pcl", *args],
         cwd=REPO_ROOT,
         capture_output=True,
         check=False,
         text=True,
     )
-    if completed.returncode != 0:
-        if completed.stdout:
-            print(completed.stdout, file=sys.stderr, end="")
-        if completed.stderr:
-            print(completed.stderr, file=sys.stderr, end="")
-        raise SystemExit(completed.returncode)
-    return json.loads(completed.stdout)
+
+
+def _compare_fixture_if_baseline_exists(root: Path, fixture: str) -> dict[str, Any] | None:
+    if not any((root / ".project-loop" / "evidence" / "retrieval-eval").glob("*.json")):
+        return None
+    completed = _run_pcl_completed(
+        [
+            "--root",
+            str(root),
+            "eval",
+            "retrieval",
+            "--fixture",
+            fixture,
+            "--compare-baseline",
+            "--json",
+        ]
+    )
+    if completed.returncode == 0:
+        return json.loads(completed.stdout)["comparison"]
+    _print_completed_output(completed)
+    raise SystemExit(completed.returncode)
+
+
+def _print_completed_output(completed: subprocess.CompletedProcess[str]) -> None:
+    if completed.stdout:
+        print(completed.stdout, file=sys.stderr, end="")
+    if completed.stderr:
+        print(completed.stderr, file=sys.stderr, end="")
 
 
 def _append_text(path: Path, text: str) -> None:
