@@ -188,7 +188,6 @@ def set_task_status(paths: ProjectPaths, task_id: str, *, status: str, reason: s
     require_initialized(paths)
     _validate_identifier(task_id, "task_id")
     _require_task_status(status)
-    _require_text(reason, "--reason is required to update task status.")
     now = utc_now_iso()
 
     conn = connect(paths.db_path)
@@ -196,10 +195,16 @@ def set_task_status(paths: ProjectPaths, task_id: str, *, status: str, reason: s
         task = _get_task(conn, task_id)
         previous_status = str(task["status"])
         if previous_status == status:
-            raise InvalidInputError(
-                f"Task {task_id} is already {status}.",
-                details={"task_id": task_id, "status": status},
-            )
+            return {
+                "ok": True,
+                "id": task_id,
+                "from_status": previous_status,
+                "to_status": status,
+                "status": status,
+                "changed": False,
+                "evidence_recorded": False,
+            }
+        _require_text(reason, "--reason is required to update task status.")
         conn.execute("UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?", (status, now, task_id))
         cleaned_reason = reason.strip()
         append_event(
@@ -221,6 +226,7 @@ def set_task_status(paths: ProjectPaths, task_id: str, *, status: str, reason: s
             "from_status": previous_status,
             "to_status": status,
             "reason": cleaned_reason,
+            "changed": True,
         }
     finally:
         conn.close()

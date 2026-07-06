@@ -1073,6 +1073,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             if json_output:
                 _print_json(result)
+            elif result.get("changed") is False:
+                print(f"Goal {result['goal_id']} already {result['status']}; no change recorded.")
             else:
                 print(f"Closed goal {result['goal_id']}")
             return 0
@@ -1081,6 +1083,8 @@ def main(argv: list[str] | None = None) -> int:
             result = cancel_goal(paths, goal_id=args.goal_id, summary=args.summary)
             if json_output:
                 _print_json(result)
+            elif result.get("changed") is False:
+                print(f"Goal {result['goal_id']} already {result['status']}; no change recorded.")
             else:
                 print(f"Cancelled goal {result['goal_id']}")
             return 0
@@ -1128,6 +1132,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             if json_output:
                 _print_json(result)
+            elif result.get("changed") is False:
+                print(f"Feature {result['feature_id']} already {result['status']}; no change recorded.")
             else:
                 print(f"Updated feature {result['feature_id']} to {result['status']}")
             return 0
@@ -1215,6 +1221,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             if json_output:
                 _print_json(result)
+            elif result.get("changed") is False:
+                print(f"Test case {result['id']} already {result['status']}; no change recorded.")
             else:
                 print(f"Passed test case {result['id']}")
             return 0
@@ -1229,6 +1237,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             if json_output:
                 _print_json(result)
+            elif result.get("changed") is False:
+                print(f"Test case {result['id']} already {result['status']}; no change recorded.")
             else:
                 print(f"Failed test case {result['id']}")
             return 0
@@ -1242,6 +1252,8 @@ def main(argv: list[str] | None = None) -> int:
             )
             if json_output:
                 _print_json(result)
+            elif result.get("changed") is False:
+                print(f"Test case {result['id']} already {result['status']}; no change recorded.")
             else:
                 print(f"Blocked test case {result['id']}")
             return 0
@@ -1250,6 +1262,8 @@ def main(argv: list[str] | None = None) -> int:
             result = missing_test_case(paths, test_case_id=args.test_case_id, summary=args.summary)
             if json_output:
                 _print_json(result)
+            elif result.get("changed") is False:
+                print(f"Test case {result['id']} already {result['status']}; no change recorded.")
             else:
                 print(f"Marked test case {result['id']} missing")
             return 0
@@ -1258,6 +1272,8 @@ def main(argv: list[str] | None = None) -> int:
             result = waive_test_case(paths, test_case_id=args.test_case_id, reason=args.reason)
             if json_output:
                 _print_json(result)
+            elif result.get("changed") is False:
+                print(f"Test case {result['id']} already {result['status']}; no change recorded.")
             else:
                 print(f"Waived test case {result['id']}")
             return 0
@@ -1334,6 +1350,8 @@ def main(argv: list[str] | None = None) -> int:
             result = set_task_status(paths, args.task_id, status=args.new_status, reason=args.reason)
             if json_output:
                 _print_json(result)
+            elif result.get("changed") is False:
+                print(f"Task {result['id']} already {result['status']}; no change recorded.")
             else:
                 print(f"Updated task {result['id']} from {result['from_status']} to {result['to_status']}")
             return 0

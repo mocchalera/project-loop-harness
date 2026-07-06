@@ -161,12 +161,6 @@ def set_feature_status(
     require_initialized(paths)
     _validate_identifier(feature_id, "feature_id")
     _require_feature_status(status)
-    _require_text(summary, "--summary is required to update feature status.")
-    _require_text(
-        evidence,
-        "--evidence is required to update feature status. Use command output, artifact path, "
-        "screenshot path, commit, or report path.",
-    )
 
     conn = connect(paths.db_path)
     try:
@@ -181,10 +175,21 @@ def set_feature_status(
             )
         previous_status = str(feature["status"])
         if previous_status == status:
-            raise InvalidInputError(
-                f"Feature {feature_id} is already {status}.",
-                details={"feature_id": feature_id, "status": status},
-            )
+            return {
+                "ok": True,
+                "feature_id": feature_id,
+                "previous_status": previous_status,
+                "status": status,
+                "changed": False,
+                "evidence_recorded": False,
+            }
+
+        _require_text(summary, "--summary is required to update feature status.")
+        _require_text(
+            evidence,
+            "--evidence is required to update feature status. Use command output, artifact path, "
+            "screenshot path, commit, or report path.",
+        )
 
         now = utc_now_iso()
         evidence_id = record_inline_evidence(
@@ -221,6 +226,7 @@ def set_feature_status(
             "status": status,
             "summary": summary.strip(),
             "evidence_id": evidence_id,
+            "changed": True,
         }
     finally:
         conn.close()

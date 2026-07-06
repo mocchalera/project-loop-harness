@@ -502,17 +502,23 @@ def _transition_test_case(
     if workflow_run_id:
         _validate_identifier(workflow_run_id, "workflow_run_id")
     _require_text(summary, f"--{text_field.replace('_', '-')} is required.")
-    if require_evidence:
-        _require_text(
-            evidence,
-            "--evidence is required for this test case transition. Use command output, "
-            "artifact path, screenshot path, commit, or report path.",
-        )
     now = utc_now_iso()
 
     conn = connect(paths.db_path)
     try:
         test_case = _get_test_case(conn, test_case_id)
+        if test_case["status"] == status:
+            return {
+                "ok": True,
+                "id": test_case_id,
+                "feature_id": test_case["feature_id"],
+                "story_id": test_case["story_id"],
+                "status": status,
+                "workflow_run_id": test_case["last_run_id"],
+                "evidence_id": test_case["evidence_id"],
+                "changed": False,
+                "evidence_recorded": False,
+            }
         if test_case["status"] not in NON_TERMINAL_TEST_CASE_STATUSES:
             raise InvalidInputError(
                 f"Test case {test_case_id} is {test_case['status']} and cannot transition to {status}.",
@@ -522,10 +528,11 @@ def _transition_test_case(
                     "requested_status": status,
                 },
             )
-        if test_case["status"] == status:
-            raise InvalidInputError(
-                f"Test case {test_case_id} is already {status}.",
-                details={"test_case_id": test_case_id, "status": status},
+        if require_evidence:
+            _require_text(
+                evidence,
+                "--evidence is required for this test case transition. Use command output, "
+                "artifact path, screenshot path, commit, or report path.",
             )
         if workflow_run_id:
             _get_workflow_run(conn, workflow_run_id)
@@ -576,6 +583,7 @@ def _transition_test_case(
             "evidence_id": evidence_id,
             text_field: cleaned_summary,
             "feature_status": feature_status,
+            "changed": True,
         }
     finally:
         conn.close()
