@@ -11,7 +11,7 @@ from .code_context.summary import (
 )
 from .code_context.receipts import latest_context_receipt_ref, resolve_context_receipt_path
 from .db import connect
-from .errors import InvalidInputError
+from .errors import ContextPackBudgetError, InvalidInputError
 from .guards import require_initialized
 from .links import enrich_decisions_with_links, enrich_escalations_with_links
 from .paths import ProjectPaths
@@ -28,6 +28,7 @@ MACHINE_CONTEXT_RULES_SECTION_ID = "machine_context_rules"
 CODE_CONTEXT_SAFETY_SECTION_ID = "code_context_safety"
 CODE_CONTEXT_DETAIL_SECTION_ID = "code_context_detail"
 CODE_CONTEXT_VERIFICATION_SECTION_ID = "code_context_verification_suggestions"
+TRUNCATION_NOTE = "_Context truncated. Increase `--max-tokens` to include omitted sections._\n"
 
 JOB_SECTION_ORDER = [
     "machine_context_rules",
@@ -231,7 +232,7 @@ def pack_context_for_job(
         events=events,
         code_context=code_context,
     )
-    markdown, included_sections, omitted_sections = _render_with_budget(
+    markdown, included_sections, omitted_sections, required_sections = _render_with_budget(
         title=f"# Context Pack: {job_id}",
         sections=sections,
         max_tokens=max_tokens,
@@ -256,6 +257,8 @@ def pack_context_for_job(
         "truncated": bool(omitted_sections),
         "included_sections": included_sections,
         "omitted_sections": omitted_sections,
+        "required_sections": required_sections,
+        "required_sections_omitted": [],
         "source_commands": source_commands,
         "source_paths": source_paths,
         "markdown": markdown,
@@ -310,7 +313,7 @@ def pack_context_for_task(
         events=events,
         code_context=code_context,
     )
-    markdown, included_sections, omitted_sections = _render_with_budget(
+    markdown, included_sections, omitted_sections, required_sections = _render_with_budget(
         title=f"# Context Pack: {task_id}",
         sections=sections,
         max_tokens=max_tokens,
@@ -341,6 +344,8 @@ def pack_context_for_task(
         "truncated": bool(omitted_sections),
         "included_sections": included_sections,
         "omitted_sections": omitted_sections,
+        "required_sections": required_sections,
+        "required_sections_omitted": [],
         "source_commands": [
             f"pcl task read {task_id} --json",
             "pcl task list --json",
@@ -809,22 +814,67 @@ def _render_with_budget(
     sections: list[tuple[str, str]],
     max_tokens: int,
     section_priorities: dict[str, int],
-) -> tuple[str, list[str], list[str]]:
+) -> tuple[str, list[str], list[str], list[str]]:
     base = f"{title}\n\n"
     canonical_ids = [section_id for section_id, _ in sections]
     section_by_id = {section_id: section for section_id, section in sections}
     canonical_index = {section_id: index for index, section_id in enumerate(canonical_ids)}
-    selected: set[str] = set()
-    selected_token_count = estimate_token_count(base)
-    for section_id in sorted(
-        canonical_ids,
-        key=lambda value: (-section_priorities.get(value, 0), canonical_index[value]),
-    ):
-        section_text = section_by_id[section_id].rstrip() + "\n\n"
-        section_token_count = estimate_token_count(section_text)
-        if selected_token_count + section_token_count <= max_tokens:
-            selected.add(section_id)
-            selected_token_count += section_token_count
+    required_sections = _required_section_ids(canonical_ids)
+    section_token_counts = {
+        section_id: estimate_token_count(section_by_id[section_id].rstrip() + "\n\n")
+        for section_id in canonical_ids
+    }
+    base_token_count = estimate_token_count(base)
+    note_token_count = estimate_token_count(TRUNCATION_NOTE)
+    required_token_count = base_token_count + sum(
+        section_token_counts[section_id] for section_id in required_sections
+    )
+
+    if required_token_count > max_tokens:
+        raise ContextPackBudgetError(
+            details=_context_pack_budget_error_details(
+                required_sections=required_sections,
+                section_token_counts=section_token_counts,
+                base_token_count=base_token_count,
+                note_token_count=note_token_count,
+                max_tokens=max_tokens,
+            )
+        )
+
+    all_section_token_count = base_token_count + sum(section_token_counts.values())
+    if all_section_token_count <= max_tokens:
+        selected = set(canonical_ids)
+        omitted: list[str] = []
+        include_note = False
+    else:
+        if required_token_count + note_token_count > max_tokens:
+            raise ContextPackBudgetError(
+                details=_context_pack_budget_error_details(
+                    required_sections=required_sections,
+                    section_token_counts=section_token_counts,
+                    base_token_count=base_token_count,
+                    note_token_count=note_token_count,
+                    max_tokens=max_tokens,
+                )
+            )
+
+        selected = set(required_sections)
+        selected_token_count = required_token_count + note_token_count
+        optional_sections = [
+            section_id
+            for section_id in canonical_ids
+            if section_id not in selected
+        ]
+        for section_id in sorted(
+            optional_sections,
+            key=lambda value: (-section_priorities.get(value, 0), canonical_index[value]),
+        ):
+            section_token_count = section_token_counts[section_id]
+            if selected_token_count + section_token_count <= max_tokens:
+                selected.add(section_id)
+                selected_token_count += section_token_count
+        omitted = [section_id for section_id in canonical_ids if section_id not in selected]
+        include_note = bool(omitted)
 
     markdown = base
     included: list[str] = []
@@ -834,14 +884,45 @@ def _render_with_budget(
         section_text = section.rstrip() + "\n\n"
         markdown += section_text
         included.append(section_id)
-    omitted = [section_id for section_id in canonical_ids if section_id not in selected]
+    if include_note:
+        markdown += TRUNCATION_NOTE
 
-    if omitted:
-        note = "_Context truncated. Increase `--max-tokens` to include omitted sections._\n"
-        if estimate_token_count(markdown + note) <= max_tokens:
-            markdown += note
+    return markdown.rstrip() + "\n", included, omitted, required_sections
 
-    return markdown.rstrip() + "\n", included, omitted
+
+def _required_section_ids(canonical_ids: list[str]) -> list[str]:
+    required = []
+    if MACHINE_CONTEXT_RULES_SECTION_ID in canonical_ids:
+        required.append(MACHINE_CONTEXT_RULES_SECTION_ID)
+    if CODE_CONTEXT_SAFETY_SECTION_ID in canonical_ids:
+        required.append(CODE_CONTEXT_SAFETY_SECTION_ID)
+    return required
+
+
+def _context_pack_budget_error_details(
+    *,
+    required_sections: list[str],
+    section_token_counts: dict[str, int],
+    base_token_count: int,
+    note_token_count: int,
+    max_tokens: int,
+) -> dict[str, Any]:
+    required_section_token_counts = {
+        section_id: section_token_counts[section_id]
+        for section_id in required_sections
+    }
+    return {
+        "required_sections": required_sections,
+        "required_section_token_counts": required_section_token_counts,
+        "title_token_count": base_token_count,
+        "truncation_note_token_count": note_token_count,
+        "max_tokens": max_tokens,
+        "estimated_min_max_tokens": (
+            base_token_count
+            + sum(required_section_token_counts.values())
+            + note_token_count
+        ),
+    }
 
 
 def estimate_token_count(text: str) -> int:

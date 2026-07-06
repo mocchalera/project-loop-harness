@@ -63,6 +63,23 @@ class InvalidInputError(PclError):
         )
 
 
+class ContextPackBudgetError(PclError):
+    def __init__(self, *, details: dict[str, Any]) -> None:
+        estimated_min = details.get("estimated_min_max_tokens")
+        hint = (
+            f" Increase --max-tokens to at least {estimated_min}."
+            if isinstance(estimated_min, int)
+            else ""
+        )
+        super().__init__(
+            message="Context pack budget is too small for required sections and truncation notice."
+            + hint,
+            code="context_pack_budget_too_small",
+            exit_code=EXIT_USAGE,
+            details=details,
+        )
+
+
 class NotImplementedCommandError(PclError):
     def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
         super().__init__(

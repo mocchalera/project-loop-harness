@@ -41,6 +41,8 @@ JSON mode returns `context-pack/v1`:
     "truncated": false,
     "included_sections": ["machine_context_rules", "target_job"],
     "omitted_sections": [],
+    "required_sections": ["machine_context_rules"],
+    "required_sections_omitted": [],
     "source_commands": [
       "pcl jobs read J-0001 --json",
       "pcl prompt job J-0001 --json",
@@ -94,10 +96,28 @@ deterministic, dependency-free `charclass/v1` estimator:
 
 The legacy `approx_char_limit` and `approx_chars_per_token` fields remain in
 `budget` for compatibility, but they are not the section-selection algorithm.
-`estimated_token_count` reports the estimator result for the final Markdown.
-When the budget is too small, the command returns a truncated pack with exact,
-deterministic `included_sections` and `omitted_sections` metadata instead of
-failing or slicing through a section.
+`estimated_token_count` reports the estimator result for the final Markdown. On
+success, required sections are guaranteed to be present in `markdown`.
+`machine_context_rules` is always required. `code_context_safety` is also
+required whenever `--include-code-context` is used. The payload exposes this
+invariant through `required_sections` and `required_sections_omitted`; the
+latter is always `[]` on success.
+
+When a budget can fit the required sections but not every optional section, the
+command returns a truncated pack with exact, deterministic `included_sections`
+and `omitted_sections` metadata instead of slicing through a section. Whenever
+`omitted_sections` is non-empty, the final Markdown includes:
+
+```markdown
+_Context truncated. Increase `--max-tokens` to include omitted sections._
+```
+
+If `--max-tokens` is too small for the title, required sections, and reserved
+truncation note, the command fails with a typed usage error instead of
+returning a noteless or safety-incomplete pack. JSON mode uses the standard
+`ok:false` shape with `error.code: "context_pack_budget_too_small"` and details
+including `required_sections`, per-required-section token estimates,
+`max_tokens`, and `estimated_min_max_tokens` for retrying.
 
 ## Sections
 
@@ -152,8 +172,9 @@ profile priority, then rendered in canonical order.
 - Unknown or blank job roles fall back to `implementer`.
 - Task packs currently use the `default` profile.
 - `machine_context_rules` and the opt-in `code_context_safety` section are
-  pinned at the highest section priority so safety facts are selected before
-  ordinary task or job detail under tight budgets.
+  required-section invariants, not ordinary priority winners. They are
+  guaranteed in successful Markdown output; too-small budgets fail with
+  `context_pack_budget_too_small`.
 - For verifier job packs, `code_context_verification_suggestions` has higher
   priority than `code_context_detail`.
 
