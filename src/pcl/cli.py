@@ -43,6 +43,7 @@ from .decisions import (
     waive_decision,
 )
 from .dispatch import assign_job, heartbeat_job, lease_job, reap_expired_leases, release_job
+from .evidence import record_adhoc_evidence
 from .errors import DataStoreError, InvalidInputError, PclError
 from .exporters import export_csv
 from .escalations import (
@@ -527,6 +528,31 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_ingest = sub.add_parser("ingest-agent-run", help="Record an agent output file as evidence")
     p_ingest.add_argument("path")
+
+    p_evidence = sub.add_parser("evidence", help="Record standalone evidence artifacts")
+    evidence_sub = p_evidence.add_subparsers(dest="evidence_command", required=True)
+    p_evidence_add = evidence_sub.add_parser(
+        "add",
+        help="Record existing local files as adhoc evidence",
+        epilog=(
+            "--command is the caller's claim about how the artifact was produced; "
+            "pcl stores it verbatim and does not run or verify it."
+        ),
+    )
+    p_evidence_add.add_argument(
+        "--file",
+        action="append",
+        required=True,
+        dest="files",
+        help="Existing readable artifact path. Repeat for bundles.",
+    )
+    p_evidence_add.add_argument("--summary", required=True)
+    p_evidence_add.add_argument(
+        "--command",
+        default=None,
+        dest="claimed_command",
+        help="Caller claim of the producing command; stored verbatim, not run or verified.",
+    )
 
     p_context = sub.add_parser("context", help="Build focused machine context packages")
     context_sub = p_context.add_subparsers(dest="context_command", required=True)
@@ -1825,6 +1851,20 @@ def main(argv: list[str] | None = None) -> int:
                     f"Ingested {result['output_path']} as {result['evidence_id']} "
                     f"for job {result['job_id']}"
                 )
+            return 0
+
+        if args.command == "evidence" and args.evidence_command == "add":
+            result = record_adhoc_evidence(
+                paths,
+                files=args.files,
+                summary=args.summary,
+                command=args.claimed_command,
+            )
+            if json_output:
+                _print_json(result)
+            else:
+                evidence = result["evidence"]
+                print(f"{evidence['id']} {evidence['type']} {evidence['manifest_path']}")
             return 0
 
         if args.command == "context" and args.context_command == "pack":

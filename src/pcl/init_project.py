@@ -20,6 +20,7 @@ DEFAULT_DIRS = [
     "evidence/test-results",
     "evidence/command-logs",
     "evidence/context-receipts",
+    "evidence/adhoc",
     "exports",
     "reports",
     "worktrees",
