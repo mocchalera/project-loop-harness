@@ -20,12 +20,21 @@ only broken measurement infrastructure blocks.
   / retrieved_total (aggregate and per task; `null` on empty
   denominator — same rule as everywhere else).
 - Add `token_cost_estimate` = deterministic `charclass/v1` estimate
-  over the retrieved candidate files' indexed content (per task and
-  aggregate). Reuse the existing estimator; document the basis
-  (indexed bytes, not live file reads) in the output field name or
-  docs — it is an estimate label, never a billing claim. Files
-  missing from the index contribute 0 and are listed in a
-  `token_cost_unestimated_paths` array rather than silently skipped.
+  for the retrieved candidate files (per task and aggregate). Reuse
+  the existing estimator; it is an estimate label, never a billing
+  claim. Files missing from the index contribute 0 and are listed in
+  a `token_cost_unestimated_paths` array rather than silently
+  skipped.
+  **Clarified 2026-07-06 after first acceptance pass:** the estimate
+  basis is a per-file `token_estimate` INTEGER computed at index
+  build time (file text is already in memory during scan) and stored
+  in the index detail payload. The detail artifact must NEVER store
+  file content — the index stays hashes + symbol-lite metadata
+  (architecture boundary; 0077 budget discipline; 0072 sensitive
+  surface). Old details lacking `token_estimate` route those paths
+  into `token_cost_unestimated_paths`. The first implementation
+  embedded full `indexed_content` text into the detail; do not
+  repeat that.
 - Existing precision / recall / missing_critical_context stay
   unchanged.
 
