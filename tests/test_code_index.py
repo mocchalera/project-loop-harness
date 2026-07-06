@@ -1059,6 +1059,120 @@ def test_eval_retrieval_reports_precision_recall_and_missing_context(
     assert evaluation["metrics"]["missing_critical_context"] == []
 
 
+def test_eval_retrieval_ignores_unknown_fixture_fields(tmp_path: Path, capsys) -> None:
+    _init_code_project(tmp_path, capsys)
+    _build_index(tmp_path, capsys)
+    fixture_path = tmp_path / "retrieval_fixture_extra_fields.json"
+    fixture_path.write_text(
+        json.dumps(
+            {
+                "contract_version": "retrieval-fixture/v0",
+                "fixture_family": "real-history",
+                "unknown_top_level": {"ignored": True},
+                "tasks": [
+                    {
+                        "id": "calc-query-extra-fields",
+                        "query": "Calculator",
+                        "expected_files": ["src/pkg/calc.py"],
+                        "expected_tests": ["tests/test_calc.py"],
+                        "critical_context": ["src/pkg/calc.py"],
+                        "unknown_task_field": ["ignored"],
+                    }
+                ],
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["--root", str(tmp_path), "eval", "retrieval", "--fixture", str(fixture_path), "--json"]) == 0
+    evaluation = _json_output(capsys)["evaluation"]
+
+    assert evaluation["task_count"] == 1
+    assert evaluation["tasks"][0]["id"] == "calc-query-extra-fields"
+    assert "src/pkg/calc.py" in evaluation["tasks"][0]["retrieved_paths"]
+
+
+def test_eval_retrieval_rejects_missing_tasks_with_typed_error(tmp_path: Path, capsys) -> None:
+    assert main(["init", "--target", str(tmp_path), "--json"]) == 0
+    _json_output(capsys)
+    fixture_path = tmp_path / "missing_tasks.json"
+    fixture_path.write_text(
+        json.dumps({"contract_version": "retrieval-fixture/v0"}, sort_keys=True),
+        encoding="utf-8",
+    )
+
+    assert main(["--root", str(tmp_path), "eval", "retrieval", "--fixture", str(fixture_path), "--json"]) == 2
+    payload = _json_output(capsys)
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert "non-empty tasks array" in payload["error"]["message"]
+
+
+def test_eval_retrieval_rejects_invalid_json_fixture_with_typed_error(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path), "--json"]) == 0
+    _json_output(capsys)
+    fixture_path = tmp_path / "invalid_retrieval_fixture.json"
+    fixture_path.write_text("{not json", encoding="utf-8")
+
+    assert main(["--root", str(tmp_path), "eval", "retrieval", "--fixture", str(fixture_path), "--json"]) == 2
+    payload = _json_output(capsys)
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert "valid JSON" in payload["error"]["message"]
+
+
+def test_adversarial_eval_secret_like_paths_are_omitted(tmp_path: Path, capsys) -> None:
+    evaluation = _run_adversarial_retrieval_eval(tmp_path, capsys)
+    task = _eval_task(evaluation, "adversarial-secret-like-omission")
+
+    assert task["sensitive_omitted_count"] == len(SENSITIVE_FIXTURE_FILES)
+    assert not (set(task["retrieved_paths"]) & set(SENSITIVE_FIXTURE_FILES))
+    assert task["missing_critical_context"] == []
+    assert task["excluded_changed_files"] == [
+        {"path": ".env", "status": "M", "reason": "sensitive:agent_may_not_modify"}
+    ]
+
+
+def test_adversarial_eval_stale_index_surfaces_staleness(tmp_path: Path, capsys) -> None:
+    evaluation = _run_adversarial_retrieval_eval(tmp_path, capsys)
+    task = _eval_task(evaluation, "adversarial-stale-index")
+
+    assert "src/pkg/calc.py" in task["retrieved_paths"]
+    assert task["staleness_warnings"]
+    assert task["staleness_affected_paths"] == ["src/pkg/calc.py"]
+    assert task["retrieved_snapshot_consistency"] == {
+        "src/pkg/calc.py": "modified_since_index"
+    }
+    assert task["missing_critical_context"] == []
+
+
+def test_adversarial_eval_renamed_file_records_known_baseline_miss(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    evaluation = _run_adversarial_retrieval_eval(tmp_path, capsys)
+    task = _eval_task(evaluation, "adversarial-renamed-file-known-miss")
+
+    assert task["expected_misses"] == [
+        {
+            "path": "src/pkg/current_widget.py",
+            "reason": (
+                "Current lexical impact baseline does not resolve renamed "
+                "destination paths that were absent from the index."
+            ),
+        }
+    ]
+    assert "src/pkg/current_widget.py" not in task["retrieved_paths"]
+    assert task["recall"] == 0.0
+    assert {"task_id": task["id"], "path": "src/pkg/current_widget.py"} in evaluation[
+        "metrics"
+    ]["missing_critical_context"]
+
+
 def test_real_history_retrieval_fixture_beats_recorded_baseline(tmp_path: Path, capsys) -> None:
     _copy_repo_subset_for_retrieval_eval(tmp_path)
 
@@ -1118,3 +1232,28 @@ def _copy_repo_subset_for_retrieval_eval(target: Path) -> None:
             )
         else:
             shutil.copy2(source_path, target_path)
+
+
+def _run_adversarial_retrieval_eval(root: Path, capsys) -> dict:
+    _init_code_project(root, capsys)
+    _write_sensitive_fixture_files(root)
+    (root / "src" / "pkg" / "legacy_widget.py").write_text(
+        "class LegacyWidget:\n    pass\n",
+        encoding="utf-8",
+    )
+    _build_index(root, capsys)
+    _append_text(
+        root / "src" / "pkg" / "calc.py",
+        "\nSTALE_EVAL_MARKER = 'StaleEvalMarker'\n",
+    )
+    (root / "src" / "pkg" / "legacy_widget.py").rename(
+        root / "src" / "pkg" / "current_widget.py"
+    )
+    fixture_path = Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "retrieval_adversarial_v0.json"
+
+    assert main(["--root", str(root), "eval", "retrieval", "--fixture", str(fixture_path), "--json"]) == 0
+    return _json_output(capsys)["evaluation"]
+
+
+def _eval_task(evaluation: dict, task_id: str) -> dict:
+    return {task["id"]: task for task in evaluation["tasks"]}[task_id]
