@@ -3,13 +3,13 @@ from __future__ import annotations
 import json
 from json import JSONDecodeError
 import math
-from pathlib import Path
 from typing import Any
 
 from .code_context.summary import (
     CODE_CONTEXT_SUMMARY_VERSION,
     summarize_code_context_receipt,
 )
+from .code_context.receipts import latest_context_receipt_ref, resolve_context_receipt_path
 from .db import connect
 from .errors import InvalidInputError
 from .guards import require_initialized
@@ -596,30 +596,11 @@ def _build_task_sections(
 
 
 def _latest_code_context_summary(paths: ProjectPaths) -> dict[str, Any]:
-    conn = connect(paths.db_path)
-    try:
-        row = _one(
-            conn,
-            """
-            SELECT id, path, created_at
-            FROM evidence
-            WHERE type = ?
-            ORDER BY created_at DESC, id DESC
-            LIMIT 1
-            """,
-            ("context_receipt",),
-        )
-    finally:
-        conn.close()
-    if row is None:
+    receipt_ref = latest_context_receipt_ref(paths)
+    if receipt_ref is None:
         return _missing_code_context_summary()
 
-    receipt_ref = {
-        "evidence_id": str(row["id"]),
-        "receipt_path": str(row["path"]),
-        "created_at": str(row["created_at"]),
-    }
-    receipt_path = _resolve_project_path(paths, str(row["path"]))
+    receipt_path = resolve_context_receipt_path(paths, str(receipt_ref["receipt_path"]))
     try:
         receipt_payload = json.loads(receipt_path.read_text(encoding="utf-8"))
     except (OSError, JSONDecodeError) as exc:
@@ -696,13 +677,6 @@ def _unavailable_code_context_summary(
         "message": message,
         "next_actions": ["pcl impact --diff --json"],
     }
-
-
-def _resolve_project_path(paths: ProjectPaths, value: str) -> Path:
-    path = Path(value)
-    if path.is_absolute():
-        return path
-    return paths.root / path
 
 
 def _code_context_receipt_path(summary: dict[str, Any]) -> str | None:

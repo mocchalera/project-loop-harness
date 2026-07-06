@@ -19,6 +19,61 @@ IMPACT_CONTRACT_VERSION = "impact/v0"
 
 
 CONTEXT_RECEIPT_VERSION = "context-receipt/v0"
+CONTEXT_RECEIPT_EVIDENCE_TYPE = "context_receipt"
+
+
+def latest_context_receipt_ref(paths: ProjectPaths) -> dict[str, str] | None:
+    conn = connect(paths.db_path)
+    try:
+        row = conn.execute(
+            """
+            SELECT id, path, created_at
+            FROM evidence
+            WHERE type = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            (CONTEXT_RECEIPT_EVIDENCE_TYPE,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return {
+        "evidence_id": str(row["id"]),
+        "receipt_path": str(row["path"]),
+        "created_at": str(row["created_at"]),
+    }
+
+
+def evidence_ref_by_id(paths: ProjectPaths, evidence_id: str) -> dict[str, str] | None:
+    conn = connect(paths.db_path)
+    try:
+        row = conn.execute(
+            """
+            SELECT id, type, path, created_at
+            FROM evidence
+            WHERE id = ?
+            """,
+            (evidence_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return {
+        "evidence_id": str(row["id"]),
+        "evidence_type": str(row["type"]),
+        "receipt_path": str(row["path"]),
+        "created_at": str(row["created_at"]),
+    }
+
+
+def resolve_context_receipt_path(paths: ProjectPaths, value: str) -> Path:
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return paths.root / path
 
 
 def _record_context_receipt(
@@ -53,7 +108,7 @@ def _record_context_receipt(
             """,
             (
                 evidence_id,
-                "context_receipt",
+                CONTEXT_RECEIPT_EVIDENCE_TYPE,
                 relative_receipt_path,
                 "pcl impact --diff",
                 "Impact candidate context receipt.",

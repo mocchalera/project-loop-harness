@@ -1,0 +1,53 @@
+{
+  "base_ref": "main",
+  "changed_file_count": 2,
+  "contract_version": "code-context-summary/v0",
+  "diff_source": "worktree-vs-main",
+  "excluded_changed_file_count": 1,
+  "included_candidate_context_top": [
+    {
+      "confidence": 1.0,
+      "language": "python",
+      "path": "src/pcl/cli.py",
+      "reason": "changed file is present in the latest index",
+      "role": "changed_file",
+      "selection": "included as candidate context",
+      "snapshot_consistency": "modified_since_index",
+      "snapshot_consistency_reason": "current hash differs from indexed hash"
+    },
+    {
+      "confidence": 0.88,
+      "language": "python",
+      "path": "tests/test_cli.py",
+      "reason": "test_hint:filename_match",
+      "role": "likely_impacted",
+      "selection": "included as candidate context",
+      "snapshot_consistency": "fresh",
+      "snapshot_consistency_reason": "current hash matches indexed hash"
+    }
+  ],
+  "included_total": 2,
+  "index_run": {
+    "created_at": "2026-07-05T00:00:00Z",
+    "id": "CI-0003"
+  },
+  "omitted_reason_counts": {
+    "lexical symbol too common": 2,
+    "not present in latest index": 1
+  },
+  "receipt_ref": {
+    "created_at": "2026-07-05T00:01:00Z",
+    "evidence_id": "E-0007",
+    "receipt_path": ".project-loop/evidence/context-receipts/e-0007-impact-v0.json"
+  },
+  "sensitive_include_override_used": false,
+  "sensitive_omitted_count": 1,
+  "status": "from_receipt",
+  "staleness_warnings": [
+    "Indexed file metadata changed: src/pcl/cli.py."
+  ],
+  "untracked_omission_warning": "Untracked files are not included in this diff source; add them to Git or provide an explicit diff with `pcl impact --diff - --json`.",
+  "verification_suggestions": [
+    "python3 -m pytest tests/test_cli.py"
+  ]
+}
