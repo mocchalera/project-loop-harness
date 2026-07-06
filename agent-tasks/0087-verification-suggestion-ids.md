@@ -17,10 +17,19 @@ consumers of old receipts on disk.
 - ID scheme: `<receipt evidence_id>/VS-<nn>`, e.g. `E-0001/VS-01`.
   Deterministic within a receipt, ordinal by position (01-based,
   zero-padded to two digits). No new DB sequence, no migration.
-- Receipt payloads get NO `status` field and no lifecycle vocabulary.
-  A receipt is an immutable candidate presentation; suggestion state
-  will live exclusively in the `verification_feedback` table (task
-  0088).
+- SUGGESTION OBJECTS get no `status`/`state`/lifecycle field and no
+  lifecycle vocabulary: each object carries exactly `id`, `command`,
+  `reason`. A receipt is an immutable candidate presentation;
+  suggestion state will live exclusively in the
+  `verification_feedback` table (task 0088).
+  **Clarified 2026-07-06 after first acceptance pass:** this rule is
+  scoped to verification suggestions only. It does NOT touch other
+  recorded facts that happen to use the word "status" — in
+  particular `changed_files[].status` / `excluded_changed_files[].status`
+  (git change status) in receipts, and the summary's availability
+  `status` (`from_receipt` / `missing_receipt` / `receipt_unavailable`)
+  must be preserved unchanged. The first implementation applied the
+  rule as a recursive key strip and broke both; do not repeat that.
 - The receipt contract is v0/unstable; the `code-context-summary/v0`
   isolation layer shields `context-pack/v1` consumers. The summary
   contract change here is additive only (`id` per suggestion).
@@ -69,8 +78,12 @@ consumers of old receipts on disk.
   permanent old-form fixture under `tests/fixtures/`.
 - New receipts written by `pcl impact --diff` carry object-form
   suggestions with sequential IDs.
-- No `status`, `state`, or lifecycle field anywhere in receipt or
-  summary payloads (assert in a test).
+- Suggestion objects carry exactly `{id, command, reason}` in
+  receipts, and only `id`/`command`/`reason` in summaries (assert in
+  a test). Assert also that `changed_files[].status` in a fresh
+  receipt and the summary availability `status` field are PRESERVED —
+  the no-lifecycle rule is scoped to suggestions, not a global key
+  ban.
 - `ruff check .` passes; full `python3 -m pytest` passes; `pcl init`
   smoke against a temp dir passes.
 
