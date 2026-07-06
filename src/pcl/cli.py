@@ -92,6 +92,7 @@ from .stories import (
     waive_story,
     waive_test_case,
 )
+from .timeutil import utc_now_iso
 from .tasks import (
     TASK_RISKS,
     TASK_STATUSES,
@@ -1747,10 +1748,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "context" and args.context_command == "pack":
+            now = utc_now_iso()
             if args.job_id:
                 pack = pack_context_for_job(
                     paths,
                     job_id=args.job_id,
+                    now=now,
                     reader_role=args.role,
                     max_tokens=args.max_tokens,
                     include_code_context=args.include_code_context,
@@ -1759,6 +1762,7 @@ def main(argv: list[str] | None = None) -> int:
                 pack = pack_context_for_task(
                     paths,
                     task_id=args.task_id,
+                    now=now,
                     reader_role=args.role,
                     max_tokens=args.max_tokens,
                     include_code_context=args.include_code_context,
@@ -1770,7 +1774,12 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "receipt" and args.receipt_command == "show":
-            summary = receipt_summary_for_ref(paths, ref=args.ref, latest=args.latest)
+            summary = receipt_summary_for_ref(
+                paths,
+                now=utc_now_iso(),
+                ref=args.ref,
+                latest=args.latest,
+            )
             if json_output:
                 _print_json(summary)
             else:

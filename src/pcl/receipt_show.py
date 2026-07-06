@@ -12,7 +12,7 @@ from .code_context.receipts import (
     latest_context_receipt_ref,
     resolve_context_receipt_path,
 )
-from .code_context.summary import summarize_code_context_receipt
+from .code_context.summary import summarize_code_context_receipt, summary_with_receipt_age
 from .errors import InvalidInputError
 from .guards import require_initialized
 from .paths import ProjectPaths
@@ -25,6 +25,7 @@ EVIDENCE_ID_RE = re.compile(r"^E-\d+$")
 def receipt_summary_for_ref(
     paths: ProjectPaths,
     *,
+    now: str,
     ref: str | None = None,
     latest: bool = False,
 ) -> dict[str, Any]:
@@ -33,7 +34,7 @@ def receipt_summary_for_ref(
     receipt = _load_receipt_payload(paths, receipt_ref)
     summary = summarize_code_context_receipt(receipt)
     _merge_resolved_receipt_ref(summary, receipt_ref)
-    return summary
+    return summary_with_receipt_age(summary, now=now)
 
 
 def _resolve_receipt_ref(

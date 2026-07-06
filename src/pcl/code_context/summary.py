@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -7,6 +8,7 @@ CODE_CONTEXT_SUMMARY_VERSION = "code-context-summary/v0"
 DEFAULT_INCLUDED_CANDIDATE_LIMIT = 10
 INDEX_REFRESH_COMMAND = "pcl index build --json"
 IMPACT_REFRESH_COMMAND = "pcl impact --diff --json"
+PROVISIONAL_RECEIPT_AGE_WARNING_SECONDS = 3600
 
 
 def summarize_code_context_receipt(
@@ -90,6 +92,7 @@ def render_receipt_summary(summary: dict[str, Any]) -> str:
         f"- created_at: {_display(receipt_ref.get('created_at'))}",
         f"- diff_source: {_display(payload.get('diff_source'))}",
         f"- base_ref: {_display(payload.get('base_ref'))}",
+        *render_receipt_age_lines(payload),
         "",
         "## Counts",
         counts_line,
@@ -138,6 +141,75 @@ def render_receipt_summary(summary: dict[str, Any]) -> str:
 
     lines.extend(["", "## Next Recommended Command", _next_recommended_command(payload)])
     return "\n".join(lines).rstrip() + "\n"
+
+
+def summary_with_receipt_age(summary: dict[str, Any], *, now: str) -> dict[str, Any]:
+    """Return a copy of a summary with deterministic receipt age fields attached."""
+    payload = dict(summary if isinstance(summary, dict) else {})
+    receipt_ref = payload.get("receipt_ref")
+    created_at = receipt_ref.get("created_at") if isinstance(receipt_ref, dict) else None
+    payload.update(receipt_age_fields(created_at, now=now))
+    return payload
+
+
+def receipt_age_fields(created_at: Any, *, now: str) -> dict[str, Any]:
+    created_at_text = _text(created_at)
+    receipt_age: dict[str, Any] = {"created_at": created_at_text}
+    created_at_dt = _parse_timestamp(created_at_text)
+    now_dt = _parse_timestamp(now)
+    if created_at_dt is None or now_dt is None:
+        return {
+            "receipt_age": receipt_age,
+            "age_warning": (
+                "Receipt age could not be computed because created_at is missing "
+                "or unparsable."
+            ),
+        }
+
+    age_seconds = max(0, int((now_dt - created_at_dt).total_seconds()))
+    receipt_age["age_seconds"] = age_seconds
+    fields: dict[str, Any] = {"receipt_age": receipt_age}
+    if age_seconds > PROVISIONAL_RECEIPT_AGE_WARNING_SECONDS:
+        fields["age_warning"] = (
+            f"Receipt age is {age_seconds}s, above the provisional "
+            f"{PROVISIONAL_RECEIPT_AGE_WARNING_SECONDS}s threshold."
+        )
+    return fields
+
+
+def render_receipt_age_lines(summary: dict[str, Any]) -> list[str]:
+    payload = summary if isinstance(summary, dict) else {}
+    receipt_age = payload.get("receipt_age")
+    if not isinstance(receipt_age, dict):
+        return []
+
+    created_at = _display(receipt_age.get("created_at"))
+    lines = []
+    age_seconds = receipt_age.get("age_seconds")
+    if isinstance(age_seconds, int) and not isinstance(age_seconds, bool):
+        lines.append(f"- receipt age: {age_seconds}s (created_at {created_at})")
+    else:
+        lines.append(f"- receipt age: unknown (created_at {created_at})")
+
+    age_warning = _text(payload.get("age_warning"))
+    if age_warning:
+        lines.append(f"- age warning: {age_warning}")
+    return lines
+
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    text = _text(value)
+    if text is None:
+        return None
+    if text.endswith("Z"):
+        text = f"{text[:-1]}+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _candidate_line(item: dict[str, Any]) -> str:

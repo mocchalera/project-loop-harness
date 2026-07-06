@@ -84,9 +84,35 @@ The summary contains compact fields such as `diff_source`,
 `sensitive_omitted_count`, `staleness_warnings`,
 `untracked_omission_warning`, `included_total`,
 `included_candidate_context_top`, `omitted_reason_counts`,
-`verification_suggestions`, and `sensitive_include_override_used`.
+`verification_suggestions`, `relevance`, `receipt_age`, `age_warning`,
+and `sensitive_include_override_used`.
 Candidate rows use the phrase `included as candidate context`; the summary
 does not make cognition claims about those files.
+
+`relevance` is stamped by the context-pack builder because it knows the pack
+target and the receipt selection method. It is not produced by the pure receipt
+summarizer. In v0.1.12, the only shipping selection scopes are:
+
+- `scope: "unscoped_latest"`: the most recent context receipt was selected by
+  recency and was not created for the pack target.
+- `scope: "missing_receipt"`: no context receipt was available.
+
+The only shipping binding strength is `binding_strength: "none"`, meaning no
+caller or PLH mechanism asserted a target linkage. Future vocabulary reserves
+`scope: "target_bound"` and `binding_strength: "caller_asserted"` for a
+possible caller-labeled flow. A caller-asserted binding would be a caller label,
+not a PLH-verified semantic relation between the receipt and the target. This
+version does not implement `--for-task`, `--for-job`, or
+`--require-bound-receipt` flags.
+
+`receipt_age` records freshness facts for the embedded receipt:
+`{"created_at": "...", "age_seconds": 123}`. Age is computed against a single
+pack-build timestamp and is clamped at `0` if the receipt timestamp is in the
+future. If `created_at` is missing or unparsable, `receipt_age` carries only
+`created_at` and sibling `age_warning` states that age could not be computed.
+When `age_seconds > 3600`, `age_warning` is present. The 3600s threshold is a
+named, provisional threshold pending dogfood data, and it is not configurable.
+These fields are factual freshness labels only; they are not a go/no-go signal.
 
 The summary is bounded. `included_candidate_context_top` contains at most the
 top 10 candidate paths by default plus `included_total`; omitted receipt rows
@@ -98,7 +124,8 @@ When no receipt exists, `--include-code-context` still succeeds and returns a
 `code_context` summary with `status: "missing_receipt"` plus next actions:
 `pcl index build --json` and `pcl impact --diff --json`. The same commands are
 exposed in `context_pack.suggested_refresh_commands`; they are not placed in
-`source_commands`.
+`source_commands`. The summary still includes `relevance` with
+`scope: "missing_receipt"` and `binding_strength: "none"`.
 
 `--max-tokens` is an approximate budget control. Section selection uses the
 deterministic, dependency-free `charclass/v1` estimator:

@@ -8,7 +8,9 @@ from typing import Any
 from .code_context.summary import (
     CODE_CONTEXT_SUMMARY_VERSION,
     recommended_refresh_commands,
+    render_receipt_age_lines,
     summarize_code_context_receipt,
+    summary_with_receipt_age,
 )
 from .code_context.receipts import latest_context_receipt_ref, resolve_context_receipt_path
 from .db import connect
@@ -121,6 +123,7 @@ def pack_context_for_job(
     paths: ProjectPaths,
     *,
     job_id: str,
+    now: str,
     reader_role: str | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     include_code_context: bool = False,
@@ -138,7 +141,17 @@ def pack_context_for_job(
     role_profile, section_priorities = _job_role_profile(role)
     approx_char_limit = max_tokens * LEGACY_APPROX_CHARS_PER_TOKEN
 
-    code_context = _latest_code_context_summary(paths) if include_code_context else None
+    target = {"type": "agent_job", "id": job_id}
+    code_context = (
+        _latest_code_context_summary(
+            paths,
+            target_type=target["type"],
+            target_id=target["id"],
+            now=now,
+        )
+        if include_code_context
+        else None
+    )
 
     conn = connect(paths.db_path)
     try:
@@ -241,7 +254,7 @@ def pack_context_for_job(
 
     pack = {
         "contract_version": CONTEXT_PACK_CONTRACT_VERSION,
-        "target": {"type": "agent_job", "id": job_id},
+        "target": target,
         "reader_role": role,
         "role_profile": role_profile,
         "token_estimator": TOKEN_ESTIMATOR,
@@ -275,6 +288,7 @@ def pack_context_for_task(
     paths: ProjectPaths,
     *,
     task_id: str,
+    now: str,
     reader_role: str | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     include_code_context: bool = False,
@@ -292,7 +306,17 @@ def pack_context_for_task(
     role_profile, section_priorities = _task_role_profile(role)
     approx_char_limit = max_tokens * LEGACY_APPROX_CHARS_PER_TOKEN
 
-    code_context = _latest_code_context_summary(paths) if include_code_context else None
+    target = {"type": "task", "id": task_id}
+    code_context = (
+        _latest_code_context_summary(
+            paths,
+            target_type=target["type"],
+            target_id=target["id"],
+            now=now,
+        )
+        if include_code_context
+        else None
+    )
 
     conn = connect(paths.db_path)
     try:
@@ -332,7 +356,7 @@ def pack_context_for_task(
 
     pack = {
         "contract_version": CONTEXT_PACK_CONTRACT_VERSION,
-        "target": {"type": "task", "id": task_id},
+        "target": target,
         "reader_role": role,
         "role_profile": role_profile,
         "token_estimator": TOKEN_ESTIMATOR,
@@ -606,23 +630,44 @@ def _build_task_sections(
     return sections
 
 
-def _latest_code_context_summary(paths: ProjectPaths) -> dict[str, Any]:
+def _latest_code_context_summary(
+    paths: ProjectPaths,
+    *,
+    target_type: str,
+    target_id: str,
+    now: str,
+) -> dict[str, Any]:
     receipt_ref = latest_context_receipt_ref(paths)
     if receipt_ref is None:
-        return _missing_code_context_summary()
+        return _stamp_code_context_pack_facts(
+            _missing_code_context_summary(),
+            target_type=target_type,
+            target_id=target_id,
+            now=now,
+        )
 
     receipt_path = resolve_context_receipt_path(paths, str(receipt_ref["receipt_path"]))
     try:
         receipt_payload = json.loads(receipt_path.read_text(encoding="utf-8"))
     except (OSError, JSONDecodeError) as exc:
-        return _unavailable_code_context_summary(
-            receipt_ref=receipt_ref,
-            message=f"Latest context receipt could not be loaded: {exc.__class__.__name__}.",
+        return _stamp_code_context_pack_facts(
+            _unavailable_code_context_summary(
+                receipt_ref=receipt_ref,
+                message=f"Latest context receipt could not be loaded: {exc.__class__.__name__}.",
+            ),
+            target_type=target_type,
+            target_id=target_id,
+            now=now,
         )
     if not isinstance(receipt_payload, dict):
-        return _unavailable_code_context_summary(
-            receipt_ref=receipt_ref,
-            message="Latest context receipt is not a JSON object.",
+        return _stamp_code_context_pack_facts(
+            _unavailable_code_context_summary(
+                receipt_ref=receipt_ref,
+                message="Latest context receipt is not a JSON object.",
+            ),
+            target_type=target_type,
+            target_id=target_id,
+            now=now,
         )
 
     summary = summarize_code_context_receipt(receipt_payload)
@@ -636,7 +681,55 @@ def _latest_code_context_summary(paths: ProjectPaths) -> dict[str, Any]:
         **receipt_ref,
         "created_at": created_at or receipt_ref["created_at"],
     }
-    return summary
+    return _stamp_code_context_pack_facts(
+        summary,
+        target_type=target_type,
+        target_id=target_id,
+        now=now,
+    )
+
+
+def _stamp_code_context_pack_facts(
+    summary: dict[str, Any],
+    *,
+    target_type: str,
+    target_id: str,
+    now: str,
+) -> dict[str, Any]:
+    stamped = summary_with_receipt_age(summary, now=now)
+    stamped["relevance"] = _code_context_relevance(
+        stamped,
+        target_type=target_type,
+        target_id=target_id,
+    )
+    return stamped
+
+
+def _code_context_relevance(
+    summary: dict[str, Any],
+    *,
+    target_type: str,
+    target_id: str,
+) -> dict[str, str]:
+    status = str(summary.get("status") or "")
+    if status == "missing_receipt":
+        return {
+            "target_type": target_type,
+            "target_id": target_id,
+            "scope": "missing_receipt",
+            "binding_strength": "none",
+            "reason": "No context receipt was available for this pack target.",
+        }
+    return {
+        "target_type": target_type,
+        "target_id": target_id,
+        "scope": "unscoped_latest",
+        "binding_strength": "none",
+        "reason": (
+            "The most recent context receipt was selected by recency; it was not "
+            "created for this target."
+        ),
+    }
 
 
 def _missing_code_context_summary() -> dict[str, Any]:
@@ -725,6 +818,9 @@ def _render_code_context_safety_section(summary: dict[str, Any]) -> str:
             [
                 "No context receipt evidence was found.",
                 "",
+                "Receipt selection and freshness facts:",
+                *_render_code_context_selection_freshness_lines(summary),
+                "",
                 "Next action: `pcl index build --json`, then `pcl impact --diff --json`.",
             ]
         )
@@ -733,6 +829,9 @@ def _render_code_context_safety_section(summary: dict[str, Any]) -> str:
         lines.extend(
             [
                 str(summary.get("message") or "Latest context receipt is unavailable."),
+                "",
+                "Receipt selection and freshness facts:",
+                *_render_code_context_selection_freshness_lines(summary),
                 "",
                 "Next action: `pcl index build --json`, then `pcl impact --diff --json`.",
             ]
@@ -754,6 +853,10 @@ def _render_code_context_safety_section(summary: dict[str, Any]) -> str:
         f"untracked_omission_warning={untracked_value}; "
         f"sensitive_include_override_used={_stringify(summary.get('sensitive_include_override_used'))}."
     )
+    selection_freshness_lines = _render_code_context_selection_freshness_lines(summary)
+    if selection_freshness_lines:
+        lines.extend(["", "Receipt selection and freshness facts:"])
+        lines.extend(selection_freshness_lines)
     if staleness_count:
         lines.extend(["", "Staleness warnings:"])
         for warning in staleness:
@@ -761,6 +864,26 @@ def _render_code_context_safety_section(summary: dict[str, Any]) -> str:
     if untracked_warning:
         lines.extend(["", f"Untracked omission warning: {_stringify(untracked_warning)}"])
     return "\n".join(lines)
+
+
+def _render_code_context_selection_freshness_lines(summary: dict[str, Any]) -> list[str]:
+    lines = []
+    relevance = summary.get("relevance")
+    if isinstance(relevance, dict):
+        scope = _stringify(relevance.get("scope"))
+        binding = _stringify(relevance.get("binding_strength"))
+        reason = _short_relevance_reason(scope, _stringify(relevance.get("reason")))
+        lines.append(f"- relevance: {scope} (binding: {binding}) - {reason}")
+    lines.extend(render_receipt_age_lines(summary))
+    return lines
+
+
+def _short_relevance_reason(scope: str, fallback: str) -> str:
+    if scope == "unscoped_latest":
+        return "latest receipt, not created for this target"
+    if scope == "missing_receipt":
+        return "no receipt was available for this target"
+    return fallback
 
 
 def _render_code_context_verification_section(summary: dict[str, Any]) -> str:
