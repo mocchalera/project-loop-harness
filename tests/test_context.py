@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 
 from pcl.cli import main
-from pcl.context import TOKEN_ESTIMATOR, estimate_token_count
+from pcl.context import TOKEN_ESTIMATOR, TRUNCATION_NOTE, estimate_token_count
 
 
 def _json_output(capsys) -> dict:
@@ -264,6 +264,8 @@ def test_context_pack_for_job_returns_machine_handoff(tmp_path: Path, capsys) ->
     assert pack["truncated"] is False
     assert "target_job" in pack["included_sections"]
     assert "agent_prompt" in pack["included_sections"]
+    assert pack["required_sections"] == ["machine_context_rules"]
+    assert pack["required_sections_omitted"] == []
     assert pack["source_commands"] == [
         "pcl jobs read J-0001 --json",
         "pcl prompt job J-0001 --json",
@@ -308,7 +310,7 @@ def test_context_pack_reports_truncation_metadata(tmp_path: Path, capsys) -> Non
         "--job",
         "J-0001",
         "--max-tokens",
-        "20",
+        "260",
         "--json",
     ]) == 0
 
@@ -344,6 +346,8 @@ def test_context_pack_for_task_returns_task_handoff_with_dependencies(
     assert pack["token_estimator"] == TOKEN_ESTIMATOR
     assert pack["budget"]["token_estimator"] == TOKEN_ESTIMATOR
     assert pack["estimated_token_count"] == estimate_token_count(pack["markdown"])
+    assert pack["required_sections"] == ["machine_context_rules"]
+    assert pack["required_sections_omitted"] == []
     assert pack["source_commands"] == [
         "pcl task read T-0002 --json",
         "pcl task list --json",
@@ -454,7 +458,7 @@ def test_context_pack_for_task_reports_truncation_metadata(
         "--task",
         "T-0002",
         "--max-tokens",
-        "80",
+        "260",
         "--json",
     ]) == 0
 
@@ -463,6 +467,246 @@ def test_context_pack_for_task_reports_truncation_metadata(
     assert pack["omitted_sections"]
     assert pack["estimated_token_count"] <= pack["budget"]["max_tokens"]
     assert pack["markdown"].startswith("# Context Pack: T-0002")
+
+
+def test_context_pack_tiny_budget_without_code_context_returns_typed_budget_error(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_job(tmp_path, capsys)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--job",
+        "J-0001",
+        "--max-tokens",
+        "1",
+        "--json",
+    ]) == 2
+
+    error = _assert_context_pack_budget_error(_json_output(capsys), max_tokens=1)
+    details = error["details"]
+    assert details["required_sections"] == ["machine_context_rules"]
+    assert set(details["required_section_token_counts"]) == {"machine_context_rules"}
+    assert details["estimated_min_max_tokens"] > details["max_tokens"]
+
+
+def test_context_pack_budget_fitting_required_section_but_not_note_errors(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_job(tmp_path, capsys)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--job",
+        "J-0001",
+        "--max-tokens",
+        "1",
+        "--json",
+    ]) == 2
+    details = _assert_context_pack_budget_error(_json_output(capsys), max_tokens=1)[
+        "details"
+    ]
+    required_only_budget = (
+        details["estimated_min_max_tokens"]
+        - details["truncation_note_token_count"]
+    )
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--job",
+        "J-0001",
+        "--max-tokens",
+        str(required_only_budget),
+        "--json",
+    ]) == 2
+
+    error = _assert_context_pack_budget_error(
+        _json_output(capsys),
+        max_tokens=required_only_budget,
+    )
+    assert error["details"]["estimated_min_max_tokens"] == details["estimated_min_max_tokens"]
+
+
+def test_context_pack_old_required_priority_tie_budget_errors_and_retry_succeeds(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "create",
+        "--title",
+        "Needs receipt",
+    ]) == 0
+    capsys.readouterr()
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0001",
+        "--include-code-context",
+        "--max-tokens",
+        "1",
+        "--json",
+    ]) == 2
+    details = _assert_context_pack_budget_error(_json_output(capsys), max_tokens=1)[
+        "details"
+    ]
+    assert details["required_sections"] == [
+        "machine_context_rules",
+        "code_context_safety",
+    ]
+
+    tie_budget = (
+        details["estimated_min_max_tokens"]
+        - details["required_section_token_counts"]["code_context_safety"]
+    )
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0001",
+        "--include-code-context",
+        "--max-tokens",
+        str(tie_budget),
+        "--json",
+    ]) == 2
+    tie_error = _assert_context_pack_budget_error(
+        _json_output(capsys),
+        max_tokens=tie_budget,
+    )
+    retry_budget = tie_error["details"]["estimated_min_max_tokens"]
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0001",
+        "--include-code-context",
+        "--max-tokens",
+        str(retry_budget),
+        "--json",
+    ]) == 0
+
+    pack = _json_output(capsys)["context_pack"]
+    assert pack["required_sections"] == [
+        "machine_context_rules",
+        "code_context_safety",
+    ]
+    assert pack["required_sections_omitted"] == []
+    assert "machine_context_rules" in pack["included_sections"]
+    assert "code_context_safety" in pack["included_sections"]
+    assert "## Machine Context Rules" in pack["markdown"]
+    assert "## Code Context Safety" in pack["markdown"]
+    assert pack["omitted_sections"]
+    assert TRUNCATION_NOTE.strip() in pack["markdown"]
+    assert pack["estimated_token_count"] <= retry_budget
+
+
+def test_context_pack_truncation_note_present_for_successful_omissions(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_task_context(tmp_path, capsys)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0002",
+        "--max-tokens",
+        "1",
+        "--json",
+    ]) == 2
+    details = _assert_context_pack_budget_error(_json_output(capsys), max_tokens=1)[
+        "details"
+    ]
+    minimum_budget = details["estimated_min_max_tokens"]
+
+    for budget in range(minimum_budget, minimum_budget + 200, 25):
+        assert main([
+            "--root",
+            str(tmp_path),
+            "context",
+            "pack",
+            "--task",
+            "T-0002",
+            "--max-tokens",
+            str(budget),
+            "--json",
+        ]) == 0
+        pack = _json_output(capsys)["context_pack"]
+        if pack["omitted_sections"]:
+            assert pack["truncated"] is True
+            assert TRUNCATION_NOTE.strip() in pack["markdown"]
+            assert pack["estimated_token_count"] <= budget
+
+
+def test_context_pack_ample_budget_adds_only_required_metadata_fields(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_task_context(tmp_path, capsys)
+
+    args = [
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0002",
+        "--json",
+    ]
+    assert main(args) == 0
+    first = _json_output(capsys)["context_pack"]
+    assert main(args) == 0
+    second = _json_output(capsys)["context_pack"]
+
+    legacy_keys = {
+        "contract_version",
+        "target",
+        "reader_role",
+        "role_profile",
+        "token_estimator",
+        "budget",
+        "approx_char_count",
+        "estimated_token_count",
+        "truncated",
+        "included_sections",
+        "omitted_sections",
+        "source_commands",
+        "source_paths",
+        "markdown",
+    }
+    assert set(first) == legacy_keys | {
+        "required_sections",
+        "required_sections_omitted",
+    }
+    assert _without_required_metadata(first) == _without_required_metadata(second)
+    assert first["required_sections"] == ["machine_context_rules"]
+    assert first["required_sections_omitted"] == []
 
 
 def test_charclass_token_estimator_counts_stable_character_classes() -> None:
@@ -488,7 +732,7 @@ def test_context_pack_for_job_tight_budget_omissions_match_markdown(
         "--job",
         "J-0001",
         "--max-tokens",
-        "40",
+        "260",
         "--json",
     ]
     assert main(args) == 0
@@ -520,7 +764,7 @@ def test_context_pack_for_task_tight_budget_omissions_match_markdown(
         "--task",
         "T-0002",
         "--max-tokens",
-        "45",
+        "260",
         "--json",
     ]
     assert main(args) == 0
@@ -592,7 +836,7 @@ def test_context_pack_role_profiles_prioritize_sections_under_budget(
         "--job",
         "J-0001",
         "--max-tokens",
-        "360",
+        "400",
     ]
     assert main([*base_args, "--json"]) == 0
     default_pack = _json_output(capsys)["context_pack"]
@@ -757,6 +1001,8 @@ def test_context_pack_for_job_include_code_context_embeds_bounded_summary(
     assert code_context["untracked_omission_warning"]
     assert code_context["sensitive_include_override_used"] is False
     assert "safe_to_continue" not in json.dumps(code_context, sort_keys=True)
+    assert pack["required_sections"] == ["machine_context_rules", "code_context_safety"]
+    assert pack["required_sections_omitted"] == []
     assert "code_context_safety" in pack["included_sections"]
     assert impact["receipt_path"] in pack["source_paths"]
     assert "## Code Context Safety" in pack["markdown"]
@@ -786,6 +1032,8 @@ def test_context_pack_for_task_include_code_context_embeds_summary(
 
     pack = _json_output(capsys)["context_pack"]
     assert pack["code_context"]["contract_version"] == "code-context-summary/v0"
+    assert pack["required_sections"] == ["machine_context_rules", "code_context_safety"]
+    assert pack["required_sections_omitted"] == []
     assert "code_context_safety" in pack["included_sections"]
     assert "code_context_detail" in pack["included_sections"]
 
@@ -806,7 +1054,24 @@ def test_context_pack_code_context_safety_survives_tight_budget(
         "T-0001",
         "--include-code-context",
         "--max-tokens",
-        "390",
+        "1",
+        "--json",
+    ]) == 2
+    retry_budget = _assert_context_pack_budget_error(
+        _json_output(capsys),
+        max_tokens=1,
+    )["details"]["estimated_min_max_tokens"]
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0001",
+        "--include-code-context",
+        "--max-tokens",
+        str(retry_budget),
         "--json",
     ]) == 0
 
@@ -822,6 +1087,7 @@ def test_context_pack_code_context_safety_survives_tight_budget(
     assert "Untracked omission warning:" in pack["markdown"]
     assert pack["code_context"]["receipt_ref"]["evidence_id"]
     assert pack["estimated_token_count"] <= pack["budget"]["max_tokens"]
+    assert pack["budget"]["max_tokens"] == retry_budget
 
 
 def test_context_pack_without_code_context_flag_is_unchanged_by_receipts(
@@ -920,3 +1186,27 @@ def _section_heading(section_id: str) -> str:
         "related_defect": "## Related Defect",
         "sibling_tasks": "## Sibling Tasks",
     }[section_id]
+
+
+def _assert_context_pack_budget_error(payload: dict, *, max_tokens: int) -> dict:
+    assert payload["ok"] is False
+    error = payload["error"]
+    assert error["code"] == "context_pack_budget_too_small"
+    assert "Context pack budget is too small" in error["message"]
+    details = error["details"]
+    assert details["max_tokens"] == max_tokens
+    assert isinstance(details["estimated_min_max_tokens"], int)
+    assert details["estimated_min_max_tokens"] > max_tokens
+    assert isinstance(details["required_sections"], list)
+    assert isinstance(details["required_section_token_counts"], dict)
+    assert isinstance(details["title_token_count"], int)
+    assert isinstance(details["truncation_note_token_count"], int)
+    return error
+
+
+def _without_required_metadata(pack: dict) -> dict:
+    return {
+        key: value
+        for key, value in pack.items()
+        if key not in {"required_sections", "required_sections_omitted"}
+    }
