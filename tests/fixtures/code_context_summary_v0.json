@@ -40,6 +40,17 @@
     "evidence_id": "E-0007",
     "receipt_path": ".project-loop/evidence/context-receipts/e-0007-impact-v0.json"
   },
+  "refresh_replay": {
+    "commands": [
+      "pcl index build --json",
+      "pcl impact --diff --base main --json"
+    ],
+    "fidelity": "scope_preserving",
+    "reason": [
+      "staleness_warnings were present; refresh should rebuild the code index first.",
+      "diff_source was worktree-vs-main."
+    ]
+  },
   "sensitive_include_override_used": false,
   "sensitive_omitted_count": 1,
   "status": "from_receipt",

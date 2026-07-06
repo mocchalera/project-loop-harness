@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import shlex
 from typing import Any
 
 
@@ -62,6 +63,7 @@ def summarize_code_context_receipt(
     base_ref = _text(payload.get("base_ref"))
     if base_ref:
         summary["base_ref"] = base_ref
+    summary["refresh_replay"] = refresh_replay(summary)
     return summary
 
 
@@ -226,17 +228,125 @@ def _candidate_line(item: dict[str, Any]) -> str:
 
 def recommended_refresh_commands(summary: dict[str, Any]) -> list[str]:
     payload = summary if isinstance(summary, dict) else {}
+    replay = payload.get("refresh_replay")
+    if isinstance(replay, dict):
+        commands = _string_list(replay.get("commands"))
+        if commands:
+            return commands
+    return refresh_replay(payload)["commands"]
+
+
+def refresh_replay(summary: dict[str, Any]) -> dict[str, Any]:
+    """Return scope-aware commands for refreshing code-context evidence."""
+    payload = summary if isinstance(summary, dict) else {}
     next_actions = _string_list(payload.get("next_actions"))
     if next_actions:
-        return next_actions
+        return {
+            "fidelity": "unavailable",
+            "commands": next_actions,
+            "reason": [
+                "No replayable context receipt scope is available; follow the next actions to create fresh code-context evidence."
+            ],
+        }
     status = _text(payload.get("status"))
-    if _string_list(payload.get("staleness_warnings")) or status in {
-        "missing_receipt",
-        "unavailable",
-        "receipt_unavailable",
-    }:
-        return [INDEX_REFRESH_COMMAND, IMPACT_REFRESH_COMMAND]
-    return [IMPACT_REFRESH_COMMAND]
+    staleness_warnings = _string_list(payload.get("staleness_warnings"))
+    if status in {"missing_receipt", "unavailable", "receipt_unavailable"}:
+        return {
+            "fidelity": "unavailable",
+            "commands": [INDEX_REFRESH_COMMAND, IMPACT_REFRESH_COMMAND],
+            "reason": [
+                f"Receipt status was {status or 'unknown'}; no previous diff scope can be replayed."
+            ],
+        }
+
+    replay = _impact_refresh_replay(payload)
+    commands = list(replay["commands"])
+    reasons = list(replay["reason"])
+    if staleness_warnings:
+        commands.insert(0, INDEX_REFRESH_COMMAND)
+        reasons.insert(
+            0,
+            "staleness_warnings were present; refresh should rebuild the code index first.",
+        )
+    return {
+        "fidelity": replay["fidelity"],
+        "commands": commands,
+        "reason": reasons,
+    }
+
+
+def _impact_refresh_replay(summary: dict[str, Any]) -> dict[str, Any]:
+    diff_source = _text(summary.get("diff_source")) or "unknown"
+    base_ref = _text(summary.get("base_ref"))
+    include_untracked = diff_source.endswith("+untracked")
+    base_diff_source = diff_source.removesuffix("+untracked")
+
+    if base_diff_source == "provided-diff":
+        return _generic_refresh_replay(
+            "diff_source was provided-diff; PLH cannot reconstruct caller-provided diff text from the receipt."
+        )
+    if base_diff_source == "worktree-vs-index":
+        return _scope_preserving_refresh_replay(
+            ["--unstaged"],
+            include_untracked=include_untracked,
+            reason=f"diff_source was {diff_source}.",
+        )
+    if base_diff_source == "all-changes-vs-HEAD":
+        return _scope_preserving_refresh_replay(
+            ["--all-changes"],
+            include_untracked=False,
+            reason=f"diff_source was {diff_source}.",
+        )
+    if base_diff_source.startswith("staged-vs-"):
+        args = ["--staged"]
+        if base_ref:
+            args.extend(["--base", base_ref])
+        return _scope_preserving_refresh_replay(
+            args,
+            include_untracked=include_untracked,
+            reason=f"diff_source was {diff_source}.",
+        )
+    if base_diff_source.startswith("worktree-vs-"):
+        args: list[str] = []
+        if base_ref:
+            args.extend(["--base", base_ref])
+        return _scope_preserving_refresh_replay(
+            args,
+            include_untracked=include_untracked,
+            reason=f"diff_source was {diff_source}.",
+        )
+    return _generic_refresh_replay(
+        f"diff_source was {diff_source}; no scope-preserving replay mapping is available."
+    )
+
+
+def _scope_preserving_refresh_replay(
+    args: list[str],
+    *,
+    include_untracked: bool,
+    reason: str,
+) -> dict[str, Any]:
+    command_args = ["pcl", "impact", "--diff", *args]
+    if include_untracked and "--all-changes" not in args:
+        command_args.append("--include-untracked")
+    command_args.append("--json")
+    return {
+        "fidelity": "scope_preserving",
+        "commands": [_command_string(command_args)],
+        "reason": [reason],
+    }
+
+
+def _generic_refresh_replay(reason: str) -> dict[str, Any]:
+    return {
+        "fidelity": "generic",
+        "commands": [IMPACT_REFRESH_COMMAND],
+        "reason": [reason],
+    }
+
+
+def _command_string(parts: list[str]) -> str:
+    return " ".join(shlex.quote(part) for part in parts)
 
 
 def _next_recommended_command(summary: dict[str, Any]) -> str:

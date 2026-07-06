@@ -8,7 +8,7 @@ import subprocess
 
 from pcl.cli import main
 from pcl.code_context.scan import LARGE_FILE_BYTES
-from pcl.code_context.summary import summarize_code_context_receipt
+from pcl.code_context.summary import recommended_refresh_commands, summarize_code_context_receipt
 from pcl.code_context import store as code_context_store
 from pcl.db import connect
 
@@ -916,6 +916,72 @@ def test_impact_include_untracked_receipt_content_and_summary(tmp_path: Path, ca
     assert summary["untracked_omission_warning"] is None
     assert summary["untracked_included_count"] == 2
     assert summary["included_candidate_context_top"][0]["role"] == "added_file"
+
+
+def test_receipt_summary_refresh_replay_preserves_replayable_diff_scope() -> None:
+    cases = [
+        (
+            {"diff_source": "worktree-vs-HEAD+untracked"},
+            "scope_preserving",
+            ["pcl impact --diff --include-untracked --json"],
+        ),
+        (
+            {"diff_source": "worktree-vs-main", "base_ref": "main"},
+            "scope_preserving",
+            ["pcl impact --diff --base main --json"],
+        ),
+        (
+            {"diff_source": "staged-vs-HEAD~1", "base_ref": "HEAD~1"},
+            "scope_preserving",
+            ["pcl impact --diff --staged --base 'HEAD~1' --json"],
+        ),
+        (
+            {"diff_source": "worktree-vs-index+untracked"},
+            "scope_preserving",
+            ["pcl impact --diff --unstaged --include-untracked --json"],
+        ),
+        (
+            {"diff_source": "all-changes-vs-HEAD+untracked"},
+            "scope_preserving",
+            ["pcl impact --diff --all-changes --json"],
+        ),
+        (
+            {"diff_source": "provided-diff"},
+            "generic",
+            ["pcl impact --diff --json"],
+        ),
+    ]
+
+    for receipt_fields, fidelity, commands in cases:
+        summary = summarize_code_context_receipt(
+            {
+                "contract_version": "context-receipt/v0",
+                "staleness_warnings": [],
+                **receipt_fields,
+            }
+        )
+
+        assert summary["refresh_replay"]["fidelity"] == fidelity
+        assert summary["refresh_replay"]["commands"] == commands
+        assert recommended_refresh_commands(summary) == commands
+
+
+def test_receipt_summary_refresh_replay_rebuilds_index_before_scope_refresh_when_stale() -> None:
+    summary = summarize_code_context_receipt(
+        {
+            "contract_version": "context-receipt/v0",
+            "diff_source": "worktree-vs-main+untracked",
+            "base_ref": "main",
+            "staleness_warnings": ["Indexed file metadata changed: src/pkg/calc.py."],
+        }
+    )
+
+    assert summary["refresh_replay"]["fidelity"] == "scope_preserving"
+    assert summary["refresh_replay"]["commands"] == [
+        "pcl index build --json",
+        "pcl impact --diff --base main --include-untracked --json",
+    ]
+    assert recommended_refresh_commands(summary) == summary["refresh_replay"]["commands"]
 
 
 def test_impact_all_changes_matches_default_with_include_untracked(tmp_path: Path, capsys) -> None:

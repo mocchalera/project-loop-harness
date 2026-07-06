@@ -81,6 +81,7 @@ pcl validate --strict --json
 pcl render --json
 python -m build --outdir /tmp/pcl-release-dist --sdist --wheel
 python -m twine check /tmp/pcl-release-dist/*
+python scripts/verify_sdist_contracts.py --dist-dir /tmp/pcl-release-dist
 ```
 
 For local artifact smoke testing:

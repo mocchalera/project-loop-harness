@@ -476,6 +476,18 @@ the optional `context_pack.code_context` section both derive from the same
 summary model; neither path inlines the full receipt body or adds a
 `safe_to_continue` field.
 
+The summary also carries `refresh_replay`, an object with:
+
+- `fidelity`: `scope_preserving`, `generic`, or `unavailable`;
+- `commands`: artifact-regenerating refresh suggestions;
+- `reason`: factual notes explaining the replay decision.
+
+For git-based receipts, `refresh_replay` reconstructs the replayable diff
+scope from `diff_source` and `base_ref`, including `--include-untracked`,
+`--all-changes`, `--staged`, `--unstaged`, and `--base <ref>` where applicable.
+For `provided-diff`, PLH cannot reconstruct the caller-provided diff text from
+the receipt, so the refresh remains generic.
+
 ## Context Pack Bridge
 
 `pcl context pack --include-code-context` links the latest context receipt into
@@ -498,6 +510,8 @@ facts are:
 - `excluded_changed_file_count`
 - `untracked_omission_warning`
 - `untracked_included_count` when untracked files were explicitly included
+- `refresh_replay` with scope-preserving, generic, or unavailable refresh
+  metadata
 
 These facts are rendered in the opt-in `Code Context Safety` section with the
 same pinned-priority budget mechanism used by `machine_context_rules`.

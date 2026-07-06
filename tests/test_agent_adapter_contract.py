@@ -150,3 +150,10 @@ def test_agent_adapter_docs_match_contract() -> None:
     ]:
         assert required in contract
     assert "# Short result summary" in template
+
+
+def test_verification_feedback_design_uses_existing_verification_namespace() -> None:
+    design = Path("docs/verification-feedback-design.md").read_text(encoding="utf-8")
+
+    assert "pcl verification feedback" in design
+    assert "pcl verify feedback" not in design

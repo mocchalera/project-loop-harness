@@ -145,7 +145,9 @@ The action installs the Python runtime through its `install-command` input. For 
 
 ## Distribution smoke
 
-Editable installs are not enough to prove distribution readiness. Run:
+Editable installs are not enough to prove distribution readiness. The wheel is
+the runtime install artifact; the sdist is the source artifact and should stay
+self-contained for docs-as-contract tests. Run:
 
 ```bash
 python -m pip wheel . --no-deps --no-build-isolation -w /tmp/pcl-wheelhouse
@@ -166,6 +168,14 @@ Then initialize a scratch project with the installed `pcl` and verify:
 
 The same path is covered by `pytest tests/test_distribution.py`.
 
+For release candidates, also build the canonical release artifacts and verify
+that the extracted sdist can run the doc/contract subset:
+
+```bash
+python -m build --outdir /tmp/pcl-release-dist --sdist --wheel
+python scripts/verify_sdist_contracts.py --dist-dir /tmp/pcl-release-dist
+```
+
 ## PyPI Release Workflow
 
 The repository ships:
@@ -179,6 +189,7 @@ The workflow:
 - runs only on GitHub Release publication or manual dispatch;
 - builds both sdist and wheel;
 - runs `twine check`;
+- verifies the extracted sdist with the doc/contract test subset before upload;
 - publishes to TestPyPI with `repository=testpypi`;
 - publishes to PyPI on a published GitHub Release or manual
   `repository=pypi` dispatch;

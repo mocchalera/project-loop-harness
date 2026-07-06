@@ -8,6 +8,7 @@ from typing import Any
 from .code_context.summary import (
     CODE_CONTEXT_SUMMARY_VERSION,
     recommended_refresh_commands,
+    refresh_replay,
     render_receipt_age_lines,
     summarize_code_context_receipt,
     summary_with_receipt_age,
@@ -702,6 +703,7 @@ def _stamp_code_context_pack_facts(
         target_type=target_type,
         target_id=target_id,
     )
+    stamped["refresh_replay"] = refresh_replay(stamped)
     return stamped
 
 

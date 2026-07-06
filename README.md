@@ -97,7 +97,9 @@ pcl --help
 ## Distribution Smoke Test
 
 Before releasing a new version or handing the runtime to another project,
-verify a wheel install rather than only editable install:
+verify distribution artifacts rather than only editable install. The wheel is
+the runtime install artifact; the sdist is the source artifact and must remain
+self-contained for docs-as-contract tests.
 
 ```bash
 python -m pip wheel . --no-deps --no-build-isolation -w /tmp/pcl-wheelhouse
@@ -105,6 +107,13 @@ python -m venv /tmp/pcl-wheel-venv
 /tmp/pcl-wheel-venv/bin/python -m pip install --no-deps /tmp/pcl-wheelhouse/project_loop_harness-*.whl
 /tmp/pcl-wheel-venv/bin/pcl --help
 /tmp/pcl-wheel-venv/bin/pcl-mcp --help
+```
+
+For release builds, also verify the sdist:
+
+```bash
+python -m build --outdir /tmp/pcl-release-dist --sdist --wheel
+python scripts/verify_sdist_contracts.py --dist-dir /tmp/pcl-release-dist
 ```
 
 The automated version is covered by:

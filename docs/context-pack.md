@@ -77,7 +77,22 @@ When `--include-code-context` is requested, the pack also includes a top-level
 suggestions for refreshing the underlying code-context evidence; they may
 create new evidence or artifacts. Stale or missing code context suggests
 `pcl index build --json` followed by `pcl impact --diff --json`; fresh code
-context suggests `pcl impact --diff --json`.
+context suggests an impact refresh command.
+
+The embedded `code_context.refresh_replay` object explains how closely those
+refresh commands preserve the previous receipt scope:
+
+- `fidelity: "scope_preserving"` means PLH reconstructed the replay command
+  from receipt facts such as `diff_source` and `base_ref`.
+- `fidelity: "generic"` means PLH can suggest a normal refresh, but cannot
+  reconstruct the prior scope, for example when the receipt used
+  caller-provided diff text.
+- `fidelity: "unavailable"` means there is no usable receipt scope to replay.
+
+Scope-preserving replay reflects the modes PLH can infer from receipt facts,
+including `--include-untracked`, `--all-changes`, `--staged`, `--unstaged`,
+and `--base <ref>`. It remains a suggested command, not an attestation that the
+pack generation reran impact.
 
 The summary contains compact fields such as `diff_source`,
 `receipt_ref`, `changed_file_count`, `excluded_changed_file_count`,
@@ -85,7 +100,7 @@ The summary contains compact fields such as `diff_source`,
 `untracked_omission_warning`, `included_total`,
 `included_candidate_context_top`, `omitted_reason_counts`,
 `verification_suggestions`, `relevance`, `receipt_age`, `age_warning`,
-and `sensitive_include_override_used`.
+`refresh_replay`, and `sensitive_include_override_used`.
 Candidate rows use the phrase `included as candidate context`; the summary
 does not make cognition claims about those files.
 
@@ -243,3 +258,8 @@ Agents should use `pcl` JSON commands, reports, evidence paths, or
 `pcl impact --diff --json` entry in `source_commands`. That command creates a
 fresh context receipt, so it now belongs under `suggested_refresh_commands`
 when `--include-code-context` is requested.
+
+`code_context.refresh_replay` now labels refresh suggestions as generic,
+scope-preserving, or unavailable. For git-based receipts, refresh commands
+preserve replayable scope flags such as `--include-untracked`, `--base`,
+`--staged`, `--unstaged`, and `--all-changes`.

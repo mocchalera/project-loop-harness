@@ -90,6 +90,17 @@ def test_summary_model_compacts_context_receipt() -> None:
     assert summary["untracked_omission_warning"]
     assert summary["verification_suggestions"] == ["python3 -m pytest tests/test_context.py"]
     assert summary["sensitive_include_override_used"] is True
+    assert summary["refresh_replay"] == {
+        "fidelity": "scope_preserving",
+        "commands": [
+            "pcl index build --json",
+            "pcl impact --diff --json",
+        ],
+        "reason": [
+            "staleness_warnings were present; refresh should rebuild the code index first.",
+            "diff_source was worktree-vs-HEAD.",
+        ],
+    }
 
 
 def test_summary_model_bounds_candidate_context_top_n() -> None:
@@ -130,6 +141,13 @@ def test_summary_model_tolerates_missing_and_unknown_receipt_fields() -> None:
         "omitted_reason_counts": {},
         "verification_suggestions": [],
         "sensitive_include_override_used": False,
+        "refresh_replay": {
+            "fidelity": "generic",
+            "commands": ["pcl impact --diff --json"],
+            "reason": [
+                "diff_source was unknown; no scope-preserving replay mapping is available."
+            ],
+        },
     }
 
 

@@ -32,6 +32,8 @@ jobs:
         run: python -m build --outdir release-dist --sdist --wheel
       - name: Check distributions
         run: python -m twine check release-dist/*
+      - name: Verify sdist contract tests
+        run: python scripts/verify_sdist_contracts.py --dist-dir release-dist
       - name: Upload distributions
         uses: actions/upload-artifact@v4
         with:

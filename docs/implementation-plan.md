@@ -213,7 +213,7 @@ for the full contract shapes, refinements, and approval record.
 - Verification suggestion feedback loop: `E-xxxx/VS-nn` suggestion IDs
   (no status field in receipts — receipts stay immutable candidate
   presentations), migration 005 `verification_feedback` append-only
-  event table (approved), `pcl verify feedback` with in-receipt ID
+  event table (approved), `pcl verification feedback` with in-receipt ID
   validation, and observable-rate metrics only (`execution_rate`,
   `executed_pass_rate`, `executed_fail_rate`,
   `feedback_coverage_rate`) — no hit/miss framing; usefulness labels

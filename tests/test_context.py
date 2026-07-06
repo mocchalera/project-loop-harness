@@ -1379,6 +1379,13 @@ def test_context_pack_include_code_context_without_receipt_suggests_next_action(
         "pcl index build --json",
         "pcl impact --diff --json",
     ]
+    assert code_context["refresh_replay"] == {
+        "fidelity": "unavailable",
+        "commands": code_context["next_actions"],
+        "reason": [
+            "No replayable context receipt scope is available; follow the next actions to create fresh code-context evidence."
+        ],
+    }
     assert pack["suggested_refresh_commands"] == code_context["next_actions"]
     assert pack["suggested_refresh_commands"] == _receipt_show_latest_error_next_actions(
         tmp_path,
@@ -1493,6 +1500,40 @@ def test_context_pack_suggested_refresh_commands_match_receipt_show_for_fresh_re
     commands = _json_output(capsys)["context_pack"]["suggested_refresh_commands"]
     assert commands == ["pcl impact --diff --json"]
     assert commands == _receipt_show_latest_recommended_commands(tmp_path, capsys)
+
+
+def test_context_pack_refresh_replay_preserves_receipt_diff_scope(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_task_code_project(tmp_path, capsys)
+    impact = _write_fresh_code_context_receipt(tmp_path, capsys)
+    receipt_path = tmp_path / impact["receipt_path"]
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt["diff_source"] = "worktree-vs-main+untracked"
+    receipt["base_ref"] = "main"
+    receipt_path.write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0001",
+        "--include-code-context",
+        "--json",
+    ]) == 0
+
+    pack = _json_output(capsys)["context_pack"]
+    replay = pack["code_context"]["refresh_replay"]
+    assert replay == {
+        "fidelity": "scope_preserving",
+        "commands": ["pcl impact --diff --base main --include-untracked --json"],
+        "reason": ["diff_source was worktree-vs-main+untracked."],
+    }
+    assert pack["suggested_refresh_commands"] == replay["commands"]
+    assert replay["commands"] == _receipt_show_latest_recommended_commands(tmp_path, capsys)
 
 
 def _section_heading(section_id: str) -> str:

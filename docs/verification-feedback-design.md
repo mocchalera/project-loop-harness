@@ -107,11 +107,11 @@ Approved field semantics:
 Recording is CLI-only (never raw SQL):
 
 ```bash
-pcl verify feedback --suggestion E-0001/VS-01 --status executed \
+pcl verification feedback --suggestion E-0001/VS-01 --status executed \
   --result passed --evidence E-0009
 ```
 
-- **Referential honesty (approved refinement):** `pcl verify feedback`
+- **Referential honesty (approved refinement):** `pcl verification feedback`
   loads the receipt referenced by the suggestion ID prefix and
   verifies the suggestion ID actually exists in that receipt's
   payload before recording; unknown IDs are a typed error.
@@ -196,7 +196,7 @@ come later).
 1. **0087**: suggestion IDs + summary/show compatibility — no
    migration; may start immediately after v0.1.12.
 2. **0088**: migration 005 (`verification_feedback` append-only event
-   table) + `pcl verify feedback` with in-receipt suggestion ID
+   table) + `pcl verification feedback` with in-receipt suggestion ID
    validation + observable-rate metrics.
 3. **0089**: dogfood-to-fixture propose command (staging area,
    unlabeled candidates) — deliberately BEFORE baseline work so
@@ -223,7 +223,7 @@ above:
    config hash, pcl version, eval contract version).
 4. `E-xxxx/VS-nn` ID scheme confirmed; no `status` field in receipt
    payloads (receipts are immutable candidate presentations; state
-   lives in `verification_feedback`); `pcl verify feedback` validates
+   lives in `verification_feedback`); `pcl verification feedback` validates
    suggestion existence in the referenced receipt.
 5. Metric vocabulary limited to observable rates (`execution_rate`,
    `executed_pass_rate`, `executed_fail_rate`,
