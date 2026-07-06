@@ -117,6 +117,10 @@ from .store import (
     build_code_index,
     code_index_status,
 )
+from .summary import (
+    CODE_CONTEXT_SUMMARY_VERSION,
+    summarize_code_context_receipt,
+)
 from .symbols import (
     JS_CLASS_RE,
     JS_EXPORT_BINDING_RE,

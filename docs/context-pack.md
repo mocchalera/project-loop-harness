@@ -12,6 +12,7 @@ generated dashboard HTML, or reconstructing prompt/evidence paths manually.
 pcl context pack --job J-0001
 pcl context pack --job J-0001 --role verifier --max-tokens 12000 --json
 pcl context pack --task T-0001 --json
+pcl context pack --task T-0001 --include-code-context --json
 ```
 
 Exactly one of `--job` or `--task` is required.
@@ -55,6 +56,26 @@ Task packs use the same `context-pack/v1` contract with
 `"target": {"type": "task", "id": "T-0001"}`. This is an additive evolution of
 the v1 contract rather than a new contract version.
 
+`--include-code-context` is opt-in. Without the flag, context packs do not look
+for code-context receipts and keep the same v1 payload shape. With the flag,
+the pack resolves the latest `context_receipt` evidence row, loads that receipt
+artifact, and embeds only a stable `code-context-summary/v0` under
+`context_pack.code_context`. The receipt body is never inlined; it is referenced
+through `code_context.receipt_ref.evidence_id`,
+`code_context.receipt_ref.receipt_path`, and `source_paths`.
+
+The summary contains compact fields such as `diff_source`,
+`included_candidate_context_count`, `included_candidate_context`,
+`omitted_count`, `excluded_changed_file_count`, `sensitive_omitted_count`,
+`staleness_warnings`, `untracked_omission_warning`, and
+`verification_suggestions`. Candidate rows use the phrase
+`included as candidate context`; the summary does not make cognition claims
+about those files.
+
+When no receipt exists, `--include-code-context` still succeeds and returns a
+`code_context` summary with `status: "missing_receipt"` plus next actions:
+`pcl index build --json` and `pcl impact --diff --json`.
+
 `--max-tokens` is an approximate budget control. Section selection uses the
 deterministic, dependency-free `charclass/v1` estimator:
 
@@ -76,15 +97,16 @@ failing or slicing through a section.
 Job packs render included sections in canonical order:
 
 1. machine context rules
-2. target job
-3. workflow run
-4. goal
-5. jobs in this run
-6. verifications
-7. human queue
-8. evidence
-9. recent events
-10. agent prompt
+2. code context, only when `--include-code-context` is used
+3. target job
+4. workflow run
+5. goal
+6. jobs in this run
+7. verifications
+8. human queue
+9. evidence
+10. recent events
+11. agent prompt
 
 The target job table includes lease fields:
 `assigned_agent_id`, `attempts`, `lease_expires_at`, and
@@ -95,14 +117,15 @@ The target job table includes lease fields:
 Task packs render included sections in canonical order:
 
 1. machine context rules
-2. target task
-3. dependencies
-4. dependents
-5. goal
-6. related feature, when linked
-7. related defect, when linked
-8. sibling tasks, when a goal is linked
-9. recent events
+2. code context, only when `--include-code-context` is used
+3. target task
+4. dependencies
+5. dependents
+6. goal
+7. related feature, when linked
+8. related defect, when linked
+9. sibling tasks, when a goal is linked
+10. recent events
 
 Task dependencies include a `satisfied` column. It is `yes` when the dependency
 task status is `done`, `cancelled`, or `waived`; otherwise it is `no`.
@@ -117,6 +140,9 @@ profile priority, then rendered in canonical order.
 - `pm` prioritizes goal, human queue, workflow run, and verifications.
 - Unknown or blank job roles fall back to `implementer`.
 - Task packs currently use the `default` profile.
+- `machine_context_rules` and the opt-in `code_context` safety summary are
+  pinned at the highest section priority so safety facts are selected before
+  ordinary task or job detail under tight budgets.
 
 The selected profile name is returned as `role_profile`.
 
@@ -127,6 +153,9 @@ The selected profile name is returned as `role_profile`.
 - It does not execute external agents.
 - It does not add or require schema migrations.
 - It does not read or parse `.project-loop/dashboard/dashboard.html`.
+- It does not run `pcl index build` or `pcl impact`; `--include-code-context`
+  reads the latest existing receipt evidence only.
+- It does not inline the full context receipt body.
 
 Agents should use `pcl` JSON commands, reports, evidence paths, or
 `.project-loop/dashboard/dashboard-data.json` for follow-up machine context.

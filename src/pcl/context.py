@@ -3,8 +3,13 @@ from __future__ import annotations
 import json
 from json import JSONDecodeError
 import math
+from pathlib import Path
 from typing import Any
 
+from .code_context.summary import (
+    CODE_CONTEXT_SUMMARY_VERSION,
+    summarize_code_context_receipt,
+)
 from .db import connect
 from .errors import InvalidInputError
 from .guards import require_initialized
@@ -20,9 +25,11 @@ DEFAULT_MAX_TOKENS = 12000
 TOKEN_ESTIMATOR = "charclass/v1"
 LEGACY_APPROX_CHARS_PER_TOKEN = 4
 MACHINE_CONTEXT_RULES_SECTION_ID = "machine_context_rules"
+CODE_CONTEXT_SECTION_ID = "code_context"
 
 JOB_SECTION_ORDER = [
     "machine_context_rules",
+    "code_context",
     "target_job",
     "workflow_run",
     "goal",
@@ -35,6 +42,7 @@ JOB_SECTION_ORDER = [
 ]
 TASK_SECTION_ORDER = [
     "machine_context_rules",
+    "code_context",
     "target_task",
     "dependencies",
     "dependents",
@@ -47,11 +55,12 @@ TASK_SECTION_ORDER = [
 
 JOB_SECTION_PRIORITY_PROFILES = {
     "implementer": {
-        section_id: (10000 if section_id == MACHINE_CONTEXT_RULES_SECTION_ID else 900 - index * 50)
+        section_id: (10000 if section_id in {MACHINE_CONTEXT_RULES_SECTION_ID, CODE_CONTEXT_SECTION_ID} else 900 - index * 50)
         for index, section_id in enumerate(JOB_SECTION_ORDER)
     },
     "verifier": {
         "machine_context_rules": 10000,
+        "code_context": 10000,
         "verifications": 950,
         "evidence": 900,
         "target_job": 850,
@@ -64,6 +73,7 @@ JOB_SECTION_PRIORITY_PROFILES = {
     },
     "pm": {
         "machine_context_rules": 10000,
+        "code_context": 10000,
         "goal": 950,
         "human_queue": 900,
         "workflow_run": 850,
@@ -77,7 +87,7 @@ JOB_SECTION_PRIORITY_PROFILES = {
 }
 TASK_SECTION_PRIORITY_PROFILES = {
     "default": {
-        section_id: (10000 if section_id == MACHINE_CONTEXT_RULES_SECTION_ID else 900 - index * 50)
+        section_id: (10000 if section_id in {MACHINE_CONTEXT_RULES_SECTION_ID, CODE_CONTEXT_SECTION_ID} else 900 - index * 50)
         for index, section_id in enumerate(TASK_SECTION_ORDER)
     }
 }
@@ -89,6 +99,7 @@ def pack_context_for_job(
     job_id: str,
     reader_role: str | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
+    include_code_context: bool = False,
 ) -> dict[str, Any]:
     require_initialized(paths)
     _validate_identifier(job_id, "job_id")
@@ -102,6 +113,8 @@ def pack_context_for_job(
     role = (reader_role or str(job["role"])).strip()
     role_profile, section_priorities = _job_role_profile(role)
     approx_char_limit = max_tokens * LEGACY_APPROX_CHARS_PER_TOKEN
+
+    code_context = _latest_code_context_summary(paths) if include_code_context else None
 
     conn = connect(paths.db_path)
     try:
@@ -171,9 +184,15 @@ def pack_context_for_job(
         f"pcl prompt job {job_id} --json",
         "pcl validate --json",
     ]
+    if include_code_context:
+        source_commands.append("pcl impact --diff --json")
     source_paths = [str(job["prompt_path"])]
     if job.get("output_path"):
         source_paths.append(str(job["output_path"]))
+    if code_context:
+        receipt_path = _code_context_receipt_path(code_context)
+        if receipt_path:
+            source_paths.append(receipt_path)
     for evidence in _job_evidence(jobs):
         path = str(evidence.get("path") or "")
         if path and path not in source_paths:
@@ -188,6 +207,7 @@ def pack_context_for_job(
         escalations=escalations,
         decisions=decisions,
         events=events,
+        code_context=code_context,
     )
     markdown, included_sections, omitted_sections = _render_with_budget(
         title=f"# Context Pack: {job_id}",
@@ -197,7 +217,7 @@ def pack_context_for_job(
     )
     estimated_token_count = estimate_token_count(markdown)
 
-    return {
+    pack = {
         "contract_version": CONTEXT_PACK_CONTRACT_VERSION,
         "target": {"type": "agent_job", "id": job_id},
         "reader_role": role,
@@ -218,6 +238,9 @@ def pack_context_for_job(
         "source_paths": source_paths,
         "markdown": markdown,
     }
+    if code_context:
+        pack["code_context"] = code_context
+    return pack
 
 
 def pack_context_for_task(
@@ -226,6 +249,7 @@ def pack_context_for_task(
     task_id: str,
     reader_role: str | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
+    include_code_context: bool = False,
 ) -> dict[str, Any]:
     require_initialized(paths)
     _validate_identifier(task_id, "task_id")
@@ -239,6 +263,8 @@ def pack_context_for_task(
     role = (reader_role or "default").strip() or "default"
     role_profile, section_priorities = _task_role_profile(role)
     approx_char_limit = max_tokens * LEGACY_APPROX_CHARS_PER_TOKEN
+
+    code_context = _latest_code_context_summary(paths) if include_code_context else None
 
     conn = connect(paths.db_path)
     try:
@@ -260,6 +286,7 @@ def pack_context_for_task(
         defect=defect,
         siblings=siblings,
         events=events,
+        code_context=code_context,
     )
     markdown, included_sections, omitted_sections = _render_with_budget(
         title=f"# Context Pack: {task_id}",
@@ -269,7 +296,13 @@ def pack_context_for_task(
     )
     estimated_token_count = estimate_token_count(markdown)
 
-    return {
+    source_paths = []
+    if code_context:
+        receipt_path = _code_context_receipt_path(code_context)
+        if receipt_path:
+            source_paths.append(receipt_path)
+
+    pack = {
         "contract_version": CONTEXT_PACK_CONTRACT_VERSION,
         "target": {"type": "task", "id": task_id},
         "reader_role": role,
@@ -290,10 +323,14 @@ def pack_context_for_task(
             f"pcl task read {task_id} --json",
             "pcl task list --json",
             "pcl validate --json",
+            *(["pcl impact --diff --json"] if include_code_context else []),
         ],
-        "source_paths": [],
+        "source_paths": source_paths,
         "markdown": markdown,
     }
+    if code_context:
+        pack["code_context"] = code_context
+    return pack
 
 
 def _build_job_sections(
@@ -306,8 +343,9 @@ def _build_job_sections(
     escalations: list[dict[str, Any]],
     decisions: list[dict[str, Any]],
     events: list[dict[str, Any]],
+    code_context: dict[str, Any] | None,
 ) -> list[tuple[str, str]]:
-    return [
+    sections = [
         (
             "machine_context_rules",
             "\n".join(
@@ -322,6 +360,11 @@ def _build_job_sections(
                 ]
             ),
         ),
+    ]
+    if code_context is not None:
+        sections.append(("code_context", _render_code_context_section(code_context)))
+    sections.extend(
+        [
         (
             "target_job",
             "## Target Job\n\n"
@@ -388,7 +431,9 @@ def _build_job_sections(
             + str(job.get("prompt") or "").rstrip()
             + "\n````",
         ),
-    ]
+        ]
+    )
+    return sections
 
 
 def _build_task_sections(
@@ -399,6 +444,7 @@ def _build_task_sections(
     defect: dict[str, Any] | None,
     siblings: list[dict[str, Any]],
     events: list[dict[str, Any]],
+    code_context: dict[str, Any] | None,
 ) -> list[tuple[str, str]]:
     sections = [
         (
@@ -415,6 +461,11 @@ def _build_task_sections(
                 ]
             ),
         ),
+    ]
+    if code_context is not None:
+        sections.append(("code_context", _render_code_context_section(code_context)))
+    sections.extend(
+        [
         (
             "target_task",
             "## Target Task\n\n"
@@ -462,7 +513,8 @@ def _build_task_sections(
                 else "No goal is linked to this task."
             ),
         ),
-    ]
+        ]
+    )
     if task.get("related_feature_id"):
         sections.append(
             (
@@ -519,6 +571,182 @@ def _build_task_sections(
         )
     )
     return sections
+
+
+def _latest_code_context_summary(paths: ProjectPaths) -> dict[str, Any]:
+    conn = connect(paths.db_path)
+    try:
+        row = _one(
+            conn,
+            """
+            SELECT id, path, created_at
+            FROM evidence
+            WHERE type = ?
+            ORDER BY created_at DESC, id DESC
+            LIMIT 1
+            """,
+            ("context_receipt",),
+        )
+    finally:
+        conn.close()
+    if row is None:
+        return _missing_code_context_summary()
+
+    receipt_ref = {
+        "evidence_id": str(row["id"]),
+        "receipt_path": str(row["path"]),
+    }
+    receipt_path = _resolve_project_path(paths, str(row["path"]))
+    try:
+        receipt_payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, JSONDecodeError) as exc:
+        return _unavailable_code_context_summary(
+            receipt_ref=receipt_ref,
+            message=f"Latest context receipt could not be loaded: {exc.__class__.__name__}.",
+        )
+    if not isinstance(receipt_payload, dict):
+        return _unavailable_code_context_summary(
+            receipt_ref=receipt_ref,
+            message="Latest context receipt is not a JSON object.",
+        )
+
+    summary = summarize_code_context_receipt(receipt_payload)
+    summary["receipt_ref"] = receipt_ref
+    return summary
+
+
+def _missing_code_context_summary() -> dict[str, Any]:
+    return {
+        "contract_version": CODE_CONTEXT_SUMMARY_VERSION,
+        "status": "missing_receipt",
+        "receipt_ref": {"evidence_id": None, "receipt_path": None},
+        "diff_source": "unknown",
+        "included_candidate_context_count": 0,
+        "included_candidate_context": [],
+        "omitted_count": 0,
+        "omitted": [],
+        "excluded_changed_file_count": 0,
+        "excluded_changed_files": [],
+        "sensitive_omitted_count": 0,
+        "staleness_warnings": [],
+        "untracked_omission_warning": None,
+        "verification_suggestions": [],
+        "message": "No context receipt evidence was found.",
+        "next_actions": [
+            "pcl index build --json",
+            "pcl impact --diff --json",
+        ],
+    }
+
+
+def _unavailable_code_context_summary(
+    *,
+    receipt_ref: dict[str, str],
+    message: str,
+) -> dict[str, Any]:
+    return {
+        "contract_version": CODE_CONTEXT_SUMMARY_VERSION,
+        "status": "receipt_unavailable",
+        "receipt_ref": receipt_ref,
+        "diff_source": "unknown",
+        "included_candidate_context_count": 0,
+        "included_candidate_context": [],
+        "omitted_count": 0,
+        "omitted": [],
+        "excluded_changed_file_count": 0,
+        "excluded_changed_files": [],
+        "sensitive_omitted_count": 0,
+        "staleness_warnings": [],
+        "untracked_omission_warning": None,
+        "verification_suggestions": [],
+        "message": message,
+        "next_actions": ["pcl impact --diff --json"],
+    }
+
+
+def _resolve_project_path(paths: ProjectPaths, value: str) -> Path:
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return paths.root / path
+
+
+def _code_context_receipt_path(summary: dict[str, Any]) -> str | None:
+    receipt_ref = summary.get("receipt_ref")
+    if not isinstance(receipt_ref, dict):
+        return None
+    receipt_path = receipt_ref.get("receipt_path")
+    if not receipt_path:
+        return None
+    return str(receipt_path)
+
+
+def _render_code_context_section(summary: dict[str, Any]) -> str:
+    lines = ["## Code Context", ""]
+    status = str(summary.get("status") or "")
+    if status == "missing_receipt":
+        lines.extend(
+            [
+                "No context receipt evidence was found.",
+                "",
+                "Next action: `pcl index build --json`, then `pcl impact --diff --json`.",
+            ]
+        )
+        return "\n".join(lines)
+    if status == "receipt_unavailable":
+        lines.extend(
+            [
+                str(summary.get("message") or "Latest context receipt is unavailable."),
+                "",
+                "Next action: `pcl impact --diff --json`.",
+            ]
+        )
+        return "\n".join(lines)
+
+    receipt_ref = _format_receipt_ref(summary)
+    staleness = summary.get("staleness_warnings")
+    staleness_count = len(staleness) if isinstance(staleness, list) else 0
+    untracked_warning = summary.get("untracked_omission_warning")
+    untracked_value = "present" if untracked_warning else "none"
+    lines.append(
+        "Safety facts: "
+        f"diff_source={_stringify(summary.get('diff_source'))}; "
+        f"receipt_ref={receipt_ref}; "
+        f"sensitive_omitted_count={_stringify(summary.get('sensitive_omitted_count'))}; "
+        f"staleness_warnings={staleness_count}; "
+        f"excluded_changed_file_count={_stringify(summary.get('excluded_changed_file_count'))}; "
+        f"untracked_omission_warning={untracked_value}."
+    )
+
+    candidates = summary.get("included_candidate_context")
+    if isinstance(candidates, list) and candidates:
+        lines.extend(["", "Files included as candidate context:"])
+        for item in candidates[:5]:
+            if not isinstance(item, dict):
+                continue
+            path = _stringify(item.get("path"))
+            role = _stringify(item.get("role"))
+            lines.append(f"- {path} ({role})")
+        if len(candidates) > 5:
+            lines.append(f"- ... (+{len(candidates) - 5} more)")
+    else:
+        lines.extend(["", "Files included as candidate context: none."])
+    return "\n".join(lines)
+
+
+def _format_receipt_ref(summary: dict[str, Any]) -> str:
+    receipt_ref = summary.get("receipt_ref")
+    if not isinstance(receipt_ref, dict):
+        return "none"
+    evidence_id = receipt_ref.get("evidence_id")
+    receipt_path = receipt_ref.get("receipt_path")
+    if evidence_id and receipt_path:
+        return str(evidence_id)
+    if evidence_id:
+        return str(evidence_id)
+    if receipt_path:
+        return str(receipt_path)
+    return "none"
 
 
 def _render_with_budget(
