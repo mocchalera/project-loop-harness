@@ -93,5 +93,6 @@ Give these tasks to coding agents in this order:
 89. `agent-tasks/0091-refresh-command-scope-fidelity.md` (retroactive record; implemented in `204a857`; numbered 0091 per the v0.1.12 review agenda)
 90. `agent-tasks/0089-dogfood-fixture-propose.md` (v0.2.1)
 91. `agent-tasks/0090-eval-baseline-record-compare.md` (v0.2.1, after 0089)
+92. `agent-tasks/0092-idempotent-status-transitions.md` (v0.2.2, from ax1-moc1 feedback F1)
 
 Do not start with MCP. Do not start with a hosted UI. The CLI/runtime must become reliable first.
