@@ -51,8 +51,18 @@ labels.
     `retrieved_candidate_paths` (the receipt's
     `included_candidate_context` paths) — this is the raw material
     the human labeler starts from, clearly provenance, not labels.
-- Append one JSONL event (`eval_fixture_proposed`) recording the
-  receipt evidence id and output path. No SQLite mutation.
+- Record one standard `eval_fixture_proposed` event via the shared
+  `append_event` path (SQLite events table + JSONL mirror, sequential
+  event id), recording the receipt evidence id and output path. The
+  event row is the ONLY permitted SQLite write; no other tables may
+  be touched.
+  **Clarified 2026-07-06 after first acceptance pass:** the original
+  wording "JSONL event ... No SQLite mutation" was over-constrained
+  and led to a JSONL-only event with a uuid id, which violates the
+  task-0012 audit integrity invariant (`validate --strict` errors on
+  JSONL event ids missing from the DB events table). Events always go
+  through `append_event` to both stores; do not invent side-channel
+  event writers.
 
 ### 2. Guard: eval refuses unlabeled fixtures
 
