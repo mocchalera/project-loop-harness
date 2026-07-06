@@ -86,5 +86,14 @@ Give these tasks to coding agents in this order:
 82. `agent-tasks/0082-receipt-relevance-and-age.md`
 83. `agent-tasks/0083-required-section-invariant.md`
 84. `agent-tasks/0084-source-commands-honesty.md`
+85. `agent-tasks/0085-distribution-source-completeness.md` (retroactive record; implemented in `204a857`)
+86. `agent-tasks/0086-command-surface-alignment.md` (retroactive record; implemented in `204a857`)
+87. `agent-tasks/0087-verification-suggestion-ids.md` (v0.2.0)
+88. `agent-tasks/0088-verification-feedback.md` (v0.2.0, migration 005 — approved)
+89. `agent-tasks/0091-refresh-command-scope-fidelity.md` (retroactive record; implemented in `204a857`; numbered 0091 per the v0.1.12 review agenda)
+
+Tasks 0089 (dogfood-to-fixture propose) and 0090 (eval baseline
+record/compare) are scheduled for v0.2.1; their specs are filed after
+the v0.2.0 release, per `docs/v0.2.0-plan.md`.
 
 Do not start with MCP. Do not start with a hosted UI. The CLI/runtime must become reliable first.

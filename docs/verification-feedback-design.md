@@ -229,3 +229,30 @@ above:
    `executed_pass_rate`, `executed_fail_rate`,
    `feedback_coverage_rate`); no hit/miss framing; usefulness is a
    future optional human label.
+
+## Approval addendum (2026-07-06, human decisions for implementation)
+
+1. **Metric exposure** starts with read-only
+   `pcl verification stats --json`; no dashboard or report surface in
+   v0.2.0.
+2. **Denominators**: suggestion-level rates
+   (`feedback_coverage_rate`, `execution_rate`) divide by ADDRESSABLE
+   issued suggestions — object-form suggestions with a non-null ID
+   found in stored receipts. Legacy string-form suggestions
+   (`id: null`) are excluded from all denominators and reported
+   separately as `unaddressable_legacy_suggestions_count`.
+3. **Levels**: `feedback_coverage_rate` and `execution_rate` are
+   suggestion-level; `executed_pass_rate` and `executed_fail_rate`
+   are feedback-event-level (over `executed` events). Empty
+   denominators yield `null`, never 0.0.
+4. **Fixture staging** (task 0089) is repo-root `fixtures/proposed/`:
+   proposed fixtures are reviewable source assets tracked in Git, not
+   `.project-loop/` state. They must carry
+   `labels_status: "unlabeled"` with empty expected/critical blocks.
+5. **Release split**: v0.2.0 = tasks 0087 + 0088 (migration 005);
+   v0.2.1 = tasks 0089 + 0090. Keep the migration release small and
+   accumulate real dogfood feedback before fixture/baseline work
+   ships.
+6. **Version truthfulness**: migration metadata must stamp the real
+   running `pcl` version (`pcl.__version__`), not a hardcoded string;
+   fixed ahead of v0.2.0.
