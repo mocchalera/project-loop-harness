@@ -32,6 +32,18 @@ def _add_feature(root: Path, capsys, *, name: str, surface: str = "cli:pcl") -> 
     return str(_json_output(capsys)["id"])
 
 
+def _audit_counts(root: Path) -> dict[str, int]:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        return {
+            "events": int(conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]),
+            "events_jsonl": len((root / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines()),
+            "evidence": int(conn.execute("SELECT COUNT(*) AS n FROM evidence").fetchone()["n"]),
+        }
+    finally:
+        conn.close()
+
+
 def test_feature_list_and_read_return_deterministic_json(tmp_path: Path, capsys) -> None:
     _init(tmp_path, capsys)
     first_id = _add_feature(tmp_path, capsys, name="Login", surface="ui:/login")
@@ -206,6 +218,7 @@ def test_feature_status_updates_with_evidence_and_typed_errors(tmp_path: Path, c
     ]) == 0
     result = _json_output(capsys)
     assert result == {
+        "changed": True,
         "evidence_id": "E-0001",
         "feature_id": feature_id,
         "ok": True,
@@ -261,6 +274,42 @@ def test_feature_status_updates_with_evidence_and_typed_errors(tmp_path: Path, c
     assert missing_evidence["error"]["code"] == "invalid_input"
     assert "--evidence is required" in missing_evidence["error"]["message"]
 
+    before_no_op = _audit_counts(tmp_path)
+    assert main([
+        "--root",
+        str(tmp_path),
+        "feature",
+        "status",
+        feature_id,
+        "--status",
+        "passing",
+        "--json",
+    ]) == 0
+    no_op = _json_output(capsys)
+    assert no_op == {
+        "changed": False,
+        "evidence_recorded": False,
+        "feature_id": feature_id,
+        "ok": True,
+        "previous_status": "passing",
+        "status": "passing",
+    }
+    assert _audit_counts(tmp_path) == before_no_op
+
+    for _ in range(2):
+        assert main([
+            "--root",
+            str(tmp_path),
+            "feature",
+            "status",
+            feature_id,
+            "--status",
+            "passing",
+            "--json",
+        ]) == 0
+        assert _json_output(capsys) == no_op
+        assert _audit_counts(tmp_path) == before_no_op
+
     assert main([
         "--root",
         str(tmp_path),
@@ -274,10 +323,28 @@ def test_feature_status_updates_with_evidence_and_typed_errors(tmp_path: Path, c
         "--evidence",
         "Already passing",
         "--json",
-    ]) == 2
-    no_op = _json_output(capsys)
-    assert no_op["error"]["code"] == "invalid_input"
-    assert no_op["error"]["details"] == {"feature_id": feature_id, "status": "passing"}
+    ]) == 0
+    with_evidence = _json_output(capsys)
+    assert with_evidence["changed"] is False
+    assert with_evidence["evidence_recorded"] is False
+    assert _audit_counts(tmp_path) == before_no_op
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "feature",
+        "status",
+        feature_id,
+        "--status",
+        "passing",
+        "--summary",
+        "No change",
+        "--evidence",
+        "Already passing",
+    ]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == f"Feature {feature_id} already passing; no change recorded.\n"
+    assert _audit_counts(tmp_path) == before_no_op
 
     assert main([
         "--root",
@@ -304,3 +371,21 @@ def test_feature_status_updates_with_evidence_and_typed_errors(tmp_path: Path, c
         "specified",
         "waived",
     ]
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "feature",
+        "status",
+        "F-9999",
+        "--status",
+        "passing",
+        "--summary",
+        "Unknown",
+        "--evidence",
+        "Unknown feature",
+        "--json",
+    ]) == 2
+    unknown = _json_output(capsys)
+    assert unknown["error"]["code"] == "invalid_input"
+    assert unknown["error"]["details"] == {"feature_id": "F-9999"}

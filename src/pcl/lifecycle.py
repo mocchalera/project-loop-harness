@@ -443,14 +443,23 @@ def close_goal(
     if verification_id:
         _validate_identifier(verification_id, "verification_id")
     _require_summary(summary)
-    if not evidence.strip() and not verification_id:
-        raise InvalidInputError("Closing a goal requires --evidence or --verification.")
     now = utc_now_iso()
 
     conn = connect(paths.db_path)
     try:
         goal = _get_goal(conn, goal_id)
+        goal_status = str(goal["status"])
+        if goal_status == "closed":
+            return {
+                "ok": True,
+                "goal_id": goal_id,
+                "status": goal_status,
+                "changed": False,
+                "evidence_recorded": False,
+            }
         _require_goal_open(goal)
+        if not evidence.strip() and not verification_id:
+            raise InvalidInputError("Closing a goal requires --evidence or --verification.")
         active_runs = _active_runs_for_goal(conn, goal_id)
         if active_runs:
             raise InvalidInputError(
@@ -485,6 +494,7 @@ def close_goal(
             "summary": summary,
             "evidence": evidence,
             "verification_id": verification_id,
+            "changed": True,
         }
     finally:
         conn.close()
@@ -499,6 +509,15 @@ def cancel_goal(paths: ProjectPaths, *, goal_id: str, summary: str) -> dict[str,
     conn = connect(paths.db_path)
     try:
         goal = _get_goal(conn, goal_id)
+        goal_status = str(goal["status"])
+        if goal_status == "cancelled":
+            return {
+                "ok": True,
+                "goal_id": goal_id,
+                "status": goal_status,
+                "changed": False,
+                "evidence_recorded": False,
+            }
         _require_goal_open(goal)
         active_runs = _active_runs_for_goal(conn, goal_id)
         if active_runs:
@@ -519,7 +538,7 @@ def cancel_goal(paths: ProjectPaths, *, goal_id: str, summary: str) -> dict[str,
             payload={"summary": summary},
         )
         conn.commit()
-        return {"ok": True, "goal_id": goal_id, "status": "cancelled", "summary": summary}
+        return {"ok": True, "goal_id": goal_id, "status": "cancelled", "summary": summary, "changed": True}
     finally:
         conn.close()
 

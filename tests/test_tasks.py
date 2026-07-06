@@ -61,6 +61,18 @@ def _task_event_types(root: Path) -> list[str]:
     return jsonl_types
 
 
+def _audit_counts(root: Path) -> dict[str, int]:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        return {
+            "events": int(conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]),
+            "events_jsonl": len((root / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines()),
+            "evidence": int(conn.execute("SELECT COUNT(*) AS n FROM evidence").fetchone()["n"]),
+        }
+    finally:
+        conn.close()
+
+
 def test_task_crud_ordering_and_filters(tmp_path: Path, capsys) -> None:
     _init(tmp_path, capsys)
     assert main(["--root", str(tmp_path), "goal", "create", "--title", "Task goal", "--json"]) == 0
@@ -163,10 +175,116 @@ def test_task_status_transitions_require_reason(tmp_path: Path, capsys) -> None:
         result = _json_output(capsys)
         assert result["to_status"] == status
         assert result["reason"] == f"move to {status}"
+        assert result["changed"] is True
 
     event_types = _task_event_types(tmp_path)
     assert event_types.count("task_created") == 1 + len(TASK_STATUSES)
     assert event_types.count("task_status_changed") == len(TASK_STATUSES) + 1
+
+
+def test_task_status_same_state_is_idempotent(tmp_path: Path, capsys) -> None:
+    _init(tmp_path, capsys)
+    task = _create_task(tmp_path, capsys, title="Idempotent task")
+    task_id = str(task["id"])
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "status",
+        task_id,
+        "ready",
+        "--reason",
+        "stage work",
+        "--json",
+    ]) == 0
+    changed = _json_output(capsys)
+    assert changed["changed"] is True
+    assert changed["from_status"] == "todo"
+    assert changed["to_status"] == "ready"
+
+    before_no_op = _audit_counts(tmp_path)
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "status",
+        task_id,
+        "ready",
+        "--reason",
+        "already ready",
+        "--json",
+    ]) == 0
+    no_op = _json_output(capsys)
+    assert no_op == {
+        "changed": False,
+        "evidence_recorded": False,
+        "from_status": "ready",
+        "id": task_id,
+        "ok": True,
+        "status": "ready",
+        "to_status": "ready",
+    }
+    assert _audit_counts(tmp_path) == before_no_op
+
+    for _ in range(2):
+        assert main([
+            "--root",
+            str(tmp_path),
+            "task",
+            "status",
+            task_id,
+            "ready",
+            "--reason",
+            "still ready",
+            "--json",
+        ]) == 0
+        assert _json_output(capsys) == no_op
+        assert _audit_counts(tmp_path) == before_no_op
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "status",
+        task_id,
+        "ready",
+        "--reason",
+        "Do not record",
+    ]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == f"Task {task_id} already ready; no change recorded.\n"
+    assert _audit_counts(tmp_path) == before_no_op
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "status",
+        "T-9999",
+        "ready",
+        "--reason",
+        "unknown task",
+        "--json",
+    ]) == 2
+    unknown = _json_output(capsys)
+    assert unknown["error"]["code"] == "invalid_input"
+    assert unknown["error"]["details"] == {"task_id": "T-9999"}
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "status",
+        task_id,
+        "unknown",
+        "--reason",
+        "invalid target",
+        "--json",
+    ]) == 2
+    invalid = _json_output(capsys)
+    assert invalid["error"]["code"] == "invalid_input"
+    assert invalid["error"]["details"]["allowed"] == sorted(TASK_STATUSES)
 
 
 def test_task_dependencies_reject_invalid_edges_and_dual_write_events(tmp_path: Path, capsys) -> None:

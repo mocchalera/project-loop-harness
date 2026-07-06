@@ -93,6 +93,8 @@ Review:
 
 If validation fails or the generated artifacts do not match state, follow [recovery-playbook.md](recovery-playbook.md) before continuing.
 
+Status transitions are idempotent for exact same-state requests: repeating a goal, feature, test case, or task status command for the current status exits 0, returns `changed: false` in JSON, and records no new evidence or audit event.
+
 ## Executor Smoke Path
 
 Freshly initialized projects include a command-only workflow for dogfooding the

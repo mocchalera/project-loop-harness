@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from pcl.cli import main
+from pcl.db import connect
 
 
 def _json_output(capsys) -> dict:
@@ -33,6 +34,18 @@ def _add_feature(root: Path, capsys, *, name: str = "Harness feature") -> str:
 
 def _dashboard_data(root: Path) -> dict:
     return json.loads((root / ".project-loop" / "dashboard" / "dashboard-data.json").read_text(encoding="utf-8"))
+
+
+def _audit_counts(root: Path) -> dict[str, int]:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        return {
+            "events": int(conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]),
+            "events_jsonl": len((root / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines()),
+            "evidence": int(conn.execute("SELECT COUNT(*) AS n FROM evidence").fetchone()["n"]),
+        }
+    finally:
+        conn.close()
 
 
 def test_story_and_test_case_lifecycle_updates_dashboard(tmp_path: Path, capsys) -> None:
@@ -160,6 +173,7 @@ def test_story_and_test_case_lifecycle_updates_dashboard(tmp_path: Path, capsys)
     assert passed["workflow_run_id"] == "WR-0001"
     assert passed["evidence_id"] == "E-0001"
     assert passed["feature_status"] == "passing"
+    assert passed["changed"] is True
 
     assert main([
         "--root",
@@ -172,6 +186,75 @@ def test_story_and_test_case_lifecycle_updates_dashboard(tmp_path: Path, capsys)
     read_test = _json_output(capsys)
     assert read_test["test_case"]["last_run_id"] == "WR-0001"
     assert read_test["test_case"]["evidence_id"] == "E-0001"
+
+    before_no_op = _audit_counts(tmp_path)
+    assert main([
+        "--root",
+        str(tmp_path),
+        "test",
+        "pass",
+        "TC-0001",
+        "--summary",
+        "Already passing",
+        "--json",
+    ]) == 0
+    no_op = _json_output(capsys)
+    assert no_op == {
+        "changed": False,
+        "evidence_id": "E-0001",
+        "evidence_recorded": False,
+        "feature_id": feature_id,
+        "id": "TC-0001",
+        "ok": True,
+        "status": "passing",
+        "story_id": "US-0001",
+        "workflow_run_id": "WR-0001",
+    }
+    assert _audit_counts(tmp_path) == before_no_op
+
+    for _ in range(2):
+        assert main([
+            "--root",
+            str(tmp_path),
+            "test",
+            "pass",
+            "TC-0001",
+            "--summary",
+            "Already passing again",
+            "--json",
+        ]) == 0
+        assert _json_output(capsys) == no_op
+        assert _audit_counts(tmp_path) == before_no_op
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "test",
+        "pass",
+        "TC-0001",
+        "--summary",
+        "Already passing with evidence",
+        "--evidence",
+        "Do not record",
+        "--json",
+    ]) == 0
+    with_evidence = _json_output(capsys)
+    assert with_evidence["changed"] is False
+    assert with_evidence["evidence_recorded"] is False
+    assert _audit_counts(tmp_path) == before_no_op
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "test",
+        "pass",
+        "TC-0001",
+        "--summary",
+        "Already passing",
+    ]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "Test case TC-0001 already passing; no change recorded.\n"
+    assert _audit_counts(tmp_path) == before_no_op
 
     assert main(["--root", str(tmp_path), "story", "list", "--feature", feature_id, "--json"]) == 0
     listed_stories = _json_output(capsys)
@@ -345,10 +428,26 @@ def test_story_and_test_case_invalid_inputs_return_typed_json(tmp_path: Path, ca
         "--evidence",
         "pytest passed again",
         "--json",
+    ]) == 0
+    payload = _json_output(capsys)
+    assert payload["changed"] is False
+    assert payload["evidence_recorded"] is False
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "test",
+        "pass",
+        "TC-9999",
+        "--summary",
+        "Unknown test",
+        "--evidence",
+        "unknown",
+        "--json",
     ]) == 2
     payload = _json_output(capsys)
     assert payload["error"]["code"] == "invalid_input"
-    assert "already passing" in payload["error"]["message"]
+    assert payload["error"]["details"] == {"test_case_id": "TC-9999"}
 
 
 def test_test_plan_plain_error_lists_allowed_types(tmp_path: Path, capsys) -> None:
@@ -498,3 +597,23 @@ def test_story_waive_and_test_case_failure_states(tmp_path: Path, capsys) -> Non
     assert "test_case_blocked" in events
     assert "test_case_marked_missing" in events
     assert "test_case_waived" in events
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "test",
+        "pass",
+        "TC-0004",
+        "--summary",
+        "Waived cannot pass",
+        "--evidence",
+        "should fail",
+        "--json",
+    ]) == 2
+    payload = _json_output(capsys)
+    assert payload["error"]["code"] == "invalid_input"
+    assert payload["error"]["details"] == {
+        "requested_status": "passing",
+        "status": "waived",
+        "test_case_id": "TC-0004",
+    }

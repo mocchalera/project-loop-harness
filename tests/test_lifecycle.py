@@ -38,6 +38,18 @@ def _db_rows(root: Path, sql: str) -> list[dict]:
         conn.close()
 
 
+def _audit_counts(root: Path) -> dict[str, int]:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        return {
+            "events": int(conn.execute("SELECT COUNT(*) AS n FROM events").fetchone()["n"]),
+            "events_jsonl": len((root / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines()),
+            "evidence": int(conn.execute("SELECT COUNT(*) AS n FROM evidence").fetchone()["n"]),
+        }
+    finally:
+        conn.close()
+
+
 def _event_payloads(root: Path, event_type: str) -> list[dict]:
     events = []
     for line in (root / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines():
@@ -184,7 +196,74 @@ def test_lifecycle_completes_run_and_closes_goal(tmp_path: Path, capsys) -> None
         "V-0001",
         "--json",
     ]) == 0
-    assert _json_output(capsys)["status"] == "closed"
+    closed = _json_output(capsys)
+    assert closed["status"] == "closed"
+    assert closed["changed"] is True
+
+    before_no_op = _audit_counts(tmp_path)
+    assert main([
+        "--root",
+        str(tmp_path),
+        "goal",
+        "close",
+        "G-0001",
+        "--summary",
+        "Already closed",
+        "--json",
+    ]) == 0
+    no_op = _json_output(capsys)
+    assert no_op == {
+        "changed": False,
+        "evidence_recorded": False,
+        "goal_id": "G-0001",
+        "ok": True,
+        "status": "closed",
+    }
+    assert _audit_counts(tmp_path) == before_no_op
+
+    for _ in range(2):
+        assert main([
+            "--root",
+            str(tmp_path),
+            "goal",
+            "close",
+            "G-0001",
+            "--summary",
+            "Still closed",
+            "--json",
+        ]) == 0
+        assert _json_output(capsys) == no_op
+        assert _audit_counts(tmp_path) == before_no_op
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "goal",
+        "close",
+        "G-0001",
+        "--summary",
+        "Already closed with evidence",
+        "--evidence",
+        "Do not record",
+        "--json",
+    ]) == 0
+    with_evidence = _json_output(capsys)
+    assert with_evidence["changed"] is False
+    assert with_evidence["evidence_recorded"] is False
+    assert _audit_counts(tmp_path) == before_no_op
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "goal",
+        "close",
+        "G-0001",
+        "--summary",
+        "Already closed",
+    ]) == 0
+    captured = capsys.readouterr()
+    assert captured.out == "Goal G-0001 already closed; no change recorded.\n"
+    assert _audit_counts(tmp_path) == before_no_op
 
     assert _db_rows(tmp_path, "SELECT id, status FROM agent_jobs ORDER BY id") == [
         {"id": "J-0001", "status": "passed"},
@@ -611,6 +690,53 @@ def test_lifecycle_rejects_invalid_transitions(tmp_path: Path, capsys) -> None:
     payload = _json_output(capsys)
     assert payload["error"]["code"] == "invalid_input"
     assert "requires --evidence or --verification" in payload["error"]["message"]
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "goal",
+        "close",
+        "G-9999",
+        "--summary",
+        "Unknown goal",
+        "--evidence",
+        "unknown",
+        "--json",
+    ]) == 2
+    payload = _json_output(capsys)
+    assert payload["error"]["code"] == "invalid_input"
+    assert payload["error"]["details"] == {"goal_id": "G-9999"}
+
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Cancelled goal", "--json"]) == 0
+    assert _json_output(capsys)["id"] == "G-0002"
+    assert main([
+        "--root",
+        str(tmp_path),
+        "goal",
+        "cancel",
+        "G-0002",
+        "--summary",
+        "No longer needed",
+        "--json",
+    ]) == 0
+    cancelled = _json_output(capsys)
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["changed"] is True
+    assert main([
+        "--root",
+        str(tmp_path),
+        "goal",
+        "close",
+        "G-0002",
+        "--summary",
+        "Wrong terminal state",
+        "--evidence",
+        "should still fail",
+        "--json",
+    ]) == 2
+    payload = _json_output(capsys)
+    assert payload["error"]["code"] == "invalid_input"
+    assert payload["error"]["details"] == {"goal_id": "G-0002", "status": "cancelled"}
 
     assert main([
         "--root",
