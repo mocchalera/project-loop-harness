@@ -5,7 +5,7 @@ from pathlib import Path
 import sqlite3
 from typing import Any
 
-from .scan import _relative_path
+from .scan import LARGE_FILE_BYTES, _detect_language, _line_count, _looks_binary, _relative_path, _sha256_file
 from .store import IndexSnapshot, _snapshot_consistency_for_path
 from ..db import connect
 from ..errors import DataStoreError
@@ -126,6 +126,8 @@ def _record_context_receipt(
             "included_candidate_context_count": len(receipt["included_candidate_context"]),
             "omitted_count": len(receipt["omitted"]),
         }
+        if impact.get("untracked_included_count") is not None:
+            event_payload["untracked_included_count"] = impact["untracked_included_count"]
         if impact.get("base_ref") is not None:
             event_payload["base_ref"] = impact["base_ref"]
         append_event(
@@ -178,6 +180,9 @@ def _receipt_payload(
         "staleness_warnings": impact["staleness_warnings"],
         "verification_suggestions": impact["verification_suggestions"],
     }
+    if impact.get("untracked_included_count") is not None:
+        payload["untracked_included_count"] = impact["untracked_included_count"]
+        payload["untracked_included_paths"] = impact.get("untracked_included_paths", [])
     if impact.get("base_ref") is not None:
         payload["base_ref"] = impact["base_ref"]
     return payload
@@ -191,6 +196,11 @@ def _included_candidate_context(
     files_by_path = snapshot.files_by_path
     included: list[dict[str, Any]] = []
     for item in impact["changed_files"]:
+        if item.get("untracked"):
+            candidate = _untracked_added_candidate(paths, item)
+            if candidate:
+                included.append(candidate)
+            continue
         if not item["indexed"]:
             continue
         row = files_by_path[str(item["path"])]
@@ -217,3 +227,43 @@ def _included_candidate_context(
         candidate.update(_snapshot_consistency_for_path(paths, snapshot, str(item["path"])))
         included.append(candidate)
     return included
+
+
+def _untracked_added_candidate(paths: ProjectPaths, item: dict[str, Any]) -> dict[str, Any] | None:
+    relative_path = str(item["path"])
+    absolute_path = paths.root / relative_path
+    try:
+        stat = absolute_path.stat()
+    except OSError:
+        return None
+    if not absolute_path.is_file():
+        return None
+    size = int(stat.st_size)
+    if size > LARGE_FILE_BYTES:
+        return None
+    try:
+        sample = absolute_path.read_bytes()[:8192]
+    except OSError:
+        return None
+    if _looks_binary(sample):
+        return None
+    try:
+        text = absolute_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    try:
+        sha256 = _sha256_file(absolute_path)
+    except OSError:
+        sha256 = None
+    return {
+        "path": relative_path,
+        "role": "added_file",
+        "reason": str(item.get("reason") or "untracked file included as added file"),
+        "confidence": 1.0,
+        "language": _detect_language(absolute_path),
+        "sha256": sha256,
+        "size_bytes": size,
+        "line_count": _line_count(text),
+        "snapshot_consistency": "untracked",
+        "snapshot_consistency_reason": "untracked file included from current working tree",
+    }

@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 from typing import Any
 
-from .diff import LoadedDiff, _load_diff, _parse_changed_files
+from .diff import PROVIDED_DIFF_SOURCE, LoadedDiff, _load_diff, _parse_changed_files
 from .receipts import _record_context_receipt
 from .scan import (
     _code_index_exclude_patterns,
@@ -45,12 +45,25 @@ def analyze_impact(
     *,
     diff_source: str,
     base_ref: str | None = None,
+    staged: bool = False,
+    unstaged: bool = False,
+    include_untracked: bool = False,
+    all_changes: bool = False,
     write_receipt: bool = True,
 ) -> dict[str, Any]:
     require_initialized(paths)
     snapshot = _load_required_snapshot(paths)
-    loaded_diff = _load_diff(paths, diff_source, base_ref=base_ref)
+    loaded_diff = _load_diff(
+        paths,
+        diff_source,
+        base_ref=base_ref,
+        staged=staged,
+        unstaged=unstaged,
+        include_untracked=include_untracked,
+        all_changes=all_changes,
+    )
     changed_files = _parse_changed_files(loaded_diff.text)
+    untracked_paths = set(loaded_diff.untracked_paths)
 
     staleness_warnings = _staleness_warnings_for_snapshot(paths, snapshot)
     sensitive_omitted_count = _summary_sensitive_omitted_count(snapshot.summary)
@@ -66,8 +79,13 @@ def analyze_impact(
         }
 
     indexable_changed_files, excluded_changed_files = _split_indexable_changed_files(paths, changed_files)
-    changed = _changed_file_entries(paths, snapshot, indexable_changed_files)
-    omitted = _omitted_changed_entries(paths, snapshot, indexable_changed_files)
+    changed = _changed_file_entries(paths, snapshot, indexable_changed_files, untracked_paths=untracked_paths)
+    omitted = _omitted_changed_entries(
+        paths,
+        snapshot,
+        indexable_changed_files,
+        included_untracked_paths=untracked_paths,
+    )
     likely_impacted, candidate_omissions = _likely_impacted_entries(paths, snapshot, indexable_changed_files)
     omitted.extend(candidate_omissions)
     verification_suggestions = _verification_suggestions_for_indexable_changes(
@@ -89,6 +107,7 @@ def analyze_impact(
         "staleness_warnings": staleness_warnings,
         "receipt_path": None,
     }
+    _add_untracked_inclusion_metadata(impact, loaded_diff)
     if loaded_diff.base_ref is not None:
         impact["base_ref"] = loaded_diff.base_ref
     if write_receipt:
@@ -115,7 +134,7 @@ def _empty_impact_payload(
     sensitive_omitted_count: int,
     staleness_warnings: list[str],
 ) -> dict[str, Any]:
-    guidance = _empty_diff_guidance(loaded_diff.diff_source)
+    guidance = _empty_diff_guidance(loaded_diff)
     impact = {
         "contract_version": IMPACT_CONTRACT_VERSION,
         "diff_source": loaded_diff.diff_source,
@@ -131,6 +150,7 @@ def _empty_impact_payload(
         "receipt_path": None,
         "empty_diff_guidance": guidance,
     }
+    _add_untracked_inclusion_metadata(impact, loaded_diff)
     if loaded_diff.base_ref is not None:
         impact["base_ref"] = loaded_diff.base_ref
     return impact
@@ -177,16 +197,34 @@ def _verification_suggestions_for_indexable_changes(
     return []
 
 
-def _empty_diff_guidance(diff_source: str) -> dict[str, Any]:
+def _empty_diff_guidance(loaded_diff: LoadedDiff) -> dict[str, Any]:
+    diff_source = loaded_diff.diff_source
+    next_steps = [
+        "No context receipt was written because the stated diff has no changed files.",
+    ]
+    if diff_source.startswith("staged-vs-"):
+        next_steps.append("Stage changes with `git add` before using `--staged`, or use the default mode.")
+    elif diff_source == "worktree-vs-index":
+        next_steps.append("Use `--staged` for staged changes, or edit files before using `--unstaged`.")
+    elif diff_source == PROVIDED_DIFF_SOURCE:
+        next_steps.append("Check that the provided diff contains changed file paths.")
+    else:
+        next_steps.append(
+            "If HEAD equals the working tree, compare against a branch with "
+            "`pcl impact --diff --base <default-branch> --json`."
+        )
+    if loaded_diff.untracked_excluded_count:
+        next_steps.append("Untracked files are present; add `--include-untracked` to include them.")
+    elif loaded_diff.untracked_included:
+        next_steps.append("No tracked or untracked files matched this diff mode.")
+    elif diff_source != PROVIDED_DIFF_SOURCE:
+        next_steps.append(
+            "If the expected change is untracked, add it to Git or provide an explicit diff with "
+            "`pcl impact --diff - --json`."
+        )
     return {
         "message": f"There is nothing to analyze for diff_source {diff_source}.",
-        "next_steps": [
-            "No context receipt was written because the stated diff has no changed files.",
-            "If HEAD equals the working tree, compare against a branch with "
-            "`pcl impact --diff --base <default-branch> --json`.",
-            "If the expected change is untracked, add it to Git or provide an explicit diff with "
-            "`pcl impact --diff - --json`.",
-        ],
+        "next_steps": next_steps,
     }
 
 
@@ -194,9 +232,12 @@ def _changed_file_entries(
     paths: ProjectPaths,
     snapshot: IndexSnapshot,
     changed_files: list[dict[str, str]],
+    *,
+    untracked_paths: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     files_by_path = _safe_snapshot_files_by_path(paths.root, snapshot)
     sensitive_settings = _sensitive_index_settings(paths.root)
+    untracked_paths = untracked_paths or set()
     entries: list[dict[str, Any]] = []
     for item in changed_files:
         path = item["path"]
@@ -211,15 +252,18 @@ def _changed_file_entries(
         )
         if sensitive_reason:
             reason = f"changed file is sensitive-excluded: {sensitive_reason}"
-        entries.append(
-            {
-                "path": path,
-                "status": item["status"],
-                "indexed": row is not None,
-                "language": row.get("language") if row else None,
-                "reason": reason,
-            }
-        )
+        if path in untracked_paths:
+            reason = "untracked file included as added file"
+        entry = {
+            "path": path,
+            "status": item["status"],
+            "indexed": row is not None,
+            "language": row.get("language") if row else None,
+            "reason": reason,
+        }
+        if path in untracked_paths:
+            entry["untracked"] = True
+        entries.append(entry)
     return entries
 
 
@@ -227,14 +271,19 @@ def _omitted_changed_entries(
     paths: ProjectPaths,
     snapshot: IndexSnapshot,
     changed_files: list[dict[str, str]],
+    *,
+    included_untracked_paths: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     files_by_path = _safe_snapshot_files_by_path(paths.root, snapshot)
     ignored_by_path = snapshot.ignored_by_path
     sensitive_settings = _sensitive_index_settings(paths.root)
+    included_untracked_paths = included_untracked_paths or set()
     omitted: list[dict[str, Any]] = []
     for item in changed_files:
         path = item["path"]
         if path in files_by_path:
+            continue
+        if path in included_untracked_paths:
             continue
         sensitive_reason = _sensitive_ignore_reason(path, sensitive_settings)
         ignored = ignored_by_path.get(path)
@@ -246,6 +295,14 @@ def _omitted_changed_entries(
             reason = "not present in latest index"
         omitted.append({"path": path, "reason": reason})
     return omitted
+
+
+def _add_untracked_inclusion_metadata(impact: dict[str, Any], loaded_diff: LoadedDiff) -> None:
+    if not loaded_diff.untracked_included:
+        return
+    paths = list(loaded_diff.untracked_paths)
+    impact["untracked_included_count"] = len(paths)
+    impact["untracked_included_paths"] = paths
 
 
 def _likely_impacted_entries(
