@@ -1,0 +1,59 @@
+{
+  "contract_version": "retrieval-fixture/v0",
+  "fixture_family": "adversarial",
+  "description": "Synthetic retrieval cases for safety and trust regressions.",
+  "tasks": [
+    {
+      "id": "adversarial-secret-like-omission",
+      "family": "adversarial",
+      "case": "secret-like omission",
+      "diff": "diff --git a/.env b/.env\n--- a/.env\n+++ b/.env\n@@ -1 +1 @@\n+API_TOKEN=PCL_FAKE_TOKEN_0072_DO_NOT_LEAK\n",
+      "expected_files": [],
+      "expected_tests": [],
+      "critical_context": [],
+      "must_not_retrieve": [
+        ".env",
+        "server.pem",
+        "id_rsa",
+        "credentials.json",
+        ".npmrc"
+      ],
+      "assertion_note": "Sensitive path-pattern files must be omitted by the index and must not appear in retrieved_paths."
+    },
+    {
+      "id": "adversarial-stale-index",
+      "family": "adversarial",
+      "case": "stale index",
+      "query": "StaleEvalMarker",
+      "expected_files": [
+        "src/pkg/calc.py"
+      ],
+      "expected_tests": [],
+      "critical_context": [
+        "src/pkg/calc.py"
+      ],
+      "expected_staleness": true,
+      "assertion_note": "The query intentionally matches content added after indexing; eval must surface a stale snapshot signal."
+    },
+    {
+      "id": "adversarial-renamed-file-known-miss",
+      "family": "adversarial",
+      "case": "renamed file",
+      "diff": "diff --git a/src/pkg/legacy_widget.py b/src/pkg/current_widget.py\nsimilarity index 80%\nrename from src/pkg/legacy_widget.py\nrename to src/pkg/current_widget.py\n--- a/src/pkg/legacy_widget.py\n+++ b/src/pkg/current_widget.py\n@@ -1,2 +1,2 @@\n-class LegacyWidget:\n+class CurrentWidget:\n     pass\n",
+      "expected_files": [
+        "src/pkg/current_widget.py"
+      ],
+      "expected_tests": [],
+      "critical_context": [
+        "src/pkg/current_widget.py"
+      ],
+      "expected_misses": [
+        {
+          "path": "src/pkg/current_widget.py",
+          "reason": "Current lexical impact baseline does not resolve renamed destination paths that were absent from the index."
+        }
+      ],
+      "assertion_note": "This records the known lexical baseline miss so a future rename-aware retriever produces a measurable delta."
+    }
+  ]
+}

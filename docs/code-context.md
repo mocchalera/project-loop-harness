@@ -505,24 +505,94 @@ present; broader sets fall back to `python3 -m pytest`.
 
 ## Retrieval Evaluation
 
-Fixtures use `retrieval-fixture/v0`:
+Fixtures use `retrieval-fixture/v0`. Checked-in fixtures should live under
+`tests/fixtures/` and use one JSON object with a `tasks` array:
 
 ```json
 {
   "contract_version": "retrieval-fixture/v0",
+  "fixture_family": "real-history",
   "tasks": [
     {
       "id": "context-change",
       "diff": "diff --git a/src/pcl/context.py b/src/pcl/context.py\n...",
       "expected_files": ["src/pcl/context.py"],
       "expected_tests": ["tests/test_context.py"],
-      "critical_context": ["src/pcl/context.py", "tests/test_context.py"]
+      "critical_context": ["src/pcl/context.py", "tests/test_context.py"],
+      "metadata": {"source": "task-0069"}
     }
   ]
 }
 ```
 
+Fixture-level fields:
+
+- `contract_version`: `retrieval-fixture/v0`. Checked-in fixtures must set this
+  value. The loader also accepts a missing value for compatibility with early
+  local fixtures.
+- `tasks`: required non-empty array of task objects.
+- `fixture_family`: optional label. Current checked-in families are
+  `real-history` and `adversarial`.
+- Other fixture-level fields are metadata and are ignored by the evaluator.
+
+Task fields:
+
+- `id`: optional stable task id. If omitted, eval uses `task-N`.
+- `diff`: inline unified or name-status diff text. A task must include either
+  `diff` or `query`.
+- `query`: lexical search query. A task must include either `diff` or `query`.
+- `limit`: optional search limit for `query` tasks; default is 50.
+- `expected_files`: optional array of production/documentation paths expected
+  to be retrieved.
+- `expected_tests`: optional array of test paths expected to be retrieved.
+- `critical_context`: optional array of paths whose absence is listed under
+  `missing_critical_context`. When omitted, eval treats
+  `expected_files + expected_tests` as critical.
+- `expected_misses`: optional array of `{ "path": "...", "reason": "..." }`
+  annotations for known baseline misses, such as a rename the current lexical
+  retriever cannot resolve yet. These annotations document the baseline; they
+  do not remove the path from recall accounting.
+- Other task fields, including labels such as `family`, `case`,
+  `assertion_note`, and `must_not_retrieve`, are metadata and are ignored by
+  the evaluator.
+
+Fixture evolution is additive in v0:
+
+- New optional fields may be added without a version bump.
+- Unknown fields must continue to evaluate without changing metric semantics.
+- Existing field meaning, required-field changes, or metric semantics changes
+  require a new fixture contract version.
+- `retrieval-fixture/v0` should not grow thresholds, release gates, embeddings,
+  Tree-sitter parsing, call graphs, daemons, or watchers.
+
+The checked-in fixture families have different purposes:
+
+- `real-history`: derived from actual repository changes, currently following
+  the `tests/fixtures/retrieval_real_history_v0.json` pattern. These fixtures
+  measure ordinary retrieval quality against real change history.
+- `adversarial`: synthetic cases intended to catch safety and trust
+  regressions rather than average quality. The current
+  `tests/fixtures/retrieval_adversarial_v0.json` covers sensitive-path
+  omission, stale-index signaling, and an annotated renamed-file baseline miss.
+
 `pcl eval retrieval --fixture <path> --json` returns `retrieval-eval/v0` with
-precision, recall, and `missing_critical_context`. This is the promotion gate
-for richer retrieval work: v0 intentionally avoids embeddings, Tree-sitter,
-call graphs, semantic retrieval, daemons, and file watchers.
+precision, recall, `missing_critical_context`, and per-task retrieved paths.
+Task output may also include additive diagnostic fields used by adversarial
+fixtures: `retrieval_source`, `staleness_warnings`,
+`staleness_affected_paths`, `sensitive_omitted_count`,
+`retrieved_snapshot_consistency`, `excluded_changed_files`, and
+`expected_misses`.
+
+CI runs `python3 scripts/run_advisory_retrieval_eval.py` after pytest. The step
+initializes and indexes the checked-out project, evaluates the checked-in
+real-history fixtures, evaluates the checked-in adversarial fixture against a
+prepared temp project, and prints a compact JSON summary. This is advisory:
+metric values are not release blockers and no recall/precision threshold is set
+in v0.1.11. Crashed eval runs or broken fixture files still fail the command.
+
+Promotion condition: retrieval metrics become release blockers only after
+dogfood data from real projects exists, thresholds are chosen from that data,
+and the thresholds are documented in a later task. Until then, proposals for
+semantic retrieval, Tree-sitter parsing, or call-graph retrieval must bring
+eval evidence showing improvement on these fixtures, but this document does
+not define concrete numeric gates.
