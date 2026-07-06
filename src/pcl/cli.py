@@ -591,6 +591,26 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Compare the working tree against this git ref when --diff has no explicit source.",
     )
+    p_impact.add_argument(
+        "--staged",
+        action="store_true",
+        help="Compare staged index changes against HEAD, or against --base when supplied.",
+    )
+    p_impact.add_argument(
+        "--unstaged",
+        action="store_true",
+        help="Compare unstaged working-tree changes against the index.",
+    )
+    p_impact.add_argument(
+        "--include-untracked",
+        action="store_true",
+        help="Include untracked, non-gitignored files in git-based diff modes.",
+    )
+    p_impact.add_argument(
+        "--all-changes",
+        action="store_true",
+        help="Compare all uncommitted tracked changes against HEAD and include untracked files.",
+    )
 
     p_eval = sub.add_parser("eval", help="Evaluate retrieval fixtures")
     eval_sub = p_eval.add_subparsers(dest="eval_command", required=True)
@@ -1799,7 +1819,15 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "impact":
-            result = analyze_impact(paths, diff_source=args.diff_source, base_ref=args.base_ref)
+            result = analyze_impact(
+                paths,
+                diff_source=args.diff_source,
+                base_ref=args.base_ref,
+                staged=args.staged,
+                unstaged=args.unstaged,
+                include_untracked=args.include_untracked,
+                all_changes=args.all_changes,
+            )
             if json_output:
                 _print_json(result)
             else:

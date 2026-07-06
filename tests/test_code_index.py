@@ -8,6 +8,7 @@ import subprocess
 
 from pcl.cli import main
 from pcl.code_context.scan import LARGE_FILE_BYTES
+from pcl.code_context.summary import summarize_code_context_receipt
 from pcl.code_context import store as code_context_store
 from pcl.db import connect
 
@@ -145,6 +146,32 @@ def _assert_diff_source_in_impact_and_receipt(
     else:
         assert receipt["base_ref"] == base_ref
     return receipt
+
+
+def _impact_json(root: Path, capsys, *args: str) -> dict:
+    assert main(["--root", str(root), "impact", *args, "--json"]) == 0
+    return _json_output(capsys)["impact"]
+
+
+def _impact_error(root: Path, capsys, *args: str) -> dict:
+    assert main(["--root", str(root), "impact", *args, "--json"]) == 2
+    return _json_output(capsys)
+
+
+def _receipt_payload(root: Path, impact: dict) -> dict:
+    return json.loads((root / impact["receipt_path"]).read_text(encoding="utf-8"))
+
+
+def _impact_equivalence_payload(root: Path, impact: dict) -> dict:
+    receipt = _receipt_payload(root, impact)
+    return {
+        "changed_files": impact["changed_files"],
+        "excluded_changed_files": impact["excluded_changed_files"],
+        "omitted": impact["omitted"],
+        "untracked_included_count": impact.get("untracked_included_count"),
+        "untracked_included_paths": impact.get("untracked_included_paths"),
+        "included_candidate_context": receipt["included_candidate_context"],
+    }
 
 
 def _synthetic_diff(root: Path) -> Path:
@@ -775,6 +802,256 @@ def test_impact_base_ref_diff_source_records_base_ref(tmp_path: Path, capsys) ->
         impact,
         diff_source="worktree-vs-HEAD~1",
         base_ref="HEAD~1",
+    )
+
+
+def test_impact_diff_source_modes_are_unique_and_record_provenance(tmp_path: Path, capsys) -> None:
+    _init_git_code_project(tmp_path, capsys)
+    _append_text(tmp_path / "src" / "pkg" / "calc.py", "\ndef committed_change():\n    return 1\n")
+    _git(tmp_path, "add", "src/pkg/calc.py")
+    _git(tmp_path, "commit", "-m", "committed change")
+    _build_index(tmp_path, capsys)
+    _append_text(tmp_path / "src" / "pkg" / "calc.py", "\ndef staged_change():\n    return 2\n")
+    _git(tmp_path, "add", "src/pkg/calc.py")
+    _append_text(tmp_path / "docs" / "calc.md", "\nUnstaged note.\n")
+    (tmp_path / "src" / "pkg" / "new_feature.py").write_text("def new_feature():\n    return 3\n", encoding="utf-8")
+
+    cases = {
+        "default": (["--diff"], "worktree-vs-HEAD", None),
+        "base": (["--diff", "--base", "HEAD~1"], "worktree-vs-HEAD~1", "HEAD~1"),
+        "staged": (["--diff", "--staged"], "staged-vs-HEAD", None),
+        "staged-base": (["--diff", "--staged", "--base", "HEAD~1"], "staged-vs-HEAD~1", "HEAD~1"),
+        "unstaged": (["--diff", "--unstaged"], "worktree-vs-index", None),
+        "include-untracked": (
+            ["--diff", "--include-untracked"],
+            "worktree-vs-HEAD+untracked",
+            None,
+        ),
+        "base-include-untracked": (
+            ["--diff", "--base", "HEAD~1", "--include-untracked"],
+            "worktree-vs-HEAD~1+untracked",
+            "HEAD~1",
+        ),
+        "staged-include-untracked": (
+            ["--diff", "--staged", "--include-untracked"],
+            "staged-vs-HEAD+untracked",
+            None,
+        ),
+        "unstaged-include-untracked": (
+            ["--diff", "--unstaged", "--include-untracked"],
+            "worktree-vs-index+untracked",
+            None,
+        ),
+        "all-changes": (
+            ["--diff", "--all-changes"],
+            "all-changes-vs-HEAD+untracked",
+            None,
+        ),
+    }
+
+    observed_sources: list[str] = []
+    for args, expected_source, expected_base_ref in cases.values():
+        impact = _impact_json(tmp_path, capsys, *args)
+        observed_sources.append(impact["diff_source"])
+        assert impact["diff_source"] == expected_source
+        assert impact["diff_provenance"]["attestation"] == "local-git"
+        assert "command_shape" in impact["diff_provenance"]
+        if expected_base_ref is None:
+            assert "base_ref" not in impact
+        else:
+            assert impact["base_ref"] == expected_base_ref
+        if expected_source.endswith("+untracked"):
+            assert impact["diff_provenance"]["untracked_count"] == 1
+            assert impact["untracked_included_count"] == 1
+        else:
+            assert "untracked_count" not in impact["diff_provenance"]
+            assert "untracked_included_count" not in impact
+
+    assert len(set(observed_sources)) == len(cases)
+
+
+def test_impact_include_untracked_receipt_content_and_summary(tmp_path: Path, capsys) -> None:
+    _init_git_code_project(tmp_path, capsys)
+    (tmp_path / "src" / "pkg" / "new_feature.py").write_text(
+        "def new_feature():\n    return 'new'\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".env").write_text(f"API_TOKEN={FAKE_SECRET_TOKEN}\n", encoding="utf-8")
+    (tmp_path / "ignored.txt").write_text(f"ignored {FAKE_SECRET_TOKEN}\n", encoding="utf-8")
+
+    impact = _impact_json(tmp_path, capsys, "--diff", "--include-untracked")
+
+    assert impact["diff_source"] == "worktree-vs-HEAD+untracked"
+    assert impact["diff_provenance"]["untracked_count"] == 2
+    assert impact["untracked_included_count"] == 2
+    assert impact["untracked_included_paths"] == [".env", "src/pkg/new_feature.py"]
+    assert impact["changed_files"] == [
+        {
+            "path": "src/pkg/new_feature.py",
+            "status": "A",
+            "indexed": False,
+            "language": None,
+            "reason": "untracked file included as added file",
+            "untracked": True,
+        }
+    ]
+    assert impact["excluded_changed_files"] == [
+        {"path": ".env", "status": "A", "reason": "sensitive:agent_may_not_modify"}
+    ]
+    assert "ignored.txt" not in json.dumps(impact, sort_keys=True)
+
+    receipt = _receipt_payload(tmp_path, impact)
+    added_candidates = [
+        item for item in receipt["included_candidate_context"] if item["role"] == "added_file"
+    ]
+    assert [item["path"] for item in added_candidates] == ["src/pkg/new_feature.py"]
+    assert added_candidates[0]["language"] == "python"
+    assert added_candidates[0]["line_count"] == 2
+    assert added_candidates[0]["snapshot_consistency"] == "untracked"
+    receipt_blob = json.dumps(receipt, sort_keys=True)
+    assert FAKE_SECRET_TOKEN not in receipt_blob
+    assert "ignored.txt" not in receipt_blob
+
+    summary = summarize_code_context_receipt(receipt)
+    assert summary["untracked_omission_warning"] is None
+    assert summary["untracked_included_count"] == 2
+    assert summary["included_candidate_context_top"][0]["role"] == "added_file"
+
+
+def test_impact_all_changes_matches_default_with_include_untracked(tmp_path: Path, capsys) -> None:
+    _init_git_code_project(tmp_path, capsys)
+    _append_text(tmp_path / "src" / "pkg" / "calc.py", "\ndef tracked_change():\n    return 1\n")
+    (tmp_path / "src" / "pkg" / "new_feature.py").write_text("def new_feature():\n    return 2\n", encoding="utf-8")
+
+    include_untracked = _impact_json(tmp_path, capsys, "--diff", "--include-untracked")
+    all_changes = _impact_json(tmp_path, capsys, "--diff", "--all-changes")
+
+    assert include_untracked["diff_source"] == "worktree-vs-HEAD+untracked"
+    assert all_changes["diff_source"] == "all-changes-vs-HEAD+untracked"
+    assert _impact_equivalence_payload(tmp_path, all_changes) == _impact_equivalence_payload(
+        tmp_path,
+        include_untracked,
+    )
+
+
+def test_impact_base_auto_resolution_and_failure(tmp_path: Path, capsys) -> None:
+    origin_root = tmp_path / "origin-head"
+    origin_root.mkdir()
+    _init_git_code_project(origin_root, capsys)
+    _git(origin_root, "branch", "-M", "main")
+    _git(origin_root, "update-ref", "refs/remotes/origin/main", "HEAD")
+    _git(origin_root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+    _append_text(origin_root / "docs" / "calc.md", "\nOrigin auto note.\n")
+
+    origin_impact = _impact_json(origin_root, capsys, "--diff", "--base", "auto")
+
+    assert origin_impact["base_ref"] == "origin/main"
+    assert origin_impact["diff_source"] == "worktree-vs-origin/main"
+    assert origin_impact["diff_provenance"]["base_ref"] == "origin/main"
+    assert origin_impact["diff_provenance"]["base_ref_resolution"] == "auto"
+    assert origin_impact["diff_provenance"]["base_ref_attempted_refs"] == [
+        "origin/HEAD",
+        "main",
+        "master",
+    ]
+
+    local_root = tmp_path / "local-main"
+    local_root.mkdir()
+    _init_git_code_project(local_root, capsys)
+    _git(local_root, "branch", "-M", "main")
+    _append_text(local_root / "docs" / "calc.md", "\nLocal auto note.\n")
+
+    local_impact = _impact_json(local_root, capsys, "--diff", "--base", "auto")
+
+    assert local_impact["base_ref"] == "main"
+    assert local_impact["diff_source"] == "worktree-vs-main"
+    assert local_impact["diff_provenance"]["base_ref"] == "main"
+
+    missing_root = tmp_path / "missing-auto"
+    missing_root.mkdir()
+    _init_git_code_project(missing_root, capsys)
+    _git(missing_root, "branch", "-M", "feature")
+
+    payload = _impact_error(missing_root, capsys, "--diff", "--base", "auto")
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert payload["error"]["details"]["attempted_refs"] == ["origin/HEAD", "main", "master"]
+    assert "Could not resolve --base auto" in payload["error"]["message"]
+
+
+def test_impact_invalid_diff_mode_combinations_return_typed_errors(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_git_code_project(tmp_path, capsys)
+    diff_path = _synthetic_diff(tmp_path)
+    cases = [
+        (["--diff", "--staged", "--unstaged"], "mutually_exclusive_diff_modes"),
+        (["--diff", "--staged", "--all-changes"], "mutually_exclusive_diff_modes"),
+        (["--diff", "--unstaged", "--all-changes"], "mutually_exclusive_diff_modes"),
+        (["--diff", "--unstaged", "--base", "HEAD"], "base_unstaged_conflict"),
+        (["--diff", "--all-changes", "--base", "HEAD"], "base_all_changes_conflict"),
+        (["--diff", str(diff_path), "--include-untracked"], "provided_diff_mode_conflict"),
+        (["--diff", str(diff_path), "--staged"], "provided_diff_mode_conflict"),
+    ]
+
+    for args, mode_error in cases:
+        payload = _impact_error(tmp_path, capsys, *args)
+        assert payload["error"]["code"] == "invalid_input"
+        assert payload["error"]["details"]["mode_error"] == mode_error
+
+
+def test_impact_empty_diff_guidance_is_mode_aware(tmp_path: Path, capsys) -> None:
+    _init_git_code_project(tmp_path, capsys)
+    (tmp_path / "src" / "pkg" / "untracked_only.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+    default_empty = _impact_json(tmp_path, capsys, "--diff")
+
+    assert default_empty["diff_source"] == "worktree-vs-HEAD"
+    assert default_empty["receipt_path"] is None
+    assert any("--include-untracked" in step for step in default_empty["empty_diff_guidance"]["next_steps"])
+
+    _append_text(tmp_path / "docs" / "calc.md", "\nUnstaged-only note.\n")
+    staged_empty = _impact_json(tmp_path, capsys, "--diff", "--staged")
+
+    assert staged_empty["diff_source"] == "staged-vs-HEAD"
+    assert staged_empty["receipt_path"] is None
+    assert any("git add" in step for step in staged_empty["empty_diff_guidance"]["next_steps"])
+
+    _git(tmp_path, "add", "docs/calc.md")
+    unstaged_empty = _impact_json(tmp_path, capsys, "--diff", "--unstaged")
+
+    assert unstaged_empty["diff_source"] == "worktree-vs-index"
+    assert unstaged_empty["receipt_path"] is None
+    assert any("--staged" in step for step in unstaged_empty["empty_diff_guidance"]["next_steps"])
+
+
+def test_impact_default_mode_contract_excludes_untracked_additive_fields(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_git_code_project(tmp_path, capsys)
+    _append_text(tmp_path / "src" / "pkg" / "calc.py", "\ndef tracked_change():\n    return 1\n")
+    (tmp_path / "src" / "pkg" / "new_feature.py").write_text("def new_feature():\n    return 2\n", encoding="utf-8")
+
+    impact = _impact_json(tmp_path, capsys, "--diff")
+
+    assert impact["diff_source"] == "worktree-vs-HEAD"
+    assert impact["diff_provenance"] == {
+        "source": "local-git-worktree",
+        "attestation": "local-git",
+        "command_shape": "git diff --no-ext-diff --no-textconv --name-status HEAD --",
+    }
+    assert "untracked_included_count" not in impact
+    assert "untracked_included_paths" not in impact
+    assert [item["path"] for item in impact["changed_files"]] == ["src/pkg/calc.py"]
+
+    receipt = _receipt_payload(tmp_path, impact)
+    summary = summarize_code_context_receipt(receipt)
+    assert "untracked_included_count" not in summary
+    assert summary["untracked_omission_warning"] == (
+        "Untracked files are not included in this diff source; add them to Git "
+        "or provide an explicit diff with `pcl impact --diff - --json`."
     )
 
 

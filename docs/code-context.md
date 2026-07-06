@@ -34,6 +34,11 @@ Explain likely impact from a diff and write a context receipt:
 ```bash
 pcl impact --diff --json
 pcl impact --diff --base main --json
+pcl impact --diff --base auto --json
+pcl impact --diff --staged --json
+pcl impact --diff --unstaged --json
+pcl impact --diff --include-untracked --json
+pcl impact --diff --all-changes --json
 git diff --no-ext-diff --no-textconv --name-status main -- | pcl impact --diff - --json
 ```
 
@@ -356,27 +361,50 @@ dropping it from the contract. `likely_impacted` and
 Non-JSON text output prints excluded changed paths as a single summary line
 with the count and first few paths.
 
-`diff_source` states what PLH compared:
+`diff_source` states what PLH compared. Git-based modes use name-status diffs
+and record the command shape in `diff_provenance`.
 
-- `worktree-vs-HEAD`: the default for `pcl impact --diff`. PLH runs a
-  config-independent `git diff --no-ext-diff --no-textconv --name-status HEAD --`
-  shape and compares tracked staged and unstaged working-tree changes against
-  `HEAD`.
-- `worktree-vs-<ref>`: used by `pcl impact --diff --base <ref>`. PLH validates
-  `<ref>` as a commit-ish before diffing and records `base_ref` in both impact
-  JSON and the receipt.
-- `provided-diff`: used when the caller provides diff text with `--diff -` or a
-  diff file path. PLH records the source as caller-provided and cannot attest
-  that the text matches the current working tree.
+| Flags | `diff_source` | Compared state | Untracked included? |
+|---|---|---|---|
+| `--diff` | `worktree-vs-HEAD` | staged and unstaged tracked worktree changes vs `HEAD` | No |
+| `--diff --base <ref>` | `worktree-vs-<ref>` | staged and unstaged tracked worktree changes vs `<ref>` | No |
+| `--diff --staged` | `staged-vs-HEAD` | index vs `HEAD` using `git diff --cached` | No |
+| `--diff --staged --base <ref>` | `staged-vs-<ref>` | index vs `<ref>` using `git diff --cached <ref>` | No |
+| `--diff --unstaged` | `worktree-vs-index` | unstaged worktree changes vs the index | No |
+| `--diff --include-untracked` | `worktree-vs-HEAD+untracked` | default tracked comparison plus `git ls-files --others --exclude-standard` | Yes |
+| `--diff --base <ref> --include-untracked` | `worktree-vs-<ref>+untracked` | base-ref tracked comparison plus untracked files | Yes |
+| `--diff --staged --include-untracked` | `staged-vs-HEAD+untracked` | staged tracked comparison plus untracked files | Yes |
+| `--diff --unstaged --include-untracked` | `worktree-vs-index+untracked` | unstaged tracked comparison plus untracked files | Yes |
+| `--diff --all-changes` | `all-changes-vs-HEAD+untracked` | all uncommitted tracked changes vs `HEAD`, plus untracked files | Yes |
+| `--diff -` or `--diff <file>` | `provided-diff` | caller-provided diff text | Caller controlled |
 
-Untracked files are not part of `worktree-vs-HEAD` or `worktree-vs-<ref>`
-diffs. Future modes may add `--staged`, `--unstaged`, and
-`--include-untracked`, but those flags are not part of `impact/v0` today.
+`--include-untracked` never reads gitignored files; untracked paths come from
+`git ls-files --others --exclude-standard`. Included untracked files are
+represented as added files. Sensitive and configured exclusions are still
+applied before candidate context is recorded, exactly as for tracked changes.
+Receipts for including modes carry `untracked_included_count` and provenance
+records `untracked_count`.
+
+`--all-changes` is a convenience mode for default tracked changes plus
+untracked files. It is anchored to `HEAD`; use `--base <ref>
+--include-untracked` for alternate-base comparisons. `--staged --base <ref>` is
+supported because Git's `git diff --cached <ref> --` semantics are explicit:
+the index is compared to the chosen commit. `--unstaged --base <ref>` is
+rejected because unstaged mode compares the worktree to the index by
+definition.
+
+`--base auto` resolves the comparison ref by trying `origin/HEAD` as a symbolic
+remote default-branch ref, then local `main`, then local `master`. The resolved
+ref is recorded as `base_ref`; `diff_provenance` also records that the value was
+auto-inferred and lists the attempted refs. If none resolve, PLH returns a typed
+`invalid_input` error naming `origin/HEAD`, `main`, and `master`.
 
 If the stated diff is empty, PLH returns an `impact/v0` no-op payload with
 `empty_diff_guidance`, writes no receipt artifact, and suggests likely next
-operations such as comparing against a default branch or providing an explicit
-diff.
+operations for the selected mode, such as staging changes for `--staged`, using
+`--staged` for staged-only changes when `--unstaged` is empty, adding
+`--include-untracked` when untracked files are present, comparing against a
+default branch, or checking a provided diff.
 
 The receipt contract is `context-receipt/v0`. Its core fields are:
 
@@ -391,6 +419,8 @@ The receipt contract is `context-receipt/v0`. Its core fields are:
 - `sensitive_omitted_count`: the sensitive omission count from the index run.
 - `staleness_warnings`: conditions that make the snapshot less current than
   the working tree.
+- `untracked_included_count`: present only when the diff source explicitly
+  includes untracked files.
 
 Receipts are evidence artifacts. They record PLH output and reasons; they do
 not make claims about agent cognition.
@@ -467,6 +497,7 @@ facts are:
 - `staleness_warnings`
 - `excluded_changed_file_count`
 - `untracked_omission_warning`
+- `untracked_included_count` when untracked files were explicitly included
 
 These facts are rendered in the opt-in `Code Context Safety` section with the
 same pinned-priority budget mechanism used by `machine_context_rules`.

@@ -52,6 +52,9 @@ def summarize_code_context_receipt(
         "verification_suggestions": _string_list(payload.get("verification_suggestions")),
         "sensitive_include_override_used": _sensitive_include_override_used(index_run),
     }
+    untracked_included_count = _optional_int(payload.get("untracked_included_count"))
+    if untracked_included_count is not None:
+        summary["untracked_included_count"] = untracked_included_count
     base_ref = _text(payload.get("base_ref"))
     if base_ref:
         summary["base_ref"] = base_ref
@@ -65,6 +68,17 @@ def render_receipt_summary(summary: dict[str, Any]) -> str:
     if not isinstance(receipt_ref, dict):
         receipt_ref = {}
 
+    counts_line = (
+        "changed: "
+        f"{_display(payload.get('changed_file_count'))}; "
+        "excluded changed: "
+        f"{_display(payload.get('excluded_changed_file_count'))}; "
+        "sensitive omitted: "
+        f"{_display(payload.get('sensitive_omitted_count'))}"
+    )
+    if payload.get("untracked_included_count") is not None:
+        counts_line += f"; untracked included: {_display(payload.get('untracked_included_count'))}"
+
     lines = [
         "# Context Receipt Summary",
         "",
@@ -76,12 +90,7 @@ def render_receipt_summary(summary: dict[str, Any]) -> str:
         f"- base_ref: {_display(payload.get('base_ref'))}",
         "",
         "## Counts",
-        "changed: "
-        f"{_display(payload.get('changed_file_count'))}; "
-        "excluded changed: "
-        f"{_display(payload.get('excluded_changed_file_count'))}; "
-        "sensitive omitted: "
-        f"{_display(payload.get('sensitive_omitted_count'))}",
+        counts_line,
         "",
         "## Staleness Warnings",
     ]
@@ -206,12 +215,18 @@ def _sensitive_include_override_used(index_run: Any) -> bool:
 
 
 def _untracked_omission_warning(diff_source: str) -> str | None:
-    if diff_source.startswith("worktree-vs-"):
+    if _diff_source_includes_untracked(diff_source):
+        return None
+    if diff_source.startswith("worktree-vs-") or diff_source.startswith("staged-vs-") or diff_source == "worktree-vs-index":
         return (
             "Untracked files are not included in this diff source; add them to Git "
             "or provide an explicit diff with `pcl impact --diff - --json`."
         )
     return None
+
+
+def _diff_source_includes_untracked(diff_source: str) -> bool:
+    return diff_source.endswith("+untracked")
 
 
 def _dict_list(value: Any) -> list[dict[str, Any]]:
@@ -242,6 +257,17 @@ def _int(value: Any) -> int:
         return int(str(value))
     except (TypeError, ValueError):
         return 0
+
+
+def _optional_int(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    try:
+        return int(str(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def _number(value: Any) -> int | float | None:
