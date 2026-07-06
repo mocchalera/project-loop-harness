@@ -7,6 +7,7 @@ from typing import Any
 
 from .code_context.summary import (
     CODE_CONTEXT_SUMMARY_VERSION,
+    recommended_refresh_commands,
     summarize_code_context_receipt,
 )
 from .code_context.receipts import latest_context_receipt_ref, resolve_context_receipt_path
@@ -207,8 +208,6 @@ def pack_context_for_job(
         f"pcl prompt job {job_id} --json",
         "pcl validate --json",
     ]
-    if include_code_context:
-        source_commands.append("pcl impact --diff --json")
     source_paths = [str(job["prompt_path"])]
     if job.get("output_path"):
         source_paths.append(str(job["output_path"]))
@@ -265,6 +264,10 @@ def pack_context_for_job(
     }
     if code_context:
         pack["code_context"] = code_context
+    if include_code_context:
+        pack["suggested_refresh_commands"] = recommended_refresh_commands(
+            code_context or {}
+        )
     return pack
 
 
@@ -350,13 +353,16 @@ def pack_context_for_task(
             f"pcl task read {task_id} --json",
             "pcl task list --json",
             "pcl validate --json",
-            *(["pcl impact --diff --json"] if include_code_context else []),
         ],
         "source_paths": source_paths,
         "markdown": markdown,
     }
     if code_context:
         pack["code_context"] = code_context
+    if include_code_context:
+        pack["suggested_refresh_commands"] = recommended_refresh_commands(
+            code_context or {}
+        )
     return pack
 
 
@@ -680,7 +686,10 @@ def _unavailable_code_context_summary(
         "verification_suggestions": [],
         "sensitive_include_override_used": False,
         "message": message,
-        "next_actions": ["pcl impact --diff --json"],
+        "next_actions": [
+            "pcl index build --json",
+            "pcl impact --diff --json",
+        ],
     }
 
 
@@ -725,7 +734,7 @@ def _render_code_context_safety_section(summary: dict[str, Any]) -> str:
             [
                 str(summary.get("message") or "Latest context receipt is unavailable."),
                 "",
-                "Next action: `pcl impact --diff --json`.",
+                "Next action: `pcl index build --json`, then `pcl impact --diff --json`.",
             ]
         )
         return "\n".join(lines)

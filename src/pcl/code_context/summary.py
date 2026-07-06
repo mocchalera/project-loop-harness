@@ -5,6 +5,8 @@ from typing import Any
 
 CODE_CONTEXT_SUMMARY_VERSION = "code-context-summary/v0"
 DEFAULT_INCLUDED_CANDIDATE_LIMIT = 10
+INDEX_REFRESH_COMMAND = "pcl index build --json"
+IMPACT_REFRESH_COMMAND = "pcl impact --diff --json"
 
 
 def summarize_code_context_receipt(
@@ -150,13 +152,23 @@ def _candidate_line(item: dict[str, Any]) -> str:
     )
 
 
-def _next_recommended_command(summary: dict[str, Any]) -> str:
-    next_actions = _string_list(summary.get("next_actions"))
+def recommended_refresh_commands(summary: dict[str, Any]) -> list[str]:
+    payload = summary if isinstance(summary, dict) else {}
+    next_actions = _string_list(payload.get("next_actions"))
     if next_actions:
-        return ", then ".join(f"`{action}`" for action in next_actions)
-    if _string_list(summary.get("staleness_warnings")):
-        return "`pcl index build --json`, then `pcl impact --diff --json`"
-    return "`pcl impact --diff --json`"
+        return next_actions
+    status = _text(payload.get("status"))
+    if _string_list(payload.get("staleness_warnings")) or status in {
+        "missing_receipt",
+        "unavailable",
+        "receipt_unavailable",
+    }:
+        return [INDEX_REFRESH_COMMAND, IMPACT_REFRESH_COMMAND]
+    return [IMPACT_REFRESH_COMMAND]
+
+
+def _next_recommended_command(summary: dict[str, Any]) -> str:
+    return ", then ".join(f"`{action}`" for action in recommended_refresh_commands(summary))
 
 
 def _candidate_summary(item: dict[str, Any]) -> dict[str, Any]:

@@ -66,6 +66,19 @@ artifact, and embeds only a stable `code-context-summary/v0` under
 through `code_context.receipt_ref.evidence_id`,
 `code_context.receipt_ref.receipt_path`, and `source_paths`.
 
+`source_commands` are read-only re-fetch commands. They are commands a reader
+can run to reproduce the inputs this pack was built from, and they must not
+create evidence rows, receipt artifacts, reports, exports, or other project
+state. Code-context packs therefore do not list `pcl impact --diff --json` in
+`source_commands`.
+
+When `--include-code-context` is requested, the pack also includes a top-level
+`suggested_refresh_commands` field. These commands are artifact-regenerating
+suggestions for refreshing the underlying code-context evidence; they may
+create new evidence or artifacts. Stale or missing code context suggests
+`pcl index build --json` followed by `pcl impact --diff --json`; fresh code
+context suggests `pcl impact --diff --json`.
+
 The summary contains compact fields such as `diff_source`,
 `receipt_ref`, `changed_file_count`, `excluded_changed_file_count`,
 `sensitive_omitted_count`, `staleness_warnings`,
@@ -83,7 +96,9 @@ the context pack.
 
 When no receipt exists, `--include-code-context` still succeeds and returns a
 `code_context` summary with `status: "missing_receipt"` plus next actions:
-`pcl index build --json` and `pcl impact --diff --json`.
+`pcl index build --json` and `pcl impact --diff --json`. The same commands are
+exposed in `context_pack.suggested_refresh_commands`; they are not placed in
+`source_commands`.
 
 `--max-tokens` is an approximate budget control. Section selection uses the
 deterministic, dependency-free `charclass/v1` estimator:
@@ -187,9 +202,17 @@ The selected profile name is returned as `role_profile`.
 - It does not execute external agents.
 - It does not add or require schema migrations.
 - It does not read or parse `.project-loop/dashboard/dashboard.html`.
+- It never executes `pcl impact` during pack generation.
 - It does not run `pcl index build` or `pcl impact`; `--include-code-context`
   reads the latest existing receipt evidence only.
 - It does not inline the full context receipt body.
 
 Agents should use `pcl` JSON commands, reports, evidence paths, or
 `.project-loop/dashboard/dashboard-data.json` for follow-up machine context.
+
+## Release Notes
+
+`context-pack/v1` no longer includes the old misleading
+`pcl impact --diff --json` entry in `source_commands`. That command creates a
+fresh context receipt, so it now belongs under `suggested_refresh_commands`
+when `--include-code-context` is requested.
