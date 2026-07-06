@@ -5,7 +5,6 @@ from json import JSONDecodeError
 from pathlib import Path
 import sqlite3
 from typing import Any
-import uuid
 
 from .receipts import (
     CONTEXT_RECEIPT_EVIDENCE_TYPE,
@@ -17,9 +16,9 @@ from .impact import analyze_impact
 from .search import search_code
 from ..db import connect
 from ..errors import EXIT_USAGE, DataStoreError, InvalidInputError, PclError
+from ..events import append_event
 from ..guards import require_initialized
 from ..paths import ProjectPaths
-from ..timeutil import utc_now_iso
 
 
 RETRIEVAL_EVAL_VERSION = "retrieval-eval/v0"
@@ -146,16 +145,6 @@ def propose_retrieval_fixture(
         output_path.parent.mkdir(parents=True, exist_ok=True)
         tmp_path.write_text(serialized, encoding="utf-8")
         tmp_path.replace(output_path)
-        _append_jsonl_only_event(
-            paths,
-            event_type="eval_fixture_proposed",
-            entity_type="retrieval_fixture",
-            entity_id=relative_output_path,
-            payload={
-                "receipt_evidence_id": evidence_id,
-                "output_path": relative_output_path,
-            },
-        )
     except OSError as exc:
         if tmp_path.exists():
             try:
@@ -169,6 +158,32 @@ def propose_retrieval_fixture(
                 "output_path": relative_output_path,
             },
         ) from exc
+
+    conn = connect(paths.db_path)
+    try:
+        append_event(
+            conn=conn,
+            events_path=paths.events_path,
+            event_type="eval_fixture_proposed",
+            entity_type="retrieval_fixture",
+            entity_id=relative_output_path,
+            payload={
+                "receipt_evidence_id": evidence_id,
+                "output_path": relative_output_path,
+            },
+        )
+        conn.commit()
+    except sqlite3.Error as exc:
+        conn.rollback()
+        raise DataStoreError(
+            f"Could not append proposed retrieval fixture event: {exc}",
+            details={
+                "receipt_evidence_id": evidence_id,
+                "output_path": relative_output_path,
+            },
+        ) from exc
+    finally:
+        conn.close()
 
     return {
         "ok": True,
@@ -503,24 +518,3 @@ def _relative_to_root(paths: ProjectPaths, path: Path) -> str:
         return path.relative_to(paths.root).as_posix()
     except ValueError:
         return str(path)
-
-
-def _append_jsonl_only_event(
-    paths: ProjectPaths,
-    *,
-    event_type: str,
-    entity_type: str,
-    entity_id: str | None,
-    payload: dict[str, Any],
-) -> None:
-    record = {
-        "id": f"EV-{uuid.uuid4().hex[:12].upper()}",
-        "event_type": event_type,
-        "entity_type": entity_type,
-        "entity_id": entity_id,
-        "payload": payload,
-        "created_at": utc_now_iso(),
-    }
-    paths.events_path.parent.mkdir(parents=True, exist_ok=True)
-    with paths.events_path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")

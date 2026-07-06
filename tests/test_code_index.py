@@ -158,6 +158,23 @@ def _sqlite_event_count(root: Path) -> int:
         conn.close()
 
 
+def _sqlite_events_by_type(root: Path, event_type: str) -> list[dict]:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        rows = conn.execute(
+            """
+            SELECT id, event_type, entity_type, entity_id, payload_json
+            FROM events
+            WHERE event_type = ?
+            ORDER BY rowid
+            """,
+            (event_type,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
 def _init_git_code_project(root: Path, capsys) -> None:
     _init_code_project(root, capsys)
     _git(root, "init")
@@ -1595,7 +1612,7 @@ def test_eval_fixture_propose_from_receipt_is_deterministic_and_unlabeled(
         "task_count": 1,
     }
     assert _event_count(tmp_path) == before_jsonl_events + 1
-    assert _sqlite_event_count(tmp_path) == before_sqlite_events
+    assert _sqlite_event_count(tmp_path) == before_sqlite_events + 1
     event = json.loads(
         (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines()[-1]
     )
@@ -1639,6 +1656,53 @@ def test_eval_fixture_propose_from_receipt_is_deterministic_and_unlabeled(
     ]) == 0
     _json_output(capsys)
     assert candidate_path.read_bytes() == first_bytes
+
+
+def test_eval_fixture_propose_preserves_strict_audit_log_integrity(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_code_project(tmp_path, capsys)
+    impact = _write_context_receipt_from_impact(tmp_path, capsys)
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
+    assert _json_output(capsys)["ok"] is True
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "eval",
+        "fixture",
+        "propose",
+        "--from-receipt",
+        impact["evidence_id"],
+        "--json",
+    ]) == 0
+    output_path = _json_output(capsys)["fixture"]["path"]
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
+    assert _json_output(capsys)["ok"] is True
+
+    db_events = _sqlite_events_by_type(tmp_path, "eval_fixture_proposed")
+    assert len(db_events) == 1
+    db_event = db_events[0]
+    assert db_event["entity_type"] == "retrieval_fixture"
+    assert db_event["entity_id"] == output_path
+    assert json.loads(db_event["payload_json"]) == {
+        "output_path": output_path,
+        "receipt_evidence_id": impact["evidence_id"],
+    }
+
+    jsonl_events = []
+    for line in (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines():
+        event = json.loads(line)
+        if event.get("event_type") == "eval_fixture_proposed":
+            jsonl_events.append(event)
+    assert len(jsonl_events) == 1
+    jsonl_event = jsonl_events[0]
+    assert jsonl_event["id"] == db_event["id"]
+    assert jsonl_event["entity_id"] == output_path
+    assert jsonl_event["payload"] == json.loads(db_event["payload_json"])
 
 
 def test_eval_retrieval_rejects_proposed_unlabeled_candidate_until_labeled(
