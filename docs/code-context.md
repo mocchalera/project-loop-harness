@@ -55,6 +55,8 @@ Evaluate retrieval behavior against labels:
 
 ```bash
 pcl eval retrieval --fixture tests/fixtures/retrieval_v0.json --json
+pcl eval retrieval --fixture tests/fixtures/retrieval_v0.json --record-baseline --json
+pcl eval retrieval --fixture tests/fixtures/retrieval_v0.json --compare-baseline --json
 ```
 
 ## Index Contract
@@ -109,6 +111,7 @@ needs every file, ignored path, and hash-skip entry on stdout.
       "mtime": 123456789,
       "sha256": "abc123",
       "line_count": 10,
+      "token_estimate": 42,
       "symbol_summary": {
         "contract_version": "symbol-summary/v0",
         "symbols": [{"type": "function", "name": "pack_context_for_job", "line": 1}]
@@ -663,6 +666,8 @@ Fixture evolution is additive in v0:
 
 The checked-in fixture families have different purposes:
 
+- `retrieval_v0.json`: small synthetic coverage for code change, docs-only,
+  and config-only tasks.
 - `real-history`: derived from actual repository changes, currently following
   the `tests/fixtures/retrieval_real_history_v0.json` pattern. These fixtures
   measure ordinary retrieval quality against real change history.
@@ -672,23 +677,88 @@ The checked-in fixture families have different purposes:
   omission, stale-index signaling, and an annotated renamed-file baseline miss.
 
 `pcl eval retrieval --fixture <path> --json` returns `retrieval-eval/v0` with
-precision, recall, `missing_critical_context`, and per-task retrieved paths.
+precision, recall, false-positive rate, token cost estimate,
+`missing_critical_context`, and per-task retrieved paths.
+
+Metric fields:
+
+- `precision`: true positives divided by retrieved paths, preserving the v0
+  empty-denominator rule.
+- `recall`: true positives divided by expected files/tests, preserving the v0
+  empty-denominator rule.
+- `false_positive_rate`: `(retrieved - true_positives) / retrieved`; empty
+  retrieved denominators yield `null`.
+- `token_cost_estimate`: deterministic `charclass/v1` estimate over retrieved
+  paths' per-file `token_estimate` integers from
+  `.project-loop/cache/code-index-detail.json`. The estimate is computed at
+  index build time from indexed text already in memory; the detail artifact does
+  not store raw file contents. It is an estimate of indexed text volume, not a
+  price or billing signal.
+- `token_cost_unestimated_paths`: retrieved paths that are absent from the
+  detail artifact or present without a `token_estimate`, including details
+  built by older versions. They contribute `0` to the estimate and are listed
+  explicitly.
+- `missing_critical_context`: labeled critical paths not retrieved.
+
 Task output may also include additive diagnostic fields used by adversarial
 fixtures: `retrieval_source`, `staleness_warnings`,
 `staleness_affected_paths`, `sensitive_omitted_count`,
 `retrieved_snapshot_consistency`, `excluded_changed_files`, and
 `expected_misses`.
 
+### Baseline Lifecycle
+
+`pcl eval retrieval --fixture <path> --record-baseline --json` runs the eval
+and stores the full payload as normal evidence under
+`.project-loop/evidence/retrieval-eval/`. Recording writes an evidence row and
+the standard mirrored event in SQLite and `.project-loop/events.jsonl`; it does
+not use a JSONL-only side channel.
+
+Every baseline artifact carries `baseline_provenance` with these required
+fields:
+
+- `fixture_path`
+- `fixture_content_hash` (sha256 of fixture bytes)
+- `git_head`
+- `index_run_id`
+- `index_detail_hash` (sha256 of the code index detail artifact)
+- `code_context_config_hash` (canonical effective `code_index` subtree)
+- `pcl_version`
+- `eval_contract_version` (`retrieval-eval/v0`)
+
+Missing provenance inputs, such as no index run, missing index detail artifact,
+or a non-Git target, are typed errors. In those cases no baseline artifact,
+evidence row, or event is recorded.
+
+`pcl eval retrieval --fixture <path> --compare-baseline --json` compares the
+current eval with the latest recorded baseline whose `fixture_content_hash`
+matches the current fixture. It reports current metrics, baseline metrics,
+metric deltas, current provenance, and baseline provenance. The reported deltas
+cover precision, recall, missing-critical-context count, false-positive rate,
+and token cost estimate.
+
+Comparison never crosses fixture hashes. If only a different fixture hash is
+available, the command returns a typed not-comparable error naming the nearest
+baseline and the hash mismatch. The comparison output is facts and deltas only:
+no threshold logic, no verdict field, and no release gate.
+
 CI runs `python3 scripts/run_advisory_retrieval_eval.py` after pytest. The step
 initializes and indexes the checked-out project, evaluates the checked-in
 real-history fixtures, evaluates the checked-in adversarial fixture against a
-prepared temp project, and prints a compact JSON summary. This is advisory:
-metric values are not release blockers and no recall/precision threshold is set
-in v0.1.11. Crashed eval runs or broken fixture files still fail the command.
+prepared temp project, and prints a compact JSON summary. When a local
+retrieval-eval baseline exists, the script also prints the same comparison
+facts as advisory output.
 
-Promotion condition: retrieval metrics become release blockers only after
-dogfood data from real projects exists, thresholds are chosen from that data,
-and the thresholds are documented in a later task. Until then, proposals for
-semantic retrieval, Tree-sitter parsing, or call-graph retrieval must bring
-eval evidence showing improvement on these fixtures, but this document does
-not define concrete numeric gates.
+Advisory-vs-blocking boundary:
+
+- Metric deltas never fail CI in v0.2.1.
+- Eval infrastructure integrity failures do fail CI: eval command errors,
+  fixture contract violations, unreadable fixtures, and provenance computation
+  failures.
+- Broken measurement is not advisory.
+
+Semantic promotion gate: richer retrieval approaches such as semantic
+retrieval, Tree-sitter parsing, or call-graph retrieval remain out of scope for
+v0.2.1. Future promotion is evidence-driven: baseline history and fixture
+coverage decide whether richer retrieval is justified, not enthusiasm. This
+document deliberately defines no metric thresholds or release gates.

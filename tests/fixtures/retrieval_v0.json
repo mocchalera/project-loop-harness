@@ -14,6 +14,28 @@
         "src/pcl/code_index.py",
         "tests/test_code_index.py"
       ]
+    },
+    {
+      "id": "docs-only-code-context-contract",
+      "diff": "diff --git a/docs/code-context.md b/docs/code-context.md\n--- a/docs/code-context.md\n+++ b/docs/code-context.md\n@@ -1,3 +1,4 @@\n # Explainable Code Context\n+\n+Baseline lifecycle notes for retrieval eval evidence.\n",
+      "expected_files": [
+        "docs/code-context.md"
+      ],
+      "expected_tests": [],
+      "critical_context": [
+        "docs/code-context.md"
+      ]
+    },
+    {
+      "id": "config-only-code-index-settings",
+      "diff": "diff --git a/pcl.yaml b/pcl.yaml\n--- a/pcl.yaml\n+++ b/pcl.yaml\n@@ -1,3 +1,5 @@\n code_index:\n   exclude:\n     - .agents/\n+  sensitive_exclude:\n+    - local-secret.json\n",
+      "expected_files": [
+        "pcl.yaml"
+      ],
+      "expected_tests": [],
+      "critical_context": [
+        "pcl.yaml"
+      ]
     }
   ]
 }

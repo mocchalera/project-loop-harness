@@ -14,8 +14,10 @@ from .code_index import (
     analyze_impact,
     build_code_index,
     code_index_status,
+    compare_retrieval_baseline,
     evaluate_retrieval,
     propose_retrieval_fixture,
+    record_retrieval_baseline,
     search_code,
 )
 from .commands import (
@@ -619,6 +621,17 @@ def build_parser() -> argparse.ArgumentParser:
     eval_sub = p_eval.add_subparsers(dest="eval_command", required=True)
     p_eval_retrieval = eval_sub.add_parser("retrieval", help="Evaluate indexed retrieval")
     p_eval_retrieval.add_argument("--fixture", required=True)
+    eval_retrieval_baseline = p_eval_retrieval.add_mutually_exclusive_group()
+    eval_retrieval_baseline.add_argument(
+        "--record-baseline",
+        action="store_true",
+        help="Store the retrieval eval payload as a provenance-bearing evidence baseline.",
+    )
+    eval_retrieval_baseline.add_argument(
+        "--compare-baseline",
+        action="store_true",
+        help="Compare against the latest recorded baseline with the same fixture hash.",
+    )
     p_eval_fixture = eval_sub.add_parser("fixture", help="Manage retrieval fixture candidates")
     eval_fixture_sub = p_eval_fixture.add_subparsers(dest="eval_fixture_command", required=True)
     p_eval_fixture_propose = eval_fixture_sub.add_parser(
@@ -1896,9 +1909,18 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "eval" and args.eval_command == "retrieval":
-            result = evaluate_retrieval(paths, fixture_path=args.fixture)
+            if args.record_baseline:
+                result = record_retrieval_baseline(paths, fixture_path=args.fixture)
+            elif args.compare_baseline:
+                result = compare_retrieval_baseline(paths, fixture_path=args.fixture)
+            else:
+                result = evaluate_retrieval(paths, fixture_path=args.fixture)
             if json_output:
                 _print_json(result)
+            elif args.record_baseline:
+                print(result["baseline"]["evidence_path"])
+            elif args.compare_baseline:
+                print(to_pretty_json(result["comparison"]))
             else:
                 print(to_pretty_json(result["evaluation"]))
             return 0
