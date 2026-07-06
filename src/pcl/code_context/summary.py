@@ -30,7 +30,6 @@ def summarize_code_context_receipt(
 
     summary: dict[str, Any] = {
         "contract_version": CODE_CONTEXT_SUMMARY_VERSION,
-        "status": "from_receipt",
         "receipt_ref": {
             "evidence_id": _text(payload.get("evidence_id")),
             "receipt_path": _text(payload.get("receipt_path")),
@@ -54,7 +53,9 @@ def summarize_code_context_receipt(
             for item in included[:limit]
         ],
         "omitted_reason_counts": _omitted_reason_counts(omitted),
-        "verification_suggestions": _string_list(payload.get("verification_suggestions")),
+        "verification_suggestions": _verification_suggestion_summaries(
+            payload.get("verification_suggestions")
+        ),
         "sensitive_include_override_used": _sensitive_include_override_used(index_run),
     }
     untracked_included_count = _optional_int(payload.get("untracked_included_count"))
@@ -135,9 +136,14 @@ def render_receipt_summary(summary: dict[str, Any]) -> str:
         lines.append("None.")
 
     lines.extend(["", "## Verification Suggestions"])
-    verification_suggestions = _string_list(payload.get("verification_suggestions"))
+    verification_suggestions = _verification_suggestion_summaries(
+        payload.get("verification_suggestions")
+    )
     if verification_suggestions:
-        lines.extend(f"- {suggestion}" for suggestion in verification_suggestions)
+        lines.extend(
+            f"- {format_verification_suggestion_for_display(suggestion)}"
+            for suggestion in verification_suggestions
+        )
     else:
         lines.append("None.")
 
@@ -234,6 +240,18 @@ def recommended_refresh_commands(summary: dict[str, Any]) -> list[str]:
         if commands:
             return commands
     return refresh_replay(payload)["commands"]
+
+
+def format_verification_suggestion_for_display(value: Any) -> str:
+    if isinstance(value, dict):
+        command = _text(value.get("command"))
+        if command is None:
+            return ""
+        suggestion_id = _text(value.get("id"))
+        if suggestion_id:
+            return f"{command} [{suggestion_id}]"
+        return command
+    return _text(value) or ""
 
 
 def refresh_replay(summary: dict[str, Any]) -> dict[str, Any]:
@@ -427,6 +445,30 @@ def _dict_list(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list):
         return []
     return [item for item in value if isinstance(item, dict)]
+
+
+def _verification_suggestion_summaries(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    suggestions: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, dict):
+            command = _text(item.get("command"))
+            if command is None:
+                continue
+            suggestion: dict[str, Any] = {
+                "id": _text(item.get("id")),
+                "command": command,
+            }
+            reason = _text(item.get("reason"))
+            if reason is not None:
+                suggestion["reason"] = reason
+            suggestions.append(suggestion)
+            continue
+        command = _text(item)
+        if command is not None:
+            suggestions.append({"id": None, "command": command})
+    return suggestions
 
 
 def _string_list(value: Any) -> list[str]:

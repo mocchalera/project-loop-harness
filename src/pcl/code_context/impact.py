@@ -88,7 +88,7 @@ def analyze_impact(
     )
     likely_impacted, candidate_omissions = _likely_impacted_entries(paths, snapshot, indexable_changed_files)
     omitted.extend(candidate_omissions)
-    verification_suggestions = _verification_suggestions_for_indexable_changes(
+    verification_suggestion_items = _verification_suggestion_items_for_indexable_changes(
         changed,
         likely_impacted,
         staleness_warnings,
@@ -101,7 +101,9 @@ def analyze_impact(
         "changed_files": changed,
         "excluded_changed_files": excluded_changed_files,
         "likely_impacted": likely_impacted,
-        "verification_suggestions": verification_suggestions,
+        "verification_suggestions": [
+            item["command"] for item in verification_suggestion_items
+        ],
         "omitted": omitted,
         "sensitive_omitted_count": sensitive_omitted_count,
         "staleness_warnings": staleness_warnings,
@@ -111,7 +113,11 @@ def analyze_impact(
     if loaded_diff.base_ref is not None:
         impact["base_ref"] = loaded_diff.base_ref
     if write_receipt:
-        evidence_id, receipt_path = _record_context_receipt(paths, snapshot, impact)
+        receipt_impact = {
+            **impact,
+            "_verification_suggestion_items": verification_suggestion_items,
+        }
+        evidence_id, receipt_path = _record_context_receipt(paths, snapshot, receipt_impact)
         impact["evidence_id"] = evidence_id
         impact["receipt_path"] = receipt_path
     return {"ok": True, "impact": impact}
@@ -190,10 +196,32 @@ def _verification_suggestions_for_indexable_changes(
     likely_impacted: list[dict[str, Any]],
     staleness_warnings: list[str],
 ) -> list[str]:
+    return [
+        item["command"]
+        for item in _verification_suggestion_items_for_indexable_changes(
+            changed_files,
+            likely_impacted,
+            staleness_warnings,
+        )
+    ]
+
+
+def _verification_suggestion_items_for_indexable_changes(
+    changed_files: list[dict[str, Any]],
+    likely_impacted: list[dict[str, Any]],
+    staleness_warnings: list[str],
+) -> list[dict[str, str]]:
     if changed_files or likely_impacted:
-        return _verification_suggestions(changed_files, likely_impacted, staleness_warnings)
+        return _verification_suggestion_items(changed_files, likely_impacted, staleness_warnings)
     if staleness_warnings:
-        return ["Run `pcl index build --json` to refresh the code index before relying on impact output."]
+        return [
+            {
+                "command": (
+                    "Run `pcl index build --json` to refresh the code index before relying on impact output."
+                ),
+                "reason": "staleness_warnings",
+            }
+        ]
     return []
 
 
@@ -431,7 +459,22 @@ def _verification_suggestions(
     likely_impacted: list[dict[str, Any]],
     staleness_warnings: list[str],
 ) -> list[str]:
-    suggestions: list[str] = []
+    return [
+        item["command"]
+        for item in _verification_suggestion_items(
+            changed_files,
+            likely_impacted,
+            staleness_warnings,
+        )
+    ]
+
+
+def _verification_suggestion_items(
+    changed_files: list[dict[str, Any]],
+    likely_impacted: list[dict[str, Any]],
+    staleness_warnings: list[str],
+) -> list[dict[str, str]]:
+    suggestions: list[dict[str, str]] = []
     changed_python_tests = sorted(
         {
             str(item["path"])
@@ -441,27 +484,79 @@ def _verification_suggestions(
         }
     )
     if changed_python_tests:
-        suggestions.append("python3 -m pytest " + " ".join(changed_python_tests))
+        suggestions.append(
+            {
+                "command": "python3 -m pytest " + " ".join(changed_python_tests),
+                "reason": "changed_file:test",
+            }
+        )
 
-    python_tests = [
-        str(item["path"])
+    python_test_candidates = [
+        item
         for item in likely_impacted
         if str(item.get("path", "")).endswith(".py") and _is_test_path(str(item.get("path", "")))
     ]
-    if python_tests:
-        unique_tests = sorted(set(python_tests))
+    if python_test_candidates:
+        unique_tests = sorted({str(item["path"]) for item in python_test_candidates})
         if len(unique_tests) <= TARGETED_TEST_SUGGESTION_LIMIT:
-            suggestions.append("python3 -m pytest " + " ".join(unique_tests))
-        else:
-            suggestions.append("python3 -m pytest")
             suggestions.append(
-                f"Review {len(unique_tests)} candidate test files in likely_impacted before narrowing verification."
+                {
+                    "command": "python3 -m pytest " + " ".join(unique_tests),
+                    "reason": _verification_suggestion_reason(python_test_candidates),
+                }
+            )
+        else:
+            suggestions.append(
+                {
+                    "command": "python3 -m pytest",
+                    "reason": "test_hint:candidate_test_limit_exceeded",
+                }
+            )
+            suggestions.append(
+                {
+                    "command": (
+                        f"Review {len(unique_tests)} candidate test files in likely_impacted "
+                        "before narrowing verification."
+                    ),
+                    "reason": "likely_impacted:candidate_test_limit_exceeded",
+                }
             )
     elif not suggestions:
-        suggestions.append("Review changed files and likely impacted candidate context before choosing verification.")
+        suggestions.append(
+            {
+                "command": (
+                    "Review changed files and likely impacted candidate context before choosing verification."
+                ),
+                "reason": "candidate_context:review_required",
+            }
+        )
     if staleness_warnings:
-        suggestions.append("Run `pcl index build --json` to refresh the code index before relying on impact output.")
+        suggestions.append(
+            {
+                "command": (
+                    "Run `pcl index build --json` to refresh the code index before relying on impact output."
+                ),
+                "reason": "staleness_warnings",
+            }
+        )
     return suggestions
+
+
+def _verification_suggestion_reason(candidates: list[dict[str, Any]]) -> str:
+    reasons = sorted(
+        {
+            str(item.get("reason") or "").strip()
+            for item in candidates
+            if str(item.get("reason") or "").strip()
+        }
+    )
+    if len(reasons) == 1:
+        return reasons[0]
+    if reasons and all(reason.startswith("test_hint:") for reason in reasons):
+        return "test_hint:multiple"
+    if reasons:
+        return "likely_impacted:multiple"
+    return "likely_impacted:candidate_test"
 
 
 def _safe_snapshot_files(root: Path, snapshot: IndexSnapshot) -> list[dict[str, Any]]:

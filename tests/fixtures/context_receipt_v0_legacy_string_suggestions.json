@@ -64,10 +64,6 @@
     "Indexed file metadata changed: src/pcl/cli.py."
   ],
   "verification_suggestions": [
-    {
-      "command": "python3 -m pytest tests/test_cli.py",
-      "id": "E-0007/VS-01",
-      "reason": "test_hint:filename_match"
-    }
+    "python3 -m pytest tests/test_cli.py"
   ]
 }

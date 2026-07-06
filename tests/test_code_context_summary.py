@@ -7,6 +7,21 @@ from pcl.code_context.summary import (
     summarize_code_context_receipt,
 )
 
+FORBIDDEN_RECEIPT_SUMMARY_KEYS = {"status", "state", "lifecycle"}
+
+
+def _forbidden_keys(payload) -> set[str]:
+    found: set[str] = set()
+    if isinstance(payload, dict):
+        for key, value in payload.items():
+            if key in FORBIDDEN_RECEIPT_SUMMARY_KEYS:
+                found.add(key)
+            found.update(_forbidden_keys(value))
+    elif isinstance(payload, list):
+        for item in payload:
+            found.update(_forbidden_keys(item))
+    return found
+
 
 def test_summary_model_compacts_context_receipt() -> None:
     summary = summarize_code_context_receipt(
@@ -50,7 +65,13 @@ def test_summary_model_compacts_context_receipt() -> None:
             "omitted": [{"path": "docs/old.md", "reason": "not present in latest index"}],
             "sensitive_omitted_count": "2",
             "staleness_warnings": ["Indexed file metadata changed: src/pcl/context.py."],
-            "verification_suggestions": ["python3 -m pytest tests/test_context.py"],
+            "verification_suggestions": [
+                {
+                    "id": "E-0001/VS-01",
+                    "command": "python3 -m pytest tests/test_context.py",
+                    "reason": "test_hint:filename_match",
+                }
+            ],
             "extra": {"ignored": True},
         }
     )
@@ -88,7 +109,13 @@ def test_summary_model_compacts_context_receipt() -> None:
     assert summary["sensitive_omitted_count"] == 2
     assert summary["staleness_warnings"] == ["Indexed file metadata changed: src/pcl/context.py."]
     assert summary["untracked_omission_warning"]
-    assert summary["verification_suggestions"] == ["python3 -m pytest tests/test_context.py"]
+    assert summary["verification_suggestions"] == [
+        {
+            "id": "E-0001/VS-01",
+            "command": "python3 -m pytest tests/test_context.py",
+            "reason": "test_hint:filename_match",
+        }
+    ]
     assert summary["sensitive_include_override_used"] is True
     assert summary["refresh_replay"] == {
         "fidelity": "scope_preserving",
@@ -127,7 +154,6 @@ def test_summary_model_tolerates_missing_and_unknown_receipt_fields() -> None:
 
     assert summary == {
         "contract_version": CODE_CONTEXT_SUMMARY_VERSION,
-        "status": "from_receipt",
         "receipt_ref": {"evidence_id": None, "receipt_path": None, "created_at": None},
         "diff_source": "unknown",
         "index_run": None,
@@ -149,6 +175,37 @@ def test_summary_model_tolerates_missing_and_unknown_receipt_fields() -> None:
             ],
         },
     }
+
+
+def test_summary_model_accepts_legacy_string_suggestions() -> None:
+    summary = summarize_code_context_receipt(
+        {
+            "contract_version": "context-receipt/v0",
+            "verification_suggestions": ["python3 -m pytest tests/test_context.py"],
+        }
+    )
+
+    assert summary["verification_suggestions"] == [
+        {"id": None, "command": "python3 -m pytest tests/test_context.py"}
+    ]
+
+
+def test_receipt_summary_payloads_do_not_carry_lifecycle_keys() -> None:
+    receipt = {
+        "contract_version": "context-receipt/v0",
+        "evidence_id": "E-0001",
+        "verification_suggestions": [
+            {
+                "id": "E-0001/VS-01",
+                "command": "python3 -m pytest tests/test_context.py",
+                "reason": "test_hint:filename_match",
+            }
+        ],
+    }
+    summary = summarize_code_context_receipt(receipt)
+
+    assert _forbidden_keys(receipt) == set()
+    assert _forbidden_keys(summary) == set()
 
 
 def test_summary_wording_stays_epistemically_narrow() -> None:

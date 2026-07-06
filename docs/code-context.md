@@ -416,6 +416,8 @@ The receipt contract is `context-receipt/v0`. Its core fields are:
 - `excluded_changed_files`: changed paths excluded from the index, with their
   exclusion reason.
 - `omitted`: files PLH did not include and the recorded reason.
+- `verification_suggestions`: suggested commands as objects with `id`,
+  `command`, and `reason`.
 - `sensitive_omitted_count`: the sensitive omission count from the index run.
 - `staleness_warnings`: conditions that make the snapshot less current than
   the working tree.
@@ -423,7 +425,29 @@ The receipt contract is `context-receipt/v0`. Its core fields are:
   includes untracked files.
 
 Receipts are evidence artifacts. They record PLH output and reasons; they do
-not make claims about agent cognition.
+not make claims about agent cognition. Receipt and receipt-derived summary
+payloads do not include `status`, `state`, or `lifecycle` fields; suggestion
+state belongs outside immutable candidate presentations.
+
+Receipt `verification_suggestions` use object form:
+
+```json
+[
+  {
+    "id": "E-0001/VS-01",
+    "command": "python3 -m pytest tests/test_context.py",
+    "reason": "test_hint:path_token_match"
+  }
+]
+```
+
+Suggestion IDs are deterministic within a receipt: `<receipt evidence_id>/VS-<nn>`,
+where `<nn>` is the 01-based, two-digit ordinal by suggestion position. They do
+not use timestamps, randomness, database sequences, or a schema migration.
+`reason` is short mechanical provenance from the suggestion source, such as a
+test hint or staleness warning. Legacy receipts with string-list suggestions
+remain valid on disk; the summary layer reports those entries with `id: null`
+and the string as `command`.
 
 ## Receipt Summary
 
@@ -464,7 +488,7 @@ included_total: 2
 - not present in latest index: 1
 
 ## Verification Suggestions
-- python3 -m pytest tests/test_cli.py
+- python3 -m pytest tests/test_cli.py [E-0001/VS-01]
 
 ## Next Recommended Command
 `pcl index build --json`, then `pcl impact --diff --json`
@@ -518,12 +542,14 @@ same pinned-priority budget mechanism used by `machine_context_rules`.
 
 Additional summary fields include `changed_file_count`, `included_total`,
 bounded `included_candidate_context_top` rows, `omitted_reason_counts`,
-`verification_suggestions`, and `sensitive_include_override_used`. Candidate
-wording is `included as candidate context`; PLH does not make cognition claims
-about those files. `included_candidate_context_top` contains at most the top 10
-paths by default; omitted receipt rows are aggregated by reason. The summary
-does not embed the full `included_candidate_context` or `omitted` receipt
-arrays.
+`verification_suggestions`, and `sensitive_include_override_used`.
+`verification_suggestions` are summary objects with `id`, `command`, and,
+when present, `reason`; legacy string-form receipt entries summarize with
+`id: null`. Candidate wording is `included as candidate context`; PLH does not
+make cognition claims about those files. `included_candidate_context_top`
+contains at most the top 10 paths by default; omitted receipt rows are
+aggregated by reason. The summary does not embed the full
+`included_candidate_context` or `omitted` receipt arrays.
 
 In context-pack markdown, `Code Context Safety` is non-droppable under the
 existing section priority mechanism. `Code Context Verification Suggestions`
@@ -531,9 +557,9 @@ and `Code Context Detail` are ordinary budgeted sections. For verifier job
 packs, verification suggestions have higher priority than the candidate
 listing.
 
-If no receipt exists, the command still returns a valid context pack with
-`code_context.status: "missing_receipt"` and next actions:
-`pcl index build --json` followed by `pcl impact --diff --json`.
+If no receipt exists, the command still returns a valid context pack with empty
+receipt refs, a message, and next actions: `pcl index build --json` followed by
+`pcl impact --diff --json`.
 
 The bridge does not add schema, rebuild the index, run impact automatically,
 make continuation claims, or expose a `safe_to_continue` field.
