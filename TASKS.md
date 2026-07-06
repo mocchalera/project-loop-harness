@@ -91,9 +91,7 @@ Give these tasks to coding agents in this order:
 87. `agent-tasks/0087-verification-suggestion-ids.md` (v0.2.0)
 88. `agent-tasks/0088-verification-feedback.md` (v0.2.0, migration 005 — approved)
 89. `agent-tasks/0091-refresh-command-scope-fidelity.md` (retroactive record; implemented in `204a857`; numbered 0091 per the v0.1.12 review agenda)
-
-Tasks 0089 (dogfood-to-fixture propose) and 0090 (eval baseline
-record/compare) are scheduled for v0.2.1; their specs are filed after
-the v0.2.0 release, per `docs/v0.2.0-plan.md`.
+90. `agent-tasks/0089-dogfood-fixture-propose.md` (v0.2.1)
+91. `agent-tasks/0090-eval-baseline-record-compare.md` (v0.2.1, after 0089)
 
 Do not start with MCP. Do not start with a hosted UI. The CLI/runtime must become reliable first.
