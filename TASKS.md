@@ -94,5 +94,7 @@ Give these tasks to coding agents in this order:
 90. `agent-tasks/0089-dogfood-fixture-propose.md` (v0.2.1)
 91. `agent-tasks/0090-eval-baseline-record-compare.md` (v0.2.1, after 0089)
 92. `agent-tasks/0092-idempotent-status-transitions.md` (v0.2.2, from ax1-moc1 feedback F1)
+93. `agent-tasks/0093-evidence-add-command.md` (v0.2.2, F2/F6, evidence-entry-paths design)
+94. `agent-tasks/0094-job-completion-evidence.md` (v0.2.2, F3, after 0093)
 
 Do not start with MCP. Do not start with a hosted UI. The CLI/runtime must become reliable first.

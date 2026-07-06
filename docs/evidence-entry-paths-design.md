@@ -1,8 +1,11 @@
 # v0.2.2 Design: Evidence Entry Paths
 
-Status: **DRAFT — pending human approval.** No implementation before
-approval. No migration is proposed; everything here stays on schema
-v5.
+Status: **APPROVED 2026-07-07 (human approval).** Decisions: (1) two
+evidence types `adhoc_artifact` / `adhoc_bundle`; (2) bundle-member
+hash drift is a WARNING in `pcl validate --strict`, not an error;
+(3) the `verification feedback --output-file` idea is formally
+superseded by `pcl evidence add`. No migration; everything stays on
+schema v5. Implementation: task 0093 then 0094.
 
 Sources: v0.2.0 plan M2 dogfood finding (ad-hoc executed feedback has
 no evidence path) and ax1-moc1 external-project agent feedback items
@@ -104,12 +107,13 @@ pcl evidence add \
 
 Both are additive CLI + artifact work on schema v5.
 
-## Open decisions for approval
+## Approval record (2026-07-07)
 
-1. Evidence `type` values: `adhoc_artifact` / `adhoc_bundle` as
-   proposed, or a single type with a manifest field distinguishing
-   arity? (Proposal: two types — cheap to read in lists.)
-2. Hash-drift on bundle members in `--strict`: warning (proposed) or
-   error?
-3. Confirm supersession of `verification feedback --output-file` by
-   `pcl evidence add`.
+1. Two evidence types confirmed: `adhoc_artifact` (single file) /
+   `adhoc_bundle` (multiple files) — cheap to read in lists.
+2. Bundle-member hash drift in `--strict` is a WARNING. Rationale:
+   drift is a fact about the working tree moving on, not a state
+   integrity violation; the pinned hash in the manifest remains the
+   recorded claim.
+3. `verification feedback --output-file` is superseded by
+   `pcl evidence add` and will not be implemented.
