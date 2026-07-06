@@ -186,6 +186,23 @@ def _create_task_code_project(root: Path, capsys) -> None:
     _git(root, "commit", "-m", "initial")
 
 
+def _create_job_code_project(root: Path, capsys) -> None:
+    _create_job(root, capsys)
+    (root / "src").mkdir()
+    (root / "tests").mkdir()
+    (root / "src" / "app.py").write_text(
+        "def greet(name: str) -> str:\n    return f'Hello {name}'\n",
+        encoding="utf-8",
+    )
+    (root / "tests" / "test_app.py").write_text(
+        "from src import app\n\n\ndef test_greet():\n    assert app.greet('PCL') == 'Hello PCL'\n",
+        encoding="utf-8",
+    )
+    _git(root, "init")
+    _git(root, "add", ".")
+    _git(root, "commit", "-m", "initial")
+
+
 def _write_code_context_receipt(root: Path, capsys) -> dict:
     assert main(["--root", str(root), "index", "build", "--json"]) == 0
     _json_output(capsys)
@@ -697,12 +714,64 @@ def test_context_pack_verifications_render_rubric_columns(
     assert "| V-0002 | J-0001 | human | approved | 0.8 | partial |" in markdown
 
 
-def test_context_pack_include_code_context_embeds_latest_summary(
+def test_context_pack_for_job_include_code_context_embeds_bounded_summary(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_job_code_project(tmp_path, capsys)
+    impact = _write_code_context_receipt(tmp_path, capsys)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--job",
+        "J-0001",
+        "--include-code-context",
+        "--json",
+    ]) == 0
+
+    pack = _json_output(capsys)["context_pack"]
+    code_context = pack["code_context"]
+    assert code_context["contract_version"] == "code-context-summary/v0"
+    assert code_context["receipt_ref"] == {
+        "evidence_id": impact["evidence_id"],
+        "receipt_path": impact["receipt_path"],
+        "created_at": code_context["receipt_ref"]["created_at"],
+    }
+    assert code_context["diff_source"] == "worktree-vs-HEAD"
+    assert code_context["changed_file_count"] == 1
+    assert code_context["included_total"] >= 1
+    assert any(
+        item["path"] == "src/app.py"
+        and item["selection"] == "included as candidate context"
+        for item in code_context["included_candidate_context_top"]
+    )
+    assert "included_candidate_context" not in code_context
+    assert "omitted" not in code_context
+    assert "excluded_changed_files" not in code_context
+    assert isinstance(code_context["omitted_reason_counts"], dict)
+    assert code_context["sensitive_omitted_count"] == 0
+    assert code_context["excluded_changed_file_count"] == 0
+    assert code_context["untracked_omission_warning"]
+    assert code_context["sensitive_include_override_used"] is False
+    assert "safe_to_continue" not in json.dumps(code_context, sort_keys=True)
+    assert "code_context_safety" in pack["included_sections"]
+    assert impact["receipt_path"] in pack["source_paths"]
+    assert "## Code Context Safety" in pack["markdown"]
+    assert "Files included as candidate context:" in pack["markdown"]
+    assert "understood" not in pack["markdown"].lower()
+    assert "analyzed" not in pack["markdown"].lower()
+    assert "agent read" not in pack["markdown"].lower()
+
+
+def test_context_pack_for_task_include_code_context_embeds_summary(
     tmp_path: Path,
     capsys,
 ) -> None:
     _create_task_code_project(tmp_path, capsys)
-    impact = _write_code_context_receipt(tmp_path, capsys)
+    _write_code_context_receipt(tmp_path, capsys)
 
     assert main([
         "--root",
@@ -716,30 +785,9 @@ def test_context_pack_include_code_context_embeds_latest_summary(
     ]) == 0
 
     pack = _json_output(capsys)["context_pack"]
-    code_context = pack["code_context"]
-    assert code_context["contract_version"] == "code-context-summary/v0"
-    assert code_context["receipt_ref"] == {
-        "evidence_id": impact["evidence_id"],
-        "receipt_path": impact["receipt_path"],
-    }
-    assert code_context["diff_source"] == "worktree-vs-HEAD"
-    assert code_context["included_candidate_context_count"] >= 1
-    assert any(
-        item["path"] == "src/app.py"
-        and item["selection"] == "included as candidate context"
-        for item in code_context["included_candidate_context"]
-    )
-    assert code_context["sensitive_omitted_count"] == 0
-    assert code_context["excluded_changed_file_count"] == 0
-    assert code_context["untracked_omission_warning"]
-    assert "safe_to_continue" not in json.dumps(code_context, sort_keys=True)
-    assert "code_context" in pack["included_sections"]
-    assert impact["receipt_path"] in pack["source_paths"]
-    assert "## Code Context" in pack["markdown"]
-    assert "Files included as candidate context:" in pack["markdown"]
-    assert "understood" not in pack["markdown"].lower()
-    assert "analyzed" not in pack["markdown"].lower()
-    assert "agent read" not in pack["markdown"].lower()
+    assert pack["code_context"]["contract_version"] == "code-context-summary/v0"
+    assert "code_context_safety" in pack["included_sections"]
+    assert "code_context_detail" in pack["included_sections"]
 
 
 def test_context_pack_code_context_safety_survives_tight_budget(
@@ -758,16 +806,20 @@ def test_context_pack_code_context_safety_survives_tight_budget(
         "T-0001",
         "--include-code-context",
         "--max-tokens",
-        "170",
+        "390",
         "--json",
     ]) == 0
 
     pack = _json_output(capsys)["context_pack"]
-    assert "code_context" in pack["included_sections"]
-    assert "## Code Context" in pack["markdown"]
+    assert "code_context_safety" in pack["included_sections"]
+    assert "code_context_detail" not in pack["included_sections"]
+    assert "code_context_detail" in pack["omitted_sections"]
+    assert "## Code Context Safety" in pack["markdown"]
+    assert "## Code Context Detail" not in pack["markdown"]
     assert "diff_source=worktree-vs-HEAD" in pack["markdown"]
     assert "sensitive_omitted_count=0" in pack["markdown"]
     assert "excluded_changed_file_count=0" in pack["markdown"]
+    assert "Untracked omission warning:" in pack["markdown"]
     assert pack["code_context"]["receipt_ref"]["evidence_id"]
     assert pack["estimated_token_count"] <= pack["budget"]["max_tokens"]
 
@@ -799,7 +851,8 @@ def test_context_pack_without_code_context_flag_is_unchanged_by_receipts(
     assert after == before
     pack = after_payload["context_pack"]
     assert "code_context" not in pack
-    assert "code_context" not in pack["included_sections"]
+    assert "code_context_safety" not in pack["included_sections"]
+    assert "code_context_detail" not in pack["included_sections"]
     assert "## Code Context" not in pack["markdown"]
 
 
@@ -836,15 +889,21 @@ def test_context_pack_include_code_context_without_receipt_suggests_next_action(
         "pcl index build --json",
         "pcl impact --diff --json",
     ]
-    assert code_context["receipt_ref"] == {"evidence_id": None, "receipt_path": None}
-    assert "code_context" in pack["included_sections"]
+    assert code_context["receipt_ref"] == {
+        "evidence_id": None,
+        "receipt_path": None,
+        "created_at": None,
+    }
+    assert "code_context_safety" in pack["included_sections"]
     assert "No context receipt evidence was found." in pack["markdown"]
 
 
 def _section_heading(section_id: str) -> str:
     return {
         "machine_context_rules": "## Machine Context Rules",
-        "code_context": "## Code Context",
+        "code_context_safety": "## Code Context Safety",
+        "code_context_detail": "## Code Context Detail",
+        "code_context_verification_suggestions": "## Code Context Verification Suggestions",
         "target_job": "## Target Job",
         "workflow_run": "## Workflow Run",
         "goal": "## Goal",

@@ -4,16 +4,24 @@ from typing import Any
 
 
 CODE_CONTEXT_SUMMARY_VERSION = "code-context-summary/v0"
+DEFAULT_INCLUDED_CANDIDATE_LIMIT = 10
 
 
-def summarize_code_context_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
+def summarize_code_context_receipt(
+    receipt: dict[str, Any],
+    *,
+    included_candidate_limit: int = DEFAULT_INCLUDED_CANDIDATE_LIMIT,
+) -> dict[str, Any]:
     """Return the stable context-pack summary for a context-receipt/v0 payload."""
     payload = receipt if isinstance(receipt, dict) else {}
     included = _dict_list(payload.get("included_candidate_context"))
     omitted = _dict_list(payload.get("omitted"))
+    changed_files = _dict_list(payload.get("changed_files"))
     excluded_changed = _dict_list(payload.get("excluded_changed_files"))
     diff_source = _text(payload.get("diff_source")) or "unknown"
     staleness_warnings = _string_list(payload.get("staleness_warnings"))
+    limit = max(0, included_candidate_limit)
+    index_run = payload.get("index_run")
 
     summary: dict[str, Any] = {
         "contract_version": CODE_CONTEXT_SUMMARY_VERSION,
@@ -21,19 +29,28 @@ def summarize_code_context_receipt(receipt: dict[str, Any]) -> dict[str, Any]:
         "receipt_ref": {
             "evidence_id": _text(payload.get("evidence_id")),
             "receipt_path": _text(payload.get("receipt_path")),
+            "created_at": _text(payload.get("created_at")),
         },
         "diff_source": diff_source,
-        "index_run": _index_run_summary(payload.get("index_run")),
-        "included_candidate_context_count": len(included),
-        "included_candidate_context": [_candidate_summary(item) for item in included],
-        "omitted_count": len(omitted),
-        "omitted": [_omitted_summary(item) for item in omitted],
+        "index_run": _index_run_summary(index_run),
+        "changed_file_count": _changed_file_count(
+            changed_files=changed_files,
+            included=included,
+            excluded_changed=excluded_changed,
+            omitted=omitted,
+        ),
         "excluded_changed_file_count": len(excluded_changed),
-        "excluded_changed_files": [_excluded_changed_summary(item) for item in excluded_changed],
         "sensitive_omitted_count": _int(payload.get("sensitive_omitted_count")),
         "staleness_warnings": staleness_warnings,
         "untracked_omission_warning": _untracked_omission_warning(diff_source),
+        "included_total": len(included),
+        "included_candidate_context_top": [
+            _candidate_summary(item)
+            for item in included[:limit]
+        ],
+        "omitted_reason_counts": _omitted_reason_counts(omitted),
         "verification_suggestions": _string_list(payload.get("verification_suggestions")),
+        "sensitive_include_override_used": _sensitive_include_override_used(index_run),
     }
     base_ref = _text(payload.get("base_ref"))
     if base_ref:
@@ -57,37 +74,43 @@ def _candidate_summary(item: dict[str, Any]) -> dict[str, Any]:
     return _without_empty_values(summary)
 
 
-def _omitted_summary(item: dict[str, Any]) -> dict[str, Any]:
-    return _without_empty_values(
-        {
-            "path": _text(item.get("path")),
-            "omitted_type": _text(item.get("omitted_type")),
-            "reason": _text(item.get("reason")),
-        }
-    )
-
-
-def _excluded_changed_summary(item: dict[str, Any]) -> dict[str, Any]:
-    return _without_empty_values(
-        {
-            "path": _text(item.get("path")),
-            "status": _text(item.get("status")),
-            "reason": _text(item.get("reason")),
-        }
-    )
-
-
 def _index_run_summary(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         return None
     return _without_empty_values(
         {
             "id": _text(value.get("id")),
-            "index_version": _text(value.get("index_version")),
-            "git_head": _text(value.get("git_head")),
             "created_at": _text(value.get("created_at")),
         }
     )
+
+
+def _changed_file_count(
+    *,
+    changed_files: list[dict[str, Any]],
+    included: list[dict[str, Any]],
+    excluded_changed: list[dict[str, Any]],
+    omitted: list[dict[str, Any]],
+) -> int:
+    if changed_files:
+        return len(changed_files)
+    included_changed = sum(1 for item in included if item.get("role") == "changed_file")
+    omitted_changed = sum(1 for item in omitted if item.get("omitted_type") == "changed_file")
+    return included_changed + len(excluded_changed) + omitted_changed
+
+
+def _omitted_reason_counts(omitted: list[dict[str, Any]]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for item in omitted:
+        reason = _text(item.get("reason")) or "unknown"
+        counts[reason] = counts.get(reason, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _sensitive_include_override_used(index_run: Any) -> bool:
+    if not isinstance(index_run, dict):
+        return False
+    return bool(index_run.get("sensitive_include_override_used"))
 
 
 def _untracked_omission_warning(diff_source: str) -> str | None:

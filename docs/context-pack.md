@@ -65,12 +65,19 @@ through `code_context.receipt_ref.evidence_id`,
 `code_context.receipt_ref.receipt_path`, and `source_paths`.
 
 The summary contains compact fields such as `diff_source`,
-`included_candidate_context_count`, `included_candidate_context`,
-`omitted_count`, `excluded_changed_file_count`, `sensitive_omitted_count`,
-`staleness_warnings`, `untracked_omission_warning`, and
-`verification_suggestions`. Candidate rows use the phrase
-`included as candidate context`; the summary does not make cognition claims
-about those files.
+`receipt_ref`, `changed_file_count`, `excluded_changed_file_count`,
+`sensitive_omitted_count`, `staleness_warnings`,
+`untracked_omission_warning`, `included_total`,
+`included_candidate_context_top`, `omitted_reason_counts`,
+`verification_suggestions`, and `sensitive_include_override_used`.
+Candidate rows use the phrase `included as candidate context`; the summary
+does not make cognition claims about those files.
+
+The summary is bounded. `included_candidate_context_top` contains at most the
+top 10 candidate paths by default plus `included_total`; omitted receipt rows
+are folded into `omitted_reason_counts`. The full
+`included_candidate_context` and `omitted` receipt arrays are not embedded in
+the context pack.
 
 When no receipt exists, `--include-code-context` still succeeds and returns a
 `code_context` summary with `status: "missing_receipt"` plus next actions:
@@ -97,16 +104,18 @@ failing or slicing through a section.
 Job packs render included sections in canonical order:
 
 1. machine context rules
-2. code context, only when `--include-code-context` is used
-3. target job
-4. workflow run
-5. goal
-6. jobs in this run
-7. verifications
-8. human queue
-9. evidence
-10. recent events
-11. agent prompt
+2. code context safety, only when `--include-code-context` is used
+3. code context verification suggestions, only when available through `--include-code-context`
+4. code context detail, only when available through `--include-code-context`
+5. target job
+6. workflow run
+7. goal
+8. jobs in this run
+9. verifications
+10. human queue
+11. evidence
+12. recent events
+13. agent prompt
 
 The target job table includes lease fields:
 `assigned_agent_id`, `attempts`, `lease_expires_at`, and
@@ -117,15 +126,17 @@ The target job table includes lease fields:
 Task packs render included sections in canonical order:
 
 1. machine context rules
-2. code context, only when `--include-code-context` is used
-3. target task
-4. dependencies
-5. dependents
-6. goal
-7. related feature, when linked
-8. related defect, when linked
-9. sibling tasks, when a goal is linked
-10. recent events
+2. code context safety, only when `--include-code-context` is used
+3. code context verification suggestions, only when available through `--include-code-context`
+4. code context detail, only when available through `--include-code-context`
+5. target task
+6. dependencies
+7. dependents
+8. goal
+9. related feature, when linked
+10. related defect, when linked
+11. sibling tasks, when a goal is linked
+12. recent events
 
 Task dependencies include a `satisfied` column. It is `yes` when the dependency
 task status is `done`, `cancelled`, or `waived`; otherwise it is `no`.
@@ -140,9 +151,11 @@ profile priority, then rendered in canonical order.
 - `pm` prioritizes goal, human queue, workflow run, and verifications.
 - Unknown or blank job roles fall back to `implementer`.
 - Task packs currently use the `default` profile.
-- `machine_context_rules` and the opt-in `code_context` safety summary are
+- `machine_context_rules` and the opt-in `code_context_safety` section are
   pinned at the highest section priority so safety facts are selected before
   ordinary task or job detail under tight budgets.
+- For verifier job packs, `code_context_verification_suggestions` has higher
+  priority than `code_context_detail`.
 
 The selected profile name is returned as `role_profile`.
 

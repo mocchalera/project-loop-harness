@@ -402,18 +402,29 @@ The summary is tolerant of missing or future receipt fields. Its stable safety
 facts are:
 
 - `diff_source`
-- `receipt_ref`
+- `receipt_ref` with `evidence_id`, `receipt_path`, and `created_at`
 - `sensitive_omitted_count`
 - `staleness_warnings`
 - `excluded_changed_file_count`
 - `untracked_omission_warning`
 
-These facts are rendered in the opt-in `Code Context` section with the same
-pinned-priority budget mechanism used by `machine_context_rules`. Additional
-summary fields include compact candidate paths, omission counts, excluded
-changed-file summaries, and verification suggestions. Candidate wording is
-`included as candidate context`; PLH does not make cognition claims about
-those files.
+These facts are rendered in the opt-in `Code Context Safety` section with the
+same pinned-priority budget mechanism used by `machine_context_rules`.
+
+Additional summary fields include `changed_file_count`, `included_total`,
+bounded `included_candidate_context_top` rows, `omitted_reason_counts`,
+`verification_suggestions`, and `sensitive_include_override_used`. Candidate
+wording is `included as candidate context`; PLH does not make cognition claims
+about those files. `included_candidate_context_top` contains at most the top 10
+paths by default; omitted receipt rows are aggregated by reason. The summary
+does not embed the full `included_candidate_context` or `omitted` receipt
+arrays.
+
+In context-pack markdown, `Code Context Safety` is non-droppable under the
+existing section priority mechanism. `Code Context Verification Suggestions`
+and `Code Context Detail` are ordinary budgeted sections. For verifier job
+packs, verification suggestions have higher priority than the candidate
+listing.
 
 If no receipt exists, the command still returns a valid context pack with
 `code_context.status: "missing_receipt"` and next actions:

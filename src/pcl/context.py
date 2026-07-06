@@ -25,11 +25,12 @@ DEFAULT_MAX_TOKENS = 12000
 TOKEN_ESTIMATOR = "charclass/v1"
 LEGACY_APPROX_CHARS_PER_TOKEN = 4
 MACHINE_CONTEXT_RULES_SECTION_ID = "machine_context_rules"
-CODE_CONTEXT_SECTION_ID = "code_context"
+CODE_CONTEXT_SAFETY_SECTION_ID = "code_context_safety"
+CODE_CONTEXT_DETAIL_SECTION_ID = "code_context_detail"
+CODE_CONTEXT_VERIFICATION_SECTION_ID = "code_context_verification_suggestions"
 
 JOB_SECTION_ORDER = [
     "machine_context_rules",
-    "code_context",
     "target_job",
     "workflow_run",
     "goal",
@@ -42,7 +43,6 @@ JOB_SECTION_ORDER = [
 ]
 TASK_SECTION_ORDER = [
     "machine_context_rules",
-    "code_context",
     "target_task",
     "dependencies",
     "dependents",
@@ -55,16 +55,27 @@ TASK_SECTION_ORDER = [
 
 JOB_SECTION_PRIORITY_PROFILES = {
     "implementer": {
-        section_id: (10000 if section_id in {MACHINE_CONTEXT_RULES_SECTION_ID, CODE_CONTEXT_SECTION_ID} else 900 - index * 50)
+        section_id: (
+            10000
+            if section_id == MACHINE_CONTEXT_RULES_SECTION_ID
+            else 900 - index * 50
+        )
         for index, section_id in enumerate(JOB_SECTION_ORDER)
+    }
+    | {
+        CODE_CONTEXT_SAFETY_SECTION_ID: 10000,
+        CODE_CONTEXT_DETAIL_SECTION_ID: 825,
+        CODE_CONTEXT_VERIFICATION_SECTION_ID: 775,
     },
     "verifier": {
         "machine_context_rules": 10000,
-        "code_context": 10000,
+        "code_context_safety": 10000,
         "verifications": 950,
+        "code_context_verification_suggestions": 925,
         "evidence": 900,
         "target_job": 850,
         "run_jobs": 800,
+        "code_context_detail": 775,
         "workflow_run": 750,
         "goal": 700,
         "human_queue": 650,
@@ -73,22 +84,33 @@ JOB_SECTION_PRIORITY_PROFILES = {
     },
     "pm": {
         "machine_context_rules": 10000,
-        "code_context": 10000,
+        "code_context_safety": 10000,
         "goal": 950,
         "human_queue": 900,
         "workflow_run": 850,
         "verifications": 800,
+        "code_context_verification_suggestions": 775,
         "target_job": 750,
         "run_jobs": 700,
         "evidence": 650,
+        "code_context_detail": 625,
         "agent_prompt": 600,
         "recent_events": 550,
     },
 }
 TASK_SECTION_PRIORITY_PROFILES = {
     "default": {
-        section_id: (10000 if section_id in {MACHINE_CONTEXT_RULES_SECTION_ID, CODE_CONTEXT_SECTION_ID} else 900 - index * 50)
+        section_id: (
+            10000
+            if section_id == MACHINE_CONTEXT_RULES_SECTION_ID
+            else 900 - index * 50
+        )
         for index, section_id in enumerate(TASK_SECTION_ORDER)
+    }
+    | {
+        CODE_CONTEXT_SAFETY_SECTION_ID: 10000,
+        CODE_CONTEXT_DETAIL_SECTION_ID: 825,
+        CODE_CONTEXT_VERIFICATION_SECTION_ID: 775,
     }
 }
 
@@ -362,7 +384,7 @@ def _build_job_sections(
         ),
     ]
     if code_context is not None:
-        sections.append(("code_context", _render_code_context_section(code_context)))
+        sections.extend(_code_context_sections(code_context))
     sections.extend(
         [
         (
@@ -463,7 +485,7 @@ def _build_task_sections(
         ),
     ]
     if code_context is not None:
-        sections.append(("code_context", _render_code_context_section(code_context)))
+        sections.extend(_code_context_sections(code_context))
     sections.extend(
         [
         (
@@ -595,6 +617,7 @@ def _latest_code_context_summary(paths: ProjectPaths) -> dict[str, Any]:
     receipt_ref = {
         "evidence_id": str(row["id"]),
         "receipt_path": str(row["path"]),
+        "created_at": str(row["created_at"]),
     }
     receipt_path = _resolve_project_path(paths, str(row["path"]))
     try:
@@ -611,7 +634,16 @@ def _latest_code_context_summary(paths: ProjectPaths) -> dict[str, Any]:
         )
 
     summary = summarize_code_context_receipt(receipt_payload)
-    summary["receipt_ref"] = receipt_ref
+    summary_receipt_ref = summary.get("receipt_ref")
+    created_at = (
+        summary_receipt_ref.get("created_at")
+        if isinstance(summary_receipt_ref, dict)
+        else None
+    )
+    summary["receipt_ref"] = {
+        **receipt_ref,
+        "created_at": created_at or receipt_ref["created_at"],
+    }
     return summary
 
 
@@ -619,18 +651,19 @@ def _missing_code_context_summary() -> dict[str, Any]:
     return {
         "contract_version": CODE_CONTEXT_SUMMARY_VERSION,
         "status": "missing_receipt",
-        "receipt_ref": {"evidence_id": None, "receipt_path": None},
+        "receipt_ref": {"evidence_id": None, "receipt_path": None, "created_at": None},
         "diff_source": "unknown",
-        "included_candidate_context_count": 0,
-        "included_candidate_context": [],
-        "omitted_count": 0,
-        "omitted": [],
+        "index_run": None,
+        "changed_file_count": 0,
         "excluded_changed_file_count": 0,
-        "excluded_changed_files": [],
         "sensitive_omitted_count": 0,
         "staleness_warnings": [],
         "untracked_omission_warning": None,
+        "included_total": 0,
+        "included_candidate_context_top": [],
+        "omitted_reason_counts": {},
         "verification_suggestions": [],
+        "sensitive_include_override_used": False,
         "message": "No context receipt evidence was found.",
         "next_actions": [
             "pcl index build --json",
@@ -649,16 +682,17 @@ def _unavailable_code_context_summary(
         "status": "receipt_unavailable",
         "receipt_ref": receipt_ref,
         "diff_source": "unknown",
-        "included_candidate_context_count": 0,
-        "included_candidate_context": [],
-        "omitted_count": 0,
-        "omitted": [],
+        "index_run": None,
+        "changed_file_count": 0,
         "excluded_changed_file_count": 0,
-        "excluded_changed_files": [],
         "sensitive_omitted_count": 0,
         "staleness_warnings": [],
         "untracked_omission_warning": None,
+        "included_total": 0,
+        "included_candidate_context_top": [],
+        "omitted_reason_counts": {},
         "verification_suggestions": [],
+        "sensitive_include_override_used": False,
         "message": message,
         "next_actions": ["pcl impact --diff --json"],
     }
@@ -681,8 +715,22 @@ def _code_context_receipt_path(summary: dict[str, Any]) -> str | None:
     return str(receipt_path)
 
 
-def _render_code_context_section(summary: dict[str, Any]) -> str:
-    lines = ["## Code Context", ""]
+def _code_context_sections(summary: dict[str, Any]) -> list[tuple[str, str]]:
+    sections = [(CODE_CONTEXT_SAFETY_SECTION_ID, _render_code_context_safety_section(summary))]
+    if summary.get("status") in {"missing_receipt", "receipt_unavailable"}:
+        return sections
+    sections.append(
+        (
+            CODE_CONTEXT_VERIFICATION_SECTION_ID,
+            _render_code_context_verification_section(summary),
+        )
+    )
+    sections.append((CODE_CONTEXT_DETAIL_SECTION_ID, _render_code_context_detail_section(summary)))
+    return sections
+
+
+def _render_code_context_safety_section(summary: dict[str, Any]) -> str:
+    lines = ["## Code Context Safety", ""]
     status = str(summary.get("status") or "")
     if status == "missing_receipt":
         lines.extend(
@@ -715,20 +763,52 @@ def _render_code_context_section(summary: dict[str, Any]) -> str:
         f"sensitive_omitted_count={_stringify(summary.get('sensitive_omitted_count'))}; "
         f"staleness_warnings={staleness_count}; "
         f"excluded_changed_file_count={_stringify(summary.get('excluded_changed_file_count'))}; "
-        f"untracked_omission_warning={untracked_value}."
+        f"untracked_omission_warning={untracked_value}; "
+        f"sensitive_include_override_used={_stringify(summary.get('sensitive_include_override_used'))}."
     )
+    if staleness_count:
+        lines.extend(["", "Staleness warnings:"])
+        for warning in staleness:
+            lines.append(f"- {_stringify(warning)}")
+    if untracked_warning:
+        lines.extend(["", f"Untracked omission warning: {_stringify(untracked_warning)}"])
+    return "\n".join(lines)
 
-    candidates = summary.get("included_candidate_context")
+
+def _render_code_context_verification_section(summary: dict[str, Any]) -> str:
+    suggestions = summary.get("verification_suggestions")
+    lines = ["## Code Context Verification Suggestions", ""]
+    if isinstance(suggestions, list) and suggestions:
+        for suggestion in suggestions:
+            lines.append(f"- {_stringify(suggestion)}")
+    else:
+        lines.append("None.")
+    return "\n".join(lines)
+
+
+def _render_code_context_detail_section(summary: dict[str, Any]) -> str:
+    lines = [
+        "## Code Context Detail",
+        "",
+        "Counts: "
+        f"changed_file_count={_stringify(summary.get('changed_file_count'))}; "
+        f"included_total={_stringify(summary.get('included_total'))}.",
+    ]
+    omitted_reason_counts = summary.get("omitted_reason_counts")
+    if isinstance(omitted_reason_counts, dict) and omitted_reason_counts:
+        lines.extend(["", "Omitted reason counts:"])
+        for reason, count in omitted_reason_counts.items():
+            lines.append(f"- {_stringify(reason)}: {_stringify(count)}")
+    candidates = summary.get("included_candidate_context_top")
     if isinstance(candidates, list) and candidates:
         lines.extend(["", "Files included as candidate context:"])
-        for item in candidates[:5]:
+        for item in candidates:
             if not isinstance(item, dict):
                 continue
             path = _stringify(item.get("path"))
             role = _stringify(item.get("role"))
-            lines.append(f"- {path} ({role})")
-        if len(candidates) > 5:
-            lines.append(f"- ... (+{len(candidates) - 5} more)")
+            reason = _stringify(item.get("reason"))
+            lines.append(f"- {path} ({role}; {reason})")
     else:
         lines.extend(["", "Files included as candidate context: none."])
     return "\n".join(lines)

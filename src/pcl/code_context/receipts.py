@@ -115,6 +115,7 @@ def _receipt_payload(
         "diff_source": impact["diff_source"],
         "diff_provenance": impact.get("diff_provenance", {}),
         "index_run": impact["index_run"],
+        "changed_files": impact.get("changed_files", []),
         "included_candidate_context": _included_candidate_context(paths, snapshot, impact),
         "excluded_changed_files": impact.get("excluded_changed_files", []),
         "omitted": impact["omitted"],
