@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from pcl import verification_feedback as verification_feedback_module
 from pcl.cli import main
 from pcl.db import connect
 
@@ -86,6 +87,29 @@ def _create_supporting_evidence(root: Path, evidence_id: str = "E-0009") -> None
     )
 
 
+def _create_adhoc_supporting_evidence(
+    root: Path,
+    capsys,
+    *,
+    filename: str = "pytest-out.txt",
+    content: str = "pytest passed\n",
+) -> dict[str, Any]:
+    artifact = root / filename
+    artifact.write_text(content, encoding="utf-8")
+    assert main([
+        "--root",
+        str(root),
+        "evidence",
+        "add",
+        "--file",
+        filename,
+        "--summary",
+        "Caller supplied pytest output.",
+        "--json",
+    ]) == 0
+    return _json_output(capsys)["evidence"]
+
+
 def _feedback_rows(root: Path) -> list[dict[str, Any]]:
     conn = connect(root / ".project-loop" / "project.db")
     try:
@@ -103,6 +127,18 @@ def _feedback_rows(root: Path) -> list[dict[str, Any]]:
 
 def _event_count(root: Path) -> int:
     return len((root / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines())
+
+
+def _event_file_size(root: Path) -> int:
+    return (root / ".project-loop" / "events.jsonl").stat().st_size
+
+
+def _table_count(root: Path, table_name: str) -> int:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        return int(conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()[0])
+    finally:
+        conn.close()
 
 
 def _assert_feedback_error(capsys, code: str) -> None:
@@ -417,6 +453,257 @@ def test_verification_stats_uses_null_rates_for_empty_denominators(
     assert stats["executed_pass_rate"] is None
     assert stats["executed_fail_denominator"] == 0
     assert stats["executed_fail_rate"] is None
+
+
+def test_verification_stats_reports_adhoc_supporting_evidence_health_and_does_not_write(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    _init(tmp_path, capsys)
+    _create_receipt(
+        tmp_path,
+        evidence_id="E-0001",
+        suggestions=[
+            {
+                "id": "E-0001/VS-01",
+                "command": "python3 -m pytest tests/test_cli.py",
+                "reason": "test_hint:path_token_match",
+            },
+            {
+                "id": "E-0001/VS-02",
+                "command": "python3 -m pytest tests/test_migrations.py",
+                "reason": "test_hint:path_token_match",
+            },
+            {
+                "id": "E-0001/VS-03",
+                "command": "python3 -m pytest tests/test_reports.py",
+                "reason": "test_hint:path_token_match",
+            },
+        ],
+    )
+    evidence = _create_adhoc_supporting_evidence(tmp_path, capsys)
+    manifest_path = tmp_path / evidence["manifest_path"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["members"][0]["path_scope"] = "workspace"
+    manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+
+    commands = [
+        [
+            "verification",
+            "feedback",
+            "--suggestion",
+            "E-0001/VS-01",
+            "--status",
+            "executed",
+            "--result",
+            "passed",
+            "--evidence",
+            evidence["id"],
+        ],
+        [
+            "verification",
+            "feedback",
+            "--suggestion",
+            "E-0001/VS-02",
+            "--status",
+            "skipped",
+            "--evidence",
+            evidence["id"],
+        ],
+        [
+            "verification",
+            "feedback",
+            "--suggestion",
+            "E-0001/VS-03",
+            "--status",
+            "skipped",
+        ],
+    ]
+    for command in commands:
+        assert main(["--root", str(tmp_path), *command, "--json"]) == 0
+        _json_output(capsys)
+
+    original_assess = verification_feedback_module.assess_adhoc_evidence
+    assessment_calls: list[str] = []
+
+    def counting_assess(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        assessment_calls.append(str(kwargs["evidence_id"]))
+        return original_assess(*args, **kwargs)
+
+    monkeypatch.setattr(verification_feedback_module, "assess_adhoc_evidence", counting_assess)
+    before_event_size = _event_file_size(tmp_path)
+    before_evidence_count = _table_count(tmp_path, "evidence")
+    before_feedback_count = _table_count(tmp_path, "verification_feedback")
+
+    assert main(["--root", str(tmp_path), "verification", "stats", "--json"]) == 0
+    stats = _json_output(capsys)["stats"]
+
+    assert assessment_calls == [evidence["id"]]
+    assert stats["executed_pass_rate"] == 1.0
+    health = stats["supporting_evidence_health"]
+    assert health == {
+        "assessed_evidence_count": 1,
+        "feedback_events_with_supporting_evidence_count": 2,
+        "health_counts": {"ok": 1, "warning": 0, "error": 0, "unknown": 0},
+        "by_evidence_id": {evidence["id"]: {"health": "ok", "findings": []}},
+    }
+    latest = stats["latest_feedback_by_suggestion"]
+    assert latest["E-0001/VS-01"]["supporting_evidence_health"] == "ok"
+    assert latest["E-0001/VS-02"]["supporting_evidence_health"] == "ok"
+    assert latest["E-0001/VS-03"]["supporting_evidence_health"] is None
+    assert _event_file_size(tmp_path) == before_event_size
+    assert _table_count(tmp_path, "evidence") == before_evidence_count
+    assert _table_count(tmp_path, "verification_feedback") == before_feedback_count
+
+
+def test_verification_stats_reports_adhoc_member_drift_without_changing_metrics(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    _create_receipt(tmp_path)
+    evidence = _create_adhoc_supporting_evidence(tmp_path, capsys)
+    assert main([
+        "--root",
+        str(tmp_path),
+        "verification",
+        "feedback",
+        "--suggestion",
+        "E-0001/VS-01",
+        "--status",
+        "executed",
+        "--result",
+        "passed",
+        "--evidence",
+        evidence["id"],
+        "--json",
+    ]) == 0
+    _json_output(capsys)
+
+    (tmp_path / "pytest-out.txt").write_text("pytest failed\n", encoding="utf-8")
+    assert main(["--root", str(tmp_path), "verification", "stats", "--json"]) == 0
+    changed_stats = _json_output(capsys)["stats"]
+    changed_health = changed_stats["supporting_evidence_health"]["by_evidence_id"][evidence["id"]]
+    assert changed_stats["executed_pass_rate"] == 1.0
+    assert changed_health == {
+        "health": "warning",
+        "findings": [{"code": "member_hash_mismatch", "path": "pytest-out.txt"}],
+    }
+
+    (tmp_path / "pytest-out.txt").unlink()
+    assert main(["--root", str(tmp_path), "verification", "stats", "--json"]) == 0
+    missing_stats = _json_output(capsys)["stats"]
+    missing_health = missing_stats["supporting_evidence_health"]["by_evidence_id"][evidence["id"]]
+    assert missing_stats["executed_pass_rate"] == 1.0
+    assert missing_health == {
+        "health": "warning",
+        "findings": [{"code": "member_missing", "path": "pytest-out.txt"}],
+    }
+
+
+def test_verification_stats_reports_missing_adhoc_manifest_error(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    _create_receipt(tmp_path)
+    evidence = _create_adhoc_supporting_evidence(tmp_path, capsys)
+    assert main([
+        "--root",
+        str(tmp_path),
+        "verification",
+        "feedback",
+        "--suggestion",
+        "E-0001/VS-01",
+        "--status",
+        "executed",
+        "--result",
+        "passed",
+        "--evidence",
+        evidence["id"],
+        "--json",
+    ]) == 0
+    _json_output(capsys)
+
+    (tmp_path / evidence["manifest_path"]).unlink()
+    assert main(["--root", str(tmp_path), "verification", "stats", "--json"]) == 0
+    health = _json_output(capsys)["stats"]["supporting_evidence_health"]
+    assert health["health_counts"] == {"ok": 0, "warning": 0, "error": 1, "unknown": 0}
+    assert health["by_evidence_id"][evidence["id"]] == {
+        "health": "error",
+        "findings": [
+            {
+                "code": "manifest_missing",
+                "path": evidence["manifest_path"],
+            }
+        ],
+    }
+
+
+def test_verification_stats_reports_unknown_type_and_missing_evidence_row(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    _create_receipt(
+        tmp_path,
+        evidence_id="E-0001",
+        suggestions=[
+            {
+                "id": "E-0001/VS-01",
+                "command": "python3 -m pytest tests/test_cli.py",
+                "reason": "test_hint:path_token_match",
+            },
+            {
+                "id": "E-0001/VS-02",
+                "command": "python3 -m pytest tests/test_migrations.py",
+                "reason": "test_hint:path_token_match",
+            },
+        ],
+    )
+    _create_supporting_evidence(tmp_path, "E-0009")
+    _create_supporting_evidence(tmp_path, "E-0010")
+    for suggestion_id, evidence_id in [
+        ("E-0001/VS-01", "E-0009"),
+        ("E-0001/VS-02", "E-0010"),
+    ]:
+        assert main([
+            "--root",
+            str(tmp_path),
+            "verification",
+            "feedback",
+            "--suggestion",
+            suggestion_id,
+            "--status",
+            "executed",
+            "--result",
+            "passed",
+            "--evidence",
+            evidence_id,
+            "--json",
+        ]) == 0
+        _json_output(capsys)
+
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("DELETE FROM evidence WHERE id = ?", ("E-0010",))
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert main(["--root", str(tmp_path), "verification", "stats", "--json"]) == 0
+    health = _json_output(capsys)["stats"]["supporting_evidence_health"]
+    assert health["health_counts"] == {"ok": 0, "warning": 0, "error": 1, "unknown": 1}
+    assert health["by_evidence_id"]["E-0009"] == {
+        "health": "unknown",
+        "findings": [{"code": "health_not_assessed_for_type", "detail": "command_result"}],
+    }
+    assert health["by_evidence_id"]["E-0010"] == {
+        "health": "error",
+        "findings": [{"code": "evidence_row_missing"}],
+    }
 
 
 def test_strict_validate_reports_verification_feedback_missing_evidence(

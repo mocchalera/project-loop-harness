@@ -9,7 +9,7 @@ import sqlite3
 from typing import Any
 
 from .db import connect, table_exists
-from .evidence import ADHOC_EVIDENCE_CONTRACT_VERSION, ADHOC_EVIDENCE_TYPES
+from .evidence import ADHOC_EVIDENCE_TYPES, assess_adhoc_evidence
 from .errors import DataStoreError, InvalidInputError
 from .migrations import migration_status
 from .paths import ProjectPaths
@@ -912,98 +912,81 @@ def _validate_adhoc_evidence_manifests(
     for row in evidence_rows:
         evidence_id = str(row["id"])
         manifest_path_value = str(row["path"] or "").strip()
-        manifest_path = _absolute_local_path(paths, manifest_path_value)
-        if manifest_path is None:
-            result.add_error(f"Adhoc evidence {evidence_id} manifest path is not local: {manifest_path_value}.")
-            continue
-        if not manifest_path.exists():
-            result.add_error(f"Adhoc evidence {evidence_id} manifest does not exist: {manifest_path_value}.")
-            continue
-        if not manifest_path.is_file():
-            result.add_error(f"Adhoc evidence {evidence_id} manifest is not a file: {manifest_path_value}.")
-            continue
-
-        try:
-            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
-        except (OSError, JSONDecodeError) as exc:
-            result.add_error(f"Adhoc evidence {evidence_id} manifest is corrupt: {manifest_path_value}: {exc}.")
-            continue
-        if not isinstance(payload, dict):
-            result.add_error(f"Adhoc evidence {evidence_id} manifest is corrupt: root must be an object.")
-            continue
-        if payload.get("contract_version") != ADHOC_EVIDENCE_CONTRACT_VERSION:
-            result.add_error(
-                f"Adhoc evidence {evidence_id} manifest has unsupported contract_version: "
-                f"{payload.get('contract_version')!r}."
-            )
-            continue
-        if payload.get("evidence_id") != evidence_id:
-            result.add_error(
-                f"Adhoc evidence {evidence_id} manifest evidence_id mismatch: "
-                f"{payload.get('evidence_id')!r}."
-            )
-            continue
-        if payload.get("evidence_type") != str(row["type"]):
-            result.add_error(
-                f"Adhoc evidence {evidence_id} manifest evidence_type mismatch: "
-                f"{payload.get('evidence_type')!r}."
-            )
-            continue
-        members = payload.get("members")
-        if not isinstance(members, list) or not members:
-            result.add_error(f"Adhoc evidence {evidence_id} manifest members must be a non-empty list.")
-            continue
-        _validate_adhoc_members(paths, result, evidence_id=evidence_id, members=members)
+        assessment = assess_adhoc_evidence(
+            paths,
+            evidence_id=evidence_id,
+            evidence_type=str(row["type"]),
+            manifest_path_value=manifest_path_value,
+        )
+        _add_adhoc_assessment_findings(result, evidence_id=evidence_id, assessment=assessment)
 
 
-def _validate_adhoc_members(
-    paths: ProjectPaths,
+def _add_adhoc_assessment_findings(
     result: ValidationResult,
     *,
     evidence_id: str,
-    members: list[Any],
+    assessment: dict[str, Any],
 ) -> None:
-    seen_paths: set[str] = set()
-    for index, member in enumerate(members, start=1):
-        if not isinstance(member, dict):
-            result.add_error(f"Adhoc evidence {evidence_id} manifest member {index} must be an object.")
+    for finding in assessment.get("findings", []):
+        if not isinstance(finding, dict):
+            result.add_error(f"Adhoc evidence {evidence_id} assessment finding is not an object.")
             continue
-        member_path = member.get("path")
-        size_bytes = member.get("size_bytes")
-        expected_sha256 = member.get("sha256")
-        if not isinstance(member_path, str) or not member_path.strip():
-            result.add_error(f"Adhoc evidence {evidence_id} manifest member {index} path is invalid.")
-            continue
-        member_path = member_path.strip()
-        if Path(member_path).is_absolute():
+        code = str(finding.get("code") or "")
+        path = str(finding.get("path") or "")
+        detail = str(finding.get("detail") or "")
+        index = finding.get("index")
+        if code == "manifest_not_local":
+            result.add_error(f"Adhoc evidence {evidence_id} manifest path is not local: {path}.")
+        elif code == "manifest_missing":
+            result.add_error(f"Adhoc evidence {evidence_id} manifest does not exist: {path}.")
+        elif code == "manifest_not_file":
+            result.add_error(f"Adhoc evidence {evidence_id} manifest is not a file: {path}.")
+        elif code == "manifest_corrupt" and detail == "root must be an object":
+            result.add_error(f"Adhoc evidence {evidence_id} manifest is corrupt: root must be an object.")
+        elif code == "manifest_corrupt":
+            result.add_error(f"Adhoc evidence {evidence_id} manifest is corrupt: {path}: {detail}.")
+        elif code == "contract_version_unsupported":
             result.add_error(
-                f"Adhoc evidence {evidence_id} manifest member {member_path} path must be relative."
+                f"Adhoc evidence {evidence_id} manifest has unsupported contract_version: {detail}."
             )
-            continue
-        if member_path in seen_paths:
-            result.add_error(f"Adhoc evidence {evidence_id} manifest member path is duplicated: {member_path}.")
-            continue
-        seen_paths.add(member_path)
-        if not isinstance(size_bytes, int) or size_bytes < 0:
-            result.add_error(
-                f"Adhoc evidence {evidence_id} manifest member {member_path} size_bytes is invalid."
-            )
-            continue
-        if not isinstance(expected_sha256, str) or not _is_sha256_hex(expected_sha256):
-            result.add_error(f"Adhoc evidence {evidence_id} manifest member {member_path} sha256 is invalid.")
-            continue
+        elif code == "evidence_id_mismatch":
+            result.add_error(f"Adhoc evidence {evidence_id} manifest evidence_id mismatch: {detail}.")
+        elif code == "evidence_type_mismatch":
+            result.add_error(f"Adhoc evidence {evidence_id} manifest evidence_type mismatch: {detail}.")
+        elif code == "members_invalid":
+            result.add_error(f"Adhoc evidence {evidence_id} manifest members must be a non-empty list.")
+        elif code == "member_entry_invalid":
+            _add_adhoc_member_entry_finding(result, evidence_id=evidence_id, index=index, path=path, detail=detail)
+        elif code == "member_missing":
+            result.add_warning(f"Adhoc evidence {evidence_id} member {path} drifted: missing.")
+        elif code == "member_hash_mismatch":
+            result.add_warning(f"Adhoc evidence {evidence_id} member {path} drifted: hash mismatch.")
+        else:
+            result.add_error(f"Adhoc evidence {evidence_id} has unsupported health finding: {code}.")
 
-        absolute_member_path = (paths.root / member_path).resolve()
-        if not absolute_member_path.exists() or not absolute_member_path.is_file():
-            result.add_warning(f"Adhoc evidence {evidence_id} member {member_path} drifted: missing.")
-            continue
-        try:
-            actual_sha256 = _sha256_file(absolute_member_path)
-        except OSError:
-            result.add_warning(f"Adhoc evidence {evidence_id} member {member_path} drifted: missing.")
-            continue
-        if actual_sha256 != expected_sha256:
-            result.add_warning(f"Adhoc evidence {evidence_id} member {member_path} drifted: hash mismatch.")
+
+def _add_adhoc_member_entry_finding(
+    result: ValidationResult,
+    *,
+    evidence_id: str,
+    index: Any,
+    path: str,
+    detail: str,
+) -> None:
+    if detail == "must_be_object":
+        result.add_error(f"Adhoc evidence {evidence_id} manifest member {index} must be an object.")
+    elif detail == "path_invalid":
+        result.add_error(f"Adhoc evidence {evidence_id} manifest member {index} path is invalid.")
+    elif detail == "path_absolute":
+        result.add_error(f"Adhoc evidence {evidence_id} manifest member {path} path must be relative.")
+    elif detail == "path_duplicated":
+        result.add_error(f"Adhoc evidence {evidence_id} manifest member path is duplicated: {path}.")
+    elif detail == "size_bytes_invalid":
+        result.add_error(f"Adhoc evidence {evidence_id} manifest member {path} size_bytes is invalid.")
+    elif detail == "sha256_invalid":
+        result.add_error(f"Adhoc evidence {evidence_id} manifest member {path} sha256 is invalid.")
+    else:
+        result.add_error(f"Adhoc evidence {evidence_id} manifest member {index} has unsupported finding: {detail}.")
 
 
 def _validate_local_artifact_paths(
@@ -1083,18 +1066,6 @@ def _absolute_local_path(paths: ProjectPaths, path_value: str) -> Path | None:
         return None
     path = Path(normalized)
     return path if path.is_absolute() else paths.root / path
-
-
-def _is_sha256_hex(value: str) -> bool:
-    return len(value) == 64 and all(char in "0123456789abcdef" for char in value)
-
-
-def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(65536), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _is_virtual_or_external_path(value: str) -> bool:

@@ -64,6 +64,30 @@ numerator and denominator for every rate, plus `receipts_scanned`,
 Unreadable artifacts are counted and reported; stats does not invent suggestion
 zeros for artifacts it cannot load.
 
+## Supporting Evidence Health
+
+`pcl verification stats --json` also reports a derived
+`supporting_evidence_health` section. This is a current-time reviewability check
+for evidence referenced by feedback rows. It does not rewrite feedback rows or
+change rate numerators, denominators, or formulas.
+
+Health values are:
+
+- `ok`: the referenced adhoc manifest and member files are readable today.
+- `warning`: the adhoc manifest is readable, but a member file is missing or
+  its content hash differs from the manifest.
+- `error`: the referenced evidence row or adhoc manifest cannot be reviewed in
+  the expected shape.
+- `unknown`: v0 does not assess this evidence type.
+
+The v0 scope is limited to `adhoc_artifact` and `adhoc_bundle` evidence. Other
+supporting evidence types, such as context receipts or command-result rows, are
+reported as `unknown` with a finding that names the evidence type.
+
+Health is about current reviewability of referenced artifacts, not whether the
+original caller claim was true or false. PLH records feedback append-only; a
+later health change is reported as a separate observation.
+
 ## Epistemic Boundary
 
 `executed` and `result` are caller claims backed by the referenced evidence
