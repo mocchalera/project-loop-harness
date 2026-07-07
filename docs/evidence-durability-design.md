@@ -1,9 +1,10 @@
 # Design: Evidence Durability Modes
 
-Status: **DRAFT — awaiting human approval.** Design only; no
-implementation task is cut until the decision points at the end are
-approved. Origin: v0.2.2 review agenda blind spot A ("hash-pin is not
-durability"), task `agent-tasks/0097-evidence-durability-design.md`.
+Status: **APPROVED 2026-07-08.** All six decision points approved as
+recommended by the human operator. Implementation task:
+`agent-tasks/0099-evidence-copy-mode.md`. Origin: v0.2.2 review
+agenda blind spot A ("hash-pin is not durability"), task
+`agent-tasks/0097-evidence-durability-design.md`.
 
 ## Problem
 
@@ -165,7 +166,9 @@ claim/pointer vocabulary; "durable" in user-facing text is always
 scoped as "survives workspace cleanup on this machine", never
 "permanent" or "guaranteed".
 
-## Decision points (for approval)
+## Decision points (approved)
+
+All six points below were approved as recommended on 2026-07-08.
 
 1. Add opt-in `--copy` with member-level `storage_mode` /
    `stored_path` as specified? (recommended: yes)
