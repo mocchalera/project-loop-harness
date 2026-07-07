@@ -447,6 +447,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_jobs_complete.add_argument("job_id")
     p_jobs_complete.add_argument("--summary", required=True)
     p_jobs_complete.add_argument("--output", default=None)
+    p_jobs_complete.add_argument("--evidence", default=None, help="Existing evidence ID to link to this completion")
     p_jobs_complete.add_argument("--token-input", type=int, default=None)
     p_jobs_complete.add_argument("--token-output", type=int, default=None)
     p_jobs_fail = jobs_sub.add_parser("fail", help="Mark an agent job failed")
@@ -1680,6 +1681,7 @@ def main(argv: list[str] | None = None) -> int:
                 job_id=args.job_id,
                 summary=args.summary,
                 output_path=args.output,
+                evidence_id=args.evidence,
                 token_input=args.token_input,
                 token_output=args.token_output,
             )

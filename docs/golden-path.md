@@ -54,6 +54,12 @@ pcl jobs complete --root /tmp/pcl-demo J-0003 --summary "Designed test cases"
 pcl next --root /tmp/pcl-demo --explain
 ```
 
+When a job artifact is already recorded as evidence, link it during completion
+with `pcl jobs complete <job-id> --evidence E-00xx`. If the artifact is a raw
+agent output file at `.project-loop/evidence/agent-runs/<job_id>/output.md`,
+prefer `pcl ingest-agent-run` so PLH validates `agent-output/v1` and records
+the evidence row before marking the job passed.
+
 Expected checkpoint:
 
 - all jobs are terminal and passed;

@@ -289,6 +289,147 @@ def test_lifecycle_completes_run_and_closes_goal(tmp_path: Path, capsys) -> None
     assert _json_output(capsys)["type"] == "create_goal"
 
 
+def test_jobs_complete_with_evidence_regresses_ax1_empty_evidence_symptom(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_run(tmp_path, capsys)
+    output_path = tmp_path / ".project-loop" / "evidence" / "agent-runs" / "J-0001" / "output.md"
+    output_path.write_text(
+        "# Mapper result\n\n"
+        "## Findings\n\n"
+        "- Mapped the surface.\n\n"
+        "## Evidence\n\n"
+        "- `.project-loop/evidence/agent-runs/J-0001/prompt.md`\n",
+        encoding="utf-8",
+    )
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        ".project-loop/evidence/agent-runs/J-0001/output.md",
+        "--summary",
+        "Mapper output artifact",
+        "--json",
+    ]) == 0
+    evidence = _json_output(capsys)["evidence"]
+    assert evidence["id"] == "E-0001"
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "jobs",
+        "complete",
+        "J-0001",
+        "--summary",
+        "Mapped project surfaces",
+        "--output",
+        ".project-loop/evidence/agent-runs/J-0001/output.md",
+        "--evidence",
+        "E-0001",
+        "--json",
+    ]) == 0
+    completed = _json_output(capsys)
+    assert completed["status"] == "passed"
+    assert completed["evidence_id"] == "E-0001"
+    assert completed["latest_evidence_id"] == "E-0001"
+
+    completion_payloads = _event_payloads(tmp_path, "agent_job_completed")
+    assert completion_payloads[-1]["evidence_id"] == "E-0001"
+
+    assert main(["--root", str(tmp_path), "jobs", "read", "J-0001", "--json"]) == 0
+    read_job = _json_output(capsys)["job"]
+    assert read_job["output_path"] == ".project-loop/evidence/agent-runs/J-0001/output.md"
+    assert read_job["evidence_ids"] == ["E-0001"]
+    assert read_job["latest_evidence_id"] == "E-0001"
+    assert read_job["latest_evidence_path"] == ".project-loop/evidence/adhoc/e-0001-adhoc-v0.json"
+
+    assert main(["--root", str(tmp_path), "jobs", "list", "--json"]) == 0
+    listed_job = _json_output(capsys)["jobs"][0]
+    assert listed_job["evidence_ids"] == ["E-0001"]
+    assert listed_job["latest_evidence_id"] == "E-0001"
+
+    assert main(["--root", str(tmp_path), "render"]) == 0
+    capsys.readouterr()
+    dashboard_data = json.loads(
+        (tmp_path / ".project-loop" / "dashboard" / "dashboard-data.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    dashboard_job = dashboard_data["agent_jobs"][0]
+    assert dashboard_job["evidence_ids"] == ["E-0001"]
+    assert dashboard_job["latest_evidence_id"] == "E-0001"
+    assert dashboard_job["latest_evidence_path"] == ".project-loop/evidence/adhoc/e-0001-adhoc-v0.json"
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
+    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": []}
+
+
+def test_jobs_complete_rejects_unknown_evidence_without_mutation(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_run(tmp_path, capsys)
+    before = _audit_counts(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "jobs",
+        "complete",
+        "J-0001",
+        "--summary",
+        "Mapped project surfaces",
+        "--evidence",
+        "E-9999",
+        "--json",
+    ]) == 2
+    payload = _json_output(capsys)
+    assert payload["error"]["code"] == "job_completion_missing_evidence"
+    assert payload["error"]["details"] == {"evidence_id": "E-9999"}
+    assert _audit_counts(tmp_path) == before
+    assert _db_rows(
+        tmp_path,
+        "SELECT id, status, output_path, summary FROM agent_jobs WHERE id = 'J-0001'",
+    ) == [{"id": "J-0001", "status": "queued", "output_path": None, "summary": "step:map_surfaces"}]
+    assert _event_payloads(tmp_path, "agent_job_completed") == []
+
+
+def test_jobs_complete_without_evidence_keeps_existing_completion_shape(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_run(tmp_path, capsys)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "jobs",
+        "complete",
+        "J-0001",
+        "--summary",
+        "Mapped project surfaces",
+        "--json",
+    ]) == 0
+    completed = _json_output(capsys)
+    assert "evidence_id" not in completed
+    assert "latest_evidence_id" not in completed
+
+    completion_payloads = _event_payloads(tmp_path, "agent_job_completed")
+    assert "evidence_id" not in completion_payloads[-1]
+
+    assert main(["--root", str(tmp_path), "jobs", "read", "J-0001", "--json"]) == 0
+    read_job = _json_output(capsys)["job"]
+    assert read_job["status"] == "passed"
+    assert read_job["evidence_ids"] == []
+    assert read_job["evidence"] == []
+    assert read_job["latest_evidence_id"] is None
+    assert read_job["latest_evidence_path"] is None
+
+
 def test_verification_record_accepts_rubric_v1_inline_and_file(tmp_path: Path, capsys) -> None:
     _create_run(tmp_path, capsys)
     _create_test_evidence(tmp_path, capsys)

@@ -7,7 +7,7 @@ from typing import Any
 
 from .db import connect
 from .evidence import record_inline_evidence
-from .errors import InvalidInputError
+from .errors import EXIT_USAGE, InvalidInputError, PclError
 from .events import append_event
 from .guards import require_initialized
 from .ids import next_prefixed_id
@@ -27,12 +27,23 @@ ACTIVE_RUN_STATUSES = {"queued", "running", "blocked"}
 ACTIVE_DEFECT_STATUSES = {"open", "triaged", "in_progress", "fixed", "verified"}
 
 
+class JobCompletionEvidenceError(PclError):
+    def __init__(self, message: str, *, code: str, details: dict[str, Any]) -> None:
+        super().__init__(
+            message=message,
+            code=code,
+            exit_code=EXIT_USAGE,
+            details=details,
+        )
+
+
 def complete_job(
     paths: ProjectPaths,
     *,
     job_id: str,
     summary: str,
     output_path: str | None = None,
+    evidence_id: str | None = None,
     token_input: int | None = None,
     token_output: int | None = None,
 ) -> dict[str, Any]:
@@ -40,12 +51,15 @@ def complete_job(
     _validate_identifier(job_id, "job_id")
     _require_summary(summary)
     normalized_output = _normalize_output_path(paths, output_path)
+    normalized_evidence_id = _normalize_evidence_id(evidence_id)
     now = utc_now_iso()
 
     conn = connect(paths.db_path)
     try:
         job = _get_job(conn, job_id)
         _require_active_status("Agent job", job_id, str(job["status"]), ACTIVE_JOB_STATUSES)
+        if normalized_evidence_id is not None:
+            _require_evidence_exists(conn, normalized_evidence_id)
         run_started = _run_started_update(conn, paths, str(job["workflow_run_id"]), now)
         conn.execute(
             """
@@ -57,22 +71,25 @@ def complete_job(
             """,
             ("passed", normalized_output, token_input, token_output, now, now, summary, job_id),
         )
+        event_payload = {
+            "workflow_run_id": job["workflow_run_id"],
+            "summary": summary,
+            "output_path": normalized_output,
+            "token_input": token_input,
+            "token_output": token_output,
+        }
+        if normalized_evidence_id is not None:
+            event_payload["evidence_id"] = normalized_evidence_id
         append_event(
             conn=conn,
             events_path=paths.events_path,
             event_type="agent_job_completed",
             entity_type="agent_job",
             entity_id=job_id,
-            payload={
-                "workflow_run_id": job["workflow_run_id"],
-                "summary": summary,
-                "output_path": normalized_output,
-                "token_input": token_input,
-                "token_output": token_output,
-            },
+            payload=event_payload,
         )
         conn.commit()
-        return {
+        result = {
             "ok": True,
             "job_id": job_id,
             "workflow_run_id": job["workflow_run_id"],
@@ -81,6 +98,10 @@ def complete_job(
             "output_path": normalized_output,
             "workflow_started": run_started,
         }
+        if normalized_evidence_id is not None:
+            result["evidence_id"] = normalized_evidence_id
+            result["latest_evidence_id"] = normalized_evidence_id
+        return result
     finally:
         conn.close()
 
@@ -1096,6 +1117,30 @@ def _missing_evidence_ids(conn, evidence_ids: list[str]) -> list[str]:
     ).fetchall()
     found = {str(row["id"]) for row in rows}
     return sorted(evidence_id for evidence_id in evidence_ids if evidence_id not in found)
+
+
+def _normalize_evidence_id(evidence_id: str | None) -> str | None:
+    if evidence_id is None:
+        return None
+    normalized = evidence_id.strip()
+    if not normalized:
+        raise JobCompletionEvidenceError(
+            "--evidence must not be empty.",
+            code="job_completion_empty_evidence",
+            details={"field": "evidence"},
+        )
+    _validate_identifier(normalized, "evidence")
+    return normalized
+
+
+def _require_evidence_exists(conn, evidence_id: str) -> None:
+    row = conn.execute("SELECT id FROM evidence WHERE id = ?", (evidence_id,)).fetchone()
+    if row is None:
+        raise JobCompletionEvidenceError(
+            f"Evidence does not exist: {evidence_id}.",
+            code="job_completion_missing_evidence",
+            details={"evidence_id": evidence_id},
+        )
 
 
 def _normalize_output_path(paths: ProjectPaths, output_path: str | None) -> str | None:
