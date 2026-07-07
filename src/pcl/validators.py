@@ -9,6 +9,7 @@ import sqlite3
 from typing import Any
 
 from .db import connect, table_exists
+from .evidence import ADHOC_EVIDENCE_CONTRACT_VERSION, ADHOC_EVIDENCE_TYPES
 from .errors import DataStoreError, InvalidInputError
 from .migrations import migration_status
 from .paths import ProjectPaths
@@ -73,6 +74,7 @@ DECISION_BLOCK_TARGET_TABLES = {
     "verification": "verifications",
     "workflow_run": "workflow_runs",
 }
+ADHOC_DRIFT_WARNING_PREFIX = "Adhoc evidence "
 
 
 @dataclass
@@ -94,6 +96,10 @@ class ValidationResult:
             "errors": self.errors,
             "warnings": self.warnings,
         }
+
+
+def _strict_warning_remains_warning(warning: str) -> bool:
+    return warning.startswith(ADHOC_DRIFT_WARNING_PREFIX) and " drifted: " in warning
 
 
 def validate_project(
@@ -184,9 +190,13 @@ def validate_project(
         if strict and not missing_tables:
             _validate_strict_invariants(paths, conn, result)
         if strict and result.warnings:
+            kept_warnings: list[str] = []
             for warning in result.warnings:
-                result.add_error(f"Strict mode treats warning as error: {warning}")
-            result.warnings.clear()
+                if _strict_warning_remains_warning(warning):
+                    kept_warnings.append(warning)
+                else:
+                    result.add_error(f"Strict mode treats warning as error: {warning}")
+            result.warnings = kept_warnings
     except sqlite3.Error as exc:
         result.add_error(f"Cannot validate SQLite database at {paths.db_path}: {exc}")
     finally:
@@ -255,6 +265,7 @@ def _validate_strict_invariants(paths: ProjectPaths, conn: sqlite3.Connection, r
     _validate_duplicate_active_runs(conn, result)
     _validate_terminal_parent_children(conn, result)
     _validate_decision_block_links(conn, result)
+    _validate_adhoc_evidence_manifests(paths, conn, result)
     _validate_local_artifact_paths(paths, conn, result)
 
 
@@ -885,6 +896,116 @@ def _validate_decision_block_links(conn: sqlite3.Connection, result: ValidationR
                 )
 
 
+def _validate_adhoc_evidence_manifests(
+    paths: ProjectPaths,
+    conn: sqlite3.Connection,
+    result: ValidationResult,
+) -> None:
+    evidence_rows = conn.execute(
+        """
+        SELECT id, type, path
+        FROM evidence
+        WHERE type IN ('adhoc_artifact', 'adhoc_bundle')
+        ORDER BY id
+        """
+    ).fetchall()
+    for row in evidence_rows:
+        evidence_id = str(row["id"])
+        manifest_path_value = str(row["path"] or "").strip()
+        manifest_path = _absolute_local_path(paths, manifest_path_value)
+        if manifest_path is None:
+            result.add_error(f"Adhoc evidence {evidence_id} manifest path is not local: {manifest_path_value}.")
+            continue
+        if not manifest_path.exists():
+            result.add_error(f"Adhoc evidence {evidence_id} manifest does not exist: {manifest_path_value}.")
+            continue
+        if not manifest_path.is_file():
+            result.add_error(f"Adhoc evidence {evidence_id} manifest is not a file: {manifest_path_value}.")
+            continue
+
+        try:
+            payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, JSONDecodeError) as exc:
+            result.add_error(f"Adhoc evidence {evidence_id} manifest is corrupt: {manifest_path_value}: {exc}.")
+            continue
+        if not isinstance(payload, dict):
+            result.add_error(f"Adhoc evidence {evidence_id} manifest is corrupt: root must be an object.")
+            continue
+        if payload.get("contract_version") != ADHOC_EVIDENCE_CONTRACT_VERSION:
+            result.add_error(
+                f"Adhoc evidence {evidence_id} manifest has unsupported contract_version: "
+                f"{payload.get('contract_version')!r}."
+            )
+            continue
+        if payload.get("evidence_id") != evidence_id:
+            result.add_error(
+                f"Adhoc evidence {evidence_id} manifest evidence_id mismatch: "
+                f"{payload.get('evidence_id')!r}."
+            )
+            continue
+        if payload.get("evidence_type") != str(row["type"]):
+            result.add_error(
+                f"Adhoc evidence {evidence_id} manifest evidence_type mismatch: "
+                f"{payload.get('evidence_type')!r}."
+            )
+            continue
+        members = payload.get("members")
+        if not isinstance(members, list) or not members:
+            result.add_error(f"Adhoc evidence {evidence_id} manifest members must be a non-empty list.")
+            continue
+        _validate_adhoc_members(paths, result, evidence_id=evidence_id, members=members)
+
+
+def _validate_adhoc_members(
+    paths: ProjectPaths,
+    result: ValidationResult,
+    *,
+    evidence_id: str,
+    members: list[Any],
+) -> None:
+    seen_paths: set[str] = set()
+    for index, member in enumerate(members, start=1):
+        if not isinstance(member, dict):
+            result.add_error(f"Adhoc evidence {evidence_id} manifest member {index} must be an object.")
+            continue
+        member_path = member.get("path")
+        size_bytes = member.get("size_bytes")
+        expected_sha256 = member.get("sha256")
+        if not isinstance(member_path, str) or not member_path.strip():
+            result.add_error(f"Adhoc evidence {evidence_id} manifest member {index} path is invalid.")
+            continue
+        member_path = member_path.strip()
+        if Path(member_path).is_absolute():
+            result.add_error(
+                f"Adhoc evidence {evidence_id} manifest member {member_path} path must be relative."
+            )
+            continue
+        if member_path in seen_paths:
+            result.add_error(f"Adhoc evidence {evidence_id} manifest member path is duplicated: {member_path}.")
+            continue
+        seen_paths.add(member_path)
+        if not isinstance(size_bytes, int) or size_bytes < 0:
+            result.add_error(
+                f"Adhoc evidence {evidence_id} manifest member {member_path} size_bytes is invalid."
+            )
+            continue
+        if not isinstance(expected_sha256, str) or not _is_sha256_hex(expected_sha256):
+            result.add_error(f"Adhoc evidence {evidence_id} manifest member {member_path} sha256 is invalid.")
+            continue
+
+        absolute_member_path = (paths.root / member_path).resolve()
+        if not absolute_member_path.exists() or not absolute_member_path.is_file():
+            result.add_warning(f"Adhoc evidence {evidence_id} member {member_path} drifted: missing.")
+            continue
+        try:
+            actual_sha256 = _sha256_file(absolute_member_path)
+        except OSError:
+            result.add_warning(f"Adhoc evidence {evidence_id} member {member_path} drifted: missing.")
+            continue
+        if actual_sha256 != expected_sha256:
+            result.add_warning(f"Adhoc evidence {evidence_id} member {member_path} drifted: hash mismatch.")
+
+
 def _validate_local_artifact_paths(
     paths: ProjectPaths,
     conn: sqlite3.Connection,
@@ -892,12 +1013,14 @@ def _validate_local_artifact_paths(
 ) -> None:
     evidence_rows = conn.execute(
         """
-        SELECT id, path
+        SELECT id, type, path
         FROM evidence
         ORDER BY id
         """
     ).fetchall()
     for row in evidence_rows:
+        if str(row["type"]) in ADHOC_EVIDENCE_TYPES:
+            continue
         _validate_local_artifact_path(
             paths,
             result,
@@ -952,6 +1075,26 @@ def _validate_local_artifact_path(
         result.add_error(f"{owner} {field_name} does not exist: {normalized}.")
     elif not absolute_path.is_file():
         result.add_error(f"{owner} {field_name} is not a file: {normalized}.")
+
+
+def _absolute_local_path(paths: ProjectPaths, path_value: str) -> Path | None:
+    normalized = path_value.strip()
+    if not normalized or _is_virtual_or_external_path(normalized):
+        return None
+    path = Path(normalized)
+    return path if path.is_absolute() else paths.root / path
+
+
+def _is_sha256_hex(value: str) -> bool:
+    return len(value) == 64 and all(char in "0123456789abcdef" for char in value)
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(65536), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _is_virtual_or_external_path(value: str) -> bool:

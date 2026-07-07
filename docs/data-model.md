@@ -171,6 +171,42 @@ under `.project-loop/evidence/context-receipts/` and registers it through the
 existing `evidence` table with type `context_receipt`, plus an append-only
 event.
 
+## Adhoc Evidence Manifests
+
+`pcl evidence add` records existing local files that were produced outside the
+agent-job ingest path. One `--file` creates evidence type `adhoc_artifact`; two
+or more `--file` flags create `adhoc_bundle`.
+
+The command writes an `adhoc-evidence/v0` manifest under
+`.project-loop/evidence/adhoc/` and stores one `evidence` row whose `path`
+points at that manifest. Manifest members are referenced in place and pinned at
+record time with only:
+
+- relative `path`;
+- `size_bytes`;
+- `sha256`.
+
+Member files are not copied and their contents are never embedded in the
+manifest. The optional `--command` value is the caller's claim about how the
+artifact was produced. PLH stores it verbatim on the evidence row; it does not
+run the command or verify that the command produced the files.
+
+Strict validation treats a missing or corrupt adhoc manifest as a state
+integrity error. If a referenced member file is later deleted or edited, strict
+validation reports a warning naming the evidence id, member path, and drift kind
+while keeping the recorded hash as the pinned claim.
+
+Worked example:
+
+```bash
+pcl evidence add \
+  --file work/reports/pytest-out.txt \
+  --summary "pytest run for suggestion E-0017/VS-01" \
+  --command "python3 -m pytest tests/test_context.py" \
+  --json
+pcl verification feedback --suggestion E-0017/VS-01 --status executed --result passed --evidence E-00xx
+```
+
 ## Verification Feedback
 
 Schema version 5 adds `verification_feedback`, an append-only event table for
