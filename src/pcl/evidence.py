@@ -19,6 +19,21 @@ ADHOC_EVIDENCE_CONTRACT_VERSION = "adhoc-evidence/v0"
 ADHOC_ARTIFACT_TYPE = "adhoc_artifact"
 ADHOC_BUNDLE_TYPE = "adhoc_bundle"
 ADHOC_EVIDENCE_TYPES = {ADHOC_ARTIFACT_TYPE, ADHOC_BUNDLE_TYPE}
+ADHOC_ERROR_FINDING_CODES = {
+    "manifest_not_local",
+    "manifest_missing",
+    "manifest_not_file",
+    "manifest_corrupt",
+    "contract_version_unsupported",
+    "evidence_id_mismatch",
+    "evidence_type_mismatch",
+    "members_invalid",
+    "member_entry_invalid",
+}
+ADHOC_WARNING_FINDING_CODES = {
+    "member_missing",
+    "member_hash_mismatch",
+}
 
 
 class EvidenceAddError(PclError):
@@ -138,6 +153,202 @@ def record_adhoc_evidence(
         conn.close()
 
 
+def assess_adhoc_evidence(
+    paths: ProjectPaths,
+    *,
+    evidence_id: str,
+    evidence_type: str,
+    manifest_path_value: str,
+) -> dict[str, Any]:
+    findings: list[dict[str, Any]] = []
+    normalized_manifest_path = str(manifest_path_value or "").strip()
+    manifest_path = _absolute_local_path(paths, normalized_manifest_path)
+    if manifest_path is None:
+        findings.append(
+            {
+                "code": "manifest_not_local",
+                "path": normalized_manifest_path,
+            }
+        )
+        return _adhoc_assessment(findings)
+    if not manifest_path.exists():
+        findings.append(
+            {
+                "code": "manifest_missing",
+                "path": normalized_manifest_path,
+            }
+        )
+        return _adhoc_assessment(findings)
+    if not manifest_path.is_file():
+        findings.append(
+            {
+                "code": "manifest_not_file",
+                "path": normalized_manifest_path,
+            }
+        )
+        return _adhoc_assessment(findings)
+
+    try:
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        findings.append(
+            {
+                "code": "manifest_corrupt",
+                "path": normalized_manifest_path,
+                "detail": str(exc),
+            }
+        )
+        return _adhoc_assessment(findings)
+    if not isinstance(payload, dict):
+        findings.append(
+            {
+                "code": "manifest_corrupt",
+                "detail": "root must be an object",
+            }
+        )
+        return _adhoc_assessment(findings)
+    contract_version = payload.get("contract_version")
+    if contract_version != ADHOC_EVIDENCE_CONTRACT_VERSION:
+        findings.append(
+            {
+                "code": "contract_version_unsupported",
+                "detail": repr(contract_version),
+            }
+        )
+        return _adhoc_assessment(findings)
+    manifest_evidence_id = payload.get("evidence_id")
+    if manifest_evidence_id != evidence_id:
+        findings.append(
+            {
+                "code": "evidence_id_mismatch",
+                "detail": repr(manifest_evidence_id),
+            }
+        )
+        return _adhoc_assessment(findings)
+    manifest_evidence_type = payload.get("evidence_type")
+    if manifest_evidence_type != evidence_type:
+        findings.append(
+            {
+                "code": "evidence_type_mismatch",
+                "detail": repr(manifest_evidence_type),
+            }
+        )
+        return _adhoc_assessment(findings)
+    members = payload.get("members")
+    if not isinstance(members, list) or not members:
+        findings.append({"code": "members_invalid"})
+        return _adhoc_assessment(findings)
+
+    findings.extend(_assess_adhoc_members(paths, members))
+    return _adhoc_assessment(findings)
+
+
+def _assess_adhoc_members(paths: ProjectPaths, members: list[Any]) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    seen_paths: set[str] = set()
+    for index, member in enumerate(members, start=1):
+        if not isinstance(member, dict):
+            findings.append(
+                {
+                    "code": "member_entry_invalid",
+                    "index": index,
+                    "detail": "must_be_object",
+                }
+            )
+            continue
+        member_path = member.get("path")
+        size_bytes = member.get("size_bytes")
+        expected_sha256 = member.get("sha256")
+        if not isinstance(member_path, str) or not member_path.strip():
+            findings.append(
+                {
+                    "code": "member_entry_invalid",
+                    "index": index,
+                    "detail": "path_invalid",
+                }
+            )
+            continue
+        member_path = member_path.strip()
+        if Path(member_path).is_absolute():
+            findings.append(
+                {
+                    "code": "member_entry_invalid",
+                    "path": member_path,
+                    "detail": "path_absolute",
+                }
+            )
+            continue
+        if member_path in seen_paths:
+            findings.append(
+                {
+                    "code": "member_entry_invalid",
+                    "path": member_path,
+                    "detail": "path_duplicated",
+                }
+            )
+            continue
+        seen_paths.add(member_path)
+        if not isinstance(size_bytes, int) or size_bytes < 0:
+            findings.append(
+                {
+                    "code": "member_entry_invalid",
+                    "path": member_path,
+                    "detail": "size_bytes_invalid",
+                }
+            )
+            continue
+        if not isinstance(expected_sha256, str) or not _is_sha256_hex(expected_sha256):
+            findings.append(
+                {
+                    "code": "member_entry_invalid",
+                    "path": member_path,
+                    "detail": "sha256_invalid",
+                }
+            )
+            continue
+
+        absolute_member_path = (paths.root / member_path).resolve()
+        if not absolute_member_path.exists() or not absolute_member_path.is_file():
+            findings.append(
+                {
+                    "code": "member_missing",
+                    "path": member_path,
+                }
+            )
+            continue
+        try:
+            actual_sha256 = _sha256_file(absolute_member_path)
+        except OSError:
+            findings.append(
+                {
+                    "code": "member_missing",
+                    "path": member_path,
+                }
+            )
+            continue
+        if actual_sha256 != expected_sha256:
+            findings.append(
+                {
+                    "code": "member_hash_mismatch",
+                    "path": member_path,
+                }
+            )
+    return findings
+
+
+def _adhoc_assessment(findings: list[dict[str, Any]]) -> dict[str, Any]:
+    if any(str(finding.get("code")) in ADHOC_ERROR_FINDING_CODES for finding in findings):
+        health = "error"
+    elif any(str(finding.get("code")) in ADHOC_WARNING_FINDING_CODES for finding in findings):
+        health = "warning"
+    else:
+        health = "ok"
+    return {
+        "health": health,
+        "findings": findings,
+    }
+
+
 def _adhoc_members(paths: ProjectPaths, files: list[str]) -> list[dict[str, Any]]:
     members: list[dict[str, Any]] = []
     seen: dict[Path, str] = {}
@@ -215,6 +426,29 @@ def _relative_path(root: Path, path: Path) -> str:
             return os.path.relpath(resolved_path, resolved_root).replace(os.sep, "/")
         except ValueError:
             return resolved_path.as_posix()
+
+
+def _absolute_local_path(paths: ProjectPaths, path_value: str) -> Path | None:
+    normalized = path_value.strip()
+    if not normalized or _is_virtual_or_external_path(normalized):
+        return None
+    path = Path(normalized)
+    return path if path.is_absolute() else paths.root / path
+
+
+def _is_sha256_hex(value: str) -> bool:
+    return len(value) == 64 and all(char in "0123456789abcdef" for char in value)
+
+
+def _is_virtual_or_external_path(value: str) -> bool:
+    if value.startswith("inline:"):
+        return True
+    if ":" not in value:
+        return False
+    scheme = value.split(":", 1)[0]
+    return bool(scheme) and scheme[0].isalpha() and all(
+        char.isalnum() or char in {"+", "-", "."} for char in scheme
+    )
 
 
 def _clean_optional(value: str | None) -> str | None:

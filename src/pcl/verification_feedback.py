@@ -11,6 +11,7 @@ from .code_context.receipts import (
     resolve_context_receipt_path,
 )
 from .db import connect, table_exists
+from .evidence import ADHOC_EVIDENCE_TYPES, assess_adhoc_evidence
 from .errors import EXIT_USAGE, PclError
 from .events import append_event
 from .guards import require_initialized
@@ -171,6 +172,7 @@ def verification_feedback_stats(paths: ProjectPaths) -> dict[str, Any]:
             unaddressable_legacy_count += unaddressable
 
         feedback_rows = _feedback_rows_for_suggestions(conn, addressable_suggestion_ids)
+        supporting_evidence_health = _supporting_evidence_health(paths, conn, feedback_rows)
     finally:
         conn.close()
 
@@ -193,7 +195,9 @@ def verification_feedback_stats(paths: ProjectPaths) -> dict[str, Any]:
                 executed_pass_events += 1
             elif result == "failed":
                 executed_fail_events += 1
-        latest_feedback_by_suggestion[suggestion_id] = _feedback_row_summary(row)
+        summary = _feedback_row_summary(row)
+        summary["supporting_evidence_health"] = _health_for_feedback_row(row, supporting_evidence_health)
+        latest_feedback_by_suggestion[suggestion_id] = summary
 
     addressable_count = len(addressable_suggestion_ids)
     feedback_coverage_numerator = len(suggestions_with_feedback)
@@ -219,6 +223,7 @@ def verification_feedback_stats(paths: ProjectPaths) -> dict[str, Any]:
             "executed_fail_denominator": executed_feedback_events,
             "executed_fail_rate": _rate(executed_fail_events, executed_feedback_events),
             "executed_feedback_events_count": executed_feedback_events,
+            "supporting_evidence_health": supporting_evidence_health,
             "latest_feedback_by_suggestion": dict(sorted(latest_feedback_by_suggestion.items())),
         },
     }
@@ -382,6 +387,97 @@ def _feedback_rows_for_suggestions(
         """,
         tuple(sorted(suggestion_ids)),
     ).fetchall()
+
+
+def _supporting_evidence_health(
+    paths: ProjectPaths,
+    conn: sqlite3.Connection,
+    feedback_rows: list[sqlite3.Row],
+) -> dict[str, Any]:
+    feedback_evidence_ids = [
+        evidence_id
+        for evidence_id in (_clean_optional(row["supporting_evidence_id"]) for row in feedback_rows)
+        if evidence_id is not None
+    ]
+    distinct_evidence_ids = sorted(set(feedback_evidence_ids))
+    evidence_rows = _evidence_rows_by_id(conn, distinct_evidence_ids)
+    by_evidence_id: dict[str, dict[str, Any]] = {}
+    health_counts = {"ok": 0, "warning": 0, "error": 0, "unknown": 0}
+
+    for evidence_id in distinct_evidence_ids:
+        row = evidence_rows.get(evidence_id)
+        if row is None:
+            assessment = {
+                "health": "error",
+                "findings": [{"code": "evidence_row_missing"}],
+            }
+        else:
+            evidence_type = str(row["type"] or "")
+            if evidence_type in ADHOC_EVIDENCE_TYPES:
+                assessment = assess_adhoc_evidence(
+                    paths,
+                    evidence_id=evidence_id,
+                    evidence_type=evidence_type,
+                    manifest_path_value=str(row["path"] or ""),
+                )
+            else:
+                assessment = {
+                    "health": "unknown",
+                    "findings": [
+                        {
+                            "code": "health_not_assessed_for_type",
+                            "detail": evidence_type,
+                        }
+                    ],
+                }
+        health = str(assessment.get("health") or "unknown")
+        if health not in health_counts:
+            health = "unknown"
+            assessment = {
+                "health": health,
+                "findings": [{"code": "health_not_assessed_for_type", "detail": "unknown"}],
+            }
+        by_evidence_id[evidence_id] = assessment
+        health_counts[health] += 1
+
+    return {
+        "assessed_evidence_count": len(distinct_evidence_ids),
+        "feedback_events_with_supporting_evidence_count": len(feedback_evidence_ids),
+        "health_counts": health_counts,
+        "by_evidence_id": by_evidence_id,
+    }
+
+
+def _evidence_rows_by_id(
+    conn: sqlite3.Connection,
+    evidence_ids: list[str],
+) -> dict[str, sqlite3.Row]:
+    if not evidence_ids:
+        return {}
+    placeholders = ", ".join("?" for _ in evidence_ids)
+    rows = conn.execute(
+        f"""
+        SELECT id, type, path
+        FROM evidence
+        WHERE id IN ({placeholders})
+        ORDER BY id
+        """,
+        tuple(evidence_ids),
+    ).fetchall()
+    return {str(row["id"]): row for row in rows}
+
+
+def _health_for_feedback_row(
+    row: sqlite3.Row,
+    supporting_evidence_health: dict[str, Any],
+) -> str | None:
+    evidence_id = _clean_optional(row["supporting_evidence_id"])
+    if evidence_id is None:
+        return None
+    assessment = supporting_evidence_health["by_evidence_id"].get(evidence_id)
+    if not isinstance(assessment, dict):
+        return "unknown"
+    return str(assessment.get("health") or "unknown")
 
 
 def _feedback_row_summary(row: sqlite3.Row) -> dict[str, Any]:
