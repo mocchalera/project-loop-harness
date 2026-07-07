@@ -537,7 +537,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Record existing local files as adhoc evidence",
         epilog=(
             "--command is the caller's claim about how the artifact was produced; "
-            "pcl stores it verbatim and does not run or verify it."
+            "pcl stores it verbatim and does not run or verify it. "
+            "Sensitive evidence checks are filename-shape checks only; "
+            "PLH does not scan file contents."
         ),
     )
     p_evidence_add.add_argument(
@@ -553,6 +555,14 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         dest="claimed_command",
         help="Caller claim of the producing command; stored verbatim, not run or verified.",
+    )
+    p_evidence_add.add_argument(
+        "--allow-sensitive-evidence",
+        action="store_true",
+        help=(
+            "Record files whose path matches sensitive filename patterns. "
+            "This is an explicit caller decision; PLH does not scan file contents."
+        ),
     )
 
     p_context = sub.add_parser("context", help="Build focused machine context packages")
@@ -1861,10 +1871,13 @@ def main(argv: list[str] | None = None) -> int:
                 files=args.files,
                 summary=args.summary,
                 command=args.claimed_command,
+                allow_sensitive_evidence=args.allow_sensitive_evidence,
             )
             if json_output:
                 _print_json(result)
             else:
+                for warning in result.get("warnings", []):
+                    print(f"WARNING: {warning}", file=sys.stderr)
                 evidence = result["evidence"]
                 print(f"{evidence['id']} {evidence['type']} {evidence['manifest_path']}")
             return 0

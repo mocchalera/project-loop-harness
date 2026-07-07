@@ -50,6 +50,12 @@ def _assert_evidence_add_error(capsys, code: str) -> None:
     assert payload["error"]["code"] == code
 
 
+def _assert_no_adhoc_traces(root: Path, *, before_events: int, before_manifests: list[Path]) -> None:
+    assert _db_rows(root, "SELECT id FROM evidence ORDER BY id") == []
+    assert _event_count(root) == before_events
+    assert _adhoc_manifests(root) == before_manifests
+
+
 def _insert_context_receipt(root: Path, *, evidence_id: str = "E-0001") -> None:
     receipt_dir = root / ".project-loop" / "evidence" / "context-receipts"
     receipt_dir.mkdir(parents=True, exist_ok=True)
@@ -108,12 +114,19 @@ def test_evidence_add_selects_artifact_and_bundle_types(tmp_path: Path, capsys) 
         "python3 -m pytest",
         "--json",
     ]) == 0
-    artifact = _json_output(capsys)["evidence"]
+    payload = _json_output(capsys)
+    assert "warnings" not in payload
+    artifact = payload["evidence"]
     assert artifact["id"] == "E-0001"
     assert artifact["type"] == ADHOC_ARTIFACT_TYPE
     assert artifact["manifest_path"] == ".project-loop/evidence/adhoc/e-0001-adhoc-v0.json"
     assert artifact["members"] == [
-        {"path": "pytest-out.txt", "size_bytes": first.stat().st_size, "sha256": _sha256(first)}
+        {
+            "path": "pytest-out.txt",
+            "path_scope": "in_project",
+            "size_bytes": first.stat().st_size,
+            "sha256": _sha256(first),
+        }
     ]
     manifest = _manifest(tmp_path, artifact["manifest_path"])
     assert manifest["contract_version"] == ADHOC_EVIDENCE_CONTRACT_VERSION
@@ -154,6 +167,291 @@ def test_evidence_add_selects_artifact_and_bundle_types(tmp_path: Path, capsys) 
             "summary": "visual QA bundle",
         },
     ]
+
+
+def test_evidence_add_records_outside_project_scope_with_json_warning(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    outside_dir = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "report.txt"
+    outside_file.write_text("outside report\n", encoding="utf-8")
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        str(outside_file),
+        "--summary",
+        "outside report",
+        "--json",
+    ]) == 0
+    payload = _json_output(capsys)
+    member = payload["evidence"]["members"][0]
+    assert member == {
+        "path": member["path"],
+        "path_scope": "outside_project",
+        "size_bytes": outside_file.stat().st_size,
+        "sha256": _sha256(outside_file),
+    }
+    assert member["path"].startswith("../")
+    assert payload["warnings"] == [f"evidence member outside project root: {member['path']}"]
+
+    manifest = _manifest(tmp_path, payload["evidence"]["manifest_path"])
+    assert manifest["members"] == [member]
+
+    [event] = _db_rows(
+        tmp_path,
+        "SELECT payload_json FROM events WHERE event_type = 'adhoc_evidence_recorded'",
+    )
+    event_payload = json.loads(event["payload_json"])
+    assert event_payload["members"] == [member]
+
+
+def test_evidence_add_prints_outside_project_warning_in_text_mode(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    outside_dir = tmp_path.parent / f"{tmp_path.name}-outside-text"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "report.txt"
+    outside_file.write_text("outside text report\n", encoding="utf-8")
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        str(outside_file),
+        "--summary",
+        "outside text report",
+    ]) == 0
+    captured = capsys.readouterr()
+    assert captured.out.startswith("E-0001 adhoc_artifact .project-loop/evidence/adhoc/e-0001-adhoc-v0.json")
+    assert "WARNING: evidence member outside project root: ../" in captured.err
+
+
+def test_evidence_add_blocks_outside_project_when_configured_and_leaves_zero_traces(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    (tmp_path / "pcl.yaml").write_text(
+        (tmp_path / "pcl.yaml").read_text(encoding="utf-8")
+        + "\nevidence:\n  allow_outside_root: false\n",
+        encoding="utf-8",
+    )
+    outside_dir = tmp_path.parent / f"{tmp_path.name}-outside-blocked"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "report.txt"
+    outside_file.write_text("blocked outside report\n", encoding="utf-8")
+    before_events = _event_count(tmp_path)
+    before_manifests = _adhoc_manifests(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        str(outside_file),
+        "--summary",
+        "blocked outside report",
+        "--json",
+    ]) == 2
+    _assert_evidence_add_error(capsys, "evidence_add_outside_root")
+    _assert_no_adhoc_traces(tmp_path, before_events=before_events, before_manifests=before_manifests)
+
+    clean_file = tmp_path / "clean.txt"
+    clean_file.write_text("clean\n", encoding="utf-8")
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "clean.txt",
+        "--summary",
+        "clean",
+        "--json",
+    ]) == 0
+    assert _json_output(capsys)["evidence"]["id"] == "E-0001"
+
+
+def test_evidence_add_blocks_sensitive_path_without_flag_and_leaves_zero_traces(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    env_file = tmp_path / ".env"
+    env_file.write_text("TOKEN=example\n", encoding="utf-8")
+    before_events = _event_count(tmp_path)
+    before_manifests = _adhoc_manifests(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        ".env",
+        "--summary",
+        "env file",
+        "--json",
+    ]) == 2
+    payload = _json_output(capsys)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "evidence_add_sensitive_path"
+    assert payload["error"]["details"]["matches"] == [{"path": ".env", "pattern": ".env"}]
+    assert payload["error"]["details"]["allow_flag"] == "--allow-sensitive-evidence"
+    _assert_no_adhoc_traces(tmp_path, before_events=before_events, before_manifests=before_manifests)
+
+    clean_file = tmp_path / "clean.txt"
+    clean_file.write_text("clean\n", encoding="utf-8")
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "clean.txt",
+        "--summary",
+        "clean",
+        "--json",
+    ]) == 0
+    assert _json_output(capsys)["evidence"]["id"] == "E-0001"
+
+
+def test_evidence_add_records_sensitive_path_with_flag_and_warning(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    env_file = tmp_path / ".env"
+    env_file.write_text("TOKEN=example\n", encoding="utf-8")
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        ".env",
+        "--summary",
+        "explicit env evidence",
+        "--allow-sensitive-evidence",
+        "--json",
+    ]) == 0
+    payload = _json_output(capsys)
+    member = payload["evidence"]["members"][0]
+    assert member == {
+        "path": ".env",
+        "path_scope": "in_project",
+        "size_bytes": env_file.stat().st_size,
+        "sha256": _sha256(env_file),
+        "sensitive_pattern": ".env",
+    }
+    assert payload["evidence"]["sensitive_path_warning_count"] == 1
+    assert payload["warnings"] == [
+        "evidence member matches sensitive filename pattern: .env "
+        "(pattern: .env); PLH checks path shapes only and does not scan file contents"
+    ]
+
+    manifest = _manifest(tmp_path, payload["evidence"]["manifest_path"])
+    assert manifest["members"] == [member]
+    assert manifest["sensitive_path_warning_count"] == 1
+    [event] = _db_rows(
+        tmp_path,
+        "SELECT payload_json FROM events WHERE event_type = 'adhoc_evidence_recorded'",
+    )
+    assert json.loads(event["payload_json"])["sensitive_path_warning_count"] == 1
+
+
+def test_evidence_add_sensitive_guard_uses_basename_custom_patterns_and_wins_order(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    (tmp_path / "pcl.yaml").write_text(
+        (tmp_path / "pcl.yaml").read_text(encoding="utf-8")
+        + "\nevidence:\n  allow_outside_root: false\n  sensitive_exclude:\n    - '*.sqlite3'\n",
+        encoding="utf-8",
+    )
+    outside_dir = tmp_path.parent / f"{tmp_path.name}-sensitive-outside"
+    outside_dir.mkdir()
+    outside_sensitive = outside_dir / "credentials-prod.json"
+    outside_sensitive.write_text('{"token":"example"}\n', encoding="utf-8")
+    before_events = _event_count(tmp_path)
+    before_manifests = _adhoc_manifests(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        str(outside_sensitive),
+        "--summary",
+        "outside sensitive",
+        "--json",
+    ]) == 2
+    payload = _json_output(capsys)
+    assert payload["error"]["code"] == "evidence_add_sensitive_path"
+    assert payload["error"]["details"]["matches"][0]["pattern"] == "credentials*.json"
+    _assert_no_adhoc_traces(tmp_path, before_events=before_events, before_manifests=before_manifests)
+
+    custom_sensitive = tmp_path / "local.sqlite3"
+    custom_sensitive.write_text("sqlite shape\n", encoding="utf-8")
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "local.sqlite3",
+        "--summary",
+        "custom sensitive",
+        "--json",
+    ]) == 2
+    payload = _json_output(capsys)
+    assert payload["error"]["code"] == "evidence_add_sensitive_path"
+    assert payload["error"]["details"]["matches"] == [{"path": "local.sqlite3", "pattern": "*.sqlite3"}]
+    _assert_no_adhoc_traces(tmp_path, before_events=before_events, before_manifests=before_manifests)
+
+
+def test_evidence_add_sensitive_bundle_blocks_without_partial_manifest(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    clean_file = tmp_path / "clean.txt"
+    env_file = tmp_path / ".env"
+    clean_file.write_text("clean\n", encoding="utf-8")
+    env_file.write_text("TOKEN=example\n", encoding="utf-8")
+    before_events = _event_count(tmp_path)
+    before_manifests = _adhoc_manifests(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "clean.txt",
+        "--file",
+        ".env",
+        "--summary",
+        "mixed bundle",
+        "--json",
+    ]) == 2
+    _assert_evidence_add_error(capsys, "evidence_add_sensitive_path")
+    _assert_no_adhoc_traces(tmp_path, before_events=before_events, before_manifests=before_manifests)
 
 
 def test_evidence_add_manifest_is_deterministic_except_id_and_created_at(
@@ -309,6 +607,107 @@ def test_strict_validate_checks_adhoc_manifest_and_warns_on_member_drift(
         "Adhoc evidence E-0001 manifest does not exist: "
         ".project-loop/evidence/adhoc/e-0001-adhoc-v0.json."
     ) in missing_manifest["errors"]
+
+
+def test_strict_validate_accepts_pre_0096_manifest_without_path_guard_fields(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    artifact = tmp_path / "artifact.txt"
+    artifact.write_text("original\n", encoding="utf-8")
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "artifact.txt",
+        "--summary",
+        "recorded artifact",
+        "--json",
+    ]) == 0
+    evidence = _json_output(capsys)["evidence"]
+    manifest_path = tmp_path / evidence["manifest_path"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for member in manifest["members"]:
+        member.pop("path_scope", None)
+    manifest.pop("sensitive_path_warning_count", None)
+    manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
+    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": []}
+
+
+def test_strict_validate_warns_on_outside_project_member_path(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    outside_dir = tmp_path.parent / f"{tmp_path.name}-validate-outside"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "report.txt"
+    outside_file.write_text("outside report\n", encoding="utf-8")
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        str(outside_file),
+        "--summary",
+        "outside report",
+        "--json",
+    ]) == 0
+    member_path = _json_output(capsys)["evidence"]["members"][0]["path"]
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
+    assert _json_output(capsys) == {
+        "errors": [],
+        "ok": True,
+        "warnings": [f"Adhoc evidence E-0001 member {member_path} is outside the project root."],
+    }
+
+
+def test_strict_validate_rejects_invalid_path_guard_fields(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    first = tmp_path / "first.txt"
+    second = tmp_path / "second.txt"
+    first.write_text("first\n", encoding="utf-8")
+    second.write_text("second\n", encoding="utf-8")
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "first.txt",
+        "--file",
+        "second.txt",
+        "--summary",
+        "bundle",
+        "--json",
+    ]) == 0
+    evidence = _json_output(capsys)["evidence"]
+    manifest_path = tmp_path / evidence["manifest_path"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["sensitive_path_warning_count"] = -1
+    manifest["members"][0]["path_scope"] = "workspace"
+    manifest["members"][1]["sensitive_pattern"] = 123
+    manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 1
+    payload = _json_output(capsys)
+    assert payload["ok"] is False
+    assert payload["warnings"] == []
+    assert payload["errors"] == [
+        "Adhoc evidence E-0001 manifest sensitive_path_warning_count is invalid: -1.",
+        "Adhoc evidence E-0001 manifest member first.txt path_scope is invalid.",
+        "Adhoc evidence E-0001 manifest member second.txt sensitive_pattern is invalid.",
+    ]
 
 
 def test_evidence_add_supports_verification_feedback_executed_claim(

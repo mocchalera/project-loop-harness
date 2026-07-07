@@ -77,6 +77,33 @@ pcl evidence add \
   answer is "make one bundle, link its one ID". An M:N table is
   reconsidered only if dogfood shows bundles insufficient.
 
+## Path guards (0096)
+
+`pcl evidence add` records path scope for every manifest member:
+`path_scope: in_project` when the resolved file is under the project
+root, otherwise `path_scope: outside_project`. Outside-project members
+are still accepted by default, but JSON mode returns an additive
+top-level `warnings` array and text mode writes a warning to stderr.
+Projects can make the boundary hard with:
+
+```yaml
+evidence:
+  allow_outside_root: false
+```
+
+Sensitive evidence protection is a filename-shape guard only. PLH
+reuses the code-index default sensitive path patterns and adds optional
+project-local `evidence.sensitive_exclude` patterns; it checks the
+recorded member path and basename. Without an explicit
+`--allow-sensitive-evidence` flag, a match fails before any evidence ID,
+manifest, database row, or event is written. With the flag, PLH records
+the member and stores `sensitive_pattern` on matched members plus
+`sensitive_path_warning_count` on the manifest/event.
+
+PLH does not scan file contents, detect secrets by entropy, or verify
+whether a file actually contains sensitive data. Recording with
+`--allow-sensitive-evidence` is the caller's explicit decision.
+
 ## Part 3: job completion evidence (F3)
 
 - `pcl jobs complete <job-id> --evidence E-00xx` sets the job's
