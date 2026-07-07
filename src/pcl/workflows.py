@@ -357,7 +357,7 @@ def enrich_jobs_with_evidence(conn: sqlite3.Connection, jobs: list[dict[str, Any
         f"""
         SELECT entity_id, payload_json
         FROM events
-        WHERE event_type = 'agent_output_ingested'
+        WHERE event_type IN ('agent_output_ingested', 'agent_job_completed')
           AND entity_type = 'agent_job'
           AND entity_id IN ({placeholders})
         ORDER BY rowid

@@ -78,6 +78,12 @@ The expected output path is deterministic:
 
 The ingest path must be the project-scoped `.project-loop/evidence/agent-runs/<job_id>/output.md`. Files from another directory, even if they contain an `agent-runs/<job_id>` segment, are rejected. Ingest is also a guarded state transition: cancelled or failed jobs cannot be revived by late output, and inactive workflow runs cannot accept new agent output.
 
+If a job artifact has already been recorded with `pcl evidence add`, complete
+the job with `pcl jobs complete <job-id> --evidence E-00xx` to link that
+existing evidence row. Otherwise, keep using `pcl ingest-agent-run` for raw
+agent output so PLH validates `agent-output/v1`, creates the evidence row, and
+marks the job passed in one guarded transition.
+
 After ingest, `pcl jobs read J-0001 --json` and `pcl jobs list --json` expose the derived evidence linkage:
 
 ```json
@@ -88,7 +94,7 @@ After ingest, `pcl jobs read J-0001 --json` and `pcl jobs list --json` expose th
 }
 ```
 
-The linkage is derived from `agent_output_ingested` events and `evidence` rows, not from a mutable `agent_jobs.evidence_id` column. Repeated ingests can therefore preserve multiple evidence ids while the latest evidence remains easy to find from job surfaces and the dashboard.
+The linkage is derived from `agent_output_ingested` events, evidence-bearing `agent_job_completed` events, and `evidence` rows, not from a mutable `agent_jobs.evidence_id` column. Repeated ingests can therefore preserve multiple evidence ids while the latest evidence remains easy to find from job surfaces and the dashboard.
 
 ## Minimal Output File
 
