@@ -602,6 +602,54 @@ def test_verification_stats_reports_adhoc_member_drift_without_changing_metrics(
     }
 
 
+def test_verification_stats_reports_outside_project_adhoc_member_warning(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    _create_receipt(tmp_path)
+    outside_dir = tmp_path.parent / f"{tmp_path.name}-outside-stats"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "pytest-out.txt"
+    outside_file.write_text("pytest passed\n", encoding="utf-8")
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        str(outside_file),
+        "--summary",
+        "Caller supplied pytest output.",
+        "--json",
+    ]) == 0
+    evidence = _json_output(capsys)["evidence"]
+    member_path = evidence["members"][0]["path"]
+    assert main([
+        "--root",
+        str(tmp_path),
+        "verification",
+        "feedback",
+        "--suggestion",
+        "E-0001/VS-01",
+        "--status",
+        "executed",
+        "--result",
+        "passed",
+        "--evidence",
+        evidence["id"],
+        "--json",
+    ]) == 0
+    _json_output(capsys)
+
+    assert main(["--root", str(tmp_path), "verification", "stats", "--json"]) == 0
+    health = _json_output(capsys)["stats"]["supporting_evidence_health"]["by_evidence_id"][evidence["id"]]
+    assert health == {
+        "health": "warning",
+        "findings": [{"code": "member_outside_project_root", "path": member_path}],
+    }
+
+
 def test_verification_stats_reports_missing_adhoc_manifest_error(
     tmp_path: Path,
     capsys,

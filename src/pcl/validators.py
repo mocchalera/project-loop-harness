@@ -99,7 +99,9 @@ class ValidationResult:
 
 
 def _strict_warning_remains_warning(warning: str) -> bool:
-    return warning.startswith(ADHOC_DRIFT_WARNING_PREFIX) and " drifted: " in warning
+    return warning.startswith(ADHOC_DRIFT_WARNING_PREFIX) and (
+        " drifted: " in warning or warning.endswith(" is outside the project root.")
+    )
 
 
 def validate_project(
@@ -917,6 +919,7 @@ def _validate_adhoc_evidence_manifests(
             evidence_id=evidence_id,
             evidence_type=str(row["type"]),
             manifest_path_value=manifest_path_value,
+            validate_optional_fields=True,
         )
         _add_adhoc_assessment_findings(result, evidence_id=evidence_id, assessment=assessment)
 
@@ -955,12 +958,18 @@ def _add_adhoc_assessment_findings(
             result.add_error(f"Adhoc evidence {evidence_id} manifest evidence_type mismatch: {detail}.")
         elif code == "members_invalid":
             result.add_error(f"Adhoc evidence {evidence_id} manifest members must be a non-empty list.")
+        elif code == "sensitive_path_warning_count_invalid":
+            result.add_error(
+                f"Adhoc evidence {evidence_id} manifest sensitive_path_warning_count is invalid: {detail}."
+            )
         elif code == "member_entry_invalid":
             _add_adhoc_member_entry_finding(result, evidence_id=evidence_id, index=index, path=path, detail=detail)
         elif code == "member_missing":
             result.add_warning(f"Adhoc evidence {evidence_id} member {path} drifted: missing.")
         elif code == "member_hash_mismatch":
             result.add_warning(f"Adhoc evidence {evidence_id} member {path} drifted: hash mismatch.")
+        elif code == "member_outside_project_root":
+            result.add_warning(f"Adhoc evidence {evidence_id} member {path} is outside the project root.")
         else:
             result.add_error(f"Adhoc evidence {evidence_id} has unsupported health finding: {code}.")
 
@@ -985,6 +994,10 @@ def _add_adhoc_member_entry_finding(
         result.add_error(f"Adhoc evidence {evidence_id} manifest member {path} size_bytes is invalid.")
     elif detail == "sha256_invalid":
         result.add_error(f"Adhoc evidence {evidence_id} manifest member {path} sha256 is invalid.")
+    elif detail == "path_scope_invalid":
+        result.add_error(f"Adhoc evidence {evidence_id} manifest member {path} path_scope is invalid.")
+    elif detail == "sensitive_pattern_invalid":
+        result.add_error(f"Adhoc evidence {evidence_id} manifest member {path} sensitive_pattern is invalid.")
     else:
         result.add_error(f"Adhoc evidence {evidence_id} manifest member {index} has unsupported finding: {detail}.")
 
