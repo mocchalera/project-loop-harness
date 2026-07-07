@@ -538,6 +538,8 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=(
             "--command is the caller's claim about how the artifact was produced; "
             "pcl stores it verbatim and does not run or verify it. "
+            "--copy stores a byte-identical copy at record time so the artifact can "
+            "survive workspace cleanup on this machine; it is not a transfer bundle. "
             "Sensitive evidence checks are filename-shape checks only; "
             "PLH does not scan file contents."
         ),
@@ -562,6 +564,15 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Record files whose path matches sensitive filename patterns. "
             "This is an explicit caller decision; PLH does not scan file contents."
+        ),
+    )
+    p_evidence_add.add_argument(
+        "--copy",
+        action="store_true",
+        dest="copy_files",
+        help=(
+            "Copy each member into .project-loop/evidence/adhoc-files at record time. "
+            "The copy is byte-identical by sha256 when recorded and survives workspace cleanup on this machine."
         ),
     )
 
@@ -1872,6 +1883,7 @@ def main(argv: list[str] | None = None) -> int:
                 summary=args.summary,
                 command=args.claimed_command,
                 allow_sensitive_evidence=args.allow_sensitive_evidence,
+                copy_files=args.copy_files,
             )
             if json_output:
                 _print_json(result)
