@@ -96,5 +96,8 @@ Give these tasks to coding agents in this order:
 92. `agent-tasks/0092-idempotent-status-transitions.md` (v0.2.2, from ax1-moc1 feedback F1)
 93. `agent-tasks/0093-evidence-add-command.md` (v0.2.2, F2/F6, evidence-entry-paths design)
 94. `agent-tasks/0094-job-completion-evidence.md` (v0.2.2, F3, after 0093)
+95. `agent-tasks/0095-supporting-evidence-health.md` (v0.2.3, evidence health axis in verification stats)
+96. `agent-tasks/0096-evidence-add-path-guards.md` (v0.2.3, after 0095 — path scope + sensitive-shaped guard)
+97. `agent-tasks/0097-evidence-durability-design.md` (v0.2.3, design doc only, orchestrator-authored)
 
 Do not start with MCP. Do not start with a hosted UI. The CLI/runtime must become reliable first.
