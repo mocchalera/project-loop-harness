@@ -179,10 +179,11 @@ or more `--file` flags create `adhoc_bundle`.
 
 The command writes an `adhoc-evidence/v0` manifest under
 `.project-loop/evidence/adhoc/` and stores one `evidence` row whose `path`
-points at that manifest. Manifest members are referenced in place and pinned at
-record time with only:
+points at that manifest. By default, manifest members are referenced in place
+and pinned at record time with:
 
 - relative `path`;
+- `path_scope` (`in_project` or `outside_project`, omitted by older manifests);
 - `size_bytes`;
 - `sha256`.
 
@@ -191,10 +192,34 @@ manifest. The optional `--command` value is the caller's claim about how the
 artifact was produced. PLH stores it verbatim on the evidence row; it does not
 run the command or verify that the command produced the files.
 
+`pcl evidence add --copy` is opt-in local durability. After path-scope and
+sensitive-filename guards pass, PLH copies each member to
+`.project-loop/evidence/adhoc-files/<evidence-id>/<NN>-<basename>`, re-hashes
+the copy, and records member-level:
+
+- `storage_mode: "copied"`;
+- `stored_path`.
+
+For copied members, PLH asserts only that at record time it wrote a
+byte-identical copy (same `sha256`) of the file the caller named to
+`stored_path`. The copy is durable only in the local sense that it survives
+workspace cleanup on this machine; `.project-loop/evidence/` remains local
+state and is not a transfer bundle.
+
+The project config key `evidence.copy_max_member_bytes` controls the maximum
+per-member size for `--copy`; it defaults to 10 MB. Members over the cap are
+rejected before any evidence row or event is written. Members over half the cap
+are recorded with a `large_evidence_member` warning. Reference mode is not
+affected by the copy cap.
+
 Strict validation treats a missing or corrupt adhoc manifest as a state
 integrity error. If a referenced member file is later deleted or edited, strict
 validation reports a warning naming the evidence id, member path, and drift kind
 while keeping the recorded hash as the pinned claim.
+
+For copied members, the stored copy is the reviewable artifact. A missing or
+changed copy is a warning. Original source churn is informational in health
+surfaces and does not make strict validation warn when the copy remains intact.
 
 Worked example:
 
@@ -203,6 +228,7 @@ pcl evidence add \
   --file work/reports/pytest-out.txt \
   --summary "pytest run for suggestion E-0017/VS-01" \
   --command "python3 -m pytest tests/test_context.py" \
+  --copy \
   --json
 pcl verification feedback --suggestion E-0017/VS-01 --status executed --result passed --evidence E-00xx
 ```

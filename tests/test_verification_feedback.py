@@ -93,10 +93,11 @@ def _create_adhoc_supporting_evidence(
     *,
     filename: str = "pytest-out.txt",
     content: str = "pytest passed\n",
+    copy: bool = False,
 ) -> dict[str, Any]:
     artifact = root / filename
     artifact.write_text(content, encoding="utf-8")
-    assert main([
+    command = [
         "--root",
         str(root),
         "evidence",
@@ -105,8 +106,11 @@ def _create_adhoc_supporting_evidence(
         filename,
         "--summary",
         "Caller supplied pytest output.",
-        "--json",
-    ]) == 0
+    ]
+    if copy:
+        command.append("--copy")
+    command.append("--json")
+    assert main(command) == 0
     return _json_output(capsys)["evidence"]
 
 
@@ -599,6 +603,59 @@ def test_verification_stats_reports_adhoc_member_drift_without_changing_metrics(
     assert missing_health == {
         "health": "warning",
         "findings": [{"code": "member_missing", "path": "pytest-out.txt"}],
+    }
+
+
+def test_verification_stats_reports_copied_adhoc_health_from_copy(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    _create_receipt(tmp_path)
+    evidence = _create_adhoc_supporting_evidence(tmp_path, capsys, copy=True)
+    stored_path = evidence["members"][0]["stored_path"]
+    assert main([
+        "--root",
+        str(tmp_path),
+        "verification",
+        "feedback",
+        "--suggestion",
+        "E-0001/VS-01",
+        "--status",
+        "executed",
+        "--result",
+        "passed",
+        "--evidence",
+        evidence["id"],
+        "--json",
+    ]) == 0
+    _json_output(capsys)
+
+    (tmp_path / "pytest-out.txt").unlink()
+    assert main(["--root", str(tmp_path), "verification", "stats", "--json"]) == 0
+    source_missing_stats = _json_output(capsys)["stats"]
+    source_missing_health = source_missing_stats["supporting_evidence_health"]["by_evidence_id"][evidence["id"]]
+    assert source_missing_stats["executed_pass_rate"] == 1.0
+    assert source_missing_health == {
+        "health": "ok",
+        "findings": [{"code": "source_drifted", "path": "pytest-out.txt", "detail": "missing"}],
+    }
+
+    (tmp_path / stored_path).write_text("stored copy changed\n", encoding="utf-8")
+    assert main(["--root", str(tmp_path), "verification", "stats", "--json"]) == 0
+    copied_drift_stats = _json_output(capsys)["stats"]
+    copied_drift_health = copied_drift_stats["supporting_evidence_health"]["by_evidence_id"][evidence["id"]]
+    assert copied_drift_stats["executed_pass_rate"] == 1.0
+    assert copied_drift_health == {
+        "health": "warning",
+        "findings": [
+            {
+                "code": "copy_hash_mismatch",
+                "path": stored_path,
+                "source_path": "pytest-out.txt",
+            },
+            {"code": "source_drifted", "path": "pytest-out.txt", "detail": "missing"},
+        ],
     }
 
 

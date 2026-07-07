@@ -968,8 +968,14 @@ def _add_adhoc_assessment_findings(
             result.add_warning(f"Adhoc evidence {evidence_id} member {path} drifted: missing.")
         elif code == "member_hash_mismatch":
             result.add_warning(f"Adhoc evidence {evidence_id} member {path} drifted: hash mismatch.")
+        elif code == "copy_missing":
+            result.add_warning(f"Adhoc evidence {evidence_id} copied member {path} drifted: missing.")
+        elif code == "copy_hash_mismatch":
+            result.add_warning(f"Adhoc evidence {evidence_id} copied member {path} drifted: hash mismatch.")
         elif code == "member_outside_project_root":
             result.add_warning(f"Adhoc evidence {evidence_id} member {path} is outside the project root.")
+        elif code == "source_drifted":
+            continue
         else:
             result.add_error(f"Adhoc evidence {evidence_id} has unsupported health finding: {code}.")
 
@@ -998,6 +1004,10 @@ def _add_adhoc_member_entry_finding(
         result.add_error(f"Adhoc evidence {evidence_id} manifest member {path} path_scope is invalid.")
     elif detail == "sensitive_pattern_invalid":
         result.add_error(f"Adhoc evidence {evidence_id} manifest member {path} sensitive_pattern is invalid.")
+    elif detail == "storage_mode_invalid":
+        result.add_error(f"Adhoc evidence {evidence_id} manifest member {path} storage_mode is invalid.")
+    elif detail == "stored_path_invalid":
+        result.add_error(f"Adhoc evidence {evidence_id} manifest member {path} stored_path is invalid.")
     else:
         result.add_error(f"Adhoc evidence {evidence_id} manifest member {index} has unsupported finding: {detail}.")
 

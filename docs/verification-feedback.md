@@ -73,9 +73,13 @@ change rate numerators, denominators, or formulas.
 
 Health values are:
 
-- `ok`: the referenced adhoc manifest and member files are readable today.
-- `warning`: the adhoc manifest is readable, but a member file is missing or
-  its content hash differs from the manifest.
+- `ok`: the referenced adhoc manifest and reviewable member artifacts are
+  readable today. For copied adhoc members, this means the stored copy is
+  readable; original source churn can still appear as informational
+  `source_drifted` findings.
+- `warning`: the adhoc manifest is readable, but a reference-mode member is
+  missing or hash-drifted, or a copied member's stored copy is missing or
+  hash-drifted.
 - `error`: the referenced evidence row or adhoc manifest cannot be reviewed in
   the expected shape.
 - `unknown`: v0 does not assess this evidence type.

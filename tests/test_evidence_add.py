@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from pcl import evidence as evidence_module
 from pcl.cli import main
 from pcl.db import connect
 from pcl.evidence import ADHOC_ARTIFACT_TYPE, ADHOC_BUNDLE_TYPE, ADHOC_EVIDENCE_CONTRACT_VERSION
@@ -44,16 +45,31 @@ def _adhoc_manifests(root: Path) -> list[Path]:
     return sorted((root / ".project-loop" / "evidence" / "adhoc").glob("*.json"))
 
 
+def _adhoc_copy_dirs(root: Path) -> list[Path]:
+    copy_root = root / ".project-loop" / "evidence" / "adhoc-files"
+    if not copy_root.exists():
+        return []
+    return sorted(path for path in copy_root.iterdir() if path.is_dir())
+
+
 def _assert_evidence_add_error(capsys, code: str) -> None:
     payload = _json_output(capsys)
     assert payload["ok"] is False
     assert payload["error"]["code"] == code
 
 
-def _assert_no_adhoc_traces(root: Path, *, before_events: int, before_manifests: list[Path]) -> None:
+def _assert_no_adhoc_traces(
+    root: Path,
+    *,
+    before_events: int,
+    before_manifests: list[Path],
+    before_copy_dirs: list[Path] | None = None,
+) -> None:
     assert _db_rows(root, "SELECT id FROM evidence ORDER BY id") == []
     assert _event_count(root) == before_events
     assert _adhoc_manifests(root) == before_manifests
+    if before_copy_dirs is not None:
+        assert _adhoc_copy_dirs(root) == before_copy_dirs
 
 
 def _insert_context_receipt(root: Path, *, evidence_id: str = "E-0001") -> None:
@@ -169,6 +185,177 @@ def test_evidence_add_selects_artifact_and_bundle_types(tmp_path: Path, capsys) 
     ]
 
 
+def test_evidence_add_copy_records_single_and_bundle_members(tmp_path: Path, capsys) -> None:
+    _init(tmp_path, capsys)
+    single = tmp_path / "pytest-out.txt"
+    single.write_text("pytest passed\n", encoding="utf-8")
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "pytest-out.txt",
+        "--summary",
+        "copied pytest output",
+        "--copy",
+        "--json",
+    ]) == 0
+    single_payload = _json_output(capsys)
+    assert "warnings" not in single_payload
+    single_evidence = single_payload["evidence"]
+    single_member = single_evidence["members"][0]
+    assert single_member == {
+        "path": "pytest-out.txt",
+        "path_scope": "in_project",
+        "size_bytes": single.stat().st_size,
+        "sha256": _sha256(single),
+        "storage_mode": "copied",
+        "stored_path": ".project-loop/evidence/adhoc-files/e-0001/01-pytest-out.txt",
+    }
+    stored_single = tmp_path / single_member["stored_path"]
+    assert stored_single.read_bytes() == single.read_bytes()
+    assert _sha256(stored_single) == single_member["sha256"]
+    manifest = _manifest(tmp_path, single_evidence["manifest_path"])
+    assert manifest["members"] == [single_member]
+
+    first_dir = tmp_path / "a"
+    second_dir = tmp_path / "b"
+    first_dir.mkdir()
+    second_dir.mkdir()
+    first = first_dir / "output.txt"
+    second = second_dir / "output.txt"
+    first.write_text("first output\n", encoding="utf-8")
+    second.write_text("second output\n", encoding="utf-8")
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "a/output.txt",
+        "--file",
+        "b/output.txt",
+        "--summary",
+        "copied bundle",
+        "--copy",
+        "--json",
+    ]) == 0
+    bundle = _json_output(capsys)["evidence"]
+    assert bundle["id"] == "E-0002"
+    assert [member["stored_path"] for member in bundle["members"]] == [
+        ".project-loop/evidence/adhoc-files/e-0002/01-output.txt",
+        ".project-loop/evidence/adhoc-files/e-0002/02-output.txt",
+    ]
+    assert (tmp_path / bundle["members"][0]["stored_path"]).read_text(encoding="utf-8") == "first output\n"
+    assert (tmp_path / bundle["members"][1]["stored_path"]).read_text(encoding="utf-8") == "second output\n"
+    assert _manifest(tmp_path, bundle["manifest_path"])["members"] == bundle["members"]
+
+
+def test_evidence_add_copy_failure_leaves_zero_traces(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    _init(tmp_path, capsys)
+    first = tmp_path / "first.txt"
+    second = tmp_path / "second.txt"
+    first.write_text("first\n", encoding="utf-8")
+    second.write_text("second\n", encoding="utf-8")
+    before_events = _event_count(tmp_path)
+    before_manifests = _adhoc_manifests(tmp_path)
+    before_copy_dirs = _adhoc_copy_dirs(tmp_path)
+    original_copyfile = evidence_module.shutil.copyfile
+
+    def fail_on_second(src: Path, dst: Path, *args: Any, **kwargs: Any) -> str:
+        if Path(src).name == "second.txt":
+            raise OSError("injected copy failure")
+        return str(original_copyfile(src, dst, *args, **kwargs))
+
+    monkeypatch.setattr(evidence_module.shutil, "copyfile", fail_on_second)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "first.txt",
+        "--file",
+        "second.txt",
+        "--summary",
+        "copy failure",
+        "--copy",
+        "--json",
+    ]) == 2
+    _assert_evidence_add_error(capsys, "evidence_copy_failed")
+    _assert_no_adhoc_traces(
+        tmp_path,
+        before_events=before_events,
+        before_manifests=before_manifests,
+        before_copy_dirs=before_copy_dirs,
+    )
+    assert list((tmp_path / ".project-loop" / "tmp").glob("e-0001-adhoc-files-*")) == []
+
+    clean = tmp_path / "clean.txt"
+    clean.write_text("clean\n", encoding="utf-8")
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "clean.txt",
+        "--summary",
+        "clean",
+        "--copy",
+        "--json",
+    ]) == 0
+    assert _json_output(capsys)["evidence"]["id"] == "E-0001"
+
+
+def test_evidence_add_copy_hash_mismatch_aborts_without_traces(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    _init(tmp_path, capsys)
+    artifact = tmp_path / "artifact.txt"
+    artifact.write_text("original\n", encoding="utf-8")
+    before_events = _event_count(tmp_path)
+    before_manifests = _adhoc_manifests(tmp_path)
+    before_copy_dirs = _adhoc_copy_dirs(tmp_path)
+
+    def copy_different_bytes(src: Path, dst: Path, *args: Any, **kwargs: Any) -> str:
+        Path(dst).write_text("different\n", encoding="utf-8")
+        return str(dst)
+
+    monkeypatch.setattr(evidence_module.shutil, "copyfile", copy_different_bytes)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "artifact.txt",
+        "--summary",
+        "hash mismatch",
+        "--copy",
+        "--json",
+    ]) == 2
+    _assert_evidence_add_error(capsys, "evidence_copy_hash_mismatch")
+    _assert_no_adhoc_traces(
+        tmp_path,
+        before_events=before_events,
+        before_manifests=before_manifests,
+        before_copy_dirs=before_copy_dirs,
+    )
+    assert list((tmp_path / ".project-loop" / "tmp").glob("e-0001-adhoc-files-*")) == []
+
+
 def test_evidence_add_records_outside_project_scope_with_json_warning(
     tmp_path: Path,
     capsys,
@@ -210,6 +397,40 @@ def test_evidence_add_records_outside_project_scope_with_json_warning(
     )
     event_payload = json.loads(event["payload_json"])
     assert event_payload["members"] == [member]
+
+
+def test_evidence_add_copy_records_outside_project_source_and_stored_path(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    outside_dir = tmp_path.parent / f"{tmp_path.name}-outside-copy"
+    outside_dir.mkdir()
+    outside_file = outside_dir / "report.txt"
+    outside_file.write_text("outside report\n", encoding="utf-8")
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        str(outside_file),
+        "--summary",
+        "outside copied report",
+        "--copy",
+        "--json",
+    ]) == 0
+    payload = _json_output(capsys)
+    member = payload["evidence"]["members"][0]
+    assert member["path"].startswith("../")
+    assert member["path_scope"] == "outside_project"
+    assert member["storage_mode"] == "copied"
+    assert member["stored_path"] == ".project-loop/evidence/adhoc-files/e-0001/01-report.txt"
+    assert (tmp_path / member["stored_path"]).read_text(encoding="utf-8") == "outside report\n"
+    assert payload["warnings"] == [f"evidence member outside project root: {member['path']}"]
+    manifest = _manifest(tmp_path, payload["evidence"]["manifest_path"])
+    assert manifest["members"] == [member]
 
 
 def test_evidence_add_prints_outside_project_warning_in_text_mode(
@@ -373,6 +594,63 @@ def test_evidence_add_records_sensitive_path_with_flag_and_warning(
     assert json.loads(event["payload_json"])["sensitive_path_warning_count"] == 1
 
 
+def test_evidence_add_copy_sensitive_path_requires_flag_and_amplifies_warning(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    env_file = tmp_path / ".env"
+    env_file.write_text("TOKEN=example\n", encoding="utf-8")
+    before_events = _event_count(tmp_path)
+    before_manifests = _adhoc_manifests(tmp_path)
+    before_copy_dirs = _adhoc_copy_dirs(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        ".env",
+        "--summary",
+        "blocked env copy",
+        "--copy",
+        "--json",
+    ]) == 2
+    _assert_evidence_add_error(capsys, "evidence_add_sensitive_path")
+    _assert_no_adhoc_traces(
+        tmp_path,
+        before_events=before_events,
+        before_manifests=before_manifests,
+        before_copy_dirs=before_copy_dirs,
+    )
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        ".env",
+        "--summary",
+        "explicit env copy",
+        "--allow-sensitive-evidence",
+        "--copy",
+        "--json",
+    ]) == 0
+    payload = _json_output(capsys)
+    member = payload["evidence"]["members"][0]
+    assert member["sensitive_pattern"] == ".env"
+    assert member["storage_mode"] == "copied"
+    assert member["stored_path"] == ".project-loop/evidence/adhoc-files/e-0001/01-.env"
+    assert (tmp_path / member["stored_path"]).read_text(encoding="utf-8") == "TOKEN=example\n"
+    assert payload["warnings"] == [
+        "evidence member matches sensitive filename pattern: .env "
+        "(pattern: .env); PLH checks path shapes only and does not scan file contents; "
+        "copying amplifies exposure because the file will also live under .project-loop/evidence"
+    ]
+
+
 def test_evidence_add_sensitive_guard_uses_basename_custom_patterns_and_wins_order(
     tmp_path: Path,
     capsys,
@@ -452,6 +730,91 @@ def test_evidence_add_sensitive_bundle_blocks_without_partial_manifest(
     ]) == 2
     _assert_evidence_add_error(capsys, "evidence_add_sensitive_path")
     _assert_no_adhoc_traces(tmp_path, before_events=before_events, before_manifests=before_manifests)
+
+
+def test_evidence_add_copy_size_cap_blocks_only_copy_mode(tmp_path: Path, capsys) -> None:
+    _init(tmp_path, capsys)
+    (tmp_path / "pcl.yaml").write_text(
+        (tmp_path / "pcl.yaml").read_text(encoding="utf-8")
+        + "\nevidence:\n  copy_max_member_bytes: 5\n",
+        encoding="utf-8",
+    )
+    artifact = tmp_path / "artifact.txt"
+    artifact.write_text("123456\n", encoding="utf-8")
+    before_events = _event_count(tmp_path)
+    before_manifests = _adhoc_manifests(tmp_path)
+    before_copy_dirs = _adhoc_copy_dirs(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "artifact.txt",
+        "--summary",
+        "too large to copy",
+        "--copy",
+        "--json",
+    ]) == 2
+    payload = _json_output(capsys)
+    assert payload["error"]["code"] == "evidence_copy_member_too_large"
+    assert payload["error"]["details"] == {
+        "path": "artifact.txt",
+        "size_bytes": artifact.stat().st_size,
+        "copy_max_member_bytes": 5,
+        "config": "evidence.copy_max_member_bytes",
+    }
+    _assert_no_adhoc_traces(
+        tmp_path,
+        before_events=before_events,
+        before_manifests=before_manifests,
+        before_copy_dirs=before_copy_dirs,
+    )
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "artifact.txt",
+        "--summary",
+        "large reference is allowed",
+        "--json",
+    ]) == 0
+    payload = _json_output(capsys)
+    assert payload["evidence"]["id"] == "E-0001"
+    assert "storage_mode" not in payload["evidence"]["members"][0]
+
+
+def test_evidence_add_copy_warns_over_half_size_cap(tmp_path: Path, capsys) -> None:
+    _init(tmp_path, capsys)
+    (tmp_path / "pcl.yaml").write_text(
+        (tmp_path / "pcl.yaml").read_text(encoding="utf-8")
+        + "\nevidence:\n  copy_max_member_bytes: 10\n",
+        encoding="utf-8",
+    )
+    artifact = tmp_path / "artifact.txt"
+    artifact.write_text("123456", encoding="utf-8")
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "artifact.txt",
+        "--summary",
+        "large copied member",
+        "--copy",
+        "--json",
+    ]) == 0
+    payload = _json_output(capsys)
+    assert payload["warnings"] == [
+        "large_evidence_member: artifact.txt is 6 bytes, over half the configured copy cap (10 bytes)"
+    ]
+    assert payload["evidence"]["members"][0]["storage_mode"] == "copied"
 
 
 def test_evidence_add_manifest_is_deterministic_except_id_and_created_at(
@@ -607,6 +970,62 @@ def test_strict_validate_checks_adhoc_manifest_and_warns_on_member_drift(
         "Adhoc evidence E-0001 manifest does not exist: "
         ".project-loop/evidence/adhoc/e-0001-adhoc-v0.json."
     ) in missing_manifest["errors"]
+
+
+def test_strict_validate_checks_copied_member_health_from_copy(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    artifact = tmp_path / "artifact.txt"
+    artifact.write_text("original\n", encoding="utf-8")
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "artifact.txt",
+        "--summary",
+        "copied artifact",
+        "--copy",
+        "--json",
+    ]) == 0
+    evidence = _json_output(capsys)["evidence"]
+    stored_path = evidence["members"][0]["stored_path"]
+
+    artifact.unlink()
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
+    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": []}
+    assessment = evidence_module.assess_adhoc_evidence(
+        evidence_module.ProjectPaths(tmp_path),
+        evidence_id=evidence["id"],
+        evidence_type=evidence["type"],
+        manifest_path_value=evidence["manifest_path"],
+        validate_optional_fields=True,
+    )
+    assert assessment == {
+        "health": "ok",
+        "findings": [{"code": "source_drifted", "path": "artifact.txt", "detail": "missing"}],
+    }
+
+    (tmp_path / stored_path).write_text("changed copy\n", encoding="utf-8")
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
+    copy_mismatch = _json_output(capsys)
+    assert copy_mismatch["ok"] is True
+    assert copy_mismatch["errors"] == []
+    assert copy_mismatch["warnings"] == [
+        f"Adhoc evidence E-0001 copied member {stored_path} drifted: hash mismatch."
+    ]
+
+    (tmp_path / stored_path).unlink()
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
+    copy_missing = _json_output(capsys)
+    assert copy_missing["ok"] is True
+    assert copy_missing["errors"] == []
+    assert copy_missing["warnings"] == [
+        f"Adhoc evidence E-0001 copied member {stored_path} drifted: missing."
+    ]
 
 
 def test_strict_validate_accepts_pre_0096_manifest_without_path_guard_fields(

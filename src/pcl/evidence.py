@@ -4,7 +4,9 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import shutil
 import sqlite3
+import tempfile
 from typing import Any
 
 from .db import connect
@@ -35,8 +37,12 @@ ADHOC_WARNING_FINDING_CODES = {
     "member_missing",
     "member_hash_mismatch",
     "member_outside_project_root",
+    "copy_missing",
+    "copy_hash_mismatch",
 }
 ADHOC_PATH_SCOPES = {"in_project", "outside_project"}
+ADHOC_COPY_STORAGE_MODE = "copied"
+DEFAULT_EVIDENCE_COPY_MAX_MEMBER_BYTES = 10_000_000
 
 
 class EvidenceAddError(PclError):
@@ -75,6 +81,7 @@ def record_adhoc_evidence(
     summary: str,
     command: str | None = None,
     allow_sensitive_evidence: bool = False,
+    copy_files: bool = False,
 ) -> dict[str, Any]:
     if not paths.loop_dir.exists() or not paths.db_path.exists():
         raise ProjectNotInitializedError(root=str(paths.root))
@@ -85,20 +92,31 @@ def record_adhoc_evidence(
         raise InvalidInputError("--summary must not be empty.", details={"field": "summary"})
 
     command = _clean_optional(command)
-    members, warnings, sensitive_path_warning_count = _adhoc_members(
+    members, source_paths, warnings, sensitive_path_warning_count = _adhoc_members(
         paths,
         files,
         allow_sensitive_evidence=allow_sensitive_evidence,
+        copy_files=copy_files,
     )
+    if copy_files:
+        warnings.extend(_copy_size_warnings_or_raise(paths, members))
     evidence_type = ADHOC_ARTIFACT_TYPE if len(members) == 1 else ADHOC_BUNDLE_TYPE
     include_sensitive_count = allow_sensitive_evidence or sensitive_path_warning_count > 0
 
     conn = connect(paths.db_path)
     manifest_path: Path | None = None
     tmp_path: Path | None = None
+    final_copy_dir: Path | None = None
     try:
         evidence_id = next_prefixed_id(conn, "evidence", "E")
         now = utc_now_iso()
+        if copy_files:
+            final_copy_dir = _copy_adhoc_members(
+                paths,
+                evidence_id=evidence_id,
+                members=members,
+                source_paths=source_paths,
+            )
         manifest_dir = paths.evidence_dir / "adhoc"
         manifest_dir.mkdir(parents=True, exist_ok=True)
         manifest_path = manifest_dir / f"{evidence_id.lower()}-adhoc-v0.json"
@@ -167,6 +185,8 @@ def record_adhoc_evidence(
             tmp_path.unlink()
         if manifest_path and manifest_path.exists():
             manifest_path.unlink()
+        if final_copy_dir and final_copy_dir.exists():
+            shutil.rmtree(final_copy_dir, ignore_errors=True)
         raise DataStoreError(f"Could not record adhoc evidence: {exc}") from exc
     finally:
         conn.close()
@@ -369,30 +389,144 @@ def _assess_adhoc_members(
             )
             continue
 
-        absolute_member_path = (paths.root / member_path).resolve()
-        if not absolute_member_path.exists() or not absolute_member_path.is_file():
+        storage_mode = member.get("storage_mode")
+        stored_path = member.get("stored_path")
+        if storage_mode is None and stored_path is None:
+            findings.extend(_assess_reference_member(paths, member_path, expected_sha256))
+            continue
+        if storage_mode != ADHOC_COPY_STORAGE_MODE:
             findings.append(
                 {
-                    "code": "member_missing",
+                    "code": "member_entry_invalid",
                     "path": member_path,
+                    "detail": "storage_mode_invalid",
                 }
             )
             continue
+        if not isinstance(stored_path, str) or not stored_path.strip() or Path(stored_path).is_absolute():
+            findings.append(
+                {
+                    "code": "member_entry_invalid",
+                    "path": member_path,
+                    "detail": "stored_path_invalid",
+                }
+            )
+            continue
+        stored_path = stored_path.strip()
+        if _is_virtual_or_external_path(stored_path):
+            findings.append(
+                {
+                    "code": "member_entry_invalid",
+                    "path": member_path,
+                    "detail": "stored_path_invalid",
+                }
+            )
+            continue
+        findings.extend(
+            _assess_copied_member(
+                paths,
+                member_path=member_path,
+                stored_path=stored_path,
+                size_bytes=size_bytes,
+                expected_sha256=expected_sha256,
+            )
+        )
+    return findings
+
+
+def _assess_reference_member(paths: ProjectPaths, member_path: str, expected_sha256: str) -> list[dict[str, Any]]:
+    absolute_member_path = (paths.root / member_path).resolve()
+    if not absolute_member_path.exists() or not absolute_member_path.is_file():
+        return [
+            {
+                "code": "member_missing",
+                "path": member_path,
+            }
+        ]
+    try:
+        actual_sha256 = _sha256_file(absolute_member_path)
+    except OSError:
+        return [
+            {
+                "code": "member_missing",
+                "path": member_path,
+            }
+        ]
+    if actual_sha256 != expected_sha256:
+        return [
+            {
+                "code": "member_hash_mismatch",
+                "path": member_path,
+            }
+        ]
+    return []
+
+
+def _assess_copied_member(
+    paths: ProjectPaths,
+    *,
+    member_path: str,
+    stored_path: str,
+    size_bytes: int,
+    expected_sha256: str,
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    absolute_copy_path = (paths.root / stored_path).resolve()
+    if not absolute_copy_path.exists() or not absolute_copy_path.is_file():
+        findings.append(
+            {
+                "code": "copy_missing",
+                "path": stored_path,
+                "source_path": member_path,
+            }
+        )
+    else:
         try:
-            actual_sha256 = _sha256_file(absolute_member_path)
+            actual_copy_sha256 = _sha256_file(absolute_copy_path)
         except OSError:
             findings.append(
                 {
-                    "code": "member_missing",
-                    "path": member_path,
+                    "code": "copy_missing",
+                    "path": stored_path,
+                    "source_path": member_path,
                 }
             )
-            continue
-        if actual_sha256 != expected_sha256:
+        else:
+            if actual_copy_sha256 != expected_sha256:
+                findings.append(
+                    {
+                        "code": "copy_hash_mismatch",
+                        "path": stored_path,
+                        "source_path": member_path,
+                    }
+                )
+
+    absolute_source_path = (paths.root / member_path).resolve()
+    try:
+        source_stat = absolute_source_path.stat()
+    except OSError:
+        findings.append(
+            {
+                "code": "source_drifted",
+                "path": member_path,
+                "detail": "missing",
+            }
+        )
+    else:
+        if not absolute_source_path.is_file():
             findings.append(
                 {
-                    "code": "member_hash_mismatch",
+                    "code": "source_drifted",
                     "path": member_path,
+                    "detail": "missing",
+                }
+            )
+        elif source_stat.st_size != size_bytes:
+            findings.append(
+                {
+                    "code": "source_drifted",
+                    "path": member_path,
+                    "detail": "size_mismatch",
                 }
             )
     return findings
@@ -416,8 +550,10 @@ def _adhoc_members(
     files: list[str],
     *,
     allow_sensitive_evidence: bool,
-) -> tuple[list[dict[str, Any]], list[str], int]:
+    copy_files: bool,
+) -> tuple[list[dict[str, Any]], list[Path], list[str], int]:
     members: list[dict[str, Any]] = []
+    source_paths: list[Path] = []
     seen: dict[Path, str] = {}
     for raw_path in files:
         path_text = str(raw_path).strip()
@@ -473,6 +609,7 @@ def _adhoc_members(
                 "sha256": sha256,
             }
         )
+        source_paths.append(resolved)
 
     sensitive_matches = _sensitive_path_matches(paths.root, members)
     if sensitive_matches and not allow_sensitive_evidence:
@@ -497,7 +634,7 @@ def _adhoc_members(
             if pattern:
                 member["sensitive_pattern"] = pattern
                 sensitive_count += 1
-                warnings.append(_sensitive_path_warning(str(member["path"]), pattern))
+                warnings.append(_sensitive_path_warning(str(member["path"]), pattern, copy_files=copy_files))
 
     outside_paths = [str(member["path"]) for member in members if member.get("path_scope") == "outside_project"]
     if outside_paths and _configured_allow_outside_root(paths.root) is False:
@@ -510,7 +647,87 @@ def _adhoc_members(
             },
         )
     warnings.extend(_outside_project_warning(path) for path in outside_paths)
-    return members, warnings, sensitive_count
+    return members, source_paths, warnings, sensitive_count
+
+
+def _copy_size_warnings_or_raise(paths: ProjectPaths, members: list[dict[str, Any]]) -> list[str]:
+    copy_max_member_bytes = _configured_copy_max_member_bytes(paths.root)
+    warnings: list[str] = []
+    for member in members:
+        size_bytes = int(member["size_bytes"])
+        member_path = str(member["path"])
+        if size_bytes > copy_max_member_bytes:
+            raise EvidenceAddError(
+                f"Evidence member is too large to copy: {member_path}",
+                code="evidence_copy_member_too_large",
+                details={
+                    "path": member_path,
+                    "size_bytes": size_bytes,
+                    "copy_max_member_bytes": copy_max_member_bytes,
+                    "config": "evidence.copy_max_member_bytes",
+                },
+            )
+        if size_bytes * 2 > copy_max_member_bytes:
+            warnings.append(
+                "large_evidence_member: "
+                f"{member_path} is {size_bytes} bytes, over half the configured copy cap "
+                f"({copy_max_member_bytes} bytes)"
+            )
+    return warnings
+
+
+def _copy_adhoc_members(
+    paths: ProjectPaths,
+    *,
+    evidence_id: str,
+    members: list[dict[str, Any]],
+    source_paths: list[Path],
+) -> Path:
+    final_dir = paths.evidence_dir / "adhoc-files" / evidence_id.lower()
+    tmp_parent = paths.loop_dir / "tmp"
+    try:
+        tmp_parent.mkdir(parents=True, exist_ok=True)
+        stage_dir = Path(tempfile.mkdtemp(prefix=f"{evidence_id.lower()}-adhoc-files-", dir=tmp_parent))
+    except OSError as exc:
+        raise DataStoreError(f"Could not stage adhoc evidence copies: {exc}") from exc
+
+    stored_paths: list[str] = []
+    try:
+        for index, (member, source_path) in enumerate(zip(members, source_paths, strict=True), start=1):
+            target_name = f"{index:02d}-{source_path.name}"
+            staged_path = stage_dir / target_name
+            try:
+                shutil.copyfile(source_path, staged_path)
+                actual_sha256 = _sha256_file(staged_path)
+            except OSError as exc:
+                raise EvidenceAddError(
+                    f"Could not copy evidence member: {member['path']}",
+                    code="evidence_copy_failed",
+                    details={"path": member["path"], "reason": str(exc)},
+                ) from exc
+            if actual_sha256 != member["sha256"]:
+                raise EvidenceAddError(
+                    f"Evidence member changed while being copied: {member['path']}",
+                    code="evidence_copy_hash_mismatch",
+                    details={
+                        "path": member["path"],
+                        "expected_sha256": member["sha256"],
+                        "actual_sha256": actual_sha256,
+                    },
+                )
+            stored_paths.append(_relative_path(paths.root, final_dir / target_name))
+        final_dir.parent.mkdir(parents=True, exist_ok=True)
+        if final_dir.exists():
+            raise DataStoreError(f"Could not store adhoc evidence copies: destination exists at {final_dir}")
+        stage_dir.replace(final_dir)
+    except Exception:
+        shutil.rmtree(stage_dir, ignore_errors=True)
+        raise
+
+    for member, stored_path in zip(members, stored_paths, strict=True):
+        member["storage_mode"] = ADHOC_COPY_STORAGE_MODE
+        member["stored_path"] = stored_path
+    return final_dir
 
 
 def _sensitive_path_matches(root: Path, members: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -538,6 +755,20 @@ def _configured_allow_outside_root(root: Path) -> bool:
     if normalized == "true":
         return True
     return True
+
+
+def _configured_copy_max_member_bytes(root: Path) -> int:
+    configured = _configured_yaml_scalar(root, "evidence", "copy_max_member_bytes")
+    if configured is None:
+        return DEFAULT_EVIDENCE_COPY_MAX_MEMBER_BYTES
+    normalized = configured.strip().strip("\"'")
+    try:
+        value = int(normalized)
+    except ValueError:
+        return DEFAULT_EVIDENCE_COPY_MAX_MEMBER_BYTES
+    if value <= 0:
+        return DEFAULT_EVIDENCE_COPY_MAX_MEMBER_BYTES
+    return value
 
 
 def _configured_yaml_scalar(root: Path, section: str, key: str) -> str | None:
@@ -581,11 +812,14 @@ def _outside_project_warning(path: str) -> str:
     return f"evidence member outside project root: {path}"
 
 
-def _sensitive_path_warning(path: str, pattern: str) -> str:
-    return (
+def _sensitive_path_warning(path: str, pattern: str, *, copy_files: bool) -> str:
+    warning = (
         "evidence member matches sensitive filename pattern: "
         f"{path} (pattern: {pattern}); PLH checks path shapes only and does not scan file contents"
     )
+    if copy_files:
+        warning += "; copying amplifies exposure because the file will also live under .project-loop/evidence"
+    return warning
 
 
 def _sha256_file(path: Path) -> str:
