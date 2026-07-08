@@ -20,13 +20,20 @@ implement from the spec file, not from prompt summaries.
 | 0105 | Evidence copy observability | v0.2.4 Trust Patch | P2 | done |
 | 0106 | Release checklist contract | v0.2.4 Trust Patch | P2 | done (`docs/release-checklist.md`) |
 | 0107 | agent-tasks backlog index | v0.2.4 Trust Patch | P3 | done (this file) |
+| 0113 | Generic evidence_links table (migration 007) | v0.3.0 Target-Bound Context | P1 | spec ready |
+| 0108 | Target-bound code context receipts (sits on 0113) | v0.3.0 Target-Bound Context | P1 | spec ready |
+| 0114 | Source hash drift detection (default-on) | v0.3.0 Target-Bound Context | P2 | spec ready |
+| 0115 | Context pack target-bound contract fixtures | v0.3.0 Target-Bound Context | P2 | spec ready |
+
+v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
+`evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
+0108 contract).
 
 ## Planned next (see growth plan for scope)
 
 | Milestone | Theme |
 |---|---|
-| v0.3.0 | Target-bound code context receipts (`impact --for-task/--for-job`, `--require-bound-receipt`) |
-| v0.3.1 | Operator experience: `pcl finish` (F7), human-gate ja copy (F5), feature_coverage no-op (F4) |
+| v0.3.1 | Operator experience: `pcl finish` (F7), human-gate ja copy (F5), feature_coverage no-op (F4), `pcl context check` preflight |
 | v0.3.2 | Master trace / intent-index v0 contract formalization |
 | v0.4.0 | Dogfood operations + cost KPI measurement |
 | v0.5.0 | Adoption: README split, contract stability policy |

@@ -109,7 +109,13 @@ Give these tasks to coding agents in this order:
 105. `agent-tasks/0105-evidence-copy-observability.md` (v0.2.4 Trust Patch, review P2-2, after 0102)
 106. `agent-tasks/0106-release-checklist.md` (v0.2.4 Trust Patch, orchestrator-authored, docs/release-checklist.md)
 107. `agent-tasks/0107-agent-tasks-backlog-index.md` (v0.2.4 Trust Patch, orchestrator-authored, agent-tasks/README.md)
+108. `agent-tasks/0108-target-bound-code-context-receipts.md` (v0.3.0 Target-Bound Context; revised 2026-07-08 to depend on 0113)
+109. `agent-tasks/0113-evidence-links-table.md` (v0.3.0, migration 007 — approved 2026-07-08; 0108 sits on this)
+110. `agent-tasks/0114-source-hash-drift.md` (v0.3.0, default-on same-size content drift; extends 0102)
+111. `agent-tasks/0115-context-pack-contract-fixtures.md` (v0.3.0, freezes the target-bound handoff contract; after 0108)
 
 Roadmap through v0.5.0: see `docs/growth-plan-v0.2.4-v0.5.md` (approved 2026-07-08).
+Numbering is creation order; milestones interleave. v0.3.0 = {0108, 0113, 0114, 0115}.
+Reserved for later milestones: 0109 `pcl finish` / 0110 human-gate ja / 0111 feature_coverage no-op / 0116 `pcl context check` (v0.3.1); 0112 master-trace formalization (v0.3.2).
 
 Do not start with MCP. Do not start with a hosted UI. The CLI/runtime must become reliable first.

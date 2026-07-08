@@ -3,7 +3,7 @@
 **作成日:** 2026-07-08
 **作成者:** Fable 5（orchestrator）
 **入力:** docs/project-loop-harness-v0.2.3-third-party-review.md（第三者レビュー提言書）+ 実コード検証 + ax1-moc1 実使用フィードバック + 引き継ぎ履歴
-**ステータス:** DRAFT — 坂本承認待ち
+**ステータス:** APPROVED — 坂本承認済み（2026-07-08）
 
 ---
 
@@ -195,3 +195,45 @@ hosted backend / cloud sync / marketplace / telemetry / multi-user collaboration
 ```
 
 v0.2.4 は全タスク S〜S-M のため、承認後 1〜2 セッションでリリース可能な見込み。
+
+---
+
+## 8. v0.3.0 スコープ確定（2026-07-08 追加承認）
+
+v0.2.4 リリース後、第三者の v0.2.4 レビュー（v0.3 道筋提案）を実コードで検証し、
+坂本が以下を承認した。§6 の論点1・2 に対する確定判断を含む。
+
+**承認（v0.3.0 に入れる）:**
+
+1. **migration 007 `evidence_links` を v0.3.0 で導入**（論点1の決着）。汎用
+   `evidence_links(evidence_id, target_type, target_id, link_role, created_at)`
+   テーブル + 既存 `linked_task_id` の backfill。判断根拠: v0.3.0 が `code_context`
+   という2つ目の link role を導入し、v0.3.2 master-trace が3つ目を足すため、単一
+   `linked_task_id` 列では role を表現できない。artifact-only にすると receipt 選択が
+   artifact scan になり evidence_links 導入時に捨てるコードになる。近い将来の consumer
+   が3つ（code_context / master-trace / v0.4 KPI）確実なため rework を回避する。→ **0113**
+2. **0108 の no-migration invariant を撤回・改訂**。binding は `evidence_links`
+   の `code_context` role 行（queryable）+ receipt artifact の `target_binding`
+   （self-describing）に二重記録し、選択は SQL クエリにする。→ **0108 改訂済み**
+3. **source-hash drift を default-on で修正**（論点2の決着）。`evidence.py:598` の
+   size 一致時に source sha256 を `expected_sha256` と比較し `hash_mismatch` を出す。
+   `--deep` は入れない（size gate + 10MB cap でコスト有界）。→ **0114**
+4. **context pack contract fixtures を必須で入れる**。0108 が pack 契約を変えるため、
+   6ケース（no-receipt / unscoped / task-bound / job-bound / stale / require-missing）
+   を fixture で凍結。0087/0089/0090 の契約回帰3連発への恒久対策。→ **0115**
+
+**保留（後続リリースへ）:**
+
+- `pcl context check` preflight → **v0.3.1**（0116 予定）。evidence_links の上なら
+  SQL 一発だが、v0.3.0 の主役を target-bound handoff に絞る。
+- `pcl finish`（F7）→ **v0.3.1**（0109）。human-gate ja（F5）→ v0.3.1（0110）。
+  feature_coverage no-op（F4）→ v0.3.1（0111）。
+- master-trace / intent-index 形式化 → **v0.3.2**（0112）。first-class trace entity 化は
+  v0.4 dogfood の結果を見てから。
+
+**論点3（binding_strength 語彙）** は 0108 spec が既に `none` / `caller_asserted`
+のみで実装しており（claims-not-facts、`safe_to_continue` 等禁止）、追加作業なし。
+
+**dispatch 順:** 0113 + 0114 並行（独立、`evidence.py` の別関数面）→ 0108（0113
+マージ後）→ 0115（0108 契約確定後）。検収規律は §7 と同一。migration 007 は
+`require_human_approval: database_migration` を本承認で充足。
