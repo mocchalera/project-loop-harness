@@ -154,6 +154,16 @@ def _insert_context_receipt(root: Path, *, evidence_id: str = "E-0001") -> None:
         conn.close()
 
 
+def _assess_adhoc_evidence(root: Path, evidence: dict[str, Any]) -> dict[str, Any]:
+    return evidence_module.assess_adhoc_evidence(
+        ProjectPaths(root),
+        evidence_id=evidence["id"],
+        evidence_type=evidence["type"],
+        manifest_path_value=evidence["manifest_path"],
+        validate_optional_fields=True,
+    )
+
+
 def test_evidence_add_selects_artifact_and_bundle_types(tmp_path: Path, capsys) -> None:
     _init(tmp_path, capsys)
     first = tmp_path / "pytest-out.txt"
@@ -1237,18 +1247,24 @@ def test_strict_validate_checks_copied_member_health_from_copy(
     evidence = _json_output(capsys)["evidence"]
     stored_path = evidence["members"][0]["stored_path"]
 
-    artifact.unlink()
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
     assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": []}
-    assessment = evidence_module.assess_adhoc_evidence(
-        evidence_module.ProjectPaths(tmp_path),
-        evidence_id=evidence["id"],
-        evidence_type=evidence["type"],
-        manifest_path_value=evidence["manifest_path"],
-        validate_optional_fields=True,
-    )
-    assert assessment == {
+    assert _assess_adhoc_evidence(tmp_path, evidence) == {
         "health": "ok",
+        "findings": [],
+    }
+
+    artifact.unlink()
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
+    source_missing = _json_output(capsys)
+    assert source_missing["ok"] is True
+    assert source_missing["errors"] == []
+    assert source_missing["warnings"] == [
+        "Adhoc evidence E-0001 source member artifact.txt drifted: missing."
+    ]
+    assert (tmp_path / stored_path).read_text(encoding="utf-8") == "original\n"
+    assert _assess_adhoc_evidence(tmp_path, evidence) == {
+        "health": "warning",
         "findings": [{"code": "source_drifted", "path": "artifact.txt", "detail": "missing"}],
     }
 
@@ -1258,9 +1274,22 @@ def test_strict_validate_checks_copied_member_health_from_copy(
     assert copy_mismatch["ok"] is True
     assert copy_mismatch["errors"] == []
     assert copy_mismatch["warnings"] == [
-        f"Adhoc evidence E-0001 copied member {stored_path} drifted: hash mismatch."
+        f"Adhoc evidence E-0001 copied member {stored_path} drifted: hash mismatch.",
+        "Adhoc evidence E-0001 source member artifact.txt drifted: missing.",
     ]
+    assert _assess_adhoc_evidence(tmp_path, evidence) == {
+        "health": "warning",
+        "findings": [
+            {
+                "code": "copy_hash_mismatch",
+                "path": stored_path,
+                "source_path": "artifact.txt",
+            },
+            {"code": "source_drifted", "path": "artifact.txt", "detail": "missing"},
+        ],
+    }
 
+    artifact.write_text("original\n", encoding="utf-8")
     (tmp_path / stored_path).unlink()
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
     copy_missing = _json_output(capsys)
@@ -1269,6 +1298,43 @@ def test_strict_validate_checks_copied_member_health_from_copy(
     assert copy_missing["warnings"] == [
         f"Adhoc evidence E-0001 copied member {stored_path} drifted: missing."
     ]
+
+
+def test_copied_adhoc_source_size_mismatch_warns_without_touching_copy(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    artifact = tmp_path / "artifact.txt"
+    artifact.write_text("original\n", encoding="utf-8")
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "artifact.txt",
+        "--summary",
+        "copied artifact",
+        "--copy",
+        "--json",
+    ]) == 0
+    evidence = _json_output(capsys)["evidence"]
+    stored_path = evidence["members"][0]["stored_path"]
+
+    artifact.write_text("changed source length\n", encoding="utf-8")
+
+    assert _assess_adhoc_evidence(tmp_path, evidence) == {
+        "health": "warning",
+        "findings": [{"code": "source_drifted", "path": "artifact.txt", "detail": "size_mismatch"}],
+    }
+    assert (tmp_path / stored_path).read_text(encoding="utf-8") == "original\n"
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
+    assert _json_output(capsys) == {
+        "errors": [],
+        "ok": True,
+        "warnings": ["Adhoc evidence E-0001 source member artifact.txt drifted: size mismatch."],
+    }
 
 
 def test_strict_validate_accepts_pre_0096_manifest_without_path_guard_fields(

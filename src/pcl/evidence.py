@@ -39,6 +39,7 @@ ADHOC_WARNING_FINDING_CODES = {
     "member_outside_project_root",
     "copy_missing",
     "copy_hash_mismatch",
+    "source_drifted",
 }
 ADHOC_PATH_SCOPES = {"in_project", "outside_project"}
 ADHOC_COPY_STORAGE_MODE = "copied"
