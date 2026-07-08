@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 SQLITE_BUSY_TIMEOUT_MS = 30_000
 
 

@@ -50,6 +50,9 @@ VERSIONED_REQUIRED_TABLES = {
     5: [
         "verification_feedback",
     ],
+    7: [
+        "evidence_links",
+    ],
 }
 
 ACTIVE_RUN_STATUSES = ("blocked", "queued", "running")
@@ -260,6 +263,7 @@ def _validate_strict_invariants(paths: ProjectPaths, conn: sqlite3.Connection, r
     _validate_workflow_proposals(paths, conn, result)
     _validate_foreign_keys(conn, result)
     _validate_verification_feedback_references(conn, result)
+    _validate_evidence_links(conn, result)
     _validate_closed_goals(conn, result)
     _validate_passed_workflow_runs(conn, result)
     _validate_verified_or_closed_defects(conn, result)
@@ -611,6 +615,47 @@ def _validate_verification_feedback_references(
             result.add_error(
                 f"Verification feedback {feedback_id} references missing supporting evidence "
                 f"{supporting_evidence_id}."
+            )
+
+
+def _validate_evidence_links(
+    conn: sqlite3.Connection,
+    result: ValidationResult,
+) -> None:
+    if not table_exists(conn, "evidence_links"):
+        return
+    rows = conn.execute(
+        """
+        SELECT evidence_id, target_type, target_id, link_role, created_at
+        FROM evidence_links
+        ORDER BY created_at, evidence_id, target_type, target_id, link_role
+        """
+    ).fetchall()
+    known_targets = {
+        "task": "tasks",
+        "agent_job": "agent_jobs",
+    }
+    for row in rows:
+        evidence_id = str(row["evidence_id"] or "")
+        target_type = str(row["target_type"] or "")
+        target_id = str(row["target_id"] or "")
+        link_role = str(row["link_role"] or "")
+        if not evidence_id or _evidence_type(conn, evidence_id) is None:
+            result.add_error(
+                f"Evidence link {evidence_id or '<empty>'} to {target_type}:{target_id} "
+                f"as {link_role or '<empty>'} references missing evidence."
+            )
+        target_table = known_targets.get(target_type)
+        if target_table is None:
+            continue
+        target = conn.execute(
+            f"SELECT id FROM {target_table} WHERE id = ?",
+            (target_id,),
+        ).fetchone()
+        if target is None:
+            result.add_error(
+                f"Evidence link {evidence_id or '<empty>'} references missing "
+                f"{target_type} {target_id or '<empty>'}."
             )
 
 

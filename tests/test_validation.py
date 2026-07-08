@@ -576,6 +576,82 @@ def test_strict_validate_rejects_decision_block_link_to_missing_entity(
     assert "Decision DEC-0001 blocks_json references missing workflow_run WR-9999." in payload["errors"]
 
 
+def test_strict_validate_rejects_evidence_link_to_missing_known_target(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path), "--json"]) == 0
+    _json_output(capsys)
+    _update_db(
+        tmp_path,
+        """
+        INSERT INTO evidence(id, type, path, summary, created_at)
+        VALUES ('E-0001', 'manual_note', 'inline:test', 'Inline evidence', '2026-07-08T00:00:00Z')
+        """,
+    )
+    _update_db(
+        tmp_path,
+        """
+        INSERT INTO evidence_links(evidence_id, target_type, target_id, link_role, created_at)
+        VALUES ('E-0001', 'task', 'T-9999', 'supporting', '2026-07-08T00:00:00Z')
+        """,
+    )
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 1
+    payload = _json_output(capsys)
+    assert "Evidence link E-0001 references missing task T-9999." in payload["errors"]
+
+
+def test_strict_validate_tolerates_evidence_link_to_unknown_target_type(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path), "--json"]) == 0
+    _json_output(capsys)
+    _update_db(
+        tmp_path,
+        """
+        INSERT INTO evidence(id, type, path, summary, created_at)
+        VALUES ('E-0001', 'manual_note', 'inline:test', 'Inline evidence', '2026-07-08T00:00:00Z')
+        """,
+    )
+    _update_db(
+        tmp_path,
+        """
+        INSERT INTO evidence_links(evidence_id, target_type, target_id, link_role, created_at)
+        VALUES ('E-0001', 'future_target', 'FT-9999', 'supporting', '2026-07-08T00:00:00Z')
+        """,
+    )
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
+    payload = _json_output(capsys)
+    assert payload["errors"] == []
+
+
+def test_strict_validate_rejects_evidence_link_to_missing_evidence(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path), "--json"]) == 0
+    _json_output(capsys)
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute(
+            """
+            INSERT INTO evidence_links(evidence_id, target_type, target_id, link_role, created_at)
+            VALUES ('E-9999', 'future_target', 'FT-9999', 'supporting', '2026-07-08T00:00:00Z')
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 1
+    payload = _json_output(capsys)
+    assert any("Evidence link E-9999 to future_target:FT-9999" in error for error in payload["errors"])
+
+
 def test_strict_validate_rejects_missing_local_evidence_artifact(
     tmp_path: Path,
     capsys,
