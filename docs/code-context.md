@@ -39,6 +39,8 @@ pcl impact --diff --staged --json
 pcl impact --diff --unstaged --json
 pcl impact --diff --include-untracked --json
 pcl impact --diff --all-changes --json
+pcl impact --diff --for-task T-0001 --json
+pcl impact --diff --for-job J-0001 --json
 git diff --no-ext-diff --no-textconv --name-status main -- | pcl impact --diff - --json
 ```
 
@@ -349,6 +351,12 @@ under `.project-loop/evidence/context-receipts/`.
     "omitted": [],
     "sensitive_omitted_count": 1,
     "staleness_warnings": [],
+    "target_binding": {
+      "target_type": "task",
+      "target_id": "T-0001",
+      "binding_strength": "caller_asserted",
+      "source": "impact_flag"
+    },
     "receipt_path": ".project-loop/evidence/context-receipts/e-0001-impact-v0.json",
     "evidence_id": "E-0001"
   }
@@ -409,6 +417,24 @@ operations for the selected mode, such as staging changes for `--staged`, using
 `--include-untracked` when untracked files are present, comparing against a
 default branch, or checking a provided diff.
 
+`--for-task T-XXXX` and `--for-job J-XXXX` bind a written context receipt to an
+existing task or agent job as a caller assertion. Exactly zero or one target
+flag is allowed. PLH validates the target before writing any receipt evidence.
+Malformed, missing, or mutually exclusive target flags return typed errors and
+do not create evidence rows, receipt artifacts, or `evidence_links` rows.
+
+When a target flag is present and the diff is non-empty, PLH records the
+binding in both durable query state and the self-describing receipt artifact:
+
+- `evidence_links(evidence_id, target_type, target_id, link_role="code_context")`
+- `target_binding` in the `impact/v0` response and the `context-receipt/v0`
+  artifact
+
+Task bindings use `target_type: "task"`. Job bindings use
+`target_type: "agent_job"`. The binding strength is always
+`caller_asserted`, with `source: "impact_flag"`. This is a caller label, not
+PLH proof that the receipt is semantically relevant to the target.
+
 The receipt contract is `context-receipt/v0`. Its core fields are:
 
 - `diff_source`: the same source label returned by `impact/v0`, with `base_ref`
@@ -426,6 +452,8 @@ The receipt contract is `context-receipt/v0`. Its core fields are:
   the working tree.
 - `untracked_included_count`: present only when the diff source explicitly
   includes untracked files.
+- `target_binding`: present only for receipts written with `--for-task` or
+  `--for-job`; it records the caller-asserted target label.
 
 Receipts are evidence artifacts. They record PLH output and reasons; they do
 not make claims about agent cognition. Verification suggestion objects carry
@@ -519,12 +547,16 @@ the receipt, so the refresh remains generic.
 
 ## Context Pack Bridge
 
-`pcl context pack --include-code-context` links the latest context receipt into
-normal task and job handoffs without inlining the receipt body.
+`pcl context pack --include-code-context` links a context receipt into normal
+task and job handoffs without inlining the receipt body.
 
-The context pack resolves the newest evidence row with type `context_receipt`,
-loads its JSON artifact, and converts it through a stable
-`code-context-summary/v0` isolation layer. The summary is embedded under
+For task and job packs, PLH first queries `evidence_links` for the newest
+matching row with `link_role: "code_context"` and the pack target
+(`target_type: "task"` or `"agent_job"`). When a matching bound receipt exists,
+that receipt is preferred over a newer unbound receipt. If no matching bound
+receipt exists, PLH keeps the unscoped-latest fallback unless the caller used
+`--require-bound-receipt`. The selected receipt artifact is converted through a
+stable `code-context-summary/v0` isolation layer. The summary is embedded under
 `context_pack.code_context`; the original receipt remains referenced by
 `receipt_ref.evidence_id`, `receipt_ref.receipt_path`, and the pack's
 `source_paths`.
@@ -564,7 +596,13 @@ listing.
 
 If no receipt exists, the command still returns a valid context pack with empty
 receipt refs, a message, and next actions: `pcl index build --json` followed by
-`pcl impact --diff --json`.
+a target-specific impact command such as
+`pcl impact --diff --for-task T-0001 --json`.
+
+`--require-bound-receipt` is valid only with `--include-code-context`. When no
+matching bound receipt exists, context pack fails with typed error
+`context_pack_bound_receipt_required` and suggests a target-specific refresh
+command. It does not fall back to the unscoped latest receipt in that mode.
 
 The bridge does not add schema, rebuild the index, run impact automatically,
 make continuation claims, or expose a `safe_to_continue` field.

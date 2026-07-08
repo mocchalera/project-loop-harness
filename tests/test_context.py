@@ -211,7 +211,7 @@ def _create_job_code_project(root: Path, capsys) -> None:
     _git(root, "commit", "-m", "initial")
 
 
-def _write_code_context_receipt(root: Path, capsys) -> dict:
+def _write_code_context_receipt(root: Path, capsys, *, impact_args: list[str] | None = None) -> dict:
     assert main(["--root", str(root), "index", "build", "--json"]) == 0
     _json_output(capsys)
     app_path = root / "src" / "app.py"
@@ -219,7 +219,7 @@ def _write_code_context_receipt(root: Path, capsys) -> dict:
         app_path.read_text(encoding="utf-8") + "\n\ndef parting() -> str:\n    return 'bye'\n",
         encoding="utf-8",
     )
-    assert main(["--root", str(root), "impact", "--diff", "--json"]) == 0
+    assert main(["--root", str(root), "impact", "--diff", *(impact_args or []), "--json"]) == 0
     return _json_output(capsys)["impact"]
 
 
@@ -230,7 +230,7 @@ def _set_receipt_created_at(root: Path, impact: dict, created_at: str) -> None:
     receipt_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
 
 
-def _write_fresh_code_context_receipt(root: Path, capsys) -> dict:
+def _write_fresh_code_context_receipt(root: Path, capsys, *, impact_args: list[str] | None = None) -> dict:
     app_path = root / "src" / "app.py"
     app_path.write_text(
         app_path.read_text(encoding="utf-8")
@@ -239,7 +239,7 @@ def _write_fresh_code_context_receipt(root: Path, capsys) -> dict:
     )
     assert main(["--root", str(root), "index", "build", "--json"]) == 0
     _json_output(capsys)
-    assert main(["--root", str(root), "impact", "--diff", "--json"]) == 0
+    assert main(["--root", str(root), "impact", "--diff", *(impact_args or []), "--json"]) == 0
     return _json_output(capsys)["impact"]
 
 
@@ -1246,6 +1246,7 @@ def test_context_pack_for_job_include_code_context_embeds_bounded_summary(
         "target_id": "J-0001",
         "scope": "unscoped_latest",
         "binding_strength": "none",
+        "warning": "No target-bound code context receipt was found; using the latest unscoped receipt.",
         "reason": (
             "The most recent context receipt was selected by recency; it was not "
             "created for this target."
@@ -1316,6 +1317,7 @@ def test_context_pack_for_task_include_code_context_embeds_summary(
         "target_id": "T-0001",
         "scope": "unscoped_latest",
         "binding_strength": "none",
+        "warning": "No target-bound code context receipt was found; using the latest unscoped receipt.",
         "reason": (
             "The most recent context receipt was selected by recency; it was not "
             "created for this target."
@@ -1336,6 +1338,141 @@ def test_context_pack_for_task_include_code_context_embeds_summary(
     assert "code_context_detail" in pack["included_sections"]
     assert "pcl impact --diff --json" not in pack["source_commands"]
     assert "suggested_refresh_commands" in pack
+
+
+def test_context_pack_prefers_matching_task_bound_receipt_over_newer_unbound(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    _create_task_code_project(tmp_path, capsys)
+    bound = _write_code_context_receipt(
+        tmp_path,
+        capsys,
+        impact_args=["--for-task", "T-0001"],
+    )
+    unbound = _write_code_context_receipt(tmp_path, capsys)
+    assert bound["evidence_id"] != unbound["evidence_id"]
+    monkeypatch.setattr(cli_module, "utc_now_iso", lambda: FIXED_NOW)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0001",
+        "--include-code-context",
+        "--json",
+    ]) == 0
+
+    pack = _json_output(capsys)["context_pack"]
+    code_context = pack["code_context"]
+    assert code_context["receipt_ref"]["evidence_id"] == bound["evidence_id"]
+    assert code_context["relevance"] == {
+        "target_type": "task",
+        "target_id": "T-0001",
+        "scope": "target_bound",
+        "binding_strength": "caller_asserted",
+        "reason": (
+            "A context receipt linked to this target was selected through evidence_links; "
+            "the binding is a caller assertion, not semantic proof."
+        ),
+    }
+    assert pack["suggested_refresh_commands"][-1] == "pcl impact --diff --for-task T-0001 --json"
+    assert all("pcl impact" not in command for command in pack["source_commands"])
+    assert "- relevance: target_bound (binding: caller_asserted)" in pack["markdown"]
+
+
+def test_context_pack_prefers_matching_job_bound_receipt_over_newer_unbound(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_job_code_project(tmp_path, capsys)
+    bound = _write_code_context_receipt(
+        tmp_path,
+        capsys,
+        impact_args=["--for-job", "J-0001"],
+    )
+    unbound = _write_code_context_receipt(tmp_path, capsys)
+    assert bound["evidence_id"] != unbound["evidence_id"]
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--job",
+        "J-0001",
+        "--include-code-context",
+        "--json",
+    ]) == 0
+
+    pack = _json_output(capsys)["context_pack"]
+    assert pack["code_context"]["receipt_ref"]["evidence_id"] == bound["evidence_id"]
+    assert pack["code_context"]["relevance"]["scope"] == "target_bound"
+    assert pack["code_context"]["relevance"]["target_type"] == "agent_job"
+    assert pack["code_context"]["relevance"]["target_id"] == "J-0001"
+    assert pack["suggested_refresh_commands"][-1] == "pcl impact --diff --for-job J-0001 --json"
+    assert all("pcl impact" not in command for command in pack["source_commands"])
+
+
+def test_context_pack_require_bound_receipt_errors_without_fallback(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_task_code_project(tmp_path, capsys)
+    unbound = _write_code_context_receipt(tmp_path, capsys)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0001",
+        "--include-code-context",
+        "--require-bound-receipt",
+        "--json",
+    ]) == 2
+
+    payload = _json_output(capsys)
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "context_pack_bound_receipt_required"
+    assert payload["error"]["details"]["target_type"] == "task"
+    assert payload["error"]["details"]["target_id"] == "T-0001"
+    assert payload["error"]["details"]["suggested_refresh_commands"] == [
+        "pcl impact --diff --for-task T-0001 --json"
+    ]
+    assert unbound["evidence_id"] not in json.dumps(payload, sort_keys=True)
+
+
+def test_context_pack_unscoped_fallback_has_target_specific_refresh_command(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_task_code_project(tmp_path, capsys)
+    _write_fresh_code_context_receipt(tmp_path, capsys)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0001",
+        "--include-code-context",
+        "--json",
+    ]) == 0
+
+    pack = _json_output(capsys)["context_pack"]
+    assert pack["code_context"]["relevance"]["scope"] == "unscoped_latest"
+    assert pack["code_context"]["relevance"]["binding_strength"] == "none"
+    assert pack["code_context"]["relevance"]["warning"]
+    assert pack["suggested_refresh_commands"] == [
+        "pcl impact --diff --for-task T-0001 --json"
+    ]
+    assert all("pcl impact" not in command for command in pack["source_commands"])
 
 
 def test_context_pack_code_context_receipt_age_fresh_in_json_and_safety_section(
@@ -1590,7 +1727,7 @@ def test_context_pack_include_code_context_without_receipt_suggests_next_action(
     assert code_context["status"] == "missing_receipt"
     assert code_context["next_actions"] == [
         "pcl index build --json",
-        "pcl impact --diff --json",
+        "pcl impact --diff --for-task T-0001 --json",
     ]
     assert code_context["refresh_replay"] == {
         "fidelity": "unavailable",
@@ -1600,10 +1737,10 @@ def test_context_pack_include_code_context_without_receipt_suggests_next_action(
         ],
     }
     assert pack["suggested_refresh_commands"] == code_context["next_actions"]
-    assert pack["suggested_refresh_commands"] == _receipt_show_latest_error_next_actions(
-        tmp_path,
-        capsys,
-    )
+    assert _receipt_show_latest_error_next_actions(tmp_path, capsys) == [
+        "pcl index build --json",
+        "pcl impact --diff --json",
+    ]
     assert "pcl impact --diff --json" not in pack["source_commands"]
     assert code_context["receipt_ref"] == {
         "evidence_id": None,
@@ -1724,8 +1861,11 @@ def test_context_pack_suggested_refresh_commands_match_receipt_show_for_stale_re
     ]) == 0
 
     commands = _json_output(capsys)["context_pack"]["suggested_refresh_commands"]
-    assert commands == ["pcl index build --json", "pcl impact --diff --json"]
-    assert commands == _receipt_show_latest_recommended_commands(tmp_path, capsys)
+    assert commands == ["pcl index build --json", "pcl impact --diff --for-task T-0001 --json"]
+    assert _receipt_show_latest_recommended_commands(tmp_path, capsys) == [
+        "pcl index build --json",
+        "pcl impact --diff --json",
+    ]
 
 
 def test_context_pack_suggested_refresh_commands_match_receipt_show_for_fresh_receipt(
@@ -1748,8 +1888,10 @@ def test_context_pack_suggested_refresh_commands_match_receipt_show_for_fresh_re
     ]) == 0
 
     commands = _json_output(capsys)["context_pack"]["suggested_refresh_commands"]
-    assert commands == ["pcl impact --diff --json"]
-    assert commands == _receipt_show_latest_recommended_commands(tmp_path, capsys)
+    assert commands == ["pcl impact --diff --for-task T-0001 --json"]
+    assert _receipt_show_latest_recommended_commands(tmp_path, capsys) == [
+        "pcl impact --diff --json",
+    ]
 
 
 def test_context_pack_refresh_replay_preserves_receipt_diff_scope(
@@ -1779,11 +1921,13 @@ def test_context_pack_refresh_replay_preserves_receipt_diff_scope(
     replay = pack["code_context"]["refresh_replay"]
     assert replay == {
         "fidelity": "scope_preserving",
-        "commands": ["pcl impact --diff --base main --include-untracked --json"],
+        "commands": ["pcl impact --diff --base main --include-untracked --for-task T-0001 --json"],
         "reason": ["diff_source was worktree-vs-main+untracked."],
     }
     assert pack["suggested_refresh_commands"] == replay["commands"]
-    assert replay["commands"] == _receipt_show_latest_recommended_commands(tmp_path, capsys)
+    assert _receipt_show_latest_recommended_commands(tmp_path, capsys) == [
+        "pcl impact --diff --base main --include-untracked --json",
+    ]
 
 
 def _section_heading(section_id: str) -> str:

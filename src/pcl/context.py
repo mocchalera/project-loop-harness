@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from json import JSONDecodeError
 from pathlib import Path
+import shlex
 from typing import Any
 
 from .code_context.summary import (
@@ -14,9 +15,15 @@ from .code_context.summary import (
     summarize_code_context_receipt,
     summary_with_receipt_age,
 )
-from .code_context.receipts import latest_context_receipt_ref, resolve_context_receipt_path
+from .code_context.receipts import (
+    CONTEXT_RECEIPT_EVIDENCE_TYPE,
+    evidence_ref_by_id,
+    latest_context_receipt_ref,
+    resolve_context_receipt_path,
+)
 from .db import connect, table_exists
-from .errors import ContextPackBudgetError, InvalidInputError
+from .errors import ContextPackBudgetError, EXIT_USAGE, InvalidInputError, PclError
+from .evidence import newest_linked_evidence_id
 from .guards import require_initialized
 from .links import enrich_decisions_with_links, enrich_escalations_with_links
 from .paths import ProjectPaths
@@ -33,7 +40,22 @@ MACHINE_CONTEXT_RULES_SECTION_ID = "machine_context_rules"
 CODE_CONTEXT_SAFETY_SECTION_ID = "code_context_safety"
 CODE_CONTEXT_DETAIL_SECTION_ID = "code_context_detail"
 CODE_CONTEXT_VERIFICATION_SECTION_ID = "code_context_verification_suggestions"
+CODE_CONTEXT_LINK_ROLE = "code_context"
 TRUNCATION_NOTE = "_Context truncated. Increase `--max-tokens` to include omitted sections._\n"
+
+
+class ContextPackBoundReceiptRequiredError(PclError):
+    def __init__(self, *, target_type: str, target_id: str, suggested_refresh_command: str) -> None:
+        super().__init__(
+            message=f"No target-bound code context receipt exists for {target_type} {target_id}.",
+            code="context_pack_bound_receipt_required",
+            exit_code=EXIT_USAGE,
+            details={
+                "target_type": target_type,
+                "target_id": target_id,
+                "suggested_refresh_commands": [suggested_refresh_command],
+            },
+        )
 
 JOB_SECTION_ORDER = [
     "machine_context_rules",
@@ -130,6 +152,7 @@ def pack_context_for_job(
     reader_role: str | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     include_code_context: bool = False,
+    require_bound_receipt: bool = False,
 ) -> dict[str, Any]:
     require_initialized(paths)
     _validate_identifier(job_id, "job_id")
@@ -137,6 +160,11 @@ def pack_context_for_job(
         raise InvalidInputError(
             "--max-tokens must be a positive integer.",
             details={"max_tokens": max_tokens},
+        )
+    if require_bound_receipt and not include_code_context:
+        raise InvalidInputError(
+            "--require-bound-receipt is valid only with --include-code-context.",
+            details={"require_bound_receipt": True, "include_code_context": include_code_context},
         )
 
     job = read_job(paths, job_id)
@@ -151,6 +179,7 @@ def pack_context_for_job(
             target_type=target["type"],
             target_id=target["id"],
             now=now,
+            require_bound_receipt=require_bound_receipt,
         )
         if include_code_context
         else None
@@ -295,6 +324,7 @@ def pack_context_for_task(
     reader_role: str | None = None,
     max_tokens: int = DEFAULT_MAX_TOKENS,
     include_code_context: bool = False,
+    require_bound_receipt: bool = False,
 ) -> dict[str, Any]:
     require_initialized(paths)
     _validate_identifier(task_id, "task_id")
@@ -302,6 +332,11 @@ def pack_context_for_task(
         raise InvalidInputError(
             "--max-tokens must be a positive integer.",
             details={"max_tokens": max_tokens},
+        )
+    if require_bound_receipt and not include_code_context:
+        raise InvalidInputError(
+            "--require-bound-receipt is valid only with --include-code-context.",
+            details={"require_bound_receipt": True, "include_code_context": include_code_context},
         )
 
     task = read_task(paths, task_id)
@@ -316,6 +351,7 @@ def pack_context_for_task(
             target_type=target["type"],
             target_id=target["id"],
             now=now,
+            require_bound_receipt=require_bound_receipt,
         )
         if include_code_context
         else None
@@ -669,14 +705,21 @@ def _latest_code_context_summary(
     target_type: str,
     target_id: str,
     now: str,
+    require_bound_receipt: bool,
 ) -> dict[str, Any]:
-    receipt_ref = latest_context_receipt_ref(paths)
+    receipt_ref, selection_scope = _select_code_context_receipt_ref(
+        paths,
+        target_type=target_type,
+        target_id=target_id,
+        require_bound_receipt=require_bound_receipt,
+    )
     if receipt_ref is None:
         return _stamp_code_context_pack_facts(
             _missing_code_context_summary(),
             target_type=target_type,
             target_id=target_id,
             now=now,
+            selection_scope="missing_receipt",
         )
 
     receipt_path = resolve_context_receipt_path(paths, str(receipt_ref["receipt_path"]))
@@ -691,6 +734,7 @@ def _latest_code_context_summary(
             target_type=target_type,
             target_id=target_id,
             now=now,
+            selection_scope=selection_scope,
         )
     if not isinstance(receipt_payload, dict):
         return _stamp_code_context_pack_facts(
@@ -701,6 +745,7 @@ def _latest_code_context_summary(
             target_type=target_type,
             target_id=target_id,
             now=now,
+            selection_scope=selection_scope,
         )
 
     summary = summarize_code_context_receipt(receipt_payload)
@@ -719,7 +764,49 @@ def _latest_code_context_summary(
         target_type=target_type,
         target_id=target_id,
         now=now,
+        selection_scope=selection_scope,
     )
+
+
+def _select_code_context_receipt_ref(
+    paths: ProjectPaths,
+    *,
+    target_type: str,
+    target_id: str,
+    require_bound_receipt: bool,
+) -> tuple[dict[str, str] | None, str]:
+    conn = connect(paths.db_path)
+    try:
+        bound_evidence_id = newest_linked_evidence_id(
+            conn,
+            target_type=target_type,
+            target_id=target_id,
+            link_role=CODE_CONTEXT_LINK_ROLE,
+        )
+    finally:
+        conn.close()
+    if bound_evidence_id:
+        receipt_ref = evidence_ref_by_id(paths, bound_evidence_id)
+        if receipt_ref is not None and receipt_ref.get("evidence_type") == CONTEXT_RECEIPT_EVIDENCE_TYPE:
+            return _public_receipt_ref(receipt_ref), "target_bound"
+    if require_bound_receipt:
+        raise ContextPackBoundReceiptRequiredError(
+            target_type=target_type,
+            target_id=target_id,
+            suggested_refresh_command=_target_refresh_command(target_type, target_id),
+        )
+    receipt_ref = latest_context_receipt_ref(paths)
+    if receipt_ref is None:
+        return None, "missing_receipt"
+    return receipt_ref, "unscoped_latest"
+
+
+def _public_receipt_ref(receipt_ref: dict[str, str]) -> dict[str, str]:
+    return {
+        "evidence_id": str(receipt_ref["evidence_id"]),
+        "receipt_path": str(receipt_ref["receipt_path"]),
+        "created_at": str(receipt_ref["created_at"]),
+    }
 
 
 def _stamp_code_context_pack_facts(
@@ -728,14 +815,26 @@ def _stamp_code_context_pack_facts(
     target_type: str,
     target_id: str,
     now: str,
+    selection_scope: str,
 ) -> dict[str, Any]:
     stamped = summary_with_receipt_age(summary, now=now)
     stamped["relevance"] = _code_context_relevance(
         stamped,
         target_type=target_type,
         target_id=target_id,
+        selection_scope=selection_scope,
     )
-    stamped["refresh_replay"] = refresh_replay(stamped)
+    if stamped.get("status") == "missing_receipt":
+        stamped["next_actions"] = [
+            "pcl index build --json",
+            _target_refresh_command(target_type, target_id),
+        ]
+    replay = refresh_replay(stamped)
+    stamped["refresh_replay"] = _target_refresh_replay(
+        replay,
+        target_type=target_type,
+        target_id=target_id,
+    )
     return stamped
 
 
@@ -744,6 +843,7 @@ def _code_context_relevance(
     *,
     target_type: str,
     target_id: str,
+    selection_scope: str,
 ) -> dict[str, str]:
     status = str(summary.get("status") or "")
     if status == "missing_receipt":
@@ -754,16 +854,70 @@ def _code_context_relevance(
             "binding_strength": "none",
             "reason": "No context receipt was available for this pack target.",
         }
+    if selection_scope == "target_bound":
+        return {
+            "target_type": target_type,
+            "target_id": target_id,
+            "scope": "target_bound",
+            "binding_strength": "caller_asserted",
+            "reason": (
+                "A context receipt linked to this target was selected through evidence_links; "
+                "the binding is a caller assertion, not semantic proof."
+            ),
+        }
     return {
         "target_type": target_type,
         "target_id": target_id,
         "scope": "unscoped_latest",
         "binding_strength": "none",
+        "warning": "No target-bound code context receipt was found; using the latest unscoped receipt.",
         "reason": (
             "The most recent context receipt was selected by recency; it was not "
             "created for this target."
         ),
     }
+
+
+def _target_refresh_command(target_type: str, target_id: str) -> str:
+    if target_type == "agent_job":
+        return f"pcl impact --diff --for-job {shlex.quote(target_id)} --json"
+    return f"pcl impact --diff --for-task {shlex.quote(target_id)} --json"
+
+
+def _target_refresh_replay(
+    replay: dict[str, Any],
+    *,
+    target_type: str,
+    target_id: str,
+) -> dict[str, Any]:
+    payload = dict(replay if isinstance(replay, dict) else {})
+    commands = payload.get("commands")
+    if not isinstance(commands, list):
+        return payload
+    payload["commands"] = [
+        _command_with_target(command, target_type=target_type, target_id=target_id)
+        for command in commands
+    ]
+    return payload
+
+
+def _command_with_target(command: Any, *, target_type: str, target_id: str) -> str:
+    text = str(command)
+    try:
+        parts = shlex.split(text)
+    except ValueError:
+        return text
+    if len(parts) < 3 or parts[:3] != ["pcl", "impact", "--diff"]:
+        return text
+    if "--for-task" in parts or "--for-job" in parts:
+        return text
+    flag = "--for-job" if target_type == "agent_job" else "--for-task"
+    if "--json" in parts:
+        index = parts.index("--json")
+        parts[index:index] = [flag, target_id]
+    else:
+        parts.extend([flag, target_id])
+    return " ".join(shlex.quote(part) for part in parts)
 
 
 def _missing_code_context_summary() -> dict[str, Any]:
@@ -913,6 +1067,8 @@ def _render_code_context_selection_freshness_lines(summary: dict[str, Any]) -> l
 
 
 def _short_relevance_reason(scope: str, fallback: str) -> str:
+    if scope == "target_bound":
+        return "target-bound receipt selected by caller assertion"
     if scope == "unscoped_latest":
         return "latest receipt, not created for this target"
     if scope == "missing_receipt":

@@ -13,6 +13,7 @@ pcl context pack --job J-0001
 pcl context pack --job J-0001 --role verifier --max-tokens 12000 --json
 pcl context pack --task T-0001 --json
 pcl context pack --task T-0001 --include-code-context --json
+pcl context pack --task T-0001 --include-code-context --require-bound-receipt --json
 ```
 
 Exactly one of `--job` or `--task` is required.
@@ -75,11 +76,28 @@ treating model output as source of truth.
 
 `--include-code-context` is opt-in. Without the flag, context packs do not look
 for code-context receipts and keep the same v1 payload shape. With the flag,
-the pack resolves the latest `context_receipt` evidence row, loads that receipt
-artifact, and embeds only a stable `code-context-summary/v0` under
-`context_pack.code_context`. The receipt body is never inlined; it is referenced
-through `code_context.receipt_ref.evidence_id`,
+the pack first queries `evidence_links` for the newest receipt bound to the
+requested target with `link_role: "code_context"`:
+
+- task packs query `target_type: "task"` and the task id;
+- job packs query `target_type: "agent_job"` and the job id.
+
+When a matching bound receipt exists, it is preferred over a newer unbound
+receipt. If no matching bound receipt exists, the pack preserves the current
+unscoped-latest fallback unless `--require-bound-receipt` is set. The selected
+receipt artifact is loaded and embedded only as a stable
+`code-context-summary/v0` under `context_pack.code_context`. The receipt body is
+never inlined; it is referenced through
+`code_context.receipt_ref.evidence_id`,
 `code_context.receipt_ref.receipt_path`, and `source_paths`.
+
+`--require-bound-receipt` is valid only with `--include-code-context`. When no
+matching bound receipt exists, JSON mode returns `ok:false` with
+`error.code: "context_pack_bound_receipt_required"` and details that include a
+target-specific refresh command such as
+`pcl impact --diff --for-task T-0001 --json` or
+`pcl impact --diff --for-job J-0001 --json`. In this mode PLH does not silently
+fall back to the unscoped latest receipt.
 
 `source_commands` are read-only re-fetch commands. They are commands a reader
 can run to reproduce the inputs this pack was built from, and they must not
@@ -91,8 +109,10 @@ When `--include-code-context` is requested, the pack also includes a top-level
 `suggested_refresh_commands` field. These commands are artifact-regenerating
 suggestions for refreshing the underlying code-context evidence; they may
 create new evidence or artifacts. Stale or missing code context suggests
-`pcl index build --json` followed by `pcl impact --diff --json`; fresh code
-context suggests an impact refresh command.
+`pcl index build --json` followed by a target-specific impact command; fresh
+code context suggests a target-specific impact refresh command. These commands
+preserve replayable diff scope where possible and add `--for-task` or
+`--for-job` for the pack target.
 
 The embedded `code_context.refresh_replay` object explains how closely those
 refresh commands preserve the previous receipt scope:
@@ -127,19 +147,21 @@ keeps the command first and may append the ID at the end.
 
 `relevance` is stamped by the context-pack builder because it knows the pack
 target and the receipt selection method. It is not produced by the pure receipt
-summarizer. In v0.1.12, the only shipping selection scopes are:
+summarizer. The shipping selection scopes are:
+
+- `scope: "target_bound"`: a context receipt was selected through a matching
+  `evidence_links` row for this pack target.
 
 - `scope: "unscoped_latest"`: the most recent context receipt was selected by
-  recency and was not created for the pack target.
+  recency because no matching bound receipt was available. The summary includes
+  an explicit warning.
 - `scope: "missing_receipt"`: no context receipt was available.
 
-The only shipping binding strength is `binding_strength: "none"`, meaning no
-caller or PLH mechanism asserted a target linkage. Future vocabulary reserves
-`scope: "target_bound"` and `binding_strength: "caller_asserted"` for a
-possible caller-labeled flow. A caller-asserted binding would be a caller label,
-not a PLH-verified semantic relation between the receipt and the target. This
-version does not implement `--for-task`, `--for-job`, or
-`--require-bound-receipt` flags.
+Binding strength is `binding_strength: "caller_asserted"` only for
+`target_bound` receipts created with `pcl impact --diff --for-task` or
+`--for-job`. This is a caller label, not a PLH-verified semantic relation
+between the receipt and the target. Unscoped fallback and missing-receipt states
+use `binding_strength: "none"`.
 
 `receipt_age` records freshness facts for the embedded receipt:
 `{"created_at": "...", "age_seconds": 123}`. Age is computed against a single
@@ -158,8 +180,8 @@ the context pack.
 
 When no receipt exists, `--include-code-context` still succeeds and returns a
 `code_context` summary with `status: "missing_receipt"`, empty receipt refs, a
-message, and next actions: `pcl index build --json` and
-`pcl impact --diff --json`. The same commands are exposed in
+message, and next actions: `pcl index build --json` and a target-specific
+impact refresh command. The same commands are exposed in
 `context_pack.suggested_refresh_commands`; they are not placed in
 `source_commands`. The summary still includes `relevance` with
 `scope: "missing_receipt"` and `binding_strength: "none"`. Receipt-derived
@@ -276,7 +298,7 @@ The selected profile name is returned as `role_profile`.
 - It does not read or parse `.project-loop/dashboard/dashboard.html`.
 - It never executes `pcl impact` during pack generation.
 - It does not run `pcl index build` or `pcl impact`; `--include-code-context`
-  reads the latest existing receipt evidence only.
+  reads `evidence_links`, evidence rows, and existing receipt artifacts only.
 - It does not inline the full context receipt body.
 
 Agents should use `pcl` JSON commands, reports, evidence paths, or

@@ -21,6 +21,8 @@ from .store import (
 )
 from .symbols import _file_mentions, _symbol_names
 from .test_hints import _is_test_path, _stem_key, _test_path_matches_changed_path
+from ..db import connect
+from ..errors import EXIT_USAGE, PclError
 from ..guards import require_initialized
 from ..paths import ProjectPaths
 
@@ -38,6 +40,14 @@ LEXICAL_SYMBOL_MAX_DOCUMENT_FRACTION = 0.05
 
 
 LEXICAL_SYMBOL_MIN_DOCUMENT_LIMIT = 10
+CODE_CONTEXT_LINK_ROLE = "code_context"
+TASK_TARGET_TYPE = "task"
+JOB_TARGET_TYPE = "agent_job"
+
+
+class ImpactTargetError(PclError):
+    def __init__(self, message: str, *, code: str, details: dict[str, Any]) -> None:
+        super().__init__(message=message, code=code, exit_code=EXIT_USAGE, details=details)
 
 
 def analyze_impact(
@@ -50,8 +60,11 @@ def analyze_impact(
     include_untracked: bool = False,
     all_changes: bool = False,
     write_receipt: bool = True,
+    for_task: str | None = None,
+    for_job: str | None = None,
 ) -> dict[str, Any]:
     require_initialized(paths)
+    target_binding = _validate_target_binding(paths, for_task=for_task, for_job=for_job)
     snapshot = _load_required_snapshot(paths)
     loaded_diff = _load_diff(
         paths,
@@ -68,7 +81,7 @@ def analyze_impact(
     staleness_warnings = _staleness_warnings_for_snapshot(paths, snapshot)
     sensitive_omitted_count = _summary_sensitive_omitted_count(snapshot.summary)
     if not changed_files:
-        return {
+        result = {
             "ok": True,
             "impact": _empty_impact_payload(
                 snapshot=snapshot,
@@ -77,6 +90,9 @@ def analyze_impact(
                 staleness_warnings=staleness_warnings,
             ),
         }
+        if target_binding is not None:
+            result["impact"]["target_binding"] = target_binding
+        return result
 
     indexable_changed_files, excluded_changed_files = _split_indexable_changed_files(paths, changed_files)
     changed = _changed_file_entries(paths, snapshot, indexable_changed_files, untracked_paths=untracked_paths)
@@ -109,6 +125,8 @@ def analyze_impact(
         "staleness_warnings": staleness_warnings,
         "receipt_path": None,
     }
+    if target_binding is not None:
+        impact["target_binding"] = target_binding
     _add_untracked_inclusion_metadata(impact, loaded_diff)
     if loaded_diff.base_ref is not None:
         impact["base_ref"] = loaded_diff.base_ref
@@ -121,6 +139,81 @@ def analyze_impact(
         impact["evidence_id"] = evidence_id
         impact["receipt_path"] = receipt_path
     return {"ok": True, "impact": impact}
+
+
+def _validate_target_binding(
+    paths: ProjectPaths,
+    *,
+    for_task: str | None,
+    for_job: str | None,
+) -> dict[str, str] | None:
+    task_id = _clean_target_id(for_task)
+    job_id = _clean_target_id(for_job)
+    if task_id and job_id:
+        raise ImpactTargetError(
+            "Use exactly one impact target flag: --for-task or --for-job.",
+            code="impact_target_mutually_exclusive",
+            details={"for_task": task_id, "for_job": job_id},
+        )
+    if task_id:
+        _validate_target_id_shape(task_id, expected_prefix="T", field_name="for_task")
+        _require_existing_target(paths, table="tasks", target_id=task_id, field_name="for_task")
+        return {
+            "target_type": TASK_TARGET_TYPE,
+            "target_id": task_id,
+            "binding_strength": "caller_asserted",
+            "source": "impact_flag",
+        }
+    if job_id:
+        _validate_target_id_shape(job_id, expected_prefix="J", field_name="for_job")
+        _require_existing_target(paths, table="agent_jobs", target_id=job_id, field_name="for_job")
+        return {
+            "target_type": JOB_TARGET_TYPE,
+            "target_id": job_id,
+            "binding_strength": "caller_asserted",
+            "source": "impact_flag",
+        }
+    return None
+
+
+def _clean_target_id(value: str | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _validate_target_id_shape(value: str, *, expected_prefix: str, field_name: str) -> None:
+    if not value.startswith(f"{expected_prefix}-") or not all(c.isalnum() or c in {"_", "-"} for c in value):
+        raise ImpactTargetError(
+            f"Invalid impact target id for --{field_name.replace('_', '-')}: {value}",
+            code="impact_target_invalid",
+            details={
+                "field": field_name,
+                "target_id": value,
+                "expected_prefix": f"{expected_prefix}-",
+            },
+        )
+
+
+def _require_existing_target(
+    paths: ProjectPaths,
+    *,
+    table: str,
+    target_id: str,
+    field_name: str,
+) -> None:
+    conn = connect(paths.db_path)
+    try:
+        row = conn.execute(f"SELECT id FROM {table} WHERE id = ?", (target_id,)).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        raise ImpactTargetError(
+            f"Impact target does not exist: {target_id}",
+            code="impact_target_not_found",
+            details={"field": field_name, "target_id": target_id},
+        )
 
 
 def _index_run_payload(snapshot: IndexSnapshot) -> dict[str, Any]:

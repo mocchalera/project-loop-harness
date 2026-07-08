@@ -602,6 +602,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Include the latest code context receipt summary when available.",
     )
+    p_context_pack.add_argument(
+        "--require-bound-receipt",
+        action="store_true",
+        help="Require a code-context receipt explicitly bound to the requested job or task.",
+    )
 
     p_receipt = sub.add_parser("receipt", help="Inspect code context receipts")
     receipt_sub = p_receipt.add_subparsers(dest="receipt_command", required=True)
@@ -671,6 +676,18 @@ def build_parser() -> argparse.ArgumentParser:
         "--all-changes",
         action="store_true",
         help="Compare all uncommitted tracked changes against HEAD and include untracked files.",
+    )
+    p_impact.add_argument(
+        "--for-task",
+        dest="for_task",
+        default=None,
+        help="Bind the written context receipt to an existing task id as a caller assertion.",
+    )
+    p_impact.add_argument(
+        "--for-job",
+        dest="for_job",
+        default=None,
+        help="Bind the written context receipt to an existing agent job id as a caller assertion.",
     )
 
     p_eval = sub.add_parser("eval", help="Evaluate retrieval fixtures")
@@ -1913,6 +1930,7 @@ def main(argv: list[str] | None = None) -> int:
                     reader_role=args.role,
                     max_tokens=args.max_tokens,
                     include_code_context=args.include_code_context,
+                    require_bound_receipt=args.require_bound_receipt,
                 )
             else:
                 pack = pack_context_for_task(
@@ -1922,6 +1940,7 @@ def main(argv: list[str] | None = None) -> int:
                     reader_role=args.role,
                     max_tokens=args.max_tokens,
                     include_code_context=args.include_code_context,
+                    require_bound_receipt=args.require_bound_receipt,
                 )
             if json_output:
                 _print_json({"ok": True, "context_pack": pack})
@@ -1992,6 +2011,8 @@ def main(argv: list[str] | None = None) -> int:
                 unstaged=args.unstaged,
                 include_untracked=args.include_untracked,
                 all_changes=args.all_changes,
+                for_task=args.for_task,
+                for_job=args.for_job,
             )
             if json_output:
                 _print_json(result)
