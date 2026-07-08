@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -18,6 +19,12 @@ def _run(command: list[str | Path], **kwargs) -> subprocess.CompletedProcess[str
         text=True,
         **kwargs,
     )
+
+
+def _wheel_runtime_env() -> dict[str, str]:
+    env = os.environ.copy()
+    env.pop("PYTHONPATH", None)
+    return env
 
 
 def _scripts_dir(venv_dir: Path) -> Path:
@@ -56,31 +63,32 @@ def test_wheel_install_smoke_runs_cli_mcp_and_bundled_templates(tmp_path: Path) 
     pcl = _script(venv_dir, "pcl")
     pcl_mcp = _script(venv_dir, "pcl-mcp")
 
-    _run([python, "-m", "pip", "install", "--no-deps", wheels[0]])
+    wheel_env = _wheel_runtime_env()
+    _run([python, "-m", "pip", "install", "--no-deps", wheels[0]], env=wheel_env)
 
-    assert "Project Loop Harness CLI" in _run([pcl, "--help"]).stdout
-    assert "Project Loop Harness MCP server" in _run([pcl_mcp, "--help"]).stdout
-    update_command = _json_output(_run([pcl, "--json", "update", "command"]))
+    assert "Project Loop Harness CLI" in _run([pcl, "--help"], env=wheel_env).stdout
+    assert "Project Loop Harness MCP server" in _run([pcl_mcp, "--help"], env=wheel_env).stdout
+    update_command = _json_output(_run([pcl, "--json", "update", "command"], env=wheel_env))
     assert update_command["ok"] is True
     assert update_command["install"]["command"]
 
     target = tmp_path / "target-project"
-    init = _json_output(_run([pcl, "--json", "init", "--target", target]))
+    init = _json_output(_run([pcl, "--json", "init", "--target", target], env=wheel_env))
     assert init["created"] is True
     assert (target / "pcl.yaml").exists()
     assert (target / ".project-loop" / "workflows" / "feature_coverage.yaml").exists()
     assert (target / ".project-loop" / "workflows" / "executor_smoke.yaml").exists()
     assert (target / ".agents" / "skills" / "project-control-loop" / "SKILL.md").exists()
 
-    assert _json_output(_run([pcl, "--root", target, "--json", "doctor"]))["ok"] is True
-    assert _json_output(_run([pcl, "--root", target, "--json", "validate", "--strict"]))["ok"] is True
+    assert _json_output(_run([pcl, "--root", target, "--json", "doctor"], env=wheel_env))["ok"] is True
+    assert _json_output(_run([pcl, "--root", target, "--json", "validate", "--strict"], env=wheel_env))["ok"] is True
 
-    render = _json_output(_run([pcl, "--root", target, "--json", "render"]))
+    render = _json_output(_run([pcl, "--root", target, "--json", "render"], env=wheel_env))
     assert render["ok"] is True
     assert Path(render["path"]).exists()
     assert Path(render["data_path"]).exists()
 
-    next_action = _json_output(_run([pcl, "--root", target, "--json", "next"]))
+    next_action = _json_output(_run([pcl, "--root", target, "--json", "next"], env=wheel_env))
     assert next_action["type"] == "create_goal"
 
 

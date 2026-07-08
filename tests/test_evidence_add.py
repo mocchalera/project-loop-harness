@@ -257,6 +257,116 @@ def test_evidence_add_copy_records_single_and_bundle_members(tmp_path: Path, cap
     assert _manifest(tmp_path, bundle["manifest_path"])["members"] == bundle["members"]
 
 
+def test_evidence_add_task_links_existing_task(tmp_path: Path, capsys) -> None:
+    _init(tmp_path, capsys)
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "create",
+        "--title",
+        "Review linked evidence",
+        "--json",
+    ]) == 0
+    _json_output(capsys)
+    artifact = tmp_path / "intent-index.json"
+    artifact.write_text('{"claim":"model-derived navigation"}\n', encoding="utf-8")
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "intent-index.json",
+        "--summary",
+        "Model-derived intent index for worker task",
+        "--task",
+        "T-0001",
+        "--json",
+    ]) == 0
+    payload = _json_output(capsys)
+
+    evidence = payload["evidence"]
+    assert evidence["linked_task_id"] == "T-0001"
+    rows = _db_rows(tmp_path, "SELECT id, linked_task_id FROM evidence ORDER BY id")
+    assert rows == [{"id": "E-0001", "linked_task_id": "T-0001"}]
+    event_payload = json.loads(
+        _db_rows(
+            tmp_path,
+            "SELECT payload_json FROM events WHERE event_type = 'adhoc_evidence_recorded'",
+        )[0]["payload_json"]
+    )
+    assert event_payload["linked_task_id"] == "T-0001"
+
+
+def test_evidence_add_task_rejects_unknown_task_with_zero_traces(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    artifact = tmp_path / "pytest-out.txt"
+    artifact.write_text("pytest passed\n", encoding="utf-8")
+    before_events = _event_count(tmp_path)
+    before_manifests = _adhoc_manifests(tmp_path)
+    before_copy_dirs = _adhoc_copy_dirs(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "pytest-out.txt",
+        "--summary",
+        "pytest run",
+        "--task",
+        "T-9999",
+        "--copy",
+        "--json",
+    ]) == 2
+
+    _assert_evidence_add_error(capsys, "evidence_add_unknown_task")
+    _assert_no_adhoc_traces(
+        tmp_path,
+        before_events=before_events,
+        before_manifests=before_manifests,
+        before_copy_dirs=before_copy_dirs,
+    )
+
+
+def test_evidence_add_task_rejects_invalid_task_id_with_zero_traces(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    artifact = tmp_path / "pytest-out.txt"
+    artifact.write_text("pytest passed\n", encoding="utf-8")
+    before_events = _event_count(tmp_path)
+    before_manifests = _adhoc_manifests(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "pytest-out.txt",
+        "--summary",
+        "pytest run",
+        "--task",
+        "not a task",
+        "--json",
+    ]) == 2
+
+    _assert_evidence_add_error(capsys, "evidence_add_invalid_task")
+    _assert_no_adhoc_traces(
+        tmp_path,
+        before_events=before_events,
+        before_manifests=before_manifests,
+    )
+
+
 def test_evidence_add_copy_serializes_concurrent_id_allocation(tmp_path: Path, capsys) -> None:
     _init(tmp_path, capsys)
     artifact = tmp_path / "race-artifact.txt"

@@ -96,7 +96,7 @@ def test_init_dry_run_reports_pending_migrations_without_applying(
         "path": ".project-loop/project.db",
         "reason": (
             "would apply pending migrations: 001_initial, 002_tasks, 003_agent_registry, "
-            "004_code_index, 005_verification_feedback"
+            "004_code_index, 005_verification_feedback, 006_evidence_task_link"
         ),
     }
     assert changes[".project-loop/events.jsonl"] == {
@@ -104,7 +104,7 @@ def test_init_dry_run_reports_pending_migrations_without_applying(
         "path": ".project-loop/events.jsonl",
         "reason": (
             "would append migration events for: 001_initial, 002_tasks, 003_agent_registry, "
-            "004_code_index, 005_verification_feedback"
+            "004_code_index, 005_verification_feedback, 006_evidence_task_link"
         ),
     }
     assert (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8") == before_events
@@ -215,13 +215,14 @@ def test_init_is_idempotent(tmp_path: Path, capsys) -> None:
         "root": str(tmp_path),
     }
     events = (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines()
-    assert len(events) == 6
+    assert len(events) == 7
     assert "migration_applied" in events[0]
     assert "migration_applied" in events[1]
     assert "migration_applied" in events[2]
     assert "migration_applied" in events[3]
     assert "migration_applied" in events[4]
-    assert "project_initialized" in events[5]
+    assert "migration_applied" in events[5]
+    assert "project_initialized" in events[6]
 
     agents = (tmp_path / "AGENTS.md").read_text(encoding="utf-8")
     claude = (tmp_path / "CLAUDE.md").read_text(encoding="utf-8")

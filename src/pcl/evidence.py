@@ -82,6 +82,7 @@ def record_adhoc_evidence(
     command: str | None = None,
     allow_sensitive_evidence: bool = False,
     copy_files: bool = False,
+    task_id: str | None = None,
 ) -> dict[str, Any]:
     if not paths.loop_dir.exists() or not paths.db_path.exists():
         raise ProjectNotInitializedError(root=str(paths.root))
@@ -92,6 +93,7 @@ def record_adhoc_evidence(
         raise InvalidInputError("--summary must not be empty.", details={"field": "summary"})
 
     command = _clean_optional(command)
+    linked_task_id = _validate_linked_task(paths, task_id)
     members, source_paths, warnings, sensitive_path_warning_count = _adhoc_members(
         paths,
         files,
@@ -136,13 +138,30 @@ def record_adhoc_evidence(
             encoding="utf-8",
         )
         tmp_path.replace(manifest_path)
-        conn.execute(
-            """
-            INSERT INTO evidence(id, type, path, command, summary, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (evidence_id, evidence_type, relative_manifest_path, command, summary, now),
-        )
+        if linked_task_id:
+            conn.execute(
+                """
+                INSERT INTO evidence(id, type, path, command, summary, created_at, linked_task_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    evidence_id,
+                    evidence_type,
+                    relative_manifest_path,
+                    command,
+                    summary,
+                    now,
+                    linked_task_id,
+                ),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO evidence(id, type, path, command, summary, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (evidence_id, evidence_type, relative_manifest_path, command, summary, now),
+            )
         event_payload = {
             "contract_version": ADHOC_EVIDENCE_CONTRACT_VERSION,
             "evidence_type": evidence_type,
@@ -151,6 +170,8 @@ def record_adhoc_evidence(
             "members": members,
             "command": command,
         }
+        if linked_task_id:
+            event_payload["linked_task_id"] = linked_task_id
         if include_sensitive_count:
             event_payload["sensitive_path_warning_count"] = sensitive_path_warning_count
         append_event(
@@ -174,6 +195,8 @@ def record_adhoc_evidence(
                 "members": members,
             },
         }
+        if linked_task_id:
+            result["evidence"]["linked_task_id"] = linked_task_id
         if include_sensitive_count:
             result["evidence"]["sensitive_path_warning_count"] = sensitive_path_warning_count
         if warnings:
@@ -190,6 +213,30 @@ def record_adhoc_evidence(
         raise DataStoreError(f"Could not record adhoc evidence: {exc}") from exc
     finally:
         conn.close()
+
+
+def _validate_linked_task(paths: ProjectPaths, task_id: str | None) -> str | None:
+    task_id = _clean_optional(task_id)
+    if task_id is None:
+        return None
+    if not all(ch.isalnum() or ch in {"_", "-"} for ch in task_id):
+        raise EvidenceAddError(
+            f"Invalid task id for evidence link: {task_id}",
+            code="evidence_add_invalid_task",
+            details={"field": "task", "task_id": task_id},
+        )
+    conn = connect(paths.db_path)
+    try:
+        row = conn.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        raise EvidenceAddError(
+            f"Task does not exist: {task_id}",
+            code="evidence_add_unknown_task",
+            details={"task_id": task_id},
+        )
+    return task_id
 
 
 def assess_adhoc_evidence(

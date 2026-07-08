@@ -58,6 +58,21 @@ Task packs use the same `context-pack/v1` contract with
 `"target": {"type": "task", "id": "T-0001"}`. This is an additive evolution of
 the v1 contract rather than a new contract version.
 
+Task packs include a `linked_evidence` field only when the task has evidence
+rows recorded through `pcl evidence add --task T-XXXX`. Each row lists evidence
+metadata and paths only: `id`, `type`, `summary`, `manifest_path`,
+`member_paths`, `stored_paths`, and `created_at`. The generated Markdown renders
+the same rows in a `Linked Evidence` section and never inlines member file
+contents. `source_paths` includes the manifest path plus copied `stored_paths`
+and original member paths so a reader can inspect the artifacts explicitly.
+When there are no linked rows, the field and section are omitted so task packs
+without linked evidence keep the same output shape as before.
+
+Linked evidence summaries and commands are caller claims, not verified facts.
+For model-derived artifacts such as intent indexes, the pack repeats that
+claims-not-facts vocabulary and points readers to member paths rather than
+treating model output as source of truth.
+
 `--include-code-context` is opt-in. Without the flag, context packs do not look
 for code-context receipts and keep the same v1 payload shape. With the flag,
 the pack resolves the latest `context_receipt` evidence row, loads that receipt
@@ -217,13 +232,14 @@ Task packs render included sections in canonical order:
 3. code context verification suggestions, only when available through `--include-code-context`
 4. code context detail, only when available through `--include-code-context`
 5. target task
-6. dependencies
-7. dependents
-8. goal
-9. related feature, when linked
-10. related defect, when linked
-11. sibling tasks, when a goal is linked
-12. recent events
+6. linked evidence, only when rows are linked through `pcl evidence add --task`
+7. dependencies
+8. dependents
+9. goal
+10. related feature, when linked
+11. related defect, when linked
+12. sibling tasks, when a goal is linked
+13. recent events
 
 Task dependencies include a `satisfied` column. It is `yes` when the dependency
 task status is `done`, `cancelled`, or `waived`; otherwise it is `no`.
@@ -244,6 +260,10 @@ profile priority, then rendered in canonical order.
   `context_pack_budget_too_small`.
 - For verifier job packs, `code_context_verification_suggestions` has higher
   priority than `code_context_detail`.
+- In task packs, `target_task` has priority 850 and `linked_evidence` has
+  priority 830. This keeps the task identity first under tight budgets while
+  selecting linked artifacts before dependencies, related entities, sibling
+  tasks, and recent events.
 
 The selected profile name is returned as `role_profile`.
 
@@ -252,7 +272,7 @@ The selected profile name is returned as `role_profile`.
 - The command is read-only.
 - It does not write context packs to disk in v1.
 - It does not execute external agents.
-- It does not add or require schema migrations.
+- Context-pack generation itself does not run migrations.
 - It does not read or parse `.project-loop/dashboard/dashboard.html`.
 - It never executes `pcl impact` during pack generation.
 - It does not run `pcl index build` or `pcl impact`; `--include-code-context`

@@ -540,6 +540,8 @@ def build_parser() -> argparse.ArgumentParser:
             "pcl stores it verbatim and does not run or verify it. "
             "--copy stores a byte-identical copy at record time so the artifact can "
             "survive workspace cleanup on this machine; it is not a transfer bundle. "
+            "--task links the evidence row to an existing task for task context packs; "
+            "PLH does not infer or verify that relationship. "
             "Sensitive evidence checks are filename-shape checks only; "
             "PLH does not scan file contents."
         ),
@@ -574,6 +576,12 @@ def build_parser() -> argparse.ArgumentParser:
             "Copy each member into .project-loop/evidence/adhoc-files at record time. "
             "The copy is byte-identical by sha256 when recorded and survives workspace cleanup on this machine."
         ),
+    )
+    p_evidence_add.add_argument(
+        "--task",
+        default=None,
+        dest="task_id",
+        help="Existing task id to link this adhoc evidence row into task context packs.",
     )
 
     p_context = sub.add_parser("context", help="Build focused machine context packages")
@@ -1884,6 +1892,7 @@ def main(argv: list[str] | None = None) -> int:
                 command=args.claimed_command,
                 allow_sensitive_evidence=args.allow_sensitive_evidence,
                 copy_files=args.copy_files,
+                task_id=args.task_id,
             )
             if json_output:
                 _print_json(result)
