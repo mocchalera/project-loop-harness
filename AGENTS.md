@@ -43,6 +43,12 @@ pytest
 pcl --help
 ```
 
+When working from a linked worktree, do not run `python -m pip install -e ...`
+against a shared/global Python environment unless the human explicitly asks for
+that environment change. Use `PYTHONPATH=src python -m ...` or a worktree-local
+virtual environment so verification uses the worktree source without repointing
+the canonical `pcl` entrypoint.
+
 After changing schema or initialization logic:
 
 ```bash

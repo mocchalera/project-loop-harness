@@ -7,6 +7,7 @@ from pathlib import Path
 from threading import Barrier
 from typing import Any
 
+import pcl.migrations as migrations_module
 from pcl import evidence as evidence_module
 from pcl.cli import main
 from pcl.db import connect
@@ -22,6 +23,46 @@ def _json_output(capsys) -> dict[str, Any]:
 def _init(root: Path, capsys) -> None:
     assert main(["init", "--target", str(root), "--json"]) == 0
     _json_output(capsys)
+
+
+def _create_migrated_db_with_metadata(root: Path, *, schema_version: int, applied_through: int) -> None:
+    loop_dir = root / ".project-loop"
+    loop_dir.mkdir(parents=True)
+    conn = connect(loop_dir / "project.db")
+    try:
+        for migration in migrations_module.discover_migrations():
+            if migration.version > applied_through:
+                continue
+            conn.executescript(migration.sql)
+            conn.execute(
+                """
+                INSERT INTO schema_migrations(version, name, checksum, applied_at)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    migration.version,
+                    migration.name,
+                    migration.checksum,
+                    "2026-07-08T00:00:00+00:00",
+                ),
+            )
+        conn.execute(
+            "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
+            ("schema_version", str(schema_version)),
+        )
+        conn.execute(
+            "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
+            ("pcl_version", "0.2.2"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    (loop_dir / "events.jsonl").write_text("", encoding="utf-8")
+    (root / "pcl.yaml").write_text("project_loop:\n  version: \"0.1.0\"\n", encoding="utf-8")
+    (root / ".agents" / "skills" / "project-control-loop").mkdir(parents=True)
+    (root / ".agents" / "skills" / "project-control-loop" / "SKILL.md").write_text(
+        "# Skill\n", encoding="utf-8"
+    )
 
 
 def _sha256(path: Path) -> str:
@@ -364,6 +405,58 @@ def test_evidence_add_task_rejects_invalid_task_id_with_zero_traces(
         tmp_path,
         before_events=before_events,
         before_manifests=before_manifests,
+    )
+
+
+def test_evidence_add_task_requires_migration_with_zero_traces(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_migrated_db_with_metadata(tmp_path, schema_version=5, applied_through=5)
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "create",
+        "--title",
+        "Review linked evidence",
+        "--json",
+    ]) == 0
+    _json_output(capsys)
+    artifact = tmp_path / "pytest-out.txt"
+    artifact.write_text("pytest passed\n", encoding="utf-8")
+    before_events = _event_count(tmp_path)
+    before_manifests = _adhoc_manifests(tmp_path)
+    before_copy_dirs = _adhoc_copy_dirs(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "pytest-out.txt",
+        "--summary",
+        "pytest run",
+        "--task",
+        "T-0001",
+        "--copy",
+        "--json",
+    ]) == 2
+
+    payload = _json_output(capsys)
+    assert payload["error"]["code"] == "evidence_task_link_requires_migration"
+    assert payload["error"]["details"] == {
+        "task_id": "T-0001",
+        "required_schema_version": 6,
+        "migration": "006_evidence_task_link",
+        "command": f"pcl migrate --root {tmp_path}",
+    }
+    _assert_no_adhoc_traces(
+        tmp_path,
+        before_events=before_events,
+        before_manifests=before_manifests,
+        before_copy_dirs=before_copy_dirs,
     )
 
 

@@ -30,6 +30,11 @@ When this skill is invoked:
 7. Run `pcl render` after validation.
 8. Report evidence, not just conclusions.
 
+`pcl.yaml` `commands.*` values are arbitrary shell commands, not npm script
+names or make targets. Run the configured command string exactly as written;
+do not assume `npm run <key>` or another wrapper exists for a key like
+`lint` or `test`.
+
 ## Adoption and setup safety
 
 When initializing or auditing a target project, use the same inspect-first
@@ -71,6 +76,25 @@ For user-visible behavior changes:
 6. Run `pcl validate --strict` after terminal test states and before calling the
    loop done.
 
+## Direct implementation loop (default)
+
+For a single well-scoped implementation task, the durable-state path below is
+sufficient. Do not start a workflow run just because `pcl next` recommends
+one; workflow runs add queued jobs you must later close out.
+
+1. `pcl feature add` (or `pcl feature read` for an existing feature).
+2. `pcl story draft` for the behavior.
+3. `pcl test plan` for at least one behavior-facing test case.
+4. Implement the smallest change.
+5. Run project QA commands and collect evidence paths.
+6. `pcl test pass TC-XXXX --summary "..." --evidence "..."`.
+7. `pcl feature status F-XXXX --status done --evidence "..."`.
+8. `pcl validate --strict`.
+9. `pcl render`.
+
+Reserve `pcl loop run ...` for coverage sweeps across a goal, defect repair
+loops, regression passes, or work that is split across multiple agent jobs.
+
 ## Normal commands
 
 ```bash
@@ -108,6 +132,17 @@ pcl loop run regression_loop --goal G-0001
 pcl jobs list
 pcl jobs read J-0001
 ```
+
+If you start a workflow run, you own closing it out:
+
+1. Read each queued job with `pcl jobs list` and `pcl jobs read J-XXXX`.
+2. Produce each job's output as an agent-output evidence file.
+3. Ingest each output with `pcl ingest-agent-run`.
+4. Re-run `pcl validate --strict` and `pcl render`.
+5. Run `pcl next`. If the remaining action is a human decision — for
+   example recording a `pcl verification record` for the workflow run —
+   report it as the pending next action and stop. Do not approve or record
+   the verification yourself.
 
 ## Agent handoff commands
 
@@ -159,6 +194,9 @@ Escalate to the human only when ambiguity changes one of:
 
 Do not ask questions whose answer can be found in code, tests, docs, `AGENTS.md`, `CLAUDE.md`, or `pcl.yaml`.
 
+When `pcl next` returns an action that requires a human decision, report the
+pending action and stop; never satisfy a human gate on the human's behalf.
+
 ## Done criteria
 
 A loop is not complete until:
@@ -168,4 +206,5 @@ A loop is not complete until:
 - validation passes;
 - dashboard has been regenerated;
 - verifier result is recorded or human escalation is opened;
+- pending human decisions are reported as such, not self-approved;
 - next action is clear.

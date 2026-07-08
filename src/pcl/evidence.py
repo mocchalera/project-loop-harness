@@ -43,6 +43,8 @@ ADHOC_WARNING_FINDING_CODES = {
 ADHOC_PATH_SCOPES = {"in_project", "outside_project"}
 ADHOC_COPY_STORAGE_MODE = "copied"
 DEFAULT_EVIDENCE_COPY_MAX_MEMBER_BYTES = 10_000_000
+EVIDENCE_TASK_LINK_REQUIRED_SCHEMA_VERSION = 6
+EVIDENCE_TASK_LINK_MIGRATION_ID = "006_evidence_task_link"
 
 
 class EvidenceAddError(PclError):
@@ -227,6 +229,19 @@ def _validate_linked_task(paths: ProjectPaths, task_id: str | None) -> str | Non
         )
     conn = connect(paths.db_path)
     try:
+        if not _table_has_column(conn, "evidence", "linked_task_id"):
+            migrate_command = f"pcl migrate --root {paths.root}"
+            raise EvidenceAddError(
+                "Evidence task links require schema migration "
+                f"{EVIDENCE_TASK_LINK_MIGRATION_ID}. Run `{migrate_command}`.",
+                code="evidence_task_link_requires_migration",
+                details={
+                    "task_id": task_id,
+                    "required_schema_version": EVIDENCE_TASK_LINK_REQUIRED_SCHEMA_VERSION,
+                    "migration": EVIDENCE_TASK_LINK_MIGRATION_ID,
+                    "command": migrate_command,
+                },
+            )
         row = conn.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone()
     finally:
         conn.close()
@@ -237,6 +252,11 @@ def _validate_linked_task(paths: ProjectPaths, task_id: str | None) -> str | Non
             details={"task_id": task_id},
         )
     return task_id
+
+
+def _table_has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
+    return any(row["name"] == column for row in rows)
 
 
 def assess_adhoc_evidence(
