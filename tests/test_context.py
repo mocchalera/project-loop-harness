@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import importlib
 import json
 from pathlib import Path
 import subprocess
+
+import pytest
 
 import pcl.cli as cli_module
 from pcl.cli import main
@@ -14,6 +17,9 @@ FIXED_NOW = "2026-07-06T01:30:00Z"
 FRESH_RECEIPT_CREATED_AT = "2026-07-06T01:00:00Z"
 STALE_RECEIPT_CREATED_AT = "2026-07-06T00:00:00Z"
 FIXTURES = Path(__file__).parent / "fixtures"
+CONTEXT_PACK_CONTRACT_FIXTURES = json.loads(
+    (FIXTURES / "context_pack_code_context_contract_v0.json").read_text(encoding="utf-8")
+)
 
 
 def _json_output(capsys) -> dict:
@@ -261,6 +267,244 @@ def _receipt_show_latest_error_next_actions(root: Path, capsys) -> list[str]:
         "--json",
     ]) == 2
     return _json_output(capsys)["error"]["details"]["next_actions"]
+
+
+def _context_pack_contract_cases(*, ok: bool) -> list[dict]:
+    return [
+        case
+        for case in CONTEXT_PACK_CONTRACT_FIXTURES["fixtures"]
+        if bool(case["expected"]["ok"]) is ok
+    ]
+
+
+def _freeze_context_pack_contract_clocks(monkeypatch, now: str) -> None:
+    module_names = [
+        "pcl.cli",
+        "pcl.commands",
+        "pcl.tasks",
+        "pcl.events",
+        "pcl.workflows",
+        "pcl.agents",
+        "pcl.migrations",
+        "pcl.code_context.store",
+        "pcl.code_context.receipts",
+    ]
+    for module_name in module_names:
+        module = importlib.import_module(module_name)
+        if hasattr(module, "utc_now_iso"):
+            monkeypatch.setattr(module, "utc_now_iso", lambda now=now: now)
+
+
+def _setup_context_pack_contract_fixture(root: Path, capsys, case: dict) -> dict[str, dict]:
+    setup = case["setup"]
+    project = setup["project"]
+    if project == "task_code":
+        _create_task_code_project(root, capsys)
+    elif project == "job_code":
+        _create_job_code_project(root, capsys)
+    else:
+        raise AssertionError(f"Unknown contract fixture project: {project}")
+
+    receipts: dict[str, dict] = {}
+    for receipt_spec in setup["receipts"]:
+        impact_args = _contract_receipt_target_args(receipt_spec.get("target"))
+        if receipt_spec.get("fresh"):
+            impact = _write_fresh_code_context_receipt(
+                root,
+                capsys,
+                impact_args=impact_args,
+            )
+        else:
+            impact = _write_code_context_receipt(
+                root,
+                capsys,
+                impact_args=impact_args,
+            )
+        if receipt_spec.get("created_at"):
+            _set_receipt_created_at(root, impact, str(receipt_spec["created_at"]))
+        receipts[str(receipt_spec["alias"])] = impact
+    return receipts
+
+
+def _contract_receipt_target_args(target: dict | None) -> list[str] | None:
+    if not target:
+        return None
+    if target["type"] == "task":
+        return ["--for-task", str(target["id"])]
+    if target["type"] == "agent_job":
+        return ["--for-job", str(target["id"])]
+    raise AssertionError(f"Unknown receipt target type: {target['type']}")
+
+
+def _context_pack_contract_args(
+    root: Path,
+    case: dict,
+    *,
+    max_tokens: int | None = None,
+) -> list[str]:
+    pack = case["pack"]
+    target_flag = "--job" if pack["target_type"] == "agent_job" else "--task"
+    args = [
+        "--root",
+        str(root),
+        "context",
+        "pack",
+        target_flag,
+        str(pack["target_id"]),
+        "--include-code-context",
+    ]
+    if pack.get("require_bound_receipt"):
+        args.append("--require-bound-receipt")
+    if max_tokens is not None:
+        args.extend(["--max-tokens", str(max_tokens)])
+    args.append("--json")
+    return args
+
+
+def _resolve_contract_fixture_values(values: list[str], receipts: dict[str, dict]) -> list[str]:
+    return [_resolve_contract_fixture_value(value, receipts) for value in values]
+
+
+def _resolve_contract_fixture_value(value: str, receipts: dict[str, dict]) -> str:
+    prefix = "$receipt:"
+    if not value.startswith(prefix):
+        return value
+    alias, field = value[len(prefix):].split(".", 1)
+    return str(receipts[alias][field])
+
+
+def _run_contract_json(args: list[str], capsys, *, expected_rc: int) -> tuple[str, dict]:
+    assert main(args) == expected_rc
+    output = capsys.readouterr().out
+    return output, json.loads(output)
+
+
+@pytest.mark.parametrize(
+    "case",
+    _context_pack_contract_cases(ok=True),
+    ids=lambda case: case["id"],
+)
+def test_context_pack_code_context_contract_fixture_states(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+    case: dict,
+) -> None:
+    _freeze_context_pack_contract_clocks(monkeypatch, CONTEXT_PACK_CONTRACT_FIXTURES["now"])
+    receipts = _setup_context_pack_contract_fixture(tmp_path, capsys, case)
+    expected = case["expected"]
+
+    max_tokens = None
+    if case["pack"].get("budget") == "tight_required_retry":
+        _, too_small_payload = _run_contract_json(
+            _context_pack_contract_args(tmp_path, case, max_tokens=1),
+            capsys,
+            expected_rc=2,
+        )
+        assert too_small_payload["error"]["code"] == "context_pack_budget_too_small"
+        details = too_small_payload["error"]["details"]
+        assert details["required_sections"] == expected["required_sections"]
+        max_tokens = details["estimated_min_max_tokens"]
+
+    args = _context_pack_contract_args(tmp_path, case, max_tokens=max_tokens)
+    first_output, payload = _run_contract_json(args, capsys, expected_rc=0)
+    second_output, repeated_payload = _run_contract_json(args, capsys, expected_rc=0)
+    assert second_output == first_output
+    assert repeated_payload == payload
+
+    pack = payload["context_pack"]
+    code_context = pack["code_context"]
+    assert pack["target"] == {
+        "type": case["pack"]["target_type"],
+        "id": case["pack"]["target_id"],
+    }
+    assert pack["included_sections"] == expected["included_sections"]
+    assert pack["omitted_sections"] == expected["omitted_sections"]
+    assert pack["required_sections"] == expected["required_sections"]
+    assert pack["required_sections_omitted"] == expected["required_sections_omitted"]
+    assert pack["source_paths"] == _resolve_contract_fixture_values(
+        expected["source_paths"],
+        receipts,
+    )
+    assert pack["suggested_refresh_commands"] == expected["suggested_refresh_commands"]
+    assert code_context["relevance"] == expected["code_context"]["relevance"]
+    assert "code_context_safety" in pack["included_sections"]
+    assert "## Code Context Safety" in pack["markdown"]
+
+    if case["pack"].get("budget") == "tight_required_retry":
+        assert pack["truncated"] is True
+        assert "code_context_detail" not in pack["included_sections"]
+        assert "## Code Context Detail" not in pack["markdown"]
+        assert pack["estimated_token_count"] <= pack["budget"]["max_tokens"]
+
+    expected_age_warning = expected["code_context"].get("age_warning")
+    if expected_age_warning:
+        assert code_context["age_warning"] == expected_age_warning
+
+    _assert_contract_receipt_ref_boundary(
+        code_context,
+        expected["code_context"].get("selected_receipt"),
+        receipts,
+    )
+    for alias in expected["code_context"].get("unselected_receipts", []):
+        assert receipts[alias]["receipt_path"] not in pack["source_paths"]
+        assert code_context["receipt_ref"]["evidence_id"] != receipts[alias]["evidence_id"]
+
+
+@pytest.mark.parametrize(
+    "case",
+    _context_pack_contract_cases(ok=False),
+    ids=lambda case: case["id"],
+)
+def test_context_pack_code_context_contract_error_fixtures(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+    case: dict,
+) -> None:
+    _freeze_context_pack_contract_clocks(monkeypatch, CONTEXT_PACK_CONTRACT_FIXTURES["now"])
+    receipts = _setup_context_pack_contract_fixture(tmp_path, capsys, case)
+
+    output, payload = _run_contract_json(
+        _context_pack_contract_args(tmp_path, case),
+        capsys,
+        expected_rc=2,
+    )
+
+    expected_error = case["expected"]["error"]
+    assert payload["ok"] is False
+    assert "context_pack" not in payload
+    assert payload["error"]["code"] == expected_error["code"]
+    assert payload["error"]["details"] == expected_error["details"]
+    for alias in case["expected"]["unselected_receipts"]:
+        assert receipts[alias]["evidence_id"] not in output
+        assert receipts[alias]["receipt_path"] not in output
+
+
+def _assert_contract_receipt_ref_boundary(
+    code_context: dict,
+    selected_receipt: str | None,
+    receipts: dict[str, dict],
+) -> None:
+    receipt_ref = code_context["receipt_ref"]
+    assert {"evidence_id", "receipt_path"}.issubset(receipt_ref)
+    forbidden_receipt_body_fields = {
+        "changed_files",
+        "included_candidate_context",
+        "omitted",
+        "excluded_changed_files",
+    }
+    assert not forbidden_receipt_body_fields.intersection(receipt_ref)
+    assert not forbidden_receipt_body_fields.intersection(code_context)
+
+    if selected_receipt is None:
+        assert receipt_ref["evidence_id"] is None
+        assert receipt_ref["receipt_path"] is None
+        return
+
+    selected = receipts[selected_receipt]
+    assert receipt_ref["evidence_id"] == selected["evidence_id"]
+    assert receipt_ref["receipt_path"] == selected["receipt_path"]
 
 
 def _rubric_v1() -> str:

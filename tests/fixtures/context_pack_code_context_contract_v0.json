@@ -1,0 +1,334 @@
+{
+  "contract_version": "context-pack-code-context-contract-fixtures/v0",
+  "description": "Contract-bearing context-pack code-context selection fixtures for target-bound receipt handoffs.",
+  "now": "2026-07-06T01:30:00Z",
+  "stale_receipt_created_at": "2026-07-06T00:00:00Z",
+  "fixtures": [
+    {
+      "id": "no_receipt_task",
+      "setup": {
+        "project": "task_code",
+        "receipts": []
+      },
+      "pack": {
+        "target_type": "task",
+        "target_id": "T-0001"
+      },
+      "expected": {
+        "ok": true,
+        "included_sections": [
+          "machine_context_rules",
+          "code_context_safety",
+          "target_task",
+          "dependencies",
+          "dependents",
+          "goal",
+          "sibling_tasks",
+          "recent_events"
+        ],
+        "omitted_sections": [],
+        "required_sections": [
+          "machine_context_rules",
+          "code_context_safety"
+        ],
+        "required_sections_omitted": [],
+        "source_paths": [],
+        "suggested_refresh_commands": [
+          "pcl index build --json",
+          "pcl impact --diff --for-task T-0001 --json"
+        ],
+        "code_context": {
+          "selected_receipt": null,
+          "relevance": {
+            "target_type": "task",
+            "target_id": "T-0001",
+            "scope": "missing_receipt",
+            "binding_strength": "none",
+            "reason": "No context receipt was available for this pack target."
+          }
+        }
+      }
+    },
+    {
+      "id": "unscoped_latest_task",
+      "setup": {
+        "project": "task_code",
+        "receipts": [
+          {
+            "alias": "unscoped",
+            "fresh": true
+          }
+        ]
+      },
+      "pack": {
+        "target_type": "task",
+        "target_id": "T-0001"
+      },
+      "expected": {
+        "ok": true,
+        "included_sections": [
+          "machine_context_rules",
+          "code_context_safety",
+          "code_context_verification_suggestions",
+          "code_context_detail",
+          "target_task",
+          "dependencies",
+          "dependents",
+          "goal",
+          "sibling_tasks",
+          "recent_events"
+        ],
+        "omitted_sections": [],
+        "required_sections": [
+          "machine_context_rules",
+          "code_context_safety"
+        ],
+        "required_sections_omitted": [],
+        "source_paths": [
+          "$receipt:unscoped.receipt_path"
+        ],
+        "suggested_refresh_commands": [
+          "pcl impact --diff --for-task T-0001 --json"
+        ],
+        "code_context": {
+          "selected_receipt": "unscoped",
+          "relevance": {
+            "target_type": "task",
+            "target_id": "T-0001",
+            "scope": "unscoped_latest",
+            "binding_strength": "none",
+            "warning": "No target-bound code context receipt was found; using the latest unscoped receipt.",
+            "reason": "The most recent context receipt was selected by recency; it was not created for this target."
+          }
+        }
+      }
+    },
+    {
+      "id": "target_bound_task_beats_newer_unbound",
+      "setup": {
+        "project": "task_code",
+        "receipts": [
+          {
+            "alias": "bound",
+            "fresh": true,
+            "target": {
+              "type": "task",
+              "id": "T-0001"
+            }
+          },
+          {
+            "alias": "newer_unbound",
+            "fresh": true
+          }
+        ]
+      },
+      "pack": {
+        "target_type": "task",
+        "target_id": "T-0001"
+      },
+      "expected": {
+        "ok": true,
+        "included_sections": [
+          "machine_context_rules",
+          "code_context_safety",
+          "code_context_verification_suggestions",
+          "code_context_detail",
+          "target_task",
+          "dependencies",
+          "dependents",
+          "goal",
+          "sibling_tasks",
+          "recent_events"
+        ],
+        "omitted_sections": [],
+        "required_sections": [
+          "machine_context_rules",
+          "code_context_safety"
+        ],
+        "required_sections_omitted": [],
+        "source_paths": [
+          "$receipt:bound.receipt_path"
+        ],
+        "suggested_refresh_commands": [
+          "pcl impact --diff --for-task T-0001 --json"
+        ],
+        "code_context": {
+          "selected_receipt": "bound",
+          "unselected_receipts": [
+            "newer_unbound"
+          ],
+          "relevance": {
+            "target_type": "task",
+            "target_id": "T-0001",
+            "scope": "target_bound",
+            "binding_strength": "caller_asserted",
+            "reason": "A context receipt linked to this target was selected through evidence_links; the binding is a caller assertion, not semantic proof."
+          }
+        }
+      }
+    },
+    {
+      "id": "target_bound_job_beats_newer_unbound",
+      "setup": {
+        "project": "job_code",
+        "receipts": [
+          {
+            "alias": "bound",
+            "fresh": true,
+            "target": {
+              "type": "agent_job",
+              "id": "J-0001"
+            }
+          },
+          {
+            "alias": "newer_unbound",
+            "fresh": true
+          }
+        ]
+      },
+      "pack": {
+        "target_type": "agent_job",
+        "target_id": "J-0001"
+      },
+      "expected": {
+        "ok": true,
+        "included_sections": [
+          "machine_context_rules",
+          "code_context_safety",
+          "code_context_verification_suggestions",
+          "code_context_detail",
+          "target_job",
+          "workflow_run",
+          "goal",
+          "run_jobs",
+          "verifications",
+          "human_queue",
+          "evidence",
+          "recent_events",
+          "agent_prompt"
+        ],
+        "omitted_sections": [],
+        "required_sections": [
+          "machine_context_rules",
+          "code_context_safety"
+        ],
+        "required_sections_omitted": [],
+        "source_paths": [
+          ".project-loop/evidence/agent-runs/J-0001/prompt.md",
+          "$receipt:bound.receipt_path"
+        ],
+        "suggested_refresh_commands": [
+          "pcl impact --diff --for-job J-0001 --json"
+        ],
+        "code_context": {
+          "selected_receipt": "bound",
+          "unselected_receipts": [
+            "newer_unbound"
+          ],
+          "relevance": {
+            "target_type": "agent_job",
+            "target_id": "J-0001",
+            "scope": "target_bound",
+            "binding_strength": "caller_asserted",
+            "reason": "A context receipt linked to this target was selected through evidence_links; the binding is a caller assertion, not semantic proof."
+          }
+        }
+      }
+    },
+    {
+      "id": "stale_target_bound_task_tight_budget",
+      "setup": {
+        "project": "task_code",
+        "receipts": [
+          {
+            "alias": "bound",
+            "fresh": false,
+            "created_at": "2026-07-06T00:00:00Z",
+            "target": {
+              "type": "task",
+              "id": "T-0001"
+            }
+          }
+        ]
+      },
+      "pack": {
+        "target_type": "task",
+        "target_id": "T-0001",
+        "budget": "tight_required_retry"
+      },
+      "expected": {
+        "ok": true,
+        "included_sections": [
+          "machine_context_rules",
+          "code_context_safety"
+        ],
+        "omitted_sections": [
+          "code_context_verification_suggestions",
+          "code_context_detail",
+          "target_task",
+          "dependencies",
+          "dependents",
+          "goal",
+          "sibling_tasks",
+          "recent_events"
+        ],
+        "required_sections": [
+          "machine_context_rules",
+          "code_context_safety"
+        ],
+        "required_sections_omitted": [],
+        "source_paths": [
+          "$receipt:bound.receipt_path"
+        ],
+        "suggested_refresh_commands": [
+          "pcl index build --json",
+          "pcl impact --diff --for-task T-0001 --json"
+        ],
+        "code_context": {
+          "selected_receipt": "bound",
+          "age_warning": "Receipt age is 5400s, above the provisional 3600s threshold.",
+          "relevance": {
+            "target_type": "task",
+            "target_id": "T-0001",
+            "scope": "target_bound",
+            "binding_strength": "caller_asserted",
+            "reason": "A context receipt linked to this target was selected through evidence_links; the binding is a caller assertion, not semantic proof."
+          }
+        }
+      }
+    },
+    {
+      "id": "require_bound_missing_task",
+      "setup": {
+        "project": "task_code",
+        "receipts": [
+          {
+            "alias": "unscoped",
+            "fresh": true
+          }
+        ]
+      },
+      "pack": {
+        "target_type": "task",
+        "target_id": "T-0001",
+        "require_bound_receipt": true
+      },
+      "expected": {
+        "ok": false,
+        "error": {
+          "code": "context_pack_bound_receipt_required",
+          "details": {
+            "target_type": "task",
+            "target_id": "T-0001",
+            "suggested_refresh_commands": [
+              "pcl impact --diff --for-task T-0001 --json"
+            ]
+          }
+        },
+        "unselected_receipts": [
+          "unscoped"
+        ]
+      }
+    }
+  ]
+}
