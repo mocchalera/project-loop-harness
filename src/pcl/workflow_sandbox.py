@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import json
+import shutil
 import shlex
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
 from .db import connect
 from .events import append_event
-from .errors import InvalidInputError, ProjectNotInitializedError
+from .errors import DataStoreError, InvalidInputError, ProjectNotInitializedError
 from .ids import next_prefixed_id
 from .paths import ProjectPaths
 from .timeutil import utc_now_iso
@@ -496,20 +498,18 @@ def _execute_sandbox(paths: ProjectPaths, sandbox: dict[str, Any], *, timeout_se
             if not command["safe_to_run"]:
                 command["status"] = "skipped"
         return
-    evidence_id = _reserve_evidence_id(paths)
-    run_dir = paths.evidence_dir / "workflow-sandbox" / evidence_id
-    run_dir.mkdir(parents=True, exist_ok=True)
-    for command in sandbox["commands"]:
-        if not command["safe_to_run"]:
-            command["status"] = "skipped"
-            continue
-        _execute_command(paths, command, run_dir=run_dir, timeout_seconds=timeout_seconds)
-    result_path = run_dir / "result.json"
-    sandbox["evidence_id"] = evidence_id
-    sandbox["evidence_path"] = str(result_path.relative_to(paths.root))
-    _recount(sandbox)
-    result_path.write_text(json.dumps(sandbox, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    _record_sandbox_evidence(paths, sandbox)
+    run_dir = _stage_sandbox_run_dir(paths)
+    try:
+        for command in sandbox["commands"]:
+            if not command["safe_to_run"]:
+                command["status"] = "skipped"
+                continue
+            _execute_command(paths, command, run_dir=run_dir, timeout_seconds=timeout_seconds)
+        _recount(sandbox)
+        _record_sandbox_evidence(paths, sandbox, stage_dir=run_dir)
+    except Exception:
+        shutil.rmtree(run_dir, ignore_errors=True)
+        raise
 
 
 def _execute_command(
@@ -568,17 +568,33 @@ def _decode_timeout_output(value: str | bytes | None) -> str:
     return value
 
 
-def _reserve_evidence_id(paths: ProjectPaths) -> str:
-    conn = connect(paths.db_path)
+def _stage_sandbox_run_dir(paths: ProjectPaths) -> Path:
+    tmp_parent = paths.loop_dir / "tmp"
     try:
-        return next_prefixed_id(conn, "evidence", "E")
-    finally:
-        conn.close()
+        tmp_parent.mkdir(parents=True, exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix="workflow-sandbox-", dir=tmp_parent))
+    except OSError as exc:
+        raise DataStoreError(f"Could not stage workflow sandbox evidence: {exc}") from exc
 
 
-def _record_sandbox_evidence(paths: ProjectPaths, sandbox: dict[str, Any]) -> None:
+def _record_sandbox_evidence(paths: ProjectPaths, sandbox: dict[str, Any], *, stage_dir: Path) -> None:
     conn = connect(paths.db_path)
+    final_dir: Path | None = None
     try:
+        evidence_id = next_prefixed_id(conn, "evidence", "E")
+        final_dir = paths.evidence_dir / "workflow-sandbox" / evidence_id
+        if final_dir.exists():
+            raise DataStoreError(f"Could not store workflow sandbox evidence: destination exists at {final_dir}")
+        final_dir.parent.mkdir(parents=True, exist_ok=True)
+        stage_dir.replace(final_dir)
+        _rebase_sandbox_paths(paths, sandbox, final_dir=final_dir)
+        result_path = final_dir / "result.json"
+        sandbox["evidence_id"] = evidence_id
+        sandbox["evidence_path"] = str(result_path.relative_to(paths.root))
+        result_path.write_text(
+            json.dumps(sandbox, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
         created_at = utc_now_iso()
         conn.execute(
             """
@@ -615,8 +631,21 @@ def _record_sandbox_evidence(paths: ProjectPaths, sandbox: dict[str, Any]) -> No
             },
         )
         conn.commit()
+    except Exception:
+        conn.rollback()
+        if final_dir is not None and final_dir.exists():
+            shutil.rmtree(final_dir, ignore_errors=True)
+        raise
     finally:
         conn.close()
+
+
+def _rebase_sandbox_paths(paths: ProjectPaths, sandbox: dict[str, Any], *, final_dir: Path) -> None:
+    for command in sandbox["commands"]:
+        for key in ("stdout_path", "stderr_path"):
+            if not command.get(key):
+                continue
+            command[key] = str((final_dir / Path(str(command[key])).name).relative_to(paths.root))
 
 
 def _sandbox_summary(sandbox: dict[str, Any]) -> str:

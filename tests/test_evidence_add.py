@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
 from pathlib import Path
+from threading import Barrier
 from typing import Any
 
 from pcl import evidence as evidence_module
 from pcl.cli import main
 from pcl.db import connect
 from pcl.evidence import ADHOC_ARTIFACT_TYPE, ADHOC_BUNDLE_TYPE, ADHOC_EVIDENCE_CONTRACT_VERSION
+from pcl.paths import ProjectPaths
 
 
 def _json_output(capsys) -> dict[str, Any]:
@@ -252,6 +255,43 @@ def test_evidence_add_copy_records_single_and_bundle_members(tmp_path: Path, cap
     assert (tmp_path / bundle["members"][0]["stored_path"]).read_text(encoding="utf-8") == "first output\n"
     assert (tmp_path / bundle["members"][1]["stored_path"]).read_text(encoding="utf-8") == "second output\n"
     assert _manifest(tmp_path, bundle["manifest_path"])["members"] == bundle["members"]
+
+
+def test_evidence_add_copy_serializes_concurrent_id_allocation(tmp_path: Path, capsys) -> None:
+    _init(tmp_path, capsys)
+    artifact = tmp_path / "race-artifact.txt"
+    artifact.write_text("parallel copy fixture\n", encoding="utf-8")
+    paths = ProjectPaths(root=tmp_path)
+    worker_count = 12
+    start = Barrier(worker_count)
+
+    def add_copied_evidence(index: int) -> dict[str, Any]:
+        start.wait()
+        return evidence_module.record_adhoc_evidence(
+            paths,
+            files=["race-artifact.txt"],
+            summary=f"parallel copy {index}",
+            copy_files=True,
+        )["evidence"]
+
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        evidence_records = list(executor.map(add_copied_evidence, range(worker_count)))
+
+    expected_ids = [f"E-{index:04d}" for index in range(1, worker_count + 1)]
+    assert sorted(record["id"] for record in evidence_records) == expected_ids
+    rows = _db_rows(tmp_path, "SELECT id, path FROM evidence ORDER BY id")
+    assert [row["id"] for row in rows] == expected_ids
+    assert [path.name for path in _adhoc_copy_dirs(tmp_path)] == [evidence_id.lower() for evidence_id in expected_ids]
+    assert list((tmp_path / ".project-loop" / "tmp").glob("e-*-adhoc-files-*")) == []
+
+    for record in evidence_records:
+        manifest = _manifest(tmp_path, record["manifest_path"])
+        member = manifest["members"][0]
+        assert member["storage_mode"] == "copied"
+        assert member["stored_path"] == f".project-loop/evidence/adhoc-files/{record['id'].lower()}/01-race-artifact.txt"
+        stored_path = tmp_path / member["stored_path"]
+        assert stored_path.read_text(encoding="utf-8") == "parallel copy fixture\n"
+        assert _sha256(stored_path) == member["sha256"]
 
 
 def test_evidence_add_copy_failure_leaves_zero_traces(

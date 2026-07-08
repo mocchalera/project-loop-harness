@@ -84,7 +84,18 @@ ContextReceiptEvidence
 | Verification | V | V-0001 |
 | Escalation | ESC | ESC-0001 |
 | Decision | DEC | DEC-0001 |
+| Code Index Run | CI | CI-0001 |
+| Verification Feedback | VF | VF-0001 |
 | Event | EV | EV-... |
+
+Prefixed IDs allocated through `next_prefixed_id` are serialized with a SQLite
+`BEGIN IMMEDIATE` transaction. The service layer starts the transaction before
+reading the current maximum ID, holds the write lock while inserting the row,
+then releases it on commit or rollback. Concurrent local `pcl` writers therefore
+wait and receive distinct human-readable IDs instead of racing on the same
+`<prefix>-NNNN` value. If SQLite cannot acquire the write lock within the local
+busy timeout, the command fails before allocating an ID; callers must not leave
+partial evidence artifacts or events for that failed attempt.
 
 ## Status design principles
 
