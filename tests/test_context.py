@@ -436,6 +436,110 @@ def test_context_pack_for_task_returns_task_handoff_with_dependencies(
     assert "| T-0004 | Dependent task | todo | 40 |" in markdown
 
 
+def test_context_pack_for_task_includes_linked_evidence_without_inlining_contents(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_task_context(tmp_path, capsys)
+    artifact = tmp_path / "intent-index.json"
+    artifact.write_text(
+        '{"claim":"DO_NOT_INLINE_MODEL_OUTPUT","source_ref":{"line_start":1}}\n',
+        encoding="utf-8",
+    )
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "intent-index.json",
+        "--summary",
+        "Model-derived intent index for target task",
+        "--command",
+        "external model indexing",
+        "--copy",
+        "--task",
+        "T-0002",
+        "--json",
+    ]) == 0
+    evidence = _json_output(capsys)["evidence"]
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0002",
+        "--json",
+    ]) == 0
+    pack = _json_output(capsys)["context_pack"]
+
+    assert "linked_evidence" in pack["included_sections"]
+    assert pack["source_paths"] == [
+        evidence["manifest_path"],
+        evidence["members"][0]["stored_path"],
+        "intent-index.json",
+    ]
+    assert pack["linked_evidence"] == [
+        {
+            "id": "E-0001",
+            "type": "adhoc_artifact",
+            "summary": "Model-derived intent index for target task",
+            "manifest_path": ".project-loop/evidence/adhoc/e-0001-adhoc-v0.json",
+            "member_paths": ["intent-index.json"],
+            "stored_paths": [".project-loop/evidence/adhoc-files/e-0001/01-intent-index.json"],
+            "created_at": evidence["created_at"],
+        }
+    ]
+    markdown = pack["markdown"]
+    assert "## Linked Evidence" in markdown
+    assert "claims, not verified facts" in markdown
+    assert "Model-derived intent index for target task" in markdown
+    assert ".project-loop/evidence/adhoc/e-0001-adhoc-v0.json" in markdown
+    assert ".project-loop/evidence/adhoc-files/e-0001/01-intent-index.json" in markdown
+    assert "DO_NOT_INLINE_MODEL_OUTPUT" not in markdown
+
+
+def test_context_pack_for_task_without_linked_evidence_unchanged_by_unlinked_evidence(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_task_context(tmp_path, capsys)
+
+    args = [
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0002",
+        "--json",
+    ]
+    assert main(args) == 0
+    before = _json_output(capsys)["context_pack"]
+    artifact = tmp_path / "unlinked-evidence.txt"
+    artifact.write_text("unlinked evidence content\n", encoding="utf-8")
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "unlinked-evidence.txt",
+        "--summary",
+        "Unlinked evidence",
+        "--json",
+    ]) == 0
+    _json_output(capsys)
+    assert main(args) == 0
+    after = _json_output(capsys)["context_pack"]
+
+    assert after == before
+
+
 def test_context_pack_for_task_without_goal_omits_goal_only_sections(
     tmp_path: Path,
     capsys,
@@ -829,6 +933,48 @@ def test_context_pack_for_task_tight_budget_omissions_match_markdown(
         assert _section_heading(section_id) in first["markdown"]
     for section_id in first["omitted_sections"]:
         assert _section_heading(section_id) not in first["markdown"]
+
+
+def test_context_pack_for_task_tight_budget_prioritizes_linked_evidence(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_task_context(tmp_path, capsys)
+    artifact = tmp_path / "linked-report.txt"
+    artifact.write_text("linked report details that must not be inlined\n", encoding="utf-8")
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "linked-report.txt",
+        "--summary",
+        "Linked task evidence with enough metadata to exercise budget selection",
+        "--task",
+        "T-0002",
+        "--json",
+    ]) == 0
+    _json_output(capsys)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0002",
+        "--max-tokens",
+        "733",
+        "--json",
+    ]) == 0
+    selected_pack = _json_output(capsys)["context_pack"]
+    assert "target_task" in selected_pack["included_sections"]
+    assert "linked_evidence" in selected_pack["included_sections"]
+    assert "dependencies" in selected_pack["omitted_sections"]
+    assert "## Linked Evidence" in selected_pack["markdown"]
+    assert "## Dependencies" not in selected_pack["markdown"]
+    assert selected_pack["estimated_token_count"] <= selected_pack["budget"]["max_tokens"]
 
 
 def test_context_pack_for_task_markdown_is_deterministic(
@@ -1597,6 +1743,7 @@ def _section_heading(section_id: str) -> str:
         "recent_events": "## Recent Events",
         "agent_prompt": "## Agent Prompt",
         "target_task": "## Target Task",
+        "linked_evidence": "## Linked Evidence",
         "dependencies": "## Dependencies",
         "dependents": "## Dependents",
         "related_feature": "## Related Feature",

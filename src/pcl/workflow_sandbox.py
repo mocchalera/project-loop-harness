@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import shlex
 import subprocess
@@ -526,6 +527,7 @@ def _execute_command(
         completed = subprocess.run(
             argv,
             cwd=paths.root,
+            env=_subprocess_env(),
             capture_output=True,
             check=False,
             shell=False,
@@ -558,6 +560,22 @@ def _execution_argv(paths: ProjectPaths, command: dict[str, Any]) -> list[str]:
     if command["kind"] == "pcl":
         return [sys.executable, "-m", "pcl", "--root", str(paths.root), *argv[1:]]
     return argv
+
+
+def _subprocess_env() -> dict[str, str]:
+    env = os.environ.copy()
+    current_src = str(Path(__file__).resolve().parents[1])
+    entries: list[str] = []
+    for raw_entry in env.get("PYTHONPATH", "").split(os.pathsep):
+        if not raw_entry:
+            continue
+        entry_path = Path(raw_entry)
+        if not entry_path.is_absolute():
+            entry_path = (Path.cwd() / entry_path).resolve()
+        entries.append(str(entry_path))
+    entries = [entry for entry in entries if entry != current_src]
+    env["PYTHONPATH"] = os.pathsep.join([current_src, *entries])
+    return env
 
 
 def _decode_timeout_output(value: str | bytes | None) -> str:

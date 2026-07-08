@@ -24,7 +24,11 @@ from .paths import ProjectPaths
 from .renderer import render_dashboard
 from .timeutil import utc_now_iso
 from .validators import validate_project
-from .workflow_sandbox import execute_planned_sandbox_command, plan_workflow_template_sandbox
+from .workflow_sandbox import (
+    _subprocess_env,
+    execute_planned_sandbox_command,
+    plan_workflow_template_sandbox,
+)
 from .workflow_verifier import verify_workflow_template
 from .workflows import WorkflowTemplate, load_workflow_template, read_job, run_workflow
 
@@ -266,6 +270,7 @@ def _execute_agent_step(
         completed = subprocess.run(
             argv,
             cwd=paths.root,
+            env=_subprocess_env(),
             capture_output=True,
             check=False,
             shell=False,

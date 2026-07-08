@@ -4,7 +4,7 @@
 
 The database is created and upgraded through ordered SQL migrations in
 `src/pcl/db/migrations/`. `src/pcl/db/schema.sql` is the base v1 schema, while
-new installs currently apply migrations through schema version 5.
+new installs currently apply migrations through schema version 6.
 
 Core tables:
 
@@ -50,7 +50,8 @@ Task
   ├─ Goal?
   ├─ Feature?
   ├─ Defect?
-  └─ Task dependencies
+  ├─ Task dependencies
+  └─ Linked Evidence?
 
 Defect
   ├─ TestCase?
@@ -202,6 +203,12 @@ Member files are not copied and their contents are never embedded in the
 manifest. The optional `--command` value is the caller's claim about how the
 artifact was produced. PLH stores it verbatim on the evidence row; it does not
 run the command or verify that the command produced the files.
+
+Schema version 6 adds `evidence.linked_task_id`, a nullable reference to
+`tasks.id`. `pcl evidence add --task T-XXXX` sets that column only when the
+task already exists. Unknown or invalid task ids are rejected before manifest
+creation, file copies, evidence rows, or events. Unlinked adhoc evidence keeps
+the same row shape as before except for the nullable column.
 
 `pcl evidence add --copy` is opt-in local durability. After path-scope and
 sensitive-filename guards pass, PLH copies each member to

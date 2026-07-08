@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from json import JSONDecodeError
+from pathlib import Path
 from typing import Any
 
 from .code_context.summary import (
@@ -116,6 +117,7 @@ TASK_SECTION_PRIORITY_PROFILES = {
         CODE_CONTEXT_SAFETY_SECTION_ID: 10000,
         CODE_CONTEXT_DETAIL_SECTION_ID: 825,
         CODE_CONTEXT_VERIFICATION_SECTION_ID: 775,
+        "linked_evidence": 830,
     }
 }
 
@@ -325,6 +327,7 @@ def pack_context_for_task(
         feature = _feature_for_task(conn, task)
         defect = _defect_for_task(conn, task)
         siblings = _sibling_tasks(conn, task) if task.get("related_goal_id") else []
+        linked_evidence = _linked_task_evidence(paths, conn, task_id)
         event_entities = [("task", task_id)]
         if task.get("related_goal_id"):
             event_entities.append(("goal", str(task["related_goal_id"])))
@@ -338,6 +341,7 @@ def pack_context_for_task(
         feature=feature,
         defect=defect,
         siblings=siblings,
+        linked_evidence=linked_evidence,
         events=events,
         code_context=code_context,
     )
@@ -350,6 +354,7 @@ def pack_context_for_task(
     estimated_token_count = estimate_token_count(markdown)
 
     source_paths = []
+    source_paths.extend(_linked_task_evidence_source_paths(linked_evidence))
     if code_context:
         receipt_path = _code_context_receipt_path(code_context)
         if receipt_path:
@@ -382,6 +387,8 @@ def pack_context_for_task(
         "source_paths": source_paths,
         "markdown": markdown,
     }
+    if linked_evidence:
+        pack["linked_evidence"] = linked_evidence
     if code_context:
         pack["code_context"] = code_context
     if include_code_context:
@@ -501,6 +508,7 @@ def _build_task_sections(
     feature: dict[str, Any] | None,
     defect: dict[str, Any] | None,
     siblings: list[dict[str, Any]],
+    linked_evidence: list[dict[str, Any]],
     events: list[dict[str, Any]],
     code_context: dict[str, Any] | None,
 ) -> list[tuple[str, str]]:
@@ -548,6 +556,30 @@ def _build_task_sections(
             + "````markdown\n"
             + str(task.get("description") or "").rstrip()
             + "\n````",
+        ),
+        *(
+            [
+                (
+                    "linked_evidence",
+                    "## Linked Evidence\n\n"
+                    + "Linked evidence summaries and commands are caller claims, not verified facts. "
+                    + "For model-derived artifacts, follow member paths back to source evidence before acting.\n\n"
+                    + _table(
+                        linked_evidence,
+                        [
+                            "id",
+                            "type",
+                            "summary",
+                            "manifest_path",
+                            "member_paths",
+                            "stored_paths",
+                            "created_at",
+                        ],
+                    ),
+                )
+            ]
+            if linked_evidence
+            else []
         ),
         (
             "dependencies",
@@ -1130,6 +1162,87 @@ def _sibling_tasks(conn, task: dict[str, Any]) -> list[dict[str, Any]]:
         """,
         (str(task["related_goal_id"]), str(task["id"])),
     )
+
+
+def _linked_task_evidence(paths: ProjectPaths, conn, task_id: str) -> list[dict[str, Any]]:
+    if not _table_has_column(conn, "evidence", "linked_task_id"):
+        return []
+    rows = _rows(
+        conn,
+        """
+        SELECT id, type, path, command, summary, created_at
+        FROM evidence
+        WHERE linked_task_id = ?
+        ORDER BY created_at, id
+        """,
+        (task_id,),
+    )
+    evidence: list[dict[str, Any]] = []
+    for row in rows:
+        manifest_path = str(row.get("path") or "")
+        members = _adhoc_manifest_members(paths, manifest_path)
+        member_paths = [str(member.get("path") or "") for member in members if member.get("path")]
+        stored_paths = [
+            str(member.get("stored_path") or "")
+            for member in members
+            if member.get("stored_path")
+        ]
+        evidence.append(
+            {
+                "id": row.get("id"),
+                "type": row.get("type"),
+                "summary": row.get("summary"),
+                "manifest_path": manifest_path,
+                "member_paths": member_paths,
+                "stored_paths": stored_paths,
+                "created_at": row.get("created_at"),
+            }
+        )
+    return evidence
+
+
+def _table_has_column(conn, table_name: str, column_name: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return any(str(row["name"]) == column_name for row in rows)
+
+
+def _adhoc_manifest_members(paths: ProjectPaths, manifest_path: str) -> list[dict[str, Any]]:
+    absolute_path = _local_path(paths, manifest_path)
+    if absolute_path is None or not absolute_path.is_file():
+        return []
+    try:
+        payload = json.loads(absolute_path.read_text(encoding="utf-8"))
+    except (OSError, JSONDecodeError):
+        return []
+    members = payload.get("members") if isinstance(payload, dict) else None
+    if not isinstance(members, list):
+        return []
+    return [member for member in members if isinstance(member, dict)]
+
+
+def _linked_task_evidence_source_paths(evidence: list[dict[str, Any]]) -> list[str]:
+    paths: list[str] = []
+    seen: set[str] = set()
+    for item in evidence:
+        for value in [
+            item.get("manifest_path"),
+            *(item.get("stored_paths") or []),
+            *(item.get("member_paths") or []),
+        ]:
+            path = str(value or "")
+            if path and path not in seen:
+                paths.append(path)
+                seen.add(path)
+    return paths
+
+
+def _local_path(paths: ProjectPaths, path_value: str) -> Path | None:
+    if "://" in path_value or path_value.startswith("inline:"):
+        return None
+    path = Path(path_value)
+    if not path.is_absolute():
+        path = paths.root / path
+    return path
 
 
 def _task_dependencies_for_table(task: dict[str, Any]) -> list[dict[str, Any]]:

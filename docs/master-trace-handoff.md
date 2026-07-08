@@ -97,7 +97,12 @@ python -m pcl render --json
 
 ## Known Hole
 
-Task context packs do not include unrelated adhoc evidence today. They render
+M1 landed after this M0 run: new adhoc evidence can now be linked directly to a
+task with `python -m pcl evidence add --task T-XXXX`, and task context packs
+render a linked-evidence section with manifest/member paths only.
+
+M0's known hole was that task context packs did not include unrelated adhoc
+evidence. They render
 task fields, dependencies, linked goal/feature/defect context, sibling tasks,
 recent events, and optional code context. They do not discover copied adhoc
 evidence by task, because `pcl evidence add` has no `--task`, `--goal`, or
@@ -115,6 +120,10 @@ That hole was reproduced during this dogfood slice:
 The M0 workaround is explicit: put the evidence IDs and durable copied paths in
 the task description. That is intentionally plain and reviewable, but it is
 manual and easy to omit.
+
+For new M1+ dogfood runs, prefer `pcl evidence add --task T-XXXX --copy` over
+manual task-description references. Keep manual refs only when working with
+older M0 evidence that was recorded before task linking existed.
 
 ## Intent Index Rules
 
@@ -148,18 +157,13 @@ become the source of truth.
 
 ## Next Decision
 
-If M0 confirms that task-description evidence refs are too awkward, consider
-cutting the next implementation task for generic evidence-to-task linking:
+M1 implemented the generic evidence-to-task link that M0 proposed:
 
 ```text
 python -m pcl evidence add --task T-XXXX
 ```
 
-The additive context-pack behavior would be a linked adhoc evidence section
-for task packs, listing each linked evidence ID, summary, manifest path, member
-path, and `stored_path` when copied. It should not inline transcript or index
-contents by default, and it should stay within the existing
-`context-pack/v1` contract.
-
-Do not cut that task from this runbook alone. M1 remains a master/operator
-decision after reviewing the M0 friction.
+The next decision is whether retroactive linking is worth a separate
+`pcl evidence link` command. Do not add it from this runbook alone; use the M1
+flow for new evidence and only cut retroactive linking if older M0 evidence
+becomes painful in repeated dogfood runs.
