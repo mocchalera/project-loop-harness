@@ -99,5 +99,17 @@ Give these tasks to coding agents in this order:
 95. `agent-tasks/0095-supporting-evidence-health.md` (v0.2.3, evidence health axis in verification stats)
 96. `agent-tasks/0096-evidence-add-path-guards.md` (v0.2.3, after 0095 — path scope + sensitive-shaped guard)
 97. `agent-tasks/0097-evidence-durability-design.md` (v0.2.3, design doc only, orchestrator-authored)
+98. `agent-tasks/0098-field-feedback-next-weight-and-run-report-scope.md` (v0.2.3, field feedback)
+99. `agent-tasks/0099-evidence-copy-mode.md` (v0.2.3, `evidence add --copy` durability)
+100. `agent-tasks/0100-evidence-task-linking.md` (v0.2.3, `evidence add --task` + linked evidence in context pack)
+101. `agent-tasks/0101-evidence-id-allocation-race.md` (v0.2.3, concurrent prefixed ID allocation fix)
+102. `agent-tasks/0102-source-drift-health-warning.md` (v0.2.4 Trust Patch, review P1-1)
+103. `agent-tasks/0103-security-policy-v02x.md` (v0.2.4 Trust Patch, review P1-2)
+104. `agent-tasks/0104-python-ci-matrix.md` (v0.2.4 Trust Patch, review P2-1)
+105. `agent-tasks/0105-evidence-copy-observability.md` (v0.2.4 Trust Patch, review P2-2, after 0102)
+106. `agent-tasks/0106-release-checklist.md` (v0.2.4 Trust Patch, orchestrator-authored, docs/release-checklist.md)
+107. `agent-tasks/0107-agent-tasks-backlog-index.md` (v0.2.4 Trust Patch, orchestrator-authored, agent-tasks/README.md)
+
+Roadmap through v0.5.0: see `docs/growth-plan-v0.2.4-v0.5.md` (approved 2026-07-08).
 
 Do not start with MCP. Do not start with a hosted UI. The CLI/runtime must become reliable first.

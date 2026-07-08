@@ -1,0 +1,197 @@
+# Project Loop Harness 成長計画 v0.2.4 → v0.5.0
+
+**作成日:** 2026-07-08
+**作成者:** Fable 5（orchestrator）
+**入力:** docs/project-loop-harness-v0.2.3-third-party-review.md（第三者レビュー提言書）+ 実コード検証 + ax1-moc1 実使用フィードバック + 引き継ぎ履歴
+**ステータス:** DRAFT — 坂本承認待ち
+
+---
+
+## 0. 第三者レビューの精査結果
+
+レビューは「ローカル clone・テスト実行なし」と明記しているため、事実主張を実コード（v0.2.3 = main HEAD 0a6c1c2）で検証した。
+
+| レビュー主張 | 検証結果 |
+|---|---|
+| P1-1: `source_drifted` が warning codes に含まれず health が `ok` のまま | **事実**。`src/pcl/evidence.py:36` の `ADHOC_WARNING_FINDING_CODES` に `source_drifted` がない。findings は生成される（evidence.py:577-597）が `_adhoc_assessment` は ok を返す |
+| P1-2: SECURITY.md が `0.1.x` のまま | **事実**。SECURITY.md:8 |
+| P2-1: CI が Python 3.11 単独 vs classifiers 3.10–3.13 | **事実**。ci.yml:14 vs pyproject.toml:22-25 |
+| P2-3: code context receipt が target-bound でない | **事実**（0078 実装は latest receipt 解決。binding metadata なし） |
+| 提案タスク採番 PLH-0101〜0110 | **衝突**。agent-tasks/0100・0101 は既に使用済み → 本計画では 0102〜 に再採番 |
+
+レビューの方向性判断（local control plane 特化、hosted/telemetry/LLM-in-core の回避、Trust Patch 最優先）は、既存の承認済み方針（2026-07-04 方向性決定、0097 設計、epistemic 語彙規律）と整合しており採用する。
+
+**採用しない/修正する点:**
+
+1. **ユーザー満足度の軸が弱い。** レビューは trust / context binding に集中しており、実ユーザー（ax1-moc1）から出た摩擦 F4/F5/F7、坂本の「人間判断の日本語化・わかりやすい escalation」要望（Milestone 13）に触れていない。本計画では Operator Experience リリースを Master Trace 形式化より前に挿入する。
+2. **Master Trace は「新規構想」ではない。** docs/master-trace-handoff.md（M0）が既に存在し、既存コマンドだけで動く。v0.3.x での作業は発明ではなく契約の形式化 + context pack への optional section 追加に縮小できる。
+3. **コスト計測の解像度。** レビューの成功指標（§13）にコスト軸を追加する（後述 §5）。charclass/v1 token 推定器・0090 の token_cost_estimate という既存資産を handoff 経済の計測に転用する。
+
+---
+
+## 1. 戦略テーゼ — なぜこの製品が「これからの世界」で効くか
+
+前提とする世界観: **モデル性能は上がり続け、コスト管理は厳しくなり続ける。**
+
+### テーゼ1: 生成はコモディティ化し、信頼が希少資源になる
+
+モデルが賢くなるほど、agent が生み出す「主張」の量は増える。ボトルネックは生成ではなく **検証・監査・引き継ぎの信頼** に移る。PLH は生成の側に立たず（core は LLM を呼ばない）、claims-not-facts・evidence・receipt という検証の側に立つ。この設計はモデル進化に対して中立であり、worker が賢くなるほど pull-context 方式の効率が上がる — つまり **モデル性能向上がそのまま PLH の価値を増幅する**。
+
+### テーゼ2: output token が最も高価な世界では、push 型長文指示書が最大の浪費
+
+高性能 master agent に長文指示書を書かせるのは、最も高価な token（高性能モデルの output）の最も低付加価値な使い方である。PLH の pull 型 handoff（master transcript → evidence → intent-index → context pack → worker が pull）は、この支出を構造的に消す。さらに PLH 自体の限界トークンコストはゼロ（local / deterministic / dependency-light）。**コスト厳格化が進むほど、この差別化は強くなる。**
+
+### テーゼ3: 検証支出にも予算規律が要る
+
+「全部を毎回検証する」は賢いモデルの世界でもコスト的に成立しない。migration 005 の verification feedback loop（execution_rate / executed_pass_rate）は「どの検証提案が実行され、何が通ったか」を計測する基盤であり、検証支出の配分最適化に直結する。dogfood でこの数値を貯めることが v0.4 の本丸。
+
+### テーゼ4: ユーザー満足度は「境界の賢さ」と「摩擦の少なさ」で決まる
+
+実ユーザーの声が既にある: human gate（requires_human）は称賛され、epistemic 境界を弱める要望はゼロだった。一方で摩擦は「終端処理の認知負荷が実装より重い」（F7）、human-gate handoff 文面（F5）、オール英語表記。**満足度の最短経路は境界を緩めることではなく、境界の手前と後ろの体験を磨くこと**である。
+
+### ターゲットペインの再確認
+
+理想ユーザー = 複数 AI エージェントを指揮する AI 開発パワーユーザー / AI プロダクトオーナー（坂本さん自身）。ペインは:
+
+```text
+忘却     — agent が文脈・決定・却下案を忘れる / 拾い間違える
+暴走     — 承認なき破壊的操作、スコープ逸脱
+証拠不足 — 「done」の根拠が辿れない、レビュー不能
+高コスト — master の長文指示書、無駄な再検証、handoff やり直し
+終端負荷 — 完了処理・引き継ぎ処理の認知コストが人間に残る
+```
+
+PLH の一文: **AI coding agent に、忘れず・暴走せず・証拠を残して・次にやることを判断させるための local control plane。** — この定義（レビュー §4.1）を README / PyPI / 冒頭ピッチの正とする。
+
+---
+
+## 2. 品質 × コスト × 満足度のマッピング
+
+| リリース | 品質 | コスト | 満足度 |
+|---|---|---|---|
+| v0.2.4 Trust Patch | evidence 意味論の正しさ、CI 実証範囲 | copy lock 観測（並列 agent の待ち時間削減の前提データ） | 「表示が嘘をつかない」信頼 |
+| v0.3.0 Target-Bound Context | 誤 receipt による誤修正の防止 | handoff やり直しの削減 | worker への引き継ぎ不安の解消 |
+| v0.3.1 Operator Experience | human gate 判断品質（why_blocked の ja 化） | 終端処理の master token 削減（F7） | **本丸**: F5/F7/ja、坂本の願いに直結 |
+| v0.3.2 Master Trace 形式化 | intent-index の claims-not-facts 契約 | **本丸**: master output token の構造的削減 | 長文指示書からの解放 |
+| v0.4.0 Dogfood Operations | 実測に基づく信頼性実証 | コスト KPI の実測値（テーゼの証明） | 実運用 runbook |
+| v0.5.0 Adoption | 契約安定性ポリシー | — | 初見 3 分で価値理解 |
+
+---
+
+## 3. ロードマップ
+
+レビュー §8 を土台に、順序を 1 箇所変更（Operator Experience を Master Trace 形式化より前に挿入）し、実リポジトリの採番・既存資産に合わせて調整した。
+
+### v0.2.4 Trust Patch（最優先・小粒）
+
+目的: v0.2.3 の evidence durability を「表示が嘘をつかない」状態に固める。
+
+| タスク | 内容 | 由来 | サイズ |
+|---|---|---|---|
+| 0102 | `source_drifted` health 修正 — 短期は `ADHOC_WARNING_FINDING_CODES` への追加 + missing / size_mismatch テスト固定。artifact_health / source_health 分離は論点として温存（§6 論点2） | レビュー P1-1（検証済み事実） | S |
+| 0103 | SECURITY.md v0.2.x 更新 + copied evidence 機密リスク・commit policy・MCP exposure 明記 + release checklist に version check 追加 | レビュー P1-2（検証済み事実） | S |
+| 0104 | Python 3.10–3.13 CI matrix（pytest + smoke: `pcl --version` / `init` / `validate --strict --json` / `render --json`。build/twine は 3.12 単独） | レビュー P2-1（検証済み事実） | S |
+| 0105 | evidence copy observability — copy duration / copied bytes / member count を event metadata に、concurrent copy stress test。reserved-row / counter 方式への変更はしない（観測が先） | レビュー P2-2 | S-M |
+| 0106 | `docs/release-checklist.md` — 既存リリース手順（trusted publishing / fresh venv smoke / sdist contract / editable 指し先確認の罠を含む）を契約化 | レビュー PLH-0108 | S |
+| 0107 | `agent-tasks/README.md` — ID / status / milestone / priority の backlog index（orchestrator 執筆で可） | レビュー PLH-0109 | S |
+
+成功条件: source drift が warning 表示 / SECURITY.md 整合 / 3.10–3.13 matrix green / checklist に沿って v0.2.4 をリリース。
+
+### v0.3.0 Target-Bound Context
+
+目的: context pack を agent handoff の信頼できる契約に進化させる。「便利な CLI」から「handoff の制御層」への転換点。
+
+| タスク | 内容 | サイズ |
+|---|---|---|
+| 0108 | target-bound code context receipts — `pcl impact --diff --for-task T-XXXX / --for-job J-XXXX`、receipt に binding metadata（target_type / target_id / binding_strength）、`context pack --require-bound-receipt`、unbound latest fallback は warning | M-L |
+
+設計上の注意: receipt 契約は `code-context-summary/v0` 絶縁層（0078 承認済み設計）を崩さず additive に拡張する。staleness（working_tree_changed_since_receipt / receipt_age_seconds）は 0082 の relevance / receipt_age 資産を再利用。
+
+### v0.3.1 Operator Experience（レビューにない追加リリース）
+
+目的: 実ユーザーが表明した摩擦と坂本の願い（人間に判りやすい escalation）を潰す。満足度の本丸であり、F7 は master token 削減というコスト施策でもある。
+
+| タスク | 内容 | 由来 | サイズ |
+|---|---|---|---|
+| 0109 | `pcl finish` 集約コマンド — 終端処理（test pass --evidence → task 遷移 → jobs complete → report）の一括化。冪等（0092 資産）前提 | ax1-moc1 F7（最重要摩擦） | M-L |
+| 0110 | human-gate handoff 文面改善 + ja ローカライズ拡張 — `pcl next` の requires_human 出力に why_blocked / options / risk_if_run（0070 資産）を ja で | ax1-moc1 F5 + Milestone 13 + 坂本要望 | M |
+| 0111 | feature_coverage 既存カバレッジ検出で no-op | ax1-moc1 F4 | M |
+
+### v0.3.2 Master Trace / Intent Index v0 形式化
+
+目的: 既存の M0 dogfood ワークフロー（docs/master-trace-handoff.md）を契約に昇格し、pull 型 handoff のコスト優位を製品機能にする。
+
+| タスク | 内容 | サイズ |
+|---|---|---|
+| 0112 | `master-trace/v0` + `intent-index/v0` 契約 docs + context pack への optional `master_trace_context` section（trace_evidence_id / intent_index_evidence_id / trust_model: claims-not-facts / raw_transcript_inlined: false / source_paths）。LLM 呼び出しは core に入れない。raw transcript の inline 禁止 | M |
+
+first-class trace entity 化は v0.4 dogfood の結果を見てから判断（レビュー論点4 と同意見 — 早すぎる抽象化を避ける）。
+
+### v0.4.0 Dogfood Operations
+
+目的: テーゼ 2・3 を実測で証明する。機能追加より計測を優先。
+
+- PLH 自身 + 外部 repo（ax1-moc1 継続 or 新規）の 2 repo dogfood report（`docs/dogfood-report-v0.4.md`）
+- **コスト KPI の実測**: master_brief_tokens_saved（pull 型 vs push 型の比較実測）、average_context_pack_tokens、finish による終端 round-trip 削減数
+- verification feedback の実データ: execution_rate / executed_pass_rate / feedback_coverage_rate
+- handoff KPI: worker_handoff_success_rate / handoff_confusion_count / bound_receipt_coverage
+- Codex / Claude Code handoff runbook
+
+### v0.5.0 Adoption / Distribution
+
+- 0113: README split（レビュー PLH-0107 準拠: 30 秒ピッチ + 3 分 quickstart + docs/operator-manual.md / contracts.md / agent-handoff.md / internals.md へ分離）
+- JSON contract stability policy（論点3 の決定を文書化）
+- examples/ + Codex / Claude Code quickstart + `.project-loop` commit policy
+- **v0.4 の実測数値を README の訴求に使う**（「master の指示書 token を X% 削減」— 実測が最強のマーケティング）
+
+---
+
+## 4. やらないこと（レビュー §3.4 を承認済み方針として再確認）
+
+hosted backend / cloud sync / marketplace / telemetry / multi-user collaboration / 複雑な自動 scheduler / dashboard の過剰リッチ化 / core からの LLM API 呼び出し。
+
+追加: semantic search / embeddings の昇格は既存ゲート（eval fixture で lexical チューニング後も missing-critical-context が改善しない場合のみ）を維持。
+
+---
+
+## 5. 成功指標
+
+レビュー §13 の 4 分類（handoff / evidence 信頼性 / context pack 品質 / release 品質）を採用し、コスト軸を追加する。
+
+| コスト指標 | 意味 | 計測手段 |
+|---|---|---|
+| master_brief_tokens_saved | pull 型 handoff で master が書かずに済んだ output token | charclass/v1 推定器で transcript vs 従来指示書を比較 |
+| average_context_pack_tokens | handoff 1 回あたりの入力コスト | pack の token 推定（既存） |
+| finish_roundtrips_saved | `pcl finish` による終端コマンド往復削減数 | dogfood 実測 |
+| verification_spend_efficiency | executed_pass_rate × execution_rate（実行された検証が意味を持った割合） | migration 005 stats |
+| bound_receipt_coverage | 誤 context による手戻り（最も高価な失敗）の予防率 | v0.3.0 以降の pack 統計 |
+
+---
+
+## 6. 坂本の決定が必要な論点
+
+1. **ロードマップ順序**: Operator Experience（v0.3.1）を Master Trace 形式化（v0.3.2）より前に挿入する変更を承認するか。（推奨: 承認。F7 は実ユーザー最重要摩擦かつ M0 ワークフローは形式化前でも dogfood 可能）
+2. **evidence health の形**: 短期は `source_drifted` を warning codes に追加（0102）。中期の artifact_health / source_health 分離は additive contract 変更として v0.3.x で再検討。（推奨: 短期案のみ先行、分離は dogfood の source_drift_rate 実測後）
+3. **ID gap 許容**（レビュー論点2）: 現状維持し、0105 の観測データで判断。（推奨: 現状維持）
+4. **`.project-loop` commit policy**（レビュー論点5）: evidence/adhoc-files は commit しない現状を SECURITY.md（0103）に明文化。project.db / events.jsonl の扱いは v0.5.0 までに決定。
+5. **v0.2.4 リリース範囲**: 0102–0107 の 6 本で切るか。
+
+---
+
+## 7. 実行計画（Cockpit 委譲）
+
+実装は従来どおり codex worker（cockpit task、worktree 分離）へ委譲し、Fable が spec 起票と独立検収を行う。
+
+```text
+順序:
+  0103 + 0104 + 0107   並行可（互いに独立、S サイズ）
+  0102 → 0105          evidence.py を触るため直列
+  0106                 リリース直前に Fable 執筆でも可
+検収規律（確立済み）:
+  - spec は worker 着手前に main へコミット（0078 の教訓）
+  - 不変条件は「何を守るか」を正規経路・対象スコープ付きで書く（0087/0089/0090 の教訓）
+  - 検収は PYTHONPATH=worktree/src、終了後 canonical repo で pip install -e '.[dev]' 復元
+  - worker task complete 前に editable の指し先確認（v0.2.1 の罠）
+```
+
+v0.2.4 は全タスク S〜S-M のため、承認後 1〜2 セッションでリリース可能な見込み。
