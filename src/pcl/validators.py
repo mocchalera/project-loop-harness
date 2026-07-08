@@ -975,7 +975,8 @@ def _add_adhoc_assessment_findings(
         elif code == "member_outside_project_root":
             result.add_warning(f"Adhoc evidence {evidence_id} member {path} is outside the project root.")
         elif code == "source_drifted":
-            continue
+            rendered_detail = "size mismatch" if detail == "size_mismatch" else detail
+            result.add_warning(f"Adhoc evidence {evidence_id} source member {path} drifted: {rendered_detail}.")
         else:
             result.add_error(f"Adhoc evidence {evidence_id} has unsupported health finding: {code}.")
 
