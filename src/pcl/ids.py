@@ -5,6 +5,8 @@ import sqlite3
 
 
 def next_prefixed_id(conn: sqlite3.Connection, table: str, prefix: str) -> str:
+    if not conn.in_transaction:
+        conn.execute("BEGIN IMMEDIATE")
     rows = conn.execute(f"SELECT id FROM {table} WHERE id LIKE ?", (f"{prefix}-%",)).fetchall()
     max_n = 0
     pattern = re.compile(rf"^{re.escape(prefix)}-(\d+)$")
