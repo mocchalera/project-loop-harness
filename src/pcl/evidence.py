@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import sqlite3
 import tempfile
+import time
 from typing import Any
 
 from .db import connect
@@ -112,11 +113,13 @@ def record_adhoc_evidence(
     manifest_path: Path | None = None
     tmp_path: Path | None = None
     final_copy_dir: Path | None = None
+    copy_metrics: dict[str, int] = {}
     try:
+        transaction_started_at = time.perf_counter()
         evidence_id = next_prefixed_id(conn, "evidence", "E")
         now = utc_now_iso()
         if copy_files:
-            final_copy_dir = _copy_adhoc_members(
+            final_copy_dir, copy_metrics = _copy_adhoc_members(
                 paths,
                 evidence_id=evidence_id,
                 members=members,
@@ -177,6 +180,9 @@ def record_adhoc_evidence(
             event_payload["linked_task_id"] = linked_task_id
         if include_sensitive_count:
             event_payload["sensitive_path_warning_count"] = sensitive_path_warning_count
+        if copy_files:
+            event_payload.update(copy_metrics)
+            event_payload["write_transaction_pre_event_duration_ms"] = _duration_ms(transaction_started_at)
         append_event(
             conn=conn,
             events_path=paths.events_path,
@@ -750,7 +756,8 @@ def _copy_adhoc_members(
     evidence_id: str,
     members: list[dict[str, Any]],
     source_paths: list[Path],
-) -> Path:
+) -> tuple[Path, dict[str, int]]:
+    started_at = time.perf_counter()
     final_dir = paths.evidence_dir / "adhoc-files" / evidence_id.lower()
     tmp_parent = paths.loop_dir / "tmp"
     try:
@@ -795,7 +802,14 @@ def _copy_adhoc_members(
     for member, stored_path in zip(members, stored_paths, strict=True):
         member["storage_mode"] = ADHOC_COPY_STORAGE_MODE
         member["stored_path"] = stored_path
-    return final_dir
+    return final_dir, {
+        "copy_duration_ms": _duration_ms(started_at),
+        "copied_total_bytes": sum(int(member["size_bytes"]) for member in members),
+    }
+
+
+def _duration_ms(started_at: float) -> int:
+    return max(0, int(round((time.perf_counter() - started_at) * 1000)))
 
 
 def _sensitive_path_matches(root: Path, members: list[dict[str, Any]]) -> list[dict[str, str]]:

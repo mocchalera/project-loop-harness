@@ -3,7 +3,10 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 from threading import Barrier
 from typing import Any
 
@@ -13,6 +16,9 @@ from pcl.cli import main
 from pcl.db import connect
 from pcl.evidence import ADHOC_ARTIFACT_TYPE, ADHOC_BUNDLE_TYPE, ADHOC_EVIDENCE_CONTRACT_VERSION
 from pcl.paths import ProjectPaths
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _json_output(capsys) -> dict[str, Any]:
@@ -79,6 +85,25 @@ def _db_rows(root: Path, sql: str, params: tuple[Any, ...] = ()) -> list[dict[st
 
 def _event_count(root: Path) -> int:
     return len((root / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines())
+
+
+def _adhoc_event_payload(root: Path, evidence_id: str) -> dict[str, Any]:
+    [row] = _db_rows(
+        root,
+        """
+        SELECT id, payload_json FROM events
+        WHERE event_type = 'adhoc_evidence_recorded' AND entity_id = ?
+        """,
+        (evidence_id,),
+    )
+    db_payload = json.loads(row["payload_json"])
+    jsonl_payloads = [
+        json.loads(line)["payload"]
+        for line in (root / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        if json.loads(line)["id"] == row["id"]
+    ]
+    assert jsonl_payloads == [db_payload]
+    return db_payload
 
 
 def _manifest(root: Path, relative_path: str) -> dict[str, Any]:
@@ -237,6 +262,10 @@ def test_evidence_add_selects_artifact_and_bundle_types(tmp_path: Path, capsys) 
             "summary": "visual QA bundle",
         },
     ]
+    event_payload = _adhoc_event_payload(tmp_path, "E-0001")
+    assert "copy_duration_ms" not in event_payload
+    assert "copied_total_bytes" not in event_payload
+    assert "write_transaction_pre_event_duration_ms" not in event_payload
 
 
 def test_evidence_add_copy_records_single_and_bundle_members(tmp_path: Path, capsys) -> None:
@@ -273,6 +302,13 @@ def test_evidence_add_copy_records_single_and_bundle_members(tmp_path: Path, cap
     assert _sha256(stored_single) == single_member["sha256"]
     manifest = _manifest(tmp_path, single_evidence["manifest_path"])
     assert manifest["members"] == [single_member]
+    event_payload = _adhoc_event_payload(tmp_path, "E-0001")
+    assert event_payload["member_count"] == 1
+    assert event_payload["copied_total_bytes"] == single.stat().st_size
+    assert isinstance(event_payload["copy_duration_ms"], int)
+    assert event_payload["copy_duration_ms"] >= 0
+    assert isinstance(event_payload["write_transaction_pre_event_duration_ms"], int)
+    assert event_payload["write_transaction_pre_event_duration_ms"] >= 0
 
     first_dir = tmp_path / "a"
     second_dir = tmp_path / "b"
@@ -505,6 +541,78 @@ def test_evidence_add_copy_serializes_concurrent_id_allocation(tmp_path: Path, c
         stored_path = tmp_path / member["stored_path"]
         assert stored_path.read_text(encoding="utf-8") == "parallel copy fixture\n"
         assert _sha256(stored_path) == member["sha256"]
+
+
+def test_evidence_add_copy_process_stress_records_unique_ids_and_metrics(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    for run_index in range(2):
+        root = tmp_path / f"run-{run_index}"
+        root.mkdir()
+        _init(root, capsys)
+        artifact = root / "race-artifact.txt"
+        artifact.write_text("parallel process copy fixture\n", encoding="utf-8")
+        worker_count = 8
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(REPO_ROOT / "src") + (
+            os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else ""
+        )
+        processes = [
+            subprocess.Popen(
+                [
+                    sys.executable,
+                    "-m",
+                    "pcl",
+                    "--root",
+                    str(root),
+                    "evidence",
+                    "add",
+                    "--file",
+                    "race-artifact.txt",
+                    "--summary",
+                    f"parallel process copy {worker_index}",
+                    "--copy",
+                    "--json",
+                ],
+                cwd=REPO_ROOT,
+                env=env,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            for worker_index in range(worker_count)
+        ]
+        completed = [process.communicate(timeout=30) for process in processes]
+        return_codes = [process.returncode for process in processes]
+        assert return_codes == [0] * worker_count
+        payloads = [json.loads(stdout) for stdout, stderr in completed]
+        assert all(stderr == "" for stdout, stderr in completed)
+
+        expected_ids = [f"E-{index:04d}" for index in range(1, worker_count + 1)]
+        assert sorted(payload["evidence"]["id"] for payload in payloads) == expected_ids
+        rows = _db_rows(root, "SELECT id FROM evidence ORDER BY id")
+        assert [row["id"] for row in rows] == expected_ids
+
+        db_events = _db_rows(
+            root,
+            """
+            SELECT entity_id, payload_json FROM events
+            WHERE event_type = 'adhoc_evidence_recorded'
+            ORDER BY entity_id
+            """,
+        )
+        assert [row["entity_id"] for row in db_events] == expected_ids
+        for row in db_events:
+            payload = json.loads(row["payload_json"])
+            assert payload["member_count"] == 1
+            assert payload["copied_total_bytes"] == artifact.stat().st_size
+            assert isinstance(payload["copy_duration_ms"], int)
+            assert payload["copy_duration_ms"] >= 0
+            assert isinstance(payload["write_transaction_pre_event_duration_ms"], int)
+            assert payload["write_transaction_pre_event_duration_ms"] >= 0
+        assert [path.name for path in _adhoc_copy_dirs(root)] == [evidence_id.lower() for evidence_id in expected_ids]
+        assert list((root / ".project-loop" / "tmp").glob("e-*-adhoc-files-*")) == []
 
 
 def test_evidence_add_copy_failure_leaves_zero_traces(
