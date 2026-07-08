@@ -14,10 +14,10 @@ implement from the spec file, not from prompt summaries.
 
 | ID | Title | Milestone | Priority | Status |
 |---|---|---|---|---|
-| 0102 | Source drift health warning | v0.2.4 Trust Patch | P1 | in progress |
-| 0103 | SECURITY.md v0.2.x + copied-evidence policy | v0.2.4 Trust Patch | P1 | in progress |
-| 0104 | Python 3.10–3.13 CI matrix | v0.2.4 Trust Patch | P2 | in progress |
-| 0105 | Evidence copy observability | v0.2.4 Trust Patch | P2 | proposed (after 0102) |
+| 0102 | Source drift health warning | v0.2.4 Trust Patch | P1 | done |
+| 0103 | SECURITY.md v0.2.x + copied-evidence policy | v0.2.4 Trust Patch | P1 | done |
+| 0104 | Python 3.10–3.13 CI matrix | v0.2.4 Trust Patch | P2 | done |
+| 0105 | Evidence copy observability | v0.2.4 Trust Patch | P2 | done |
 | 0106 | Release checklist contract | v0.2.4 Trust Patch | P2 | done (`docs/release-checklist.md`) |
 | 0107 | agent-tasks backlog index | v0.2.4 Trust Patch | P3 | done (this file) |
 
