@@ -2483,7 +2483,12 @@ def _copy_repo_subset_for_retrieval_eval(target: Path) -> None:
             shutil.copytree(
                 source_path,
                 target_path,
-                ignore=shutil.ignore_patterns("__pycache__", ".pytest_cache", ".ruff_cache"),
+                ignore=shutil.ignore_patterns(
+                    "__pycache__",
+                    ".pytest_cache",
+                    ".ruff_cache",
+                    "context_pack_code_context_contract_v0.json",
+                ),
             )
         else:
             shutil.copy2(source_path, target_path)
