@@ -15,7 +15,7 @@ from .code_context.summary import (
     summary_with_receipt_age,
 )
 from .code_context.receipts import latest_context_receipt_ref, resolve_context_receipt_path
-from .db import connect
+from .db import connect, table_exists
 from .errors import ContextPackBudgetError, InvalidInputError
 from .guards import require_initialized
 from .links import enrich_decisions_with_links, enrich_escalations_with_links
@@ -1165,18 +1165,34 @@ def _sibling_tasks(conn, task: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _linked_task_evidence(paths: ProjectPaths, conn, task_id: str) -> list[dict[str, Any]]:
-    if not _table_has_column(conn, "evidence", "linked_task_id"):
+    if table_exists(conn, "evidence_links"):
+        rows = _rows(
+            conn,
+            """
+            SELECT evidence.id, evidence.type, evidence.path, evidence.command,
+                   evidence.summary, evidence.created_at
+            FROM evidence_links
+            JOIN evidence ON evidence.id = evidence_links.evidence_id
+            WHERE evidence_links.target_type = 'task'
+              AND evidence_links.target_id = ?
+              AND evidence_links.link_role = 'supporting'
+            ORDER BY evidence_links.created_at, evidence_links.evidence_id
+            """,
+            (task_id,),
+        )
+    elif not _table_has_column(conn, "evidence", "linked_task_id"):
         return []
-    rows = _rows(
-        conn,
-        """
-        SELECT id, type, path, command, summary, created_at
-        FROM evidence
-        WHERE linked_task_id = ?
-        ORDER BY created_at, id
-        """,
-        (task_id,),
-    )
+    else:
+        rows = _rows(
+            conn,
+            """
+            SELECT id, type, path, command, summary, created_at
+            FROM evidence
+            WHERE linked_task_id = ?
+            ORDER BY created_at, id
+            """,
+            (task_id,),
+        )
     evidence: list[dict[str, Any]] = []
     for row in rows:
         manifest_path = str(row.get("path") or "")

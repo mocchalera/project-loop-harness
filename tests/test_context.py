@@ -7,6 +7,7 @@ import subprocess
 import pcl.cli as cli_module
 from pcl.cli import main
 from pcl.context import TOKEN_ESTIMATOR, TRUNCATION_NOTE, estimate_token_count
+from pcl.db import connect
 
 
 FIXED_NOW = "2026-07-06T01:30:00Z"
@@ -500,6 +501,64 @@ def test_context_pack_for_task_includes_linked_evidence_without_inlining_content
     assert ".project-loop/evidence/adhoc/e-0001-adhoc-v0.json" in markdown
     assert ".project-loop/evidence/adhoc-files/e-0001/01-intent-index.json" in markdown
     assert "DO_NOT_INLINE_MODEL_OUTPUT" not in markdown
+
+
+def test_context_pack_for_task_falls_back_to_linked_task_column_without_evidence_links(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_task_context(tmp_path, capsys)
+    artifact = tmp_path / "intent-index.json"
+    artifact.write_text(
+        '{"claim":"legacy linked evidence"}\n',
+        encoding="utf-8",
+    )
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "intent-index.json",
+        "--summary",
+        "Legacy linked evidence",
+        "--task",
+        "T-0002",
+        "--json",
+    ]) == 0
+    evidence = _json_output(capsys)["evidence"]
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        conn.execute("DROP TABLE evidence_links")
+        conn.execute("DELETE FROM schema_migrations WHERE version = 7")
+        conn.execute("UPDATE metadata SET value = '6' WHERE key = 'schema_version'")
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0002",
+        "--json",
+    ]) == 0
+    pack = _json_output(capsys)["context_pack"]
+
+    assert pack["linked_evidence"] == [
+        {
+            "id": "E-0001",
+            "type": "adhoc_artifact",
+            "summary": "Legacy linked evidence",
+            "manifest_path": ".project-loop/evidence/adhoc/e-0001-adhoc-v0.json",
+            "member_paths": ["intent-index.json"],
+            "stored_paths": [],
+            "created_at": evidence["created_at"],
+        }
+    ]
 
 
 def test_context_pack_for_task_without_linked_evidence_unchanged_by_unlinked_evidence(

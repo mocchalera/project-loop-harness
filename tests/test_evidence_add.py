@@ -378,6 +378,36 @@ def test_evidence_add_task_links_existing_task(tmp_path: Path, capsys) -> None:
     assert evidence["linked_task_id"] == "T-0001"
     rows = _db_rows(tmp_path, "SELECT id, linked_task_id FROM evidence ORDER BY id")
     assert rows == [{"id": "E-0001", "linked_task_id": "T-0001"}]
+    link_rows = _db_rows(
+        tmp_path,
+        """
+        SELECT evidence_id, target_type, target_id, link_role, created_at
+        FROM evidence_links
+        ORDER BY evidence_id
+        """,
+    )
+    assert link_rows == [
+        {
+            "evidence_id": "E-0001",
+            "target_type": "task",
+            "target_id": "T-0001",
+            "link_role": "supporting",
+            "created_at": evidence["created_at"],
+        }
+    ]
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        assert (
+            evidence_module.newest_linked_evidence_id(
+                conn,
+                target_type="task",
+                target_id="T-0001",
+                link_role="supporting",
+            )
+            == "E-0001"
+        )
+    finally:
+        conn.close()
     event_payload = json.loads(
         _db_rows(
             tmp_path,
@@ -496,6 +526,58 @@ def test_evidence_add_task_requires_migration_with_zero_traces(
         "task_id": "T-0001",
         "required_schema_version": 6,
         "migration": "006_evidence_task_link",
+        "command": f"pcl migrate --root {tmp_path}",
+    }
+    _assert_no_adhoc_traces(
+        tmp_path,
+        before_events=before_events,
+        before_manifests=before_manifests,
+        before_copy_dirs=before_copy_dirs,
+    )
+
+
+def test_evidence_add_task_requires_evidence_links_migration_with_zero_traces(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_migrated_db_with_metadata(tmp_path, schema_version=6, applied_through=6)
+    assert main([
+        "--root",
+        str(tmp_path),
+        "task",
+        "create",
+        "--title",
+        "Review linked evidence",
+        "--json",
+    ]) == 0
+    _json_output(capsys)
+    artifact = tmp_path / "pytest-out.txt"
+    artifact.write_text("pytest passed\n", encoding="utf-8")
+    before_events = _event_count(tmp_path)
+    before_manifests = _adhoc_manifests(tmp_path)
+    before_copy_dirs = _adhoc_copy_dirs(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "pytest-out.txt",
+        "--summary",
+        "pytest run",
+        "--task",
+        "T-0001",
+        "--copy",
+        "--json",
+    ]) == 2
+
+    payload = _json_output(capsys)
+    assert payload["error"]["code"] == "evidence_links_requires_migration"
+    assert payload["error"]["details"] == {
+        "task_id": "T-0001",
+        "required_schema_version": 7,
+        "migration": "007_evidence_links",
         "command": f"pcl migrate --root {tmp_path}",
     }
     _assert_no_adhoc_traces(

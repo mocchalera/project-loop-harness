@@ -10,7 +10,7 @@ import tempfile
 import time
 from typing import Any
 
-from .db import connect
+from .db import connect, table_exists
 from .errors import DataStoreError, EXIT_USAGE, InvalidInputError, PclError, ProjectNotInitializedError
 from .events import append_event
 from .ids import next_prefixed_id
@@ -47,6 +47,8 @@ ADHOC_COPY_STORAGE_MODE = "copied"
 DEFAULT_EVIDENCE_COPY_MAX_MEMBER_BYTES = 10_000_000
 EVIDENCE_TASK_LINK_REQUIRED_SCHEMA_VERSION = 6
 EVIDENCE_TASK_LINK_MIGRATION_ID = "006_evidence_task_link"
+EVIDENCE_LINK_SUPPORTING_ROLE = "supporting"
+EVIDENCE_LINK_TASK_TARGET = "task"
 
 
 class EvidenceAddError(PclError):
@@ -160,6 +162,14 @@ def record_adhoc_evidence(
                     linked_task_id,
                 ),
             )
+            insert_evidence_link(
+                conn,
+                evidence_id=evidence_id,
+                target_type=EVIDENCE_LINK_TASK_TARGET,
+                target_id=linked_task_id,
+                link_role=EVIDENCE_LINK_SUPPORTING_ROLE,
+                created_at=now,
+            )
         else:
             conn.execute(
                 """
@@ -249,6 +259,19 @@ def _validate_linked_task(paths: ProjectPaths, task_id: str | None) -> str | Non
                     "command": migrate_command,
                 },
             )
+        if not table_exists(conn, "evidence_links"):
+            migrate_command = f"pcl migrate --root {paths.root}"
+            raise EvidenceAddError(
+                "Evidence task links require schema migration 007_evidence_links. "
+                f"Run `{migrate_command}`.",
+                code="evidence_links_requires_migration",
+                details={
+                    "task_id": task_id,
+                    "required_schema_version": 7,
+                    "migration": "007_evidence_links",
+                    "command": migrate_command,
+                },
+            )
         row = conn.execute("SELECT id FROM tasks WHERE id = ?", (task_id,)).fetchone()
     finally:
         conn.close()
@@ -264,6 +287,48 @@ def _validate_linked_task(paths: ProjectPaths, task_id: str | None) -> str | Non
 def _table_has_column(conn: sqlite3.Connection, table: str, column: str) -> bool:
     rows = conn.execute(f"PRAGMA table_info({table})").fetchall()
     return any(row["name"] == column for row in rows)
+
+
+def insert_evidence_link(
+    conn: sqlite3.Connection,
+    *,
+    evidence_id: str,
+    target_type: str,
+    target_id: str,
+    link_role: str,
+    created_at: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO evidence_links(evidence_id, target_type, target_id, link_role, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (evidence_id, target_type, target_id, link_role, created_at),
+    )
+
+
+def newest_linked_evidence_id(
+    conn: sqlite3.Connection,
+    *,
+    target_type: str,
+    target_id: str,
+    link_role: str,
+) -> str | None:
+    if not table_exists(conn, "evidence_links"):
+        return None
+    row = conn.execute(
+        """
+        SELECT evidence_id
+        FROM evidence_links
+        WHERE target_type = ?
+          AND target_id = ?
+          AND link_role = ?
+        ORDER BY created_at DESC, evidence_id DESC
+        LIMIT 1
+        """,
+        (target_type, target_id, link_role),
+    ).fetchone()
+    return None if row is None else str(row["evidence_id"])
 
 
 def assess_adhoc_evidence(
