@@ -168,6 +168,15 @@ def _evidence_count(root: Path) -> int:
         conn.close()
 
 
+def _evidence_link_count(root: Path) -> int:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        row = conn.execute("SELECT COUNT(*) AS n FROM evidence_links").fetchone()
+        return int(row["n"])
+    finally:
+        conn.close()
+
+
 def _sqlite_events_by_type(root: Path, event_type: str) -> list[dict]:
     conn = connect(root / ".project-loop" / "project.db")
     try:
@@ -1375,6 +1384,178 @@ def test_impact_writes_epistemically_honest_receipt_and_evidence(
         assert event["event_type"] == "context_receipt_recorded"
     finally:
         conn.close()
+
+
+def test_impact_for_task_writes_receipt_binding_and_code_context_link(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_code_project(tmp_path, capsys)
+    assert main(["--root", str(tmp_path), "task", "create", "--title", "Target task"]) == 0
+    capsys.readouterr()
+    _build_index(tmp_path, capsys)
+    diff_path = _synthetic_diff(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "impact",
+        "--diff",
+        str(diff_path),
+        "--for-task",
+        "T-0001",
+        "--json",
+    ]) == 0
+    impact = _json_output(capsys)["impact"]
+
+    expected_binding = {
+        "target_type": "task",
+        "target_id": "T-0001",
+        "binding_strength": "caller_asserted",
+        "source": "impact_flag",
+    }
+    assert impact["target_binding"] == expected_binding
+    receipt = json.loads((tmp_path / impact["receipt_path"]).read_text(encoding="utf-8"))
+    assert receipt["target_binding"] == expected_binding
+
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        row = conn.execute(
+            """
+            SELECT evidence_id, target_type, target_id, link_role
+            FROM evidence_links
+            WHERE evidence_id = ?
+            """,
+            (impact["evidence_id"],),
+        ).fetchone()
+        assert dict(row) == {
+            "evidence_id": impact["evidence_id"],
+            "target_type": "task",
+            "target_id": "T-0001",
+            "link_role": "code_context",
+        }
+    finally:
+        conn.close()
+
+
+def test_impact_for_job_writes_receipt_binding_and_code_context_link(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_code_project(tmp_path, capsys)
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Coverage"]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "loop",
+        "run",
+        "feature_coverage",
+        "--goal",
+        "G-0001",
+    ]) == 0
+    capsys.readouterr()
+    _build_index(tmp_path, capsys)
+    diff_path = _synthetic_diff(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "impact",
+        "--diff",
+        str(diff_path),
+        "--for-job",
+        "J-0001",
+        "--json",
+    ]) == 0
+    impact = _json_output(capsys)["impact"]
+
+    expected_binding = {
+        "target_type": "agent_job",
+        "target_id": "J-0001",
+        "binding_strength": "caller_asserted",
+        "source": "impact_flag",
+    }
+    assert impact["target_binding"] == expected_binding
+    receipt = json.loads((tmp_path / impact["receipt_path"]).read_text(encoding="utf-8"))
+    assert receipt["target_binding"] == expected_binding
+
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        row = conn.execute(
+            """
+            SELECT evidence_id, target_type, target_id, link_role
+            FROM evidence_links
+            WHERE evidence_id = ?
+            """,
+            (impact["evidence_id"],),
+        ).fetchone()
+        assert dict(row) == {
+            "evidence_id": impact["evidence_id"],
+            "target_type": "agent_job",
+            "target_id": "J-0001",
+            "link_role": "code_context",
+        }
+    finally:
+        conn.close()
+
+
+def test_impact_invalid_or_conflicting_target_flags_are_typed_zero_write(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init_code_project(tmp_path, capsys)
+    _build_index(tmp_path, capsys)
+    diff_path = _synthetic_diff(tmp_path)
+    before_evidence = _evidence_count(tmp_path)
+    before_links = _evidence_link_count(tmp_path)
+    before_events = _event_count(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "impact",
+        "--diff",
+        str(diff_path),
+        "--for-task",
+        "not-a-task",
+        "--json",
+    ]) == 2
+    _assert_json_error(capsys, "impact_target_invalid")
+    assert _evidence_count(tmp_path) == before_evidence
+    assert _evidence_link_count(tmp_path) == before_links
+    assert _event_count(tmp_path) == before_events
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "impact",
+        "--diff",
+        str(diff_path),
+        "--for-task",
+        "T-9999",
+        "--json",
+    ]) == 2
+    _assert_json_error(capsys, "impact_target_not_found")
+    assert _evidence_count(tmp_path) == before_evidence
+    assert _evidence_link_count(tmp_path) == before_links
+    assert _event_count(tmp_path) == before_events
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "impact",
+        "--diff",
+        str(diff_path),
+        "--for-task",
+        "T-0001",
+        "--for-job",
+        "J-0001",
+        "--json",
+    ]) == 2
+    _assert_json_error(capsys, "impact_target_mutually_exclusive")
+    assert _evidence_count(tmp_path) == before_evidence
+    assert _evidence_link_count(tmp_path) == before_links
+    assert _event_count(tmp_path) == before_events
 
 
 def test_impact_diff_parser_ignores_pathlike_body_lines(tmp_path: Path, capsys) -> None:

@@ -8,6 +8,7 @@ from typing import Any
 from .scan import LARGE_FILE_BYTES, _detect_language, _line_count, _looks_binary, _relative_path, _sha256_file
 from .store import IndexSnapshot, _snapshot_consistency_for_path
 from ..db import connect
+from ..evidence import insert_evidence_link
 from ..errors import DataStoreError
 from ..events import append_event
 from ..ids import next_prefixed_id
@@ -20,6 +21,7 @@ IMPACT_CONTRACT_VERSION = "impact/v0"
 
 CONTEXT_RECEIPT_VERSION = "context-receipt/v0"
 CONTEXT_RECEIPT_EVIDENCE_TYPE = "context_receipt"
+CODE_CONTEXT_LINK_ROLE = "code_context"
 
 
 def latest_context_receipt_ref(paths: ProjectPaths) -> dict[str, str] | None:
@@ -91,12 +93,14 @@ def _record_context_receipt(
         receipt_name = f"{evidence_id.lower()}-impact-v0.json"
         receipt_path = receipt_dir / receipt_name
         relative_receipt_path = _relative_path(paths.root, receipt_path)
+        now = utc_now_iso()
         receipt = _receipt_payload(
             paths=paths,
             snapshot=snapshot,
             impact=impact,
             evidence_id=evidence_id,
             receipt_path=relative_receipt_path,
+            created_at=now,
         )
         tmp_path = receipt_path.with_suffix(".json.tmp")
         tmp_path.write_text(json.dumps(receipt, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
@@ -112,9 +116,19 @@ def _record_context_receipt(
                 relative_receipt_path,
                 "pcl impact --diff",
                 "Impact candidate context receipt.",
-                utc_now_iso(),
+                now,
             ),
         )
+        target_binding = _target_binding(impact)
+        if target_binding is not None:
+            insert_evidence_link(
+                conn,
+                evidence_id=evidence_id,
+                target_type=str(target_binding["target_type"]),
+                target_id=str(target_binding["target_id"]),
+                link_role=CODE_CONTEXT_LINK_ROLE,
+                created_at=now,
+            )
         event_payload = {
             "contract_version": CONTEXT_RECEIPT_VERSION,
             "impact_contract_version": IMPACT_CONTRACT_VERSION,
@@ -130,6 +144,8 @@ def _record_context_receipt(
             event_payload["untracked_included_count"] = impact["untracked_included_count"]
         if impact.get("base_ref") is not None:
             event_payload["base_ref"] = impact["base_ref"]
+        if target_binding is not None:
+            event_payload["target_binding"] = target_binding
         append_event(
             conn=conn,
             events_path=paths.events_path,
@@ -161,10 +177,11 @@ def _receipt_payload(
     impact: dict[str, Any],
     evidence_id: str,
     receipt_path: str,
+    created_at: str,
 ) -> dict[str, Any]:
     payload = {
         "contract_version": CONTEXT_RECEIPT_VERSION,
-        "created_at": utc_now_iso(),
+        "created_at": created_at,
         "evidence_id": evidence_id,
         "receipt_path": receipt_path,
         "root_path": str(paths.root),
@@ -188,7 +205,28 @@ def _receipt_payload(
         payload["untracked_included_paths"] = impact.get("untracked_included_paths", [])
     if impact.get("base_ref") is not None:
         payload["base_ref"] = impact["base_ref"]
+    target_binding = _target_binding(impact)
+    if target_binding is not None:
+        payload["target_binding"] = target_binding
     return payload
+
+
+def _target_binding(impact: dict[str, Any]) -> dict[str, str] | None:
+    value = impact.get("target_binding")
+    if not isinstance(value, dict):
+        return None
+    target_type = _text(value.get("target_type"))
+    target_id = _text(value.get("target_id"))
+    binding_strength = _text(value.get("binding_strength"))
+    source = _text(value.get("source"))
+    if not all([target_type, target_id, binding_strength, source]):
+        return None
+    return {
+        "target_type": str(target_type),
+        "target_id": str(target_id),
+        "binding_strength": str(binding_strength),
+        "source": str(source),
+    }
 
 
 def _receipt_verification_suggestions(
