@@ -603,6 +603,26 @@ def _assess_copied_member(
                     "detail": "size_mismatch",
                 }
             )
+        else:
+            try:
+                actual_source_sha256 = _sha256_file(absolute_source_path)
+            except OSError:
+                findings.append(
+                    {
+                        "code": "source_drifted",
+                        "path": member_path,
+                        "detail": "missing",
+                    }
+                )
+            else:
+                if actual_source_sha256 != expected_sha256:
+                    findings.append(
+                        {
+                            "code": "source_drifted",
+                            "path": member_path,
+                            "detail": "hash_mismatch",
+                        }
+                    )
     return findings
 
 

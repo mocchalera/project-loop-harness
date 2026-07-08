@@ -1362,6 +1362,44 @@ def test_strict_validate_checks_copied_member_health_from_copy(
         "findings": [],
     }
 
+    artifact.write_text("rewrite!\n", encoding="utf-8")
+    assert _assess_adhoc_evidence(tmp_path, evidence) == {
+        "health": "warning",
+        "findings": [{"code": "source_drifted", "path": "artifact.txt", "detail": "hash_mismatch"}],
+    }
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
+    source_hash_mismatch = _json_output(capsys)
+    assert source_hash_mismatch == {
+        "errors": [],
+        "ok": True,
+        "warnings": ["Adhoc evidence E-0001 source member artifact.txt drifted: hash mismatch."],
+    }
+    assert (tmp_path / stored_path).read_text(encoding="utf-8") == "original\n"
+
+    (tmp_path / stored_path).write_text("damaged!\n", encoding="utf-8")
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
+    copy_and_source_mismatch = _json_output(capsys)
+    assert copy_and_source_mismatch == {
+        "errors": [],
+        "ok": True,
+        "warnings": [
+            f"Adhoc evidence E-0001 copied member {stored_path} drifted: hash mismatch.",
+            "Adhoc evidence E-0001 source member artifact.txt drifted: hash mismatch.",
+        ],
+    }
+    assert _assess_adhoc_evidence(tmp_path, evidence) == {
+        "health": "warning",
+        "findings": [
+            {
+                "code": "copy_hash_mismatch",
+                "path": stored_path,
+                "source_path": "artifact.txt",
+            },
+            {"code": "source_drifted", "path": "artifact.txt", "detail": "hash_mismatch"},
+        ],
+    }
+
+    (tmp_path / stored_path).write_text("original\n", encoding="utf-8")
     artifact.unlink()
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
     source_missing = _json_output(capsys)
