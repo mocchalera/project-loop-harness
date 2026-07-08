@@ -55,5 +55,5 @@ Generated dashboard HTML is a human view, not a machine context source. Agents
 and integrations should use `pcl` JSON commands, reports, evidence paths, or
 `.project-loop/dashboard/dashboard-data.json` for machine-readable context.
 
-The release checklist for the 0106 release-checklist task will include a
-`SECURITY.md` supported-versions check for each release.
+The release checklist (`docs/release-checklist.md`) includes a `SECURITY.md`
+supported-versions check for each release.
