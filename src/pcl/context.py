@@ -21,6 +21,7 @@ from .code_context.receipts import (
     latest_context_receipt_ref,
     resolve_context_receipt_path,
 )
+from .context_binding import _receipt_target_binding_agrees
 from .db import connect, table_exists
 from .errors import ContextPackBudgetError, EXIT_USAGE, InvalidInputError, PclError
 from .evidence import newest_linked_evidence_id
@@ -56,6 +57,34 @@ class ContextPackBoundReceiptRequiredError(PclError):
                 "suggested_refresh_commands": [suggested_refresh_command],
             },
         )
+
+
+class ContextPackBoundReceiptMismatchError(PclError):
+    def __init__(
+        self,
+        *,
+        target_type: str,
+        target_id: str,
+        evidence_id: str,
+        claimed_target_binding: Any,
+        suggested_refresh_command: str,
+    ) -> None:
+        super().__init__(
+            message=(
+                f"Linked code context receipt {evidence_id} for {target_type} {target_id} "
+                "has a target_binding that disagrees with the evidence link routing row."
+            ),
+            code="context_pack_bound_receipt_mismatch",
+            exit_code=EXIT_USAGE,
+            details={
+                "target_type": target_type,
+                "target_id": target_id,
+                "evidence_id": evidence_id,
+                "claimed_target_binding": claimed_target_binding,
+                "suggested_refresh_commands": [suggested_refresh_command],
+            },
+        )
+
 
 JOB_SECTION_ORDER = [
     "machine_context_rules",
@@ -785,10 +814,29 @@ def _select_code_context_receipt_ref(
         )
     finally:
         conn.close()
+    selection_scope = "unscoped_latest"
     if bound_evidence_id:
         receipt_ref = evidence_ref_by_id(paths, bound_evidence_id)
         if receipt_ref is not None and receipt_ref.get("evidence_type") == CONTEXT_RECEIPT_EVIDENCE_TYPE:
-            return _public_receipt_ref(receipt_ref), "target_bound"
+            public_ref = _public_receipt_ref(receipt_ref)
+            receipt_payload = _load_receipt_payload_for_binding_check(paths, public_ref)
+            if receipt_payload is None:
+                return public_ref, "target_bound"
+            if _receipt_target_binding_agrees(
+                receipt_payload,
+                target_type=target_type,
+                target_id=target_id,
+            ):
+                return public_ref, "target_bound"
+            if require_bound_receipt:
+                raise ContextPackBoundReceiptMismatchError(
+                    target_type=target_type,
+                    target_id=target_id,
+                    evidence_id=str(public_ref["evidence_id"]),
+                    claimed_target_binding=receipt_payload.get("target_binding"),
+                    suggested_refresh_command=_target_refresh_command(target_type, target_id),
+                )
+            selection_scope = "unscoped_latest_after_bound_mismatch"
     if require_bound_receipt:
         raise ContextPackBoundReceiptRequiredError(
             target_type=target_type,
@@ -798,7 +846,21 @@ def _select_code_context_receipt_ref(
     receipt_ref = latest_context_receipt_ref(paths)
     if receipt_ref is None:
         return None, "missing_receipt"
-    return receipt_ref, "unscoped_latest"
+    return receipt_ref, selection_scope
+
+
+def _load_receipt_payload_for_binding_check(
+    paths: ProjectPaths,
+    receipt_ref: dict[str, str],
+) -> dict[str, Any] | None:
+    receipt_path = resolve_context_receipt_path(paths, str(receipt_ref["receipt_path"]))
+    try:
+        receipt_payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, JSONDecodeError):
+        return None
+    if not isinstance(receipt_payload, dict):
+        return None
+    return receipt_payload
 
 
 def _public_receipt_ref(receipt_ref: dict[str, str]) -> dict[str, str]:
@@ -863,6 +925,22 @@ def _code_context_relevance(
             "reason": (
                 "A context receipt linked to this target was selected through evidence_links; "
                 "the binding is a caller assertion, not semantic proof."
+            ),
+        }
+    if selection_scope == "unscoped_latest_after_bound_mismatch":
+        return {
+            "target_type": target_type,
+            "target_id": target_id,
+            "scope": "unscoped_latest",
+            "binding_strength": "none",
+            "warning": (
+                "A target-bound code context receipt link was skipped because the "
+                "evidence link routing row and artifact binding disagree; using "
+                "the latest context receipt by recency."
+            ),
+            "reason": (
+                "The most recent context receipt was selected by recency; it was not "
+                "accepted as target-bound for this target."
             ),
         }
     return {
@@ -1009,7 +1087,7 @@ def _render_code_context_safety_section(summary: dict[str, Any]) -> str:
                 "Receipt selection and freshness facts:",
                 *_render_code_context_selection_freshness_lines(summary),
                 "",
-                "Next action: `pcl index build --json`, then `pcl impact --diff --json`.",
+                _render_code_context_next_action_line(summary),
             ]
         )
         return "\n".join(lines)
@@ -1021,7 +1099,7 @@ def _render_code_context_safety_section(summary: dict[str, Any]) -> str:
                 "Receipt selection and freshness facts:",
                 *_render_code_context_selection_freshness_lines(summary),
                 "",
-                "Next action: `pcl index build --json`, then `pcl impact --diff --json`.",
+                _render_code_context_next_action_line(summary),
             ]
         )
         return "\n".join(lines)
@@ -1052,6 +1130,13 @@ def _render_code_context_safety_section(summary: dict[str, Any]) -> str:
     if untracked_warning:
         lines.extend(["", f"Untracked omission warning: {_stringify(untracked_warning)}"])
     return "\n".join(lines)
+
+
+def _render_code_context_next_action_line(summary: dict[str, Any]) -> str:
+    commands = recommended_refresh_commands(summary)
+    if not commands:
+        commands = ["pcl index build --json", "pcl impact --diff --json"]
+    return "Next action: " + ", then ".join(f"`{command}`" for command in commands) + "."
 
 
 def _render_code_context_selection_freshness_lines(summary: dict[str, Any]) -> list[str]:
