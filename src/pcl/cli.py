@@ -33,7 +33,13 @@ from .commands import (
     set_feature_status,
     to_pretty_json,
 )
-from .context import DEFAULT_MAX_TOKENS, pack_context_for_job, pack_context_for_task
+from .context import (
+    DEFAULT_MAX_TOKENS,
+    context_check_for_job,
+    context_check_for_task,
+    pack_context_for_job,
+    pack_context_for_task,
+)
 from .code_context.summary import render_receipt_summary
 from .decisions import (
     list_decisions,
@@ -607,6 +613,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Require a code-context receipt explicitly bound to the requested job or task.",
     )
+    p_context_check = context_sub.add_parser("check", help="Check target-bound context facts")
+    context_check_target = p_context_check.add_mutually_exclusive_group(required=True)
+    context_check_target.add_argument("--job", dest="job_id", default=None, help="Agent job id to check")
+    context_check_target.add_argument("--task", dest="task_id", default=None, help="Task id to check")
+    p_context_check.add_argument(
+        "--require-bound-receipt",
+        action="store_true",
+        help="Exit with a typed error unless a matching target-bound code-context receipt is present.",
+    )
 
     p_receipt = sub.add_parser("receipt", help="Inspect code context receipts")
     receipt_sub = p_receipt.add_subparsers(dest="receipt_command", required=True)
@@ -864,6 +879,23 @@ def _impact_text_payload(impact: dict) -> tuple[dict, str | None]:
     if len(paths) > 5:
         visible += f", ... (+{len(paths) - 5} more)"
     return display, f"Excluded changed files: {len(excluded)} ({visible})"
+
+
+def _print_context_check_summary(payload: dict) -> None:
+    target = payload["target"]
+    bound = payload["target_bound_code_context"]
+    print(f"Context check: {target['type']} {target['id']}")
+    print(f"Target-bound code context: {bound['status']}")
+    receipt_ref = bound.get("receipt_ref")
+    if isinstance(receipt_ref, dict):
+        print(f"Receipt: {receipt_ref.get('evidence_id', '')} ({receipt_ref.get('created_at', '')})")
+    print(f"Supporting evidence: {payload['supporting_evidence_count']}")
+    print(f"Canonical pack command: {payload['canonical_context_pack_command']}")
+    refresh_command = payload.get("recommended_refresh_command")
+    if refresh_command:
+        print(f"Recommended refresh command: {refresh_command}")
+    for warning in payload.get("warnings", []):
+        print(f"WARNING: {warning}")
 
 
 def _format_next_explanation(action: dict) -> str:
@@ -1946,6 +1978,25 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json({"ok": True, "context_pack": pack})
             else:
                 print(pack["markdown"], end="")
+            return 0
+
+        if args.command == "context" and args.context_command == "check":
+            if args.job_id:
+                payload = context_check_for_job(
+                    paths,
+                    job_id=args.job_id,
+                    require_bound_receipt=args.require_bound_receipt,
+                )
+            else:
+                payload = context_check_for_task(
+                    paths,
+                    task_id=args.task_id,
+                    require_bound_receipt=args.require_bound_receipt,
+                )
+            if json_output:
+                _print_json({"ok": True, "context_check": payload})
+            else:
+                _print_context_check_summary(payload)
             return 0
 
         if args.command == "receipt" and args.receipt_command == "show":
