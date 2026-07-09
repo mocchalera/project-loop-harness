@@ -277,3 +277,99 @@ def test_loop_run_rejects_unknown_goal(tmp_path: Path, capsys) -> None:
 def test_jobs_commands_require_init(tmp_path: Path, capsys) -> None:
     assert main(["--root", str(tmp_path), "jobs", "list", "--json"]) == 3
     assert _json_output(capsys)["error"]["code"] == "not_initialized"
+
+
+def _add_feature(tmp_path: Path, name: str, capsys) -> None:
+    assert main([
+        "--root", str(tmp_path), "feature", "add",
+        "--name", name, "--surface", "surface", "--description", "desc",
+    ]) == 0
+    capsys.readouterr()
+
+
+def _cover_feature(tmp_path: Path, feature_id: str, capsys) -> None:
+    assert main([
+        "--root", str(tmp_path), "feature", "status", feature_id,
+        "--status", "passing", "--summary", "covered", "--evidence", "test output",
+    ]) == 0
+    capsys.readouterr()
+
+
+def test_feature_coverage_noop_when_all_features_covered(tmp_path: Path, capsys) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Coverage"]) == 0
+    capsys.readouterr()
+    _add_feature(tmp_path, "Login", capsys)
+    _cover_feature(tmp_path, "F-0001", capsys)
+
+    assert main([
+        "--root", str(tmp_path), "loop", "run", "feature_coverage", "--goal", "G-0001", "--json",
+    ]) == 0
+    result = _json_output(capsys)
+    assert result["no_op"] is True
+    assert result["reason"] == "feature_coverage_already_covered"
+    assert result["workflow_run"] is None
+    assert result["jobs"] == []
+    assert result["covered_feature_count"] == 1
+    assert result["feature_count"] == 1
+
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        assert conn.execute("SELECT COUNT(*) AS n FROM workflow_runs").fetchone()["n"] == 0
+        assert conn.execute("SELECT COUNT(*) AS n FROM agent_jobs").fetchone()["n"] == 0
+    finally:
+        conn.close()
+    events = (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8")
+    assert "workflow_run_created" not in events
+
+    # Idempotent: still a no-op on a second run.
+    assert main([
+        "--root", str(tmp_path), "loop", "run", "feature_coverage", "--goal", "G-0001", "--json",
+    ]) == 0
+    assert _json_output(capsys)["no_op"] is True
+
+
+def test_feature_coverage_runs_when_a_feature_is_uncovered(tmp_path: Path, capsys) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Coverage"]) == 0
+    capsys.readouterr()
+    _add_feature(tmp_path, "Login", capsys)
+    _add_feature(tmp_path, "Signup", capsys)
+    _cover_feature(tmp_path, "F-0001", capsys)  # F-0002 stays 'discovered'
+
+    assert main([
+        "--root", str(tmp_path), "loop", "run", "feature_coverage", "--goal", "G-0001", "--json",
+    ]) == 0
+    result = _json_output(capsys)
+    assert "no_op" not in result
+    # The no-op did not consume WR-0001.
+    assert result["workflow_run"]["id"] == "WR-0001"
+    assert result["jobs"]
+
+
+def test_feature_coverage_runs_when_no_features_exist(tmp_path: Path, capsys) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Coverage"]) == 0
+    capsys.readouterr()
+
+    assert main([
+        "--root", str(tmp_path), "loop", "run", "feature_coverage", "--goal", "G-0001", "--json",
+    ]) == 0
+    result = _json_output(capsys)
+    assert "no_op" not in result
+    assert result["workflow_run"]["workflow_id"] == "feature_coverage"
+
+
+def test_non_feature_coverage_workflow_runs_despite_covered_features(tmp_path: Path, capsys) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Coverage"]) == 0
+    capsys.readouterr()
+    _add_feature(tmp_path, "Login", capsys)
+    _cover_feature(tmp_path, "F-0001", capsys)
+
+    assert main([
+        "--root", str(tmp_path), "loop", "run", "executor_smoke", "--goal", "G-0001", "--json",
+    ]) == 0
+    result = _json_output(capsys)
+    assert "no_op" not in result
+    assert result["workflow_run"]["workflow_id"] == "executor_smoke"

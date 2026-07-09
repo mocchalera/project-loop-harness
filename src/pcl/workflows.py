@@ -73,6 +73,39 @@ def load_workflow_template(paths: ProjectPaths, workflow_id: str) -> WorkflowTem
     )
 
 
+FEATURE_COVERAGE_UNCOVERED_STATUSES = ("discovered", "specified", "needs_test", "needs_fix")
+
+
+def _feature_coverage_noop(conn) -> dict[str, Any] | None:
+    """Return a no-op result when every tracked feature is already covered.
+
+    feature_coverage's job is to find and cover uncovered features. When at least
+    one feature exists and none are in an uncovered status, running it again only
+    re-proposes the same coverage work. Returns None (proceed with a real run)
+    when there are no features (the first run is discovery) or any feature is
+    still uncovered. States a fact (all features covered), not project completion.
+    """
+    total = conn.execute("SELECT COUNT(*) AS n FROM features").fetchone()["n"]
+    if not total:
+        return None
+    placeholders = ", ".join("?" for _ in FEATURE_COVERAGE_UNCOVERED_STATUSES)
+    uncovered = conn.execute(
+        f"SELECT COUNT(*) AS n FROM features WHERE status IN ({placeholders})",
+        FEATURE_COVERAGE_UNCOVERED_STATUSES,
+    ).fetchone()["n"]
+    if uncovered:
+        return None
+    return {
+        "ok": True,
+        "no_op": True,
+        "reason": "feature_coverage_already_covered",
+        "workflow_run": None,
+        "jobs": [],
+        "covered_feature_count": int(total),
+        "feature_count": int(total),
+    }
+
+
 def run_workflow(
     paths: ProjectPaths,
     *,
@@ -93,6 +126,10 @@ def run_workflow(
             retry_of_workflow_run_id=retry_of_workflow_run_id,
             retry_of_status=retry_of_status,
         )
+        if template.workflow_id == "feature_coverage":
+            noop = _feature_coverage_noop(conn)
+            if noop is not None:
+                return noop
         now = utc_now_iso()
         conn.execute(
             """

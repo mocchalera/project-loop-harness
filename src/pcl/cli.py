@@ -1626,6 +1626,11 @@ def main(argv: list[str] | None = None) -> int:
             )
             if json_output:
                 _print_json(result)
+            elif result.get("no_op"):
+                print(
+                    "No workflow run created: all tracked features are already covered "
+                    f"({result['covered_feature_count']})."
+                )
             else:
                 run = result["workflow_run"]
                 print(f"Created workflow run {run['id']} for {run['workflow_id']}")

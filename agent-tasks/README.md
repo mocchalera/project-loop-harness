@@ -30,6 +30,7 @@ implement from the spec file, not from prompt summaries.
 | 0119 | `pcl context check` read-only preflight | v0.3.1 Operator Experience | P1 | merged to main (v0.3.1, unreleased) |
 | 0120 | `pcl finish` terminal close-out planner (F7) | v0.3.1 Operator Experience | P1 | merged to main (v0.3.1, unreleased) |
 | 0121 | Japanese human-gate guidance in `pcl next` (F5) | v0.3.1 Operator Experience | P1 | done (main, v0.3.1 unreleased) |
+| 0122 | feature_coverage no-op when all covered (F4) | v0.3.1 Operator Experience | P1 | done (local, awaiting push) |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
