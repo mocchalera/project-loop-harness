@@ -25,6 +25,7 @@ from .commands import (
     add_feature,
     build_next_action,
     create_goal,
+    finish_plan,
     list_features,
     loop_status,
     next_action,
@@ -844,6 +845,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_next.add_argument("--strict", action="store_true", help="Route strict validation failures before normal next actions")
     p_next.add_argument("--explain", action="store_true", help="Print a human-readable explanation of the next action")
 
+    p_finish = sub.add_parser("finish", help="Plan terminal loop close-out steps")
+    p_finish.add_argument("--execute", action="store_true", help="Run validate/render only when no finish steps remain")
+    p_finish.add_argument("--run", default=None, help="Target a workflow run explicitly")
+    p_finish.add_argument("--goal", default=None, help="Target a goal explicitly")
+
     p_export = sub.add_parser("export", help="Export state")
     export_sub = p_export.add_subparsers(dest="export_command", required=True)
     export_sub.add_parser("csv")
@@ -915,6 +921,52 @@ def _format_next_explanation(action: dict) -> str:
     if isinstance(target, dict) and target.get("id"):
         lines.append(f"Target: {target['id']}")
     return "\n".join(lines)
+
+
+def _format_finish_summary(payload: dict) -> str:
+    target = payload["target"]
+    lines = [
+        f"Finish target: run={target['run'] or '-'} goal={target['goal'] or '-'}",
+        f"Finished: {_yes_no(bool(payload['finished']))}",
+    ]
+    steps = payload["remaining_steps"]
+    if steps:
+        lines.append("Remaining steps:")
+        for index, step in enumerate(steps, start=1):
+            lines.append(
+                f"{index}. {step['command']} "
+                f"(requires_human={_yes_no(bool(step['requires_human']))}, "
+                f"safe_to_run={_yes_no(bool(step['safe_to_run']))})"
+            )
+    else:
+        lines.append("Remaining steps: none")
+    if "executed" in payload:
+        executed = payload["executed"]
+        if executed:
+            lines.append("Executed:")
+            for item in executed:
+                lines.append(f"- {item['command']}: {'ok' if item['ok'] else 'failed'}")
+        else:
+            lines.append("Executed: none")
+        lines.append(f"Changed: {_yes_no(bool(payload['changed']))}")
+    return "\n".join(lines)
+
+
+def _run_finish_tail(paths) -> list[dict]:
+    executed: list[dict] = []
+    strict = validate_project(paths, strict=True)
+    executed.append({"command": "pcl validate --strict", "ok": strict.ok})
+    if not strict.ok:
+        return executed
+
+    render_validation = validate_project(paths)
+    if not render_validation.ok:
+        executed.append({"command": "pcl render", "ok": False})
+        return executed
+
+    render_dashboard(paths)
+    executed.append({"command": "pcl render", "ok": True})
+    return executed
 
 
 def _yes_no(value: bool) -> str:
@@ -2332,6 +2384,26 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(to_pretty_json(action))
             return 0
+
+        if args.command == "finish":
+            payload = finish_plan(paths, run_id=args.run, goal_id=args.goal)
+            exit_code = 0
+            if args.execute:
+                payload = dict(payload)
+                if payload["remaining_steps"]:
+                    payload["executed"] = []
+                    payload["changed"] = False
+                else:
+                    executed = _run_finish_tail(paths)
+                    payload["executed"] = executed
+                    payload["changed"] = bool(executed)
+                    if any(not item["ok"] for item in executed):
+                        exit_code = 1
+            if json_output:
+                _print_json({"ok": True, "finish": payload})
+            else:
+                print(_format_finish_summary(payload))
+            return exit_code
 
         if args.command == "export" and args.export_command == "csv":
             paths_written = export_csv(paths)
