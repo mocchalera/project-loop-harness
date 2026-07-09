@@ -662,3 +662,65 @@ def test_dashboard_next_action_block_renders_guided_fields(tmp_path: Path, capsy
     assert "run_policy" in html
     assert "human_guidance" in html
     assert "expected_after" in html
+
+
+def _human_gated_action(*, action_type="record_verification", blocking=True):
+    from pcl.commands import build_next_action
+
+    return build_next_action(
+        action_type=action_type,
+        command="pcl verification record --run WR-0001 --result approved --reason '<why>'",
+        reason="All active workflow jobs are terminal, but no approved verification exists.",
+        target={"id": "WR-0001"},
+        priority=40,
+        blocking=blocking,
+        requires_human=True,
+        safe_to_run=False,
+        expected_after="An approved verification exists for the run.",
+    )
+
+
+def test_human_gate_action_includes_japanese_guidance() -> None:
+    action = _human_gated_action()
+    ja = action["human_guidance_ja"]
+    assert set(ja) == {"why_blocked", "check", "next_options"}
+    # blocking prefix + record_verification specific reason, in Japanese.
+    assert ja["why_blocked"].startswith("通常のループ継続は待つべきです。")
+    assert "検証" in ja["why_blocked"]
+    assert isinstance(ja["check"], list) and ja["check"]
+    assert any("証跡" in item for item in ja["check"])
+    # next_options are Japanese labels mapped 1:1 from the English options order.
+    assert ja["next_options"] == ["承認する", "却下する", "保留する", "追加の証跡を確認する"]
+    # additive: the English fields are unchanged.
+    assert isinstance(action["why_blocked"], str)
+    assert [o["label"] for o in action["options"]] == [
+        "Approve",
+        "Reject",
+        "Hold",
+        "Request more evidence",
+    ]
+
+
+def test_human_gate_default_reason_when_action_type_unmapped() -> None:
+    action = _human_gated_action(action_type="continue_goal", blocking=False)
+    ja = action["human_guidance_ja"]
+    assert not ja["why_blocked"].startswith("通常のループ継続は待つべきです。")
+    assert "durable" in ja["why_blocked"]
+
+
+def test_agent_safe_action_has_no_japanese_guidance() -> None:
+    from pcl.commands import build_next_action
+
+    action = build_next_action(
+        action_type="continue_workflow",
+        command="pcl jobs read J-0001",
+        reason="A workflow run is already active and has queued or running jobs.",
+        target={"id": "WR-0001"},
+        priority=40,
+        blocking=False,
+        requires_human=False,
+        safe_to_run=True,
+        expected_after="The agent job prompt is reviewed.",
+    )
+    assert "human_guidance_ja" not in action
+    assert action["run_policy"] == "agent_safe"

@@ -336,6 +336,62 @@ DASHBOARD_STRINGS = {
 SUPPORTED_DASHBOARD_LOCALES = tuple(DASHBOARD_STRINGS)
 
 
+# Japanese guidance for `pcl next` human-decision gates (0121, F5). Additive:
+# it states why the loop stopped, what to check, and the next options in
+# Japanese. It never asserts that the work itself is correct, sufficient, or
+# safe -- only that a human decision is required and what the branches are.
+HUMAN_GATE_JA = {
+    "blocking_prefix": "通常のループ継続は待つべきです。",
+    "why_blocked": {
+        "record_verification": (
+            "全ジョブが終端状態ですが、承認済みの検証がまだありません。"
+            "ランを完了扱いにする前に、人間が検証結果を記録する必要があります。"
+        ),
+        "open_escalation": (
+            "検証の記録、またはエスカレーションの起票を、人間が選ぶ必要があります。"
+        ),
+        "resolve_decision": (
+            "未解決の判断があります。安全に継続する前に、人間が選択または waive する必要があります。"
+        ),
+        "resolve_escalation": (
+            "オープン中のエスカレーションがあります。人間が対応結果を記録する必要があります。"
+        ),
+        "_default": (
+            "この操作は durable なループ状態を変更します。実行する前に人間の確認が必要です。"
+        ),
+    },
+    "check": {
+        "record_verification": [
+            "対象ランのジョブ結果と証跡を確認したか",
+            "テスト・検証結果が証跡として保存されているか",
+            "未解決のエスカレーションが残っていないか",
+        ],
+        "open_escalation": [
+            "検証で判断できるか、エスカレーションが必要かを確認したか",
+            "不足している証跡が何かを特定したか",
+        ],
+        "resolve_decision": [
+            "提示された選択肢と、それぞれのリスクを確認したか",
+            "選んだ理由を記録できるか",
+        ],
+        "resolve_escalation": [
+            "人間判断の対象と経緯を確認したか",
+            "紐づく判断（decision）の要否を確認したか",
+        ],
+        "_default": [
+            "推奨コマンドの対象を確認したか",
+            "実行後の durable な状態変化を許容できるか",
+        ],
+    },
+    "option_labels": {
+        "Approve": "承認する",
+        "Reject": "却下する",
+        "Hold": "保留する",
+        "Request more evidence": "追加の証跡を確認する",
+    },
+}
+
+
 def resolve_dashboard_locale(paths: ProjectPaths, requested_locale: str | None = None) -> str:
     locale = (requested_locale or _dashboard_locale_from_config(paths) or "en").strip()
     if locale not in DASHBOARD_STRINGS:

@@ -13,6 +13,7 @@ from .guards import require_initialized
 from .ids import next_prefixed_id
 from .lifecycle import ACTIVE_JOB_STATUSES, ACTIVE_RUN_STATUSES, TERMINAL_JOB_STATUSES
 from .links import linked_decisions_for_escalation
+from .locales import HUMAN_GATE_JA
 from .paths import ProjectPaths
 from .timeutil import utc_now_iso
 from .workflow_proposals import next_reviewable_workflow_proposal
@@ -402,6 +403,29 @@ def human_decision_action_fields(
         "recommendation_reason": reason,
         "related_evidence_paths": [],
         "receipt_paths": [],
+        "human_guidance_ja": _human_guidance_ja(
+            action_type=action_type,
+            blocking=blocking,
+            options=_human_next_action_options(
+                action_type=action_type,
+                command=command,
+                target=target,
+            ),
+        ),
+    }
+
+
+def _human_guidance_ja(*, action_type: str, blocking: bool, options: list[dict]) -> dict:
+    why = HUMAN_GATE_JA["why_blocked"].get(action_type, HUMAN_GATE_JA["why_blocked"]["_default"])
+    if blocking:
+        why = HUMAN_GATE_JA["blocking_prefix"] + why
+    check = HUMAN_GATE_JA["check"].get(action_type, HUMAN_GATE_JA["check"]["_default"])
+    labels = HUMAN_GATE_JA["option_labels"]
+    next_options = [labels.get(str(option.get("label")), str(option.get("label"))) for option in options]
+    return {
+        "why_blocked": why,
+        "check": list(check),
+        "next_options": next_options,
     }
 
 

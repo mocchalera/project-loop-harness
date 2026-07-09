@@ -28,7 +28,8 @@ implement from the spec file, not from prompt summaries.
 | 0117 | Target-specific refresh command in code-context Markdown | v0.3.1 Handoff Integrity | P1 | merged to main (v0.3.1, unreleased) |
 | 0118 | Canonical target-bound handoff docs (README + adoption) | v0.3.1 Operator Experience | P1 | done (main, v0.3.1 unreleased) |
 | 0119 | `pcl context check` read-only preflight | v0.3.1 Operator Experience | P1 | merged to main (v0.3.1, unreleased) |
-| 0120 | `pcl finish` terminal close-out planner (F7) | v0.3.1 Operator Experience | P1 | spec ready |
+| 0120 | `pcl finish` terminal close-out planner (F7) | v0.3.1 Operator Experience | P1 | merged to main (v0.3.1, unreleased) |
+| 0121 | Japanese human-gate guidance in `pcl next` (F5) | v0.3.1 Operator Experience | P1 | done (main, v0.3.1 unreleased) |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the

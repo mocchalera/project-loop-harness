@@ -118,6 +118,7 @@ Give these tasks to coding agents in this order:
 114. `agent-tasks/0118-canonical-target-bound-handoff-docs.md` (v0.3.1, README/adoption canonical `--require-bound-receipt` flow; orchestrator-authored docs)
 115. `agent-tasks/0119-context-check-preflight.md` (v0.3.1, read-only `pcl context check`; reuses 0116 agreement predicate)
 116. `agent-tasks/0120-pcl-finish-terminal-closeout.md` (v0.3.1, F7 `pcl finish` terminal close-out planner; plans all, auto-runs only safe generation)
+117. `agent-tasks/0121-human-gate-japanese-guidance.md` (v0.3.1, F5 additive Japanese human-gate guidance in `pcl next`)
 
 Roadmap through v0.5.0: see `docs/growth-plan-v0.2.4-v0.5.md` (approved 2026-07-08).
 Numbering is creation order; milestones interleave. v0.3.0 = {0108, 0113, 0114, 0115}.
