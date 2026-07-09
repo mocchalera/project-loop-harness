@@ -7,6 +7,7 @@ import subprocess
 
 import pytest
 
+from pcl.context_binding import _receipt_target_binding_agrees
 import pcl.cli as cli_module
 from pcl.cli import main
 from pcl.context import TOKEN_ESTIMATOR, TRUNCATION_NOTE, estimate_token_count
@@ -236,6 +237,18 @@ def _set_receipt_created_at(root: Path, impact: dict, created_at: str) -> None:
     receipt_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
 
 
+def _rewrite_receipt_target_binding(root: Path, impact: dict, target: dict) -> None:
+    receipt_path = root / impact["receipt_path"]
+    payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    binding = payload["target_binding"]
+    payload["target_binding"] = {
+        **binding,
+        "target_type": str(target["type"]),
+        "target_id": str(target["id"]),
+    }
+    receipt_path.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+
+
 def _write_fresh_code_context_receipt(root: Path, capsys, *, impact_args: list[str] | None = None) -> dict:
     app_path = root / "src" / "app.py"
     app_path.write_text(
@@ -267,6 +280,15 @@ def _receipt_show_latest_error_next_actions(root: Path, capsys) -> list[str]:
         "--json",
     ]) == 2
     return _json_output(capsys)["error"]["details"]["next_actions"]
+
+
+def _markdown_next_action_line(markdown: str) -> str:
+    return next(line for line in markdown.splitlines() if line.startswith("Next action: "))
+
+
+def _markdown_next_action_commands(markdown: str) -> list[str]:
+    parts = _markdown_next_action_line(markdown).split("`")
+    return [part for index, part in enumerate(parts) if index % 2 == 1]
 
 
 def _context_pack_contract_cases(*, ok: bool) -> list[dict]:
@@ -322,6 +344,8 @@ def _setup_context_pack_contract_fixture(root: Path, capsys, case: dict) -> dict
             )
         if receipt_spec.get("created_at"):
             _set_receipt_created_at(root, impact, str(receipt_spec["created_at"]))
+        if receipt_spec.get("artifact_target"):
+            _rewrite_receipt_target_binding(root, impact, receipt_spec["artifact_target"])
         receipts[str(receipt_spec["alias"])] = impact
     return receipts
 
@@ -365,7 +389,16 @@ def _resolve_contract_fixture_values(values: list[str], receipts: dict[str, dict
     return [_resolve_contract_fixture_value(value, receipts) for value in values]
 
 
-def _resolve_contract_fixture_value(value: str, receipts: dict[str, dict]) -> str:
+def _resolve_contract_fixture_value(value: object, receipts: dict[str, dict]) -> object:
+    if isinstance(value, list):
+        return [_resolve_contract_fixture_value(item, receipts) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _resolve_contract_fixture_value(item, receipts)
+            for key, item in value.items()
+        }
+    if not isinstance(value, str):
+        return value
     prefix = "$receipt:"
     if not value.startswith(prefix):
         return value
@@ -377,6 +410,46 @@ def _run_contract_json(args: list[str], capsys, *, expected_rc: int) -> tuple[st
     assert main(args) == expected_rc
     output = capsys.readouterr().out
     return output, json.loads(output)
+
+
+@pytest.mark.parametrize(
+    ("receipt_payload", "expected"),
+    [
+        (
+            {
+                "target_binding": {
+                    "target_type": "task",
+                    "target_id": "T-0001",
+                }
+            },
+            True,
+        ),
+        (
+            {
+                "target_binding": {
+                    "target_type": "task",
+                    "target_id": "T-9999",
+                }
+            },
+            False,
+        ),
+        ({}, False),
+        ({"target_binding": ""}, False),
+        (["not", "a", "dict"], False),
+    ],
+)
+def test_receipt_target_binding_agreement_predicate(
+    receipt_payload: object,
+    expected: bool,
+) -> None:
+    assert (
+        _receipt_target_binding_agrees(
+            receipt_payload,
+            target_type="task",
+            target_id="T-0001",
+        )
+        is expected
+    )
 
 
 @pytest.mark.parametrize(
@@ -475,8 +548,11 @@ def test_context_pack_code_context_contract_error_fixtures(
     assert payload["ok"] is False
     assert "context_pack" not in payload
     assert payload["error"]["code"] == expected_error["code"]
-    assert payload["error"]["details"] == expected_error["details"]
-    for alias in case["expected"]["unselected_receipts"]:
+    assert payload["error"]["details"] == _resolve_contract_fixture_value(
+        expected_error["details"],
+        receipts,
+    )
+    for alias in case["expected"].get("unselected_receipts", []):
         assert receipts[alias]["evidence_id"] not in output
         assert receipts[alias]["receipt_path"] not in output
 
@@ -1719,6 +1795,37 @@ def test_context_pack_unscoped_fallback_has_target_specific_refresh_command(
     assert all("pcl impact" not in command for command in pack["source_commands"])
 
 
+def test_context_pack_missing_receipt_markdown_next_action_matches_json_for_job(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_job(tmp_path, capsys)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--job",
+        "J-0001",
+        "--include-code-context",
+        "--json",
+    ]) == 0
+
+    pack = _json_output(capsys)["context_pack"]
+    assert pack["code_context"]["status"] == "missing_receipt"
+    assert pack["suggested_refresh_commands"] == [
+        "pcl index build --json",
+        "pcl impact --diff --for-job J-0001 --json",
+    ]
+    assert _markdown_next_action_commands(pack["markdown"]) == pack["suggested_refresh_commands"]
+    assert _markdown_next_action_line(pack["markdown"]) == (
+        "Next action: `pcl index build --json`, then "
+        "`pcl impact --diff --for-job J-0001 --json`."
+    )
+    assert "Next action: `pcl index build --json`, then `pcl impact --diff --json`." not in pack["markdown"]
+
+
 def test_context_pack_code_context_receipt_age_fresh_in_json_and_safety_section(
     tmp_path: Path,
     capsys,
@@ -1845,6 +1952,16 @@ def test_context_pack_unavailable_code_context_keeps_unscoped_latest_relevance(
     assert code_context["relevance"]["scope"] == "unscoped_latest"
     assert code_context["relevance"]["binding_strength"] == "none"
     assert "receipt_age" in code_context
+    assert pack["suggested_refresh_commands"] == [
+        "pcl index build --json",
+        "pcl impact --diff --for-task T-0001 --json",
+    ]
+    assert _markdown_next_action_commands(pack["markdown"]) == pack["suggested_refresh_commands"]
+    assert _markdown_next_action_line(pack["markdown"]) == (
+        "Next action: `pcl index build --json`, then "
+        "`pcl impact --diff --for-task T-0001 --json`."
+    )
+    assert "Next action: `pcl index build --json`, then `pcl impact --diff --json`." not in pack["markdown"]
     assert "Latest context receipt could not be loaded: JSONDecodeError." in pack["markdown"]
     assert "- relevance: unscoped_latest (binding: none)" in pack["markdown"]
 
@@ -1986,6 +2103,12 @@ def test_context_pack_include_code_context_without_receipt_suggests_next_action(
         "pcl impact --diff --json",
     ]
     assert "pcl impact --diff --json" not in pack["source_commands"]
+    assert _markdown_next_action_commands(pack["markdown"]) == pack["suggested_refresh_commands"]
+    assert _markdown_next_action_line(pack["markdown"]) == (
+        "Next action: `pcl index build --json`, then "
+        "`pcl impact --diff --for-task T-0001 --json`."
+    )
+    assert "Next action: `pcl index build --json`, then `pcl impact --diff --json`." not in pack["markdown"]
     assert code_context["receipt_ref"] == {
         "evidence_id": None,
         "receipt_path": None,

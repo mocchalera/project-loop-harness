@@ -8,6 +8,7 @@ from pathlib import Path
 import sqlite3
 from typing import Any
 
+from .context_binding import _receipt_target_binding_agrees
 from .db import connect, table_exists
 from .evidence import ADHOC_EVIDENCE_TYPES, assess_adhoc_evidence
 from .errors import DataStoreError, InvalidInputError
@@ -263,7 +264,7 @@ def _validate_strict_invariants(paths: ProjectPaths, conn: sqlite3.Connection, r
     _validate_workflow_proposals(paths, conn, result)
     _validate_foreign_keys(conn, result)
     _validate_verification_feedback_references(conn, result)
-    _validate_evidence_links(conn, result)
+    _validate_evidence_links(paths, conn, result)
     _validate_closed_goals(conn, result)
     _validate_passed_workflow_runs(conn, result)
     _validate_verified_or_closed_defects(conn, result)
@@ -619,6 +620,7 @@ def _validate_verification_feedback_references(
 
 
 def _validate_evidence_links(
+    paths: ProjectPaths,
     conn: sqlite3.Connection,
     result: ValidationResult,
 ) -> None:
@@ -657,6 +659,55 @@ def _validate_evidence_links(
                 f"Evidence link {evidence_id or '<empty>'} references missing "
                 f"{target_type} {target_id or '<empty>'}."
             )
+        _validate_code_context_link_binding(
+            paths,
+            evidence_id=evidence_id,
+            target_type=target_type,
+            target_id=target_id,
+            link_role=link_role,
+            result=result,
+        )
+
+
+def _validate_code_context_link_binding(
+    paths: ProjectPaths,
+    *,
+    evidence_id: str,
+    target_type: str,
+    target_id: str,
+    link_role: str,
+    result: ValidationResult,
+) -> None:
+    if link_role != "code_context":
+        return
+    from .code_context.receipts import (
+        CONTEXT_RECEIPT_EVIDENCE_TYPE,
+        evidence_ref_by_id,
+        resolve_context_receipt_path,
+    )
+
+    receipt_ref = evidence_ref_by_id(paths, evidence_id)
+    if receipt_ref is None or receipt_ref.get("evidence_type") != CONTEXT_RECEIPT_EVIDENCE_TYPE:
+        return
+    receipt_path = resolve_context_receipt_path(paths, str(receipt_ref["receipt_path"]))
+    try:
+        receipt_payload = json.loads(receipt_path.read_text(encoding="utf-8"))
+    except (OSError, JSONDecodeError):
+        return
+    if not isinstance(receipt_payload, dict):
+        return
+    if _receipt_target_binding_agrees(
+        receipt_payload,
+        target_type=target_type,
+        target_id=target_id,
+    ):
+        return
+    result.add_error(
+        "Evidence link "
+        f"{evidence_id} to {target_type}:{target_id} as code_context has an artifact "
+        "target_binding that disagrees with the evidence link routing row: "
+        f"{receipt_payload.get('target_binding')!r}."
+    )
 
 
 def _validate_closed_goals(conn: sqlite3.Connection, result: ValidationResult) -> None:

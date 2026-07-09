@@ -104,6 +104,68 @@
       }
     },
     {
+      "id": "mismatched_bound_link_falls_back_to_unscoped_latest",
+      "setup": {
+        "project": "task_code",
+        "receipts": [
+          {
+            "alias": "mismatched",
+            "fresh": true,
+            "target": {
+              "type": "task",
+              "id": "T-0001"
+            },
+            "artifact_target": {
+              "type": "task",
+              "id": "T-9999"
+            }
+          }
+        ]
+      },
+      "pack": {
+        "target_type": "task",
+        "target_id": "T-0001"
+      },
+      "expected": {
+        "ok": true,
+        "included_sections": [
+          "machine_context_rules",
+          "code_context_safety",
+          "code_context_verification_suggestions",
+          "code_context_detail",
+          "target_task",
+          "dependencies",
+          "dependents",
+          "goal",
+          "sibling_tasks",
+          "recent_events"
+        ],
+        "omitted_sections": [],
+        "required_sections": [
+          "machine_context_rules",
+          "code_context_safety"
+        ],
+        "required_sections_omitted": [],
+        "source_paths": [
+          "$receipt:mismatched.receipt_path"
+        ],
+        "suggested_refresh_commands": [
+          "pcl impact --diff --for-task T-0001 --json"
+        ],
+        "code_context": {
+          "selected_receipt": "mismatched",
+          "relevance": {
+            "target_type": "task",
+            "target_id": "T-0001",
+            "scope": "unscoped_latest",
+            "binding_strength": "none",
+            "warning": "A target-bound code context receipt link was skipped because the evidence link routing row and artifact binding disagree; using the latest context receipt by recency.",
+            "reason": "The most recent context receipt was selected by recency; it was not accepted as target-bound for this target."
+          }
+        }
+      }
+    },
+    {
       "id": "target_bound_task_beats_newer_unbound",
       "setup": {
         "project": "task_code",
@@ -328,6 +390,51 @@
         "unselected_receipts": [
           "unscoped"
         ]
+      }
+    },
+    {
+      "id": "require_bound_mismatched_task",
+      "setup": {
+        "project": "task_code",
+        "receipts": [
+          {
+            "alias": "mismatched",
+            "fresh": true,
+            "target": {
+              "type": "task",
+              "id": "T-0001"
+            },
+            "artifact_target": {
+              "type": "task",
+              "id": "T-9999"
+            }
+          }
+        ]
+      },
+      "pack": {
+        "target_type": "task",
+        "target_id": "T-0001",
+        "require_bound_receipt": true
+      },
+      "expected": {
+        "ok": false,
+        "error": {
+          "code": "context_pack_bound_receipt_mismatch",
+          "details": {
+            "target_type": "task",
+            "target_id": "T-0001",
+            "evidence_id": "$receipt:mismatched.evidence_id",
+            "claimed_target_binding": {
+              "binding_strength": "caller_asserted",
+              "source": "impact_flag",
+              "target_id": "T-9999",
+              "target_type": "task"
+            },
+            "suggested_refresh_commands": [
+              "pcl impact --diff --for-task T-0001 --json"
+            ]
+          }
+        }
       }
     }
   ]

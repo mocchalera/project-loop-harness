@@ -29,6 +29,54 @@ def _update_db(root: Path, sql: str, params: tuple = ()) -> None:
         conn.close()
 
 
+def _insert_context_receipt_link(
+    root: Path,
+    *,
+    evidence_id: str,
+    link_target_type: str,
+    link_target_id: str,
+    link_role: str,
+    binding_target_type: str,
+    binding_target_id: str,
+) -> None:
+    receipt_path = f".project-loop/evidence/context-receipts/{evidence_id.lower()}-impact-v0.json"
+    absolute_receipt_path = root / receipt_path
+    absolute_receipt_path.parent.mkdir(parents=True, exist_ok=True)
+    absolute_receipt_path.write_text(
+        json.dumps(
+            {
+                "contract_version": "context-receipt/v0",
+                "evidence_id": evidence_id,
+                "receipt_path": receipt_path,
+                "target_binding": {
+                    "target_type": binding_target_type,
+                    "target_id": binding_target_id,
+                    "binding_strength": "caller_asserted",
+                    "source": "impact_flag",
+                },
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    _update_db(
+        root,
+        """
+        INSERT INTO evidence(id, type, path, summary, created_at)
+        VALUES (?, 'context_receipt', ?, 'Context receipt', '2026-07-08T00:00:00Z')
+        """,
+        (evidence_id, receipt_path),
+    )
+    _update_db(
+        root,
+        """
+        INSERT INTO evidence_links(evidence_id, target_type, target_id, link_role, created_at)
+        VALUES (?, ?, ?, ?, '2026-07-08T00:00:00Z')
+        """,
+        (evidence_id, link_target_type, link_target_id, link_role),
+    )
+
+
 def _valid_rubric(evidence_id: str | None = None) -> dict:
     return {
         "contract_version": "rubric/v1",
@@ -621,6 +669,75 @@ def test_strict_validate_tolerates_evidence_link_to_unknown_target_type(
         INSERT INTO evidence_links(evidence_id, target_type, target_id, link_role, created_at)
         VALUES ('E-0001', 'future_target', 'FT-9999', 'supporting', '2026-07-08T00:00:00Z')
         """,
+    )
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
+    payload = _json_output(capsys)
+    assert payload["errors"] == []
+
+
+def test_strict_validate_rejects_code_context_link_target_binding_mismatch(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path), "--json"]) == 0
+    _json_output(capsys)
+    assert main(["--root", str(tmp_path), "task", "create", "--title", "Target"]) == 0
+    capsys.readouterr()
+    _insert_context_receipt_link(
+        tmp_path,
+        evidence_id="E-0001",
+        link_target_type="task",
+        link_target_id="T-0001",
+        link_role="code_context",
+        binding_target_type="task",
+        binding_target_id="T-9999",
+    )
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 1
+    payload = _json_output(capsys)
+    assert any(
+        "Evidence link E-0001 to task:T-0001 as code_context has an artifact "
+        "target_binding that disagrees with the evidence link routing row"
+        in error
+        for error in payload["errors"]
+    )
+
+
+def test_strict_validate_accepts_matching_code_context_link_and_ignores_non_binding_roles(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path), "--json"]) == 0
+    _json_output(capsys)
+    assert main(["--root", str(tmp_path), "task", "create", "--title", "Target"]) == 0
+    capsys.readouterr()
+    _insert_context_receipt_link(
+        tmp_path,
+        evidence_id="E-0001",
+        link_target_type="task",
+        link_target_id="T-0001",
+        link_role="code_context",
+        binding_target_type="task",
+        binding_target_id="T-0001",
+    )
+    _insert_context_receipt_link(
+        tmp_path,
+        evidence_id="E-0002",
+        link_target_type="task",
+        link_target_id="T-0001",
+        link_role="supporting",
+        binding_target_type="task",
+        binding_target_id="T-9999",
+    )
+    _insert_context_receipt_link(
+        tmp_path,
+        evidence_id="E-0003",
+        link_target_type="future_target",
+        link_target_id="FT-9999",
+        link_role="code_context",
+        binding_target_type="task",
+        binding_target_id="T-9999",
     )
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
