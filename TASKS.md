@@ -113,9 +113,12 @@ Give these tasks to coding agents in this order:
 109. `agent-tasks/0113-evidence-links-table.md` (v0.3.0, migration 007 — approved 2026-07-08; 0108 sits on this)
 110. `agent-tasks/0114-source-hash-drift.md` (v0.3.0, default-on same-size content drift; extends 0102)
 111. `agent-tasks/0115-context-pack-contract-fixtures.md` (v0.3.0, freezes the target-bound handoff contract; after 0108)
+112. `agent-tasks/0116-receipt-link-agreement-validation.md` (v0.3.1, read-side + strict binding-agreement guard; approved 2026-07-09)
+113. `agent-tasks/0117-markdown-target-refresh-command.md` (v0.3.1, target-specific refresh command in code-context Markdown; pairs with 0116)
 
 Roadmap through v0.5.0: see `docs/growth-plan-v0.2.4-v0.5.md` (approved 2026-07-08).
 Numbering is creation order; milestones interleave. v0.3.0 = {0108, 0113, 0114, 0115}.
-Reserved for later milestones: 0109 `pcl finish` / 0110 human-gate ja / 0111 feature_coverage no-op / 0116 `pcl context check` (v0.3.1); 0112 master-trace formalization (v0.3.2).
+v0.3.1 = Handoff Integrity + Operator Experience, dispatch order: 0116 receipt/link agreement -> 0117 Markdown refresh command -> 0118 canonical target-bound docs -> 0119 `pcl context check` -> 0120 `pcl finish` -> 0121 human-gate ja -> 0122 feature_coverage no-op. (0116+0117 = the integrity pair, dispatched first; supersedes the earlier 0109/0110/0111/0116 reservation from the v0.3.0 planning note.)
+v0.3.2 = master-trace / intent-index formalization.
 
 Do not start with MCP. Do not start with a hosted UI. The CLI/runtime must become reliable first.

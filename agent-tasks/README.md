@@ -20,14 +20,22 @@ implement from the spec file, not from prompt summaries.
 | 0105 | Evidence copy observability | v0.2.4 Trust Patch | P2 | done |
 | 0106 | Release checklist contract | v0.2.4 Trust Patch | P2 | done (`docs/release-checklist.md`) |
 | 0107 | agent-tasks backlog index | v0.2.4 Trust Patch | P3 | done (this file) |
-| 0113 | Generic evidence_links table (migration 007) | v0.3.0 Target-Bound Context | P1 | spec ready |
-| 0108 | Target-bound code context receipts (sits on 0113) | v0.3.0 Target-Bound Context | P1 | spec ready |
-| 0114 | Source hash drift detection (default-on) | v0.3.0 Target-Bound Context | P2 | spec ready |
-| 0115 | Context pack target-bound contract fixtures | v0.3.0 Target-Bound Context | P2 | spec ready |
+| 0113 | Generic evidence_links table (migration 007) | v0.3.0 Target-Bound Context | P1 | done (shipped v0.3.0) |
+| 0108 | Target-bound code context receipts (sits on 0113) | v0.3.0 Target-Bound Context | P1 | done (shipped v0.3.0) |
+| 0114 | Source hash drift detection (default-on) | v0.3.0 Target-Bound Context | P2 | done (shipped v0.3.0) |
+| 0115 | Context pack target-bound contract fixtures | v0.3.0 Target-Bound Context | P2 | done (shipped v0.3.0) |
+| 0116 | Target-bound receipt / link agreement validation | v0.3.1 Handoff Integrity | P1 | spec ready |
+| 0117 | Target-specific refresh command in code-context Markdown | v0.3.1 Handoff Integrity | P1 | spec ready |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
-0108 contract).
+0108 contract). Shipped in v0.3.0.
+
+v0.3.1 dispatch order: **0116 + 0117 = the integrity pair, dispatched first**
+(both in `context.py`; one worker, no cross-worker merge) → 0118 canonical
+target-bound docs → 0119 `pcl context check` (imports the 0116 agreement
+predicate) → 0120 `pcl finish` → 0121 human-gate ja → 0122 feature_coverage
+no-op.
 
 ## Planned next (see growth plan for scope)
 
