@@ -24,8 +24,8 @@ implement from the spec file, not from prompt summaries.
 | 0108 | Target-bound code context receipts (sits on 0113) | v0.3.0 Target-Bound Context | P1 | done (shipped v0.3.0) |
 | 0114 | Source hash drift detection (default-on) | v0.3.0 Target-Bound Context | P2 | done (shipped v0.3.0) |
 | 0115 | Context pack target-bound contract fixtures | v0.3.0 Target-Bound Context | P2 | done (shipped v0.3.0) |
-| 0116 | Target-bound receipt / link agreement validation | v0.3.1 Handoff Integrity | P1 | spec ready |
-| 0117 | Target-specific refresh command in code-context Markdown | v0.3.1 Handoff Integrity | P1 | spec ready |
+| 0116 | Target-bound receipt / link agreement validation | v0.3.1 Handoff Integrity | P1 | merged to main (v0.3.1, unreleased) |
+| 0117 | Target-specific refresh command in code-context Markdown | v0.3.1 Handoff Integrity | P1 | merged to main (v0.3.1, unreleased) |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
