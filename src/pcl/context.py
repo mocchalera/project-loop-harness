@@ -21,6 +21,7 @@ from .code_context.receipts import (
     latest_context_receipt_ref,
     resolve_context_receipt_path,
 )
+from .code_context.impact import _require_existing_target, _validate_target_id_shape
 from .context_binding import _receipt_target_binding_agrees
 from .db import connect, table_exists
 from .errors import ContextPackBudgetError, EXIT_USAGE, InvalidInputError, PclError
@@ -463,6 +464,88 @@ def pack_context_for_task(
     return pack
 
 
+def check_context(
+    paths: ProjectPaths,
+    *,
+    target_type: str,
+    target_id: str,
+    require_bound_receipt: bool = False,
+) -> dict[str, Any]:
+    require_initialized(paths)
+    _validate_context_check_target(paths, target_type=target_type, target_id=target_id)
+
+    conn = connect(paths.db_path)
+    try:
+        supporting_evidence_count = _supporting_evidence_count(
+            conn,
+            target_type=target_type,
+            target_id=target_id,
+        )
+        target_bound_code_context = _target_bound_code_context_status(
+            paths,
+            conn,
+            target_type=target_type,
+            target_id=target_id,
+        )
+    finally:
+        conn.close()
+
+    status = str(target_bound_code_context["status"])
+    if require_bound_receipt and status == "mismatched":
+        raise ContextPackBoundReceiptMismatchError(
+            target_type=target_type,
+            target_id=target_id,
+            evidence_id=str(target_bound_code_context["receipt_ref"]["evidence_id"]),
+            claimed_target_binding=target_bound_code_context.get("claimed_target_binding"),
+            suggested_refresh_command=_target_refresh_command(target_type, target_id),
+        )
+    if require_bound_receipt and status != "present":
+        raise ContextPackBoundReceiptRequiredError(
+            target_type=target_type,
+            target_id=target_id,
+            suggested_refresh_command=_target_refresh_command(target_type, target_id),
+        )
+
+    payload: dict[str, Any] = {
+        "target": {"type": target_type, "id": target_id},
+        "supporting_evidence_count": supporting_evidence_count,
+        "target_bound_code_context": target_bound_code_context,
+        "canonical_context_pack_command": _canonical_context_pack_command(target_type, target_id),
+        "warnings": _context_check_warnings(target_type=target_type, status=status),
+    }
+    if status != "present":
+        payload["recommended_refresh_command"] = _target_refresh_command(target_type, target_id)
+    return payload
+
+
+def context_check_for_task(
+    paths: ProjectPaths,
+    *,
+    task_id: str,
+    require_bound_receipt: bool = False,
+) -> dict[str, Any]:
+    return check_context(
+        paths,
+        target_type="task",
+        target_id=task_id,
+        require_bound_receipt=require_bound_receipt,
+    )
+
+
+def context_check_for_job(
+    paths: ProjectPaths,
+    *,
+    job_id: str,
+    require_bound_receipt: bool = False,
+) -> dict[str, Any]:
+    return check_context(
+        paths,
+        target_type="agent_job",
+        target_id=job_id,
+        require_bound_receipt=require_bound_receipt,
+    )
+
+
 def _build_job_sections(
     *,
     job: dict[str, Any],
@@ -847,6 +930,121 @@ def _select_code_context_receipt_ref(
     if receipt_ref is None:
         return None, "missing_receipt"
     return receipt_ref, selection_scope
+
+
+def _validate_context_check_target(
+    paths: ProjectPaths,
+    *,
+    target_type: str,
+    target_id: str,
+) -> None:
+    if target_type == "task":
+        _validate_target_id_shape(target_id, expected_prefix="T", field_name="for_task")
+        _require_existing_target(paths, table="tasks", target_id=target_id, field_name="for_task")
+        return
+    if target_type == "agent_job":
+        _validate_target_id_shape(target_id, expected_prefix="J", field_name="for_job")
+        _require_existing_target(paths, table="agent_jobs", target_id=target_id, field_name="for_job")
+        return
+    raise InvalidInputError(
+        f"Unsupported context check target type: {target_type}",
+        details={"target_type": target_type},
+    )
+
+
+def _supporting_evidence_count(
+    conn,
+    *,
+    target_type: str,
+    target_id: str,
+) -> int:
+    if not table_exists(conn, "evidence_links"):
+        return 0
+    row = conn.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM evidence_links
+        WHERE target_type = ?
+          AND target_id = ?
+          AND link_role = 'supporting'
+        """,
+        (target_type, target_id),
+    ).fetchone()
+    return 0 if row is None else int(row["count"])
+
+
+def _target_bound_code_context_status(
+    paths: ProjectPaths,
+    conn,
+    *,
+    target_type: str,
+    target_id: str,
+) -> dict[str, Any]:
+    bound_evidence_id = newest_linked_evidence_id(
+        conn,
+        target_type=target_type,
+        target_id=target_id,
+        link_role=CODE_CONTEXT_LINK_ROLE,
+    )
+    if bound_evidence_id is None:
+        return {"status": "missing"}
+
+    receipt_ref = evidence_ref_by_id(paths, bound_evidence_id)
+    if receipt_ref is None:
+        return {"status": "unavailable"}
+
+    result: dict[str, Any] = {
+        "status": "unavailable",
+        "receipt_ref": _context_check_receipt_ref(receipt_ref),
+    }
+    if receipt_ref.get("evidence_type") != CONTEXT_RECEIPT_EVIDENCE_TYPE:
+        return result
+
+    receipt_payload = _load_receipt_payload_for_binding_check(
+        paths,
+        _public_receipt_ref(receipt_ref),
+    )
+    if receipt_payload is None:
+        return result
+    if _receipt_target_binding_agrees(
+        receipt_payload,
+        target_type=target_type,
+        target_id=target_id,
+    ):
+        result["status"] = "present"
+        return result
+    result["status"] = "mismatched"
+    result["claimed_target_binding"] = receipt_payload.get("target_binding")
+    return result
+
+
+def _context_check_receipt_ref(receipt_ref: dict[str, str]) -> dict[str, str]:
+    return {
+        "evidence_id": str(receipt_ref["evidence_id"]),
+        "created_at": str(receipt_ref["created_at"]),
+    }
+
+
+def _canonical_context_pack_command(target_type: str, target_id: str) -> str:
+    target_flag = "--job" if target_type == "agent_job" else "--task"
+    return (
+        f"pcl context pack {target_flag} {shlex.quote(target_id)} "
+        "--include-code-context --require-bound-receipt --json"
+    )
+
+
+def _context_check_warnings(*, target_type: str, status: str) -> list[str]:
+    target_label = "agent job" if target_type == "agent_job" else "task"
+    if status == "missing":
+        return [f"No target-bound code context receipt exists for this {target_label}."]
+    if status == "mismatched":
+        return ["A code_context link disagrees with its artifact binding."]
+    if status == "unavailable":
+        return [
+            "A code_context link exists, but a target binding could not be confirmed "
+            "from its evidence artifact."
+        ]
+    return []
 
 
 def _load_receipt_payload_for_binding_check(
