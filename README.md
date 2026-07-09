@@ -237,6 +237,33 @@ evidence. Receipts use the fields `included_candidate_context`, `omitted`, and
 See [docs/code-context.md](docs/code-context.md) for the index, impact,
 receipt, and retrieval-eval contracts.
 
+### Target-bound agent handoff (v0.3)
+
+To hand another agent auditable, target-scoped code context, bind a receipt to
+the task or job, then require that binding when you build the pack:
+
+```bash
+pcl index build --json
+pcl impact --diff --for-task T-0001 --json
+pcl context pack --task T-0001 --include-code-context --require-bound-receipt --json
+```
+
+Use the `--for-job` / `--job` forms for an agent-job handoff:
+
+```bash
+pcl impact --diff --for-job J-0001 --json
+pcl context pack --job J-0001 --include-code-context --require-bound-receipt --json
+```
+
+`pcl impact --diff --for-task` (or `--for-job`) records a caller-asserted binding
+between the diff-based receipt and the target. With `--require-bound-receipt` the
+pack fails with `context_pack_bound_receipt_required` instead of silently using an
+unrelated latest receipt, so a worker never receives another task's context under
+a target-bound label. The binding records that a receipt was created for the
+target (`binding_strength: caller_asserted`) — not that the receipt is sufficient
+or that any agent read it. Because the receipt comes from a diff, this is a
+review/continuation handoff and presumes a change already exists for the target.
+
 ## Guided Next Actions
 
 `pcl next` is the loop router. The JSON output keeps the original fields and adds stable guidance fields:

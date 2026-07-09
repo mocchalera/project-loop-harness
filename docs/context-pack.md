@@ -18,6 +18,12 @@ pcl context pack --task T-0001 --include-code-context --require-bound-receipt --
 
 Exactly one of `--job` or `--task` is required.
 
+For an agent handoff that must carry code context, the canonical strict form is
+`--include-code-context --require-bound-receipt` against a target that already
+has a bound receipt (created with `pcl impact --diff --for-task` / `--for-job`).
+It fails closed with `context_pack_bound_receipt_required` instead of silently
+using an unrelated latest receipt.
+
 ## Contract
 
 JSON mode returns `context-pack/v1`:

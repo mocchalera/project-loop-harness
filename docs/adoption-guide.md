@@ -324,6 +324,24 @@ Before finishing, run the relevant tests plus:
 Summarize evidence, not just conclusions.
 ```
 
+### Target-Bound Code Context Handoff
+
+When you hand another agent code context for a specific task or job, bind the
+receipt to that target and require the binding, so the worker cannot receive an
+unrelated receipt under a target-bound label:
+
+```text
+pcl index build --json
+pcl impact --diff --for-task T-0001 --json
+pcl context pack --task T-0001 --include-code-context --require-bound-receipt --json
+```
+
+Use the `--for-job` / `--job` forms for agent-job handoffs. `--require-bound-receipt`
+turns a missing target binding into a typed failure
+(`context_pack_bound_receipt_required`) instead of a silent unscoped fallback.
+This presumes a diff already exists for the target; it is a review/continuation
+handoff, not a pre-implementation context primitive.
+
 ## Operator Checklist
 
 Before handing a target project to another agent, confirm:
@@ -334,6 +352,7 @@ Before handing a target project to another agent, confirm:
 - `pcl.yaml` has real project commands and permissions;
 - `pcl validate --strict` passes;
 - `pcl render --json` returns dashboard artifact paths for human review and machine JSON;
+- for target-scoped code handoffs, `pcl context pack --include-code-context --require-bound-receipt` against the intended task or job succeeds (a bound receipt exists);
 - the committed files exclude local DB, JSONL audit log, and evidence blobs
   unless the team intentionally chose otherwise;
 - the first prompt tells agents to use `pcl` or dashboard-data JSON, not raw SQLite or generated HTML.

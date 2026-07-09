@@ -604,6 +604,16 @@ matching bound receipt exists, context pack fails with typed error
 `context_pack_bound_receipt_required` and suggests a target-specific refresh
 command. It does not fall back to the unscoped latest receipt in that mode.
 
+### Review/continuation vs pre-work context
+
+A target-bound receipt is produced by `pcl impact --diff --for-task` /
+`--for-job`, so it presumes a diff already exists for the target. Target-bound
+code context is therefore a review/continuation handoff: it binds the code
+candidate context of an existing change to the task or job that owns it. It is
+not a pre-implementation "task intent" primitive — when no diff exists yet,
+`--require-bound-receipt` fails by design rather than fabricate a binding.
+Pre-work context preparation is a separate, future path.
+
 The bridge does not add schema, rebuild the index, run impact automatically,
 make continuation claims, or expose a `safe_to_continue` field.
 

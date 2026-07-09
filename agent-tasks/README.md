@@ -26,7 +26,7 @@ implement from the spec file, not from prompt summaries.
 | 0115 | Context pack target-bound contract fixtures | v0.3.0 Target-Bound Context | P2 | done (shipped v0.3.0) |
 | 0116 | Target-bound receipt / link agreement validation | v0.3.1 Handoff Integrity | P1 | merged to main (v0.3.1, unreleased) |
 | 0117 | Target-specific refresh command in code-context Markdown | v0.3.1 Handoff Integrity | P1 | merged to main (v0.3.1, unreleased) |
-| 0118 | Canonical target-bound handoff docs (README + adoption) | v0.3.1 Operator Experience | P1 | spec ready (orchestrator-owned) |
+| 0118 | Canonical target-bound handoff docs (README + adoption) | v0.3.1 Operator Experience | P1 | done (main, v0.3.1 unreleased) |
 | 0119 | `pcl context check` read-only preflight | v0.3.1 Operator Experience | P1 | spec ready |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
