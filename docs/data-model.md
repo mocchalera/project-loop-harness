@@ -4,13 +4,14 @@
 
 The database is created and upgraded through ordered SQL migrations in
 `src/pcl/db/migrations/`. `src/pcl/db/schema.sql` is the base v1 schema, while
-new installs currently apply migrations through schema version 6.
+new installs currently apply migrations through schema version 8.
 
 Core tables:
 
 - `metadata`
 - `schema_migrations`
 - `events`
+- `outbox_records`
 - `goals`
 - `workflows`
 - `workflow_runs`
@@ -66,7 +67,15 @@ CodeIndexRun
 
 ContextReceiptEvidence
   └─ VerificationFeedback
+
+Event
+  └─ OutboxRecord (JSONL projection delivery state)
 ```
+
+Schema version 8 gives every event a positive, unique, contiguous `sequence`
+and adds the retained `outbox_records` delivery ledger. Domain state, the event,
+and its pending outbox row commit together. `events.jsonl` is updated only after
+that commit and is considered durable only after file `fsync` succeeds.
 
 ## ID prefixes
 

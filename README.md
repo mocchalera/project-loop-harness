@@ -63,7 +63,7 @@ The important separation is:
 Skill          = instructions for agents
 pcl CLI        = runtime that mutates state, validates, renders, and routes work
 project.db     = current normalized loop memory
-events.jsonl   = append-only audit log
+events.jsonl   = derived append-only projection of authoritative SQLite events
 dashboard.html = generated human-readable view, not agent context
 Plugin         = Codex distribution wrapper
 MCP            = optional read/local-render bridge

@@ -76,14 +76,23 @@ pcl loop run defect_repair --defect D-0001
 
 ## Why SQLite + JSONL
 
-SQLite is used for current normalized state and dashboard queries.
-JSONL is used for append-only audit and reconstruction.
+SQLite is authoritative for current normalized state, ordered events, and
+transactional JSONL delivery intent. JSONL is a derived, append-only,
+rebuildable projection of committed SQLite events; it is not a source for
+rebuilding arbitrary domain tables.
 
 Do not choose only one:
 
-- SQLite alone is hard to review in Git.
+- SQLite alone is hard to review with ordinary text tools.
 - JSONL alone is awkward for query, joins, and validation.
 - CSV alone is too easy to corrupt as the loop grows.
+
+Every public mutation owns a `BEGIN IMMEDIATE` transaction containing its
+domain writes, event row, and outbox row. After the authoritative commit, a
+bounded synchronous projector writes canonical UTF-8 JSONL in event sequence,
+calls `fsync`, and only then marks the outbox row delivered. Projection failure
+does not undo committed domain state; retry with `pcl audit flush` rather than
+re-running the mutation.
 
 ## Why CLI first
 

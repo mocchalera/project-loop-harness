@@ -472,6 +472,12 @@ def _validate_audit_log_integrity(paths: ProjectPaths, conn: sqlite3.Connection,
         return
     jsonl_events = _read_jsonl_events(paths, result)
     db_events = _db_events(conn, result)
+    sequences = [int(event["sequence"]) for event in db_events if event.get("sequence") is not None]
+    if sequences and sequences != list(range(1, len(sequences) + 1)):
+        result.add_error(
+            "DB event sequence must be contiguous and start at 1; "
+            f"found {sequences[:10]}{'...' if len(sequences) > 10 else ''}."
+        )
     jsonl_by_id: dict[str, dict[str, Any]] = {}
     first_lines: dict[str, int] = {}
     for event in jsonl_events:
@@ -541,13 +547,23 @@ def _read_jsonl_events(paths: ProjectPaths, result: ValidationResult) -> list[di
 
 
 def _db_events(conn: sqlite3.Connection, result: ValidationResult) -> list[dict[str, Any]]:
-    rows = conn.execute(
-        """
-        SELECT id, event_type, entity_type, entity_id, payload_json, created_at
-        FROM events
-        ORDER BY rowid
-        """
-    ).fetchall()
+    columns = {str(row["name"]) for row in conn.execute("PRAGMA table_info(events)").fetchall()}
+    if "sequence" in columns:
+        rows = conn.execute(
+            """
+            SELECT id, sequence, event_type, entity_type, entity_id, payload_json, created_at
+            FROM events
+            ORDER BY sequence
+            """
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            """
+            SELECT id, event_type, entity_type, entity_id, payload_json, created_at
+            FROM events
+            ORDER BY rowid
+            """
+        ).fetchall()
     events: list[dict[str, Any]] = []
     for row in rows:
         event = dict(row)
@@ -578,6 +594,12 @@ def _compare_event_record(
             )
     if db_event.get("payload") != jsonl_event.get("payload"):
         result.add_error(f"Event {event_id} payload differs between DB and events.jsonl.")
+    if "sequence" in db_event and "sequence" in jsonl_event:
+        if db_event["sequence"] != jsonl_event["sequence"]:
+            result.add_error(
+                f"Event {event_id} sequence differs: DB={db_event['sequence']!r}, "
+                f"events.jsonl={jsonl_event['sequence']!r}."
+            )
 
 
 def _validate_foreign_keys(conn: sqlite3.Connection, result: ValidationResult) -> None:
