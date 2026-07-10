@@ -63,3 +63,25 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install -e '.[dev,mcp-test]'
       - run: python -m pytest tests/mcp -ra
+
+  windows-smoke:
+    name: Windows CLI smoke
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -e '.[dev]'
+      - name: Exercise mutation and audit path
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP "pcl-windows-smoke-$([guid]::NewGuid())"
+          pcl init --target $root --json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pcl --root $root --json goal create --title "Windows smoke goal"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pcl --root $root --json validate --strict
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pcl --root $root --json audit check
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
