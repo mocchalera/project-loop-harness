@@ -100,7 +100,9 @@ def test_wheel_install_smoke_runs_cli_mcp_and_bundled_templates(tmp_path: Path) 
     assert Path(render["data_path"]).exists()
 
     next_action = _json_output(_run([pcl, "--root", target, "--json", "next"], env=wheel_env))
-    assert next_action["type"] == "create_goal"
+    assert next_action["type"] == "idle"
+    assert next_action["command"] is None
+    assert next_action["requires_human"] is False
 
 
 def test_reusable_github_action_contract_is_documented_and_wired() -> None:

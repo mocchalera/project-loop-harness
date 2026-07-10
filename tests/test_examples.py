@@ -68,4 +68,7 @@ def test_examples_can_be_initialized_validated_and_rendered(tmp_path: Path, caps
         assert Path(render["path"]).exists()
 
         assert main(["--root", str(target), "next", "--json"]) == 0
-        assert _json_output(capsys)["type"] == "create_goal"
+        next_action = _json_output(capsys)
+        assert next_action["type"] == "idle"
+        assert next_action["command"] is None
+        assert next_action["requires_human"] is False

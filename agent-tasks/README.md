@@ -52,7 +52,7 @@ implement from the spec file, not from prompt summaries.
 | 0140a | Skill / CLI contract parity | v0.4.0 RC2 Integrity Gate | P0 | done (main 8bd6aa3) |
 | 0140b | Evidence-backed lifecycle integrity gate | v0.4.0 RC2 Integrity Gate | P0 | done (main ad082d7 + d5d2602) |
 | 0140c | Fail-open finish check guard | v0.4.0 RC2 Integrity Gate | P0 | done (main 131d9d4) |
-| 0141 | Idle routing without a redundant human gate | v0.4.1 Integrity Migration | P0 | in progress |
+| 0141 | Idle routing without a redundant human gate | v0.4.1 Integrity Migration | P0 | done |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the

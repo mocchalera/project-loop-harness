@@ -78,7 +78,7 @@ def _json_output(capsys) -> dict:
 def _assert_guided_action(action: dict) -> None:
     assert GUIDED_ACTION_KEYS.issubset(action)
     assert isinstance(action["type"], str)
-    assert isinstance(action["command"], str)
+    assert action["command"] is None or isinstance(action["command"], str)
     assert isinstance(action["reason"], str)
     assert isinstance(action["priority"], int)
     assert isinstance(action["blocking"], bool)
@@ -142,21 +142,47 @@ def _approve_workflow(tmp_path: Path, capsys, workflow_text: str) -> None:
     capsys.readouterr()
 
 
-def test_next_json_returns_guided_schema_for_create_goal(tmp_path: Path, capsys) -> None:
+def test_next_json_returns_non_blocking_idle_action(tmp_path: Path, capsys) -> None:
     assert main(["init", "--target", str(tmp_path)]) == 0
     capsys.readouterr()
 
     assert main(["--root", str(tmp_path), "next", "--json"]) == 0
     action = _json_output(capsys)
     _assert_guided_action(action)
-    assert action["type"] == "create_goal"
+    assert action["type"] == "idle"
+    assert action["command"] is None
     assert action["priority"] == 70
     assert action["blocking"] is False
-    assert action["requires_human"] is True
+    assert action["requires_human"] is False
     assert action["safe_to_run"] is False
-    assert action["run_policy"] == "human_decision"
-    assert "human should choose" in action["human_guidance"]
-    assert "open goal exists" in action["expected_after"]
+    assert action["run_policy"] == "idle"
+    assert "pcl start" in action["human_guidance"]
+    assert "explicit intent" in action["reason"]
+    assert "why_blocked" not in action
+    assert "No state changes" in action["expected_after"]
+
+
+def test_idle_dashboard_keeps_command_null_and_human_queue_empty(tmp_path: Path, capsys) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "render", "--json"]) == 0
+    _json_output(capsys)
+
+    data = json.loads(
+        (tmp_path / ".project-loop" / "dashboard" / "dashboard-data.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert data["next_action"]["type"] == "idle"
+    assert data["next_action"]["command"] is None
+    assert data["human_decisions"] == {"count": 0, "items": []}
+
+    html = (tmp_path / ".project-loop" / "dashboard" / "dashboard.html").read_text(
+        encoding="utf-8"
+    )
+    assert "<strong>idle</strong>" in html
+    assert "<code>None</code>" not in html
 
 
 def test_next_routes_uncovered_feature_before_generic_goal(tmp_path: Path, capsys) -> None:
@@ -623,13 +649,14 @@ def test_next_explain_prints_guided_fields(tmp_path: Path, capsys) -> None:
 
     assert main(["--root", str(tmp_path), "next", "--explain"]) == 0
     output = capsys.readouterr().out
-    assert "Next action: create_goal" in output
+    assert "Next action: idle" in output
     assert "Priority: 70" in output
     assert "Blocking: no" in output
-    assert "Requires human: yes" in output
+    assert "Requires human: no" in output
     assert "Safe to run: no" in output
-    assert "Run policy: human_decision" in output
+    assert "Run policy: idle" in output
     assert "Human guidance:" in output
+    assert "Command: -" in output
     assert "Expected after:" in output
 
 

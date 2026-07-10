@@ -284,6 +284,12 @@ review/continuation handoff and presumes a change already exists for the target.
 }
 ```
 
+When no active work or real human decision exists, the same schema returns
+`type: "idle"`, `command: null`, `requires_human: false`, and
+`run_policy: "idle"`. If a user has already supplied explicit work, pass that
+literal intent to `pcl start "<intent>"` instead of inventing a Goal title or
+asking for a second approval merely to register it.
+
 Use:
 
 ```bash

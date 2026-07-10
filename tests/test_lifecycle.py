@@ -294,7 +294,7 @@ def test_lifecycle_completes_run_and_closes_goal(tmp_path: Path, capsys) -> None
     assert "goal_closed" in events
 
     assert main(["--root", str(tmp_path), "next", "--json"]) == 0
-    assert _json_output(capsys)["type"] == "create_goal"
+    assert _json_output(capsys)["type"] == "idle"
 
 
 def test_jobs_complete_with_evidence_regresses_ax1_empty_evidence_symptom(

@@ -741,6 +741,30 @@ def _human_guidance(*, run_policy: str, blocking: bool) -> str:
     return prefix + "This mutates durable loop state; run it deliberately after reviewing the recommendation."
 
 
+def _idle_next_action() -> dict:
+    return {
+        "type": "idle",
+        "command": None,
+        "reason": (
+            "No active work or pending human decision exists; pass explicit intent "
+            "to `pcl start` when work is requested."
+        ),
+        "target": None,
+        "priority": 70,
+        "blocking": False,
+        "requires_human": False,
+        "safe_to_run": False,
+        "expected_after": (
+            "No state changes until explicit intent is passed to `pcl start \"<intent>\"`."
+        ),
+        "run_policy": "idle",
+        "human_guidance": (
+            "No durable action is pending. When explicit user intent is available, "
+            "pass it literally to `pcl start \"<intent>\"`."
+        ),
+    }
+
+
 def next_action(paths: ProjectPaths) -> dict:
     status = loop_status(paths)
     escalation = _open_escalation_next_action(paths)
@@ -782,17 +806,7 @@ def next_action(paths: ProjectPaths) -> dict:
     uncovered_feature = _uncovered_feature_next_action(paths)
     if uncovered_feature is not None:
         return uncovered_feature
-    return build_next_action(
-        action_type="create_goal",
-        command="pcl goal create --title 'Reach feature coverage'",
-        reason="No open goal exists.",
-        target=None,
-        priority=70,
-        blocking=False,
-        requires_human=True,
-        safe_to_run=False,
-        expected_after="An open goal exists and `pcl next` can route work from it.",
-    )
+    return _idle_next_action()
 
 
 def finish_plan(paths: ProjectPaths, *, run_id: str | None = None, goal_id: str | None = None) -> dict:

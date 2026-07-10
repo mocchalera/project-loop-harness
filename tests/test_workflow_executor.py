@@ -585,7 +585,7 @@ def test_loop_execute_retry_failed_run_creates_linked_new_run(
     assert retry_event_count == 1
 
     assert main(["--root", str(tmp_path), "next", "--json"]) == 0
-    assert _json_output(capsys)["type"] == "create_goal"
+    assert _json_output(capsys)["type"] == "idle"
 
 
 def test_loop_execute_retry_run_creation_and_link_event_are_atomic(

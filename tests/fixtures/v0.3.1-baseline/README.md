@@ -25,6 +25,10 @@ personal information, or real-project content. It was generated from the
 
 ## Intended changes since v0.3.1 freeze
 
+- 2026-07-11 — `snapshots/empty-next-json.json` intentionally changed for task
+  0141: a project with no active work now returns a neutral `idle` action with
+  `command: null` and no fabricated human gate. Explicit user intent enters
+  through `pcl start`.
 - 2026-07-10 — `snapshots/pcl-version.json` regenerated for the v0.4.0 release
   bump (`0.3.3` → `0.4.0`).
 - 2026-07-10 — `snapshots/pcl-help.json` regenerated for task 0139 because the

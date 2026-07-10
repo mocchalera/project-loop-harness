@@ -158,7 +158,8 @@ The linked decision is stored in `decisions.blocks_json`, and `escalation_resolv
 Every `pcl next --json` action includes:
 
 - `type`;
-- `command`;
+- `command` (a command string, or `null` only when the action deliberately has
+  no executable command, such as `type: idle`);
 - `reason`;
 - `target`;
 - `priority`;
@@ -182,6 +183,12 @@ Interpret the routing fields this way:
   transition before it is recorded.
 - `blocking: true` means normal loop continuation should wait until the action
   is resolved.
+
+When no active work or real human decision exists, `pcl next --json` returns a
+non-blocking `idle` action with `command: null` and `requires_human: false`. If
+the user has already supplied a literal implementation intent, register it
+directly with `pcl start "<intent>"`; do not invent a Goal title or ask for a
+second approval merely to record that intent.
 
 Verification results should be used consistently:
 

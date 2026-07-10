@@ -24,11 +24,14 @@ When this skill is invoked:
 1. Read `AGENTS.md`, `CLAUDE.md` if present, and `pcl.yaml`.
 2. Run `pcl doctor` or `pcl validate` if project-loop state may be stale.
 3. Use `pcl next` to determine the next harness action when ambiguous.
-4. Perform the smallest valid next step.
-5. Record state through `pcl` commands.
-6. Run `pcl validate` after state changes.
-7. Run `pcl render` after validation.
-8. Report evidence, not just conclusions.
+4. When the user has already supplied explicit implementation intent and no
+   active work exists, pass that intent literally to `pcl start`; do not create
+   an extra human gate merely to register it.
+5. Perform the smallest valid next step.
+6. Record state through `pcl` commands.
+7. Run `pcl validate` after state changes.
+8. Run `pcl render` after validation.
+9. Report evidence, not just conclusions.
 
 `pcl.yaml` `commands.*` values are arbitrary shell commands, not npm script
 names or make targets. Run the configured command string exactly as written;

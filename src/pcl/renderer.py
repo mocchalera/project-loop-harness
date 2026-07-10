@@ -1183,7 +1183,8 @@ def _risk_summary_block(summary: dict[str, Any], strings: dict[str, str]) -> str
 
 
 def _next_action_block(action: dict[str, Any], strings: dict[str, str]) -> str:
-    command = html.escape(str(action.get("command", "")))
+    command = html.escape(str(action.get("command") or ""))
+    command_block = f"<p><code>{command}</code></p>" if command else ""
     reason = html.escape(str(action.get("reason", "")))
     action_type = html.escape(str(action.get("type", "")))
     priority = html.escape(str(action.get("priority", "")))
@@ -1196,7 +1197,7 @@ def _next_action_block(action: dict[str, Any], strings: dict[str, str]) -> str:
     return (
         f"<p><strong>{action_type}</strong></p>"
         f"<p>{reason}</p>"
-        f"<p><code>{command}</code></p>"
+        f"{command_block}"
         "<dl>"
         f"<dt>{html.escape(strings['next_action.priority'])}</dt><dd>{priority}</dd>"
         f"<dt>{html.escape(strings['next_action.blocking'])}</dt><dd>{blocking}</dd>"

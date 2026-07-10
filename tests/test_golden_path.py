@@ -90,7 +90,7 @@ def test_readme_golden_path_runs_end_to_end(tmp_path: Path, capsys) -> None:
     assert Path(render["data_path"]).exists()
 
     assert main(["--root", str(tmp_path), "next", "--json"]) == 0
-    assert _json_output(capsys)["type"] == "create_goal"
+    assert _json_output(capsys)["type"] == "idle"
 
 
 def test_readme_human_decision_branch_links_escalation_and_decision(tmp_path: Path, capsys) -> None:
