@@ -57,6 +57,11 @@ from .contracts.completion_packet import (
     load_completion_packet,
     validate_completion_packet,
 )
+from .contracts.handoff_packet import (
+    HANDOFF_PACKET_CONTRACT_VERSION,
+    load_handoff_packet,
+    validate_handoff_packet,
+)
 from .code_context.summary import render_receipt_summary
 from .decisions import (
     list_decisions,
@@ -103,6 +108,7 @@ from .renderer import render_dashboard
 from .receipt_show import receipt_summary_for_ref
 from .registry import AGENT_STATUSES, list_agents, read_agent, register_agent, retire_agent, update_agent
 from .reports import report_defect, report_feature, report_goal, report_run, report_validation
+from .resume import build_handoff_packet, render_handoff_markdown, serialized_handoff_packet
 from .stories import (
     STORY_STATUSES,
     TEST_CASE_STATUSES,
@@ -708,7 +714,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_contract_validate.add_argument(
         "--type",
         required=True,
-        choices=[COMPLETION_PACKET_CONTRACT_VERSION],
+        choices=[COMPLETION_PACKET_CONTRACT_VERSION, HANDOFF_PACKET_CONTRACT_VERSION],
         dest="contract_type",
     )
     p_contract_validate.add_argument("file", help="Path to the JSON contract artifact")
@@ -1004,6 +1010,21 @@ def build_parser() -> argparse.ArgumentParser:
         help="Maximum retained stdout and stderr bytes per check stream",
     )
 
+    p_resume = sub.add_parser("resume", help="Build a read-only handoff packet for current work")
+    p_resume.add_argument(
+        "--target",
+        dest="resume_target",
+        default=None,
+        help="Task or goal ID; required when multiple active targets exist",
+    )
+    p_resume.add_argument(
+        "--format",
+        choices=["json", "markdown"],
+        default=None,
+        help="Output format (default: markdown; --json selects JSON)",
+    )
+    p_resume.add_argument("--output", default=None, help="Also write the rendered packet to this path")
+
     p_export = sub.add_parser("export", help="Export state")
     export_sub = p_export.add_subparsers(dest="export_command", required=True)
     export_sub.add_parser("csv")
@@ -1030,9 +1051,24 @@ def _print_json(payload: object) -> None:
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
 
 
-def _validate_contract_file(path_value: str, *, json_output: bool) -> int:
+def _validate_contract_file(
+    path_value: str,
+    *,
+    contract_type: str,
+    json_output: bool,
+) -> int:
+    load_packet = (
+        load_completion_packet
+        if contract_type == COMPLETION_PACKET_CONTRACT_VERSION
+        else load_handoff_packet
+    )
+    validate_packet = (
+        validate_completion_packet
+        if contract_type == COMPLETION_PACKET_CONTRACT_VERSION
+        else validate_handoff_packet
+    )
     try:
-        packet = load_completion_packet(path_value)
+        packet = load_packet(path_value)
     except OSError as exc:
         raise InvalidInputError(
             f"Could not read contract file: {path_value}",
@@ -1049,13 +1085,13 @@ def _validate_contract_file(path_value: str, *, json_output: bool) -> int:
             details={"path": path_value, "reason": str(exc)},
         ) from exc
 
-    result = validate_completion_packet(packet)
+    result = validate_packet(packet)
     payload = result.to_dict()
     payload["path"] = path_value
     if json_output:
         _print_json(payload)
     elif result.ok:
-        print(f"Valid {COMPLETION_PACKET_CONTRACT_VERSION}: {path_value}")
+        print(f"Valid {contract_type}: {path_value}")
     else:
         for error in result.errors:
             print(f"ERROR: {error}", file=sys.stderr)
@@ -1341,7 +1377,52 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command == "contract" and args.contract_command == "validate":
-            return _validate_contract_file(args.file, json_output=json_output)
+            return _validate_contract_file(
+                args.file,
+                contract_type=args.contract_type,
+                json_output=json_output,
+            )
+
+        if args.command == "resume":
+            if json_output and args.format == "markdown":
+                raise InvalidInputError("--json cannot be combined with --format markdown.")
+            output_format = "json" if json_output else (args.format or "markdown")
+            output_path = Path(args.output) if args.output else None
+            if output_path is not None:
+                resolved_output = output_path.resolve()
+                loop_dir = paths.loop_dir.resolve()
+                exports_dir = paths.exports_dir.resolve()
+                if resolved_output.is_relative_to(loop_dir) and not resolved_output.is_relative_to(
+                    exports_dir
+                ):
+                    raise InvalidInputError(
+                        "--output cannot overwrite Project Loop state; use .project-loop/exports or a path outside .project-loop.",
+                        details={"path": args.output, "allowed_project_loop_dir": str(paths.exports_dir)},
+                    )
+            packet = build_handoff_packet(paths, target_id=args.resume_target)
+            rendered = (
+                serialized_handoff_packet(packet)
+                if output_format == "json"
+                else render_handoff_markdown(packet)
+            )
+            if output_path is not None:
+                try:
+                    output_path.write_text(rendered, encoding="utf-8")
+                except OSError as exc:
+                    raise InvalidInputError(
+                        f"Could not write handoff packet: {args.output}",
+                        details={"path": args.output, "reason": str(exc)},
+                    ) from exc
+            if output_format == "json":
+                payload: dict[str, object] = {"ok": True, "handoff_packet": packet}
+                if args.output:
+                    payload["output"] = args.output
+                _print_json(payload)
+            elif args.output:
+                print(args.output)
+            else:
+                print(rendered, end="")
+            return 0
 
         if args.command == "init":
             if args.dry_run:

@@ -124,6 +124,11 @@ layer and transactional outbox. A projector failure returns recoverable exit
 but the SQLite commit did not occur, `pcl audit check` reports
 `orphan_completion_packet` for human review.
 
+The read-only [`pcl resume`](handoff-packet-v1.md) surface consumes the newest
+valid completion packet through its target-bound `completion_packet` Evidence
+link. It preserves the packet's verified/unverified boundary and does not alter
+finish state.
+
 ### Outcomes and exits
 
 - `COMPLETED_VERIFIED`: configured checks and strict validation pass, the

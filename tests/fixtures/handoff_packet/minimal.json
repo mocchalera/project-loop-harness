@@ -1,0 +1,57 @@
+{
+  "blockers": [],
+  "context_refs": [
+    {
+      "freshness": "current",
+      "kind": "completion-packet/v1",
+      "ref": "evidence:E-0001",
+      "sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  ],
+  "contract_version": "handoff-packet/v1",
+  "current_state": "IN_PROGRESS",
+  "decisions": [],
+  "estimated_token_count": 513,
+  "generated_at": "2026-07-10T00:00:00Z",
+  "intent_index_ref": null,
+  "next_safe_action": {
+    "command": "pytest tests/test_resume.py",
+    "text": "Rerun the targeted test."
+  },
+  "omitted_sections": [
+    "evidence_bodies",
+    "full_transcript"
+  ],
+  "packet_id": "hp-sha256:2859b27ac192ea431c0e086f3c9a0d332203e33b3bb27b77189d8b0bb2e5cb78",
+  "producer": {
+    "name": "project-loop-harness",
+    "version": "0.3.3"
+  },
+  "risks": [
+    "Cross-platform behavior is unobserved."
+  ],
+  "size_bytes": 1104,
+  "summary": "Task T-0001 is ready to resume.",
+  "target": {
+    "id": "T-0001",
+    "repository_revision": "abc123",
+    "type": "task",
+    "work_brief_ref": null
+  },
+  "token_estimator": "charclass/v1",
+  "unverified": [
+    {
+      "reason": "Integration tests were not run.",
+      "text": "Integration compatibility"
+    }
+  ],
+  "verified": [
+    {
+      "evidence_refs": [
+        "evidence:E-0001"
+      ],
+      "proof_level": "L2",
+      "text": "Targeted tests passed."
+    }
+  ]
+}

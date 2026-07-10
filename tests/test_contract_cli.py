@@ -7,6 +7,7 @@ from pcl.cli import main
 
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "completion_packet"
+HANDOFF_FIXTURE = Path(__file__).parent / "fixtures" / "handoff_packet" / "minimal.json"
 
 
 def test_contract_validate_json_success_has_pure_stdout(capsys) -> None:
@@ -92,3 +93,19 @@ def test_contract_validate_is_read_only(tmp_path: Path, capsys) -> None:
     capsys.readouterr()
 
     assert list(tmp_path.iterdir()) == []
+
+
+def test_contract_validate_handoff_packet_json_success(capsys) -> None:
+    assert main([
+        "contract", "validate", "--type", "handoff-packet/v1",
+        str(HANDOFF_FIXTURE), "--json",
+    ]) == 0
+
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert json.loads(captured.out) == {
+        "contract_type": "handoff-packet/v1",
+        "errors": [],
+        "ok": True,
+        "path": str(HANDOFF_FIXTURE),
+    }

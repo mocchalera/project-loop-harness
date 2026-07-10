@@ -10,6 +10,7 @@ import zipfile
 
 PROJECT_ROOT = Path(__file__).parents[1]
 SCHEMA_MEMBER = "pcl/contracts/schemas/completion-packet-v1.schema.json"
+HANDOFF_SCHEMA_MEMBER = "pcl/contracts/schemas/handoff-packet-v1.schema.json"
 
 
 def test_wheel_installs_with_readable_completion_packet_schema(tmp_path: Path) -> None:
@@ -37,6 +38,7 @@ def test_wheel_installs_with_readable_completion_packet_schema(tmp_path: Path) -
 
     with zipfile.ZipFile(wheel) as archive:
         assert SCHEMA_MEMBER in archive.namelist()
+        assert HANDOFF_SCHEMA_MEMBER in archive.namelist()
 
     site_dir = tmp_path / "site"
     install = subprocess.run(
@@ -78,3 +80,23 @@ def test_wheel_installs_with_readable_completion_packet_schema(tmp_path: Path) -
     assert smoke.returncode == 0, smoke.stdout + smoke.stderr
     schema = json.loads(smoke.stdout)
     assert schema["properties"]["contract_version"]["const"] == "completion-packet/v1"
+
+    handoff_smoke = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import json; "
+                "from pcl.contracts import handoff_packet_schema; "
+                "print(json.dumps(handoff_packet_schema(), sort_keys=True))"
+            ),
+        ],
+        cwd=tmp_path,
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert handoff_smoke.returncode == 0, handoff_smoke.stdout + handoff_smoke.stderr
+    handoff_schema = json.loads(handoff_smoke.stdout)
+    assert handoff_schema["properties"]["contract_version"]["const"] == "handoff-packet/v1"

@@ -26,6 +26,9 @@ personal information, or real-project content. It was generated from the
 ## Intended changes since v0.3.1 freeze
 
 - 2026-07-10 — `snapshots/pcl-help.json` regenerated to include the additive
+  read-only `resume` command introduced by task 0137. No existing command was
+  removed or renamed.
+- 2026-07-10 — `snapshots/pcl-help.json` regenerated to include the additive
   `start` command introduced by task 0136. No existing command was removed or
   renamed; the command intentionally omits the deferred `--profile` option.
 - 2026-07-10 — `snapshots/pcl-help.json` regenerated to include the additive
