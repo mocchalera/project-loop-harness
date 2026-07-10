@@ -25,6 +25,8 @@ personal information, or real-project content. It was generated from the
 
 ## Intended changes since v0.3.1 freeze
 
+- 2026-07-10 — `snapshots/pcl-version.json` regenerated for the v0.4.0 release
+  bump (`0.3.3` → `0.4.0`).
 - 2026-07-10 — `snapshots/pcl-help.json` regenerated for task 0139 because the
   existing `evidence` command now also exposes the additive read-only `show`
   metadata subcommand. No existing command was removed or renamed.
