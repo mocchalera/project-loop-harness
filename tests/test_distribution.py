@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import venv
+import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -56,6 +57,8 @@ def test_wheel_install_smoke_runs_cli_mcp_and_bundled_templates(tmp_path: Path) 
     ])
     wheels = sorted(wheelhouse.glob("project_loop_harness-*.whl"))
     assert len(wheels) == 1
+    with zipfile.ZipFile(wheels[0]) as wheel:
+        assert any(name.endswith("pcl/db/migrations/008_event_outbox.sql") for name in wheel.namelist())
 
     venv_dir = tmp_path / "venv"
     venv.EnvBuilder(with_pip=True).create(venv_dir)
@@ -79,6 +82,12 @@ def test_wheel_install_smoke_runs_cli_mcp_and_bundled_templates(tmp_path: Path) 
     assert (target / ".project-loop" / "workflows" / "feature_coverage.yaml").exists()
     assert (target / ".project-loop" / "workflows" / "executor_smoke.yaml").exists()
     assert (target / ".agents" / "skills" / "project-control-loop" / "SKILL.md").exists()
+
+    migration_status = _json_output(
+        _run([pcl, "--root", target, "--json", "migrate", "status"], env=wheel_env)
+    )
+    assert migration_status["current_schema_version"] == 8
+    assert migration_status["applied_versions"] == list(range(1, 9))
 
     assert _json_output(_run([pcl, "--root", target, "--json", "doctor"], env=wheel_env))["ok"] is True
     assert _json_output(_run([pcl, "--root", target, "--json", "validate", "--strict"], env=wheel_env))["ok"] is True
