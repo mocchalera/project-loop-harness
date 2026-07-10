@@ -136,6 +136,8 @@ Give these tasks to coding agents in this order:
 132. `agent-tasks/0136-lite-pcl-start.md` (v0.4.0 Wave B, lite `pcl start "<intent>"` entry point reusing init/goal/task services; bundle 0133 renumbered)
 133. `agent-tasks/0137-handoff-packet-pcl-resume.md` (v0.4.0 Wave B, handoff-packet/v1 + read-only `pcl resume`; bundle 0134 renumbered)
 134. `agent-tasks/0138-kpi-report-surface.md` (v0.4.0 Dogfood Operations, `pcl report kpi` read-only aggregation + `context_pack_generated` usage event + dogfood report template; growth-plan-derived, not bundle)
+135. `agent-tasks/0139-executable-resume-context.md` (v0.4.0 Wave B exit repair, read-only Evidence lookup + executable restart context after blind dogfood)
+136. `agent-tasks/0140-kpi-post-integration-sources.md` (v0.4.0 release blocker, replace stale pre-0135/0137 KPI placeholders with durable finish-event measurements and factual read-only resume reasons)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and

@@ -42,6 +42,13 @@ implement from the spec file, not from prompt summaries.
 | 0131 | Guarded executor hardening (terminology, caps, redaction) | v0.3.3 Trust Foundation (Wave A) | P1 | done (main cdbcf3a) |
 | 0132 | Optional master_trace_context section in context-pack/v1 | v0.3.2 Master Trace / Intent Index | P1 | done (main a2a09d9) |
 | 0133 | Windows advisory-lock fallback (msvcrt) | v0.3.3 Trust Foundation (release blocker) | P0 | done (main 6a3212a; shipped v0.3.3) |
+| 0134 | completion-packet/v1 contract | v0.4.0 Three-command Wedge | P0 | done (main e801ef0) |
+| 0135 | `pcl finish` completion packet emission | v0.4.0 Three-command Wedge | P0 | done (main 84be7a0) |
+| 0136 | Lite `pcl start` | v0.4.0 Three-command Wedge | P0 | done (main 4272ab0) |
+| 0137 | handoff-packet/v1 and read-only `pcl resume` | v0.4.0 Three-command Wedge | P0 | done (main 34ac60c) |
+| 0138 | `pcl report kpi` surface | v0.4.0 Dogfood Operations | P1 | done (main 6f1c024) |
+| 0139 | Executable restart context repair | v0.4.0 Three-command Wedge | P0 | done (main bcb6cf5) |
+| 0140 | KPI post-integration data sources | v0.4.0 release candidate | P0 | approved |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the

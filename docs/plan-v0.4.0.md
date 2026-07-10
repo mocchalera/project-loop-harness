@@ -68,6 +68,8 @@ repo spec と実装コードレビューで確定する。
 1. **M2 wedge exit（bundle M2 準拠）**: 新規利用者が ontology を知らずに
    10 分以内・3 操作（start → finish → resume）で有用な packet を得る。
    dogfood で time-to-first-value を手動計測して記録する。
+   この 10 分は製品タスクの実装時間ではなく、3 操作と packet-driven replay
+   によって最初の有用な引き継ぎ結果を得るまでの PCL 利用経路を測る。
 2. **Dogfood exit（growth plan 準拠）**: 2 repo の dogfood report が
    `docs/dogfood-report-v0.4.md` に存在し、§2b の KPI 5 種すべてに実測値
    （または計測不能の明示的理由）が入っている。
