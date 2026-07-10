@@ -238,7 +238,7 @@ def test_resume_restart_context_is_fresh_session_executable_from_public_commands
 
 
 def test_restart_context_deduplicates_orders_bounds_and_marks_documentation_candidates() -> None:
-    from pcl.resume import _first_passed_replay_command, _restart_context
+    from pcl.resume import _restart_context
 
     checks = [
         {
@@ -287,8 +287,14 @@ def test_restart_context_deduplicates_orders_bounds_and_marks_documentation_cand
     assert restart["acceptance_status"] == "work_brief_linked"
     assert restart["acceptance_ref"] == "evidence:E-0042"
     assert [item["command"] for item in restart["verification_commands"]] == [
-        "ruff check .", "python -m pytest",
+        "python -m pytest", "ruff check .",
     ]
+    assert restart["verification_commands"][1] == {
+        "command": "ruff check .",
+        "previous_status": "failed",
+        "evidence_refs": ["evidence:E-0001", "evidence:E-0003"],
+        "proof_source": "completion-packet/v1.checks/CHK-0003",
+    }
     assert len(restart["changed_paths"]) == 50
     assert restart["documentation_candidates"] == [
         "README.md", "docs/usage.md", "src/README-extra.md",
@@ -300,19 +306,68 @@ def test_restart_context_deduplicates_orders_bounds_and_marks_documentation_cand
         "pcl evidence show E-0042 --json",
         "pcl evidence show E-0099 --json",
     ]
-    duplicate_status_packet = {
+
+
+def test_duplicate_reproducible_check_pass_then_fail_is_not_recommended() -> None:
+    from pcl.resume import (
+        _first_passed_replay_command,
+        _next_safe_action,
+        _verification_commands,
+    )
+
+    packet = {
         "checks": [
             {
-                "id": "CHK-0001", "command": "ruff check .", "status": "failed",
-                "reproducible": True,
+                "id": "CHK-0001", "command": "ruff check .", "status": "passed",
+                "artifact_ref": "evidence:E-0001", "reproducible": True,
             },
             {
-                "id": "CHK-0002", "command": "ruff check .", "status": "passed",
-                "reproducible": True,
+                "id": "CHK-0002", "command": "ruff check .", "status": "failed",
+                "artifact_ref": "evidence:E-0002", "reproducible": True,
             },
         ]
     }
-    assert _first_passed_replay_command(duplicate_status_packet) == "ruff check ."
+
+    assert _verification_commands(packet) == [{
+        "command": "ruff check .",
+        "previous_status": "failed",
+        "evidence_refs": ["evidence:E-0001", "evidence:E-0002"],
+        "proof_source": "completion-packet/v1.checks/CHK-0002",
+    }]
+    assert _first_passed_replay_command(packet) is None
+    assert _next_safe_action({"type": "task", "status": "done"}, packet, [])["command"] is None
+
+
+def test_duplicate_reproducible_check_fail_then_pass_is_recommended() -> None:
+    from pcl.resume import (
+        _first_passed_replay_command,
+        _next_safe_action,
+        _verification_commands,
+    )
+
+    packet = {
+        "checks": [
+            {
+                "id": "CHK-0001", "command": "ruff check .", "status": "failed",
+                "artifact_ref": "evidence:E-0001", "reproducible": True,
+            },
+            {
+                "id": "CHK-0002", "command": "ruff check .", "status": "passed",
+                "artifact_ref": "evidence:E-0002", "reproducible": True,
+            },
+        ]
+    }
+
+    assert _verification_commands(packet) == [{
+        "command": "ruff check .",
+        "previous_status": "passed",
+        "evidence_refs": ["evidence:E-0001", "evidence:E-0002"],
+        "proof_source": "completion-packet/v1.checks/CHK-0002",
+    }]
+    assert _first_passed_replay_command(packet) == "ruff check ."
+    assert _next_safe_action({"type": "task", "status": "done"}, packet, [])["command"] == (
+        "ruff check ."
+    )
 
 
 def test_resume_incomplete_then_newer_packet_marks_older_packet_omitted(

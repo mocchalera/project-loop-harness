@@ -59,10 +59,13 @@ v1 packets without `restart_context` remain valid.
 selected completion packet's `checks`, together with their previous status,
 check Evidence refs, and proof-source check ID. They are replay instructions:
 `pcl resume` does not rerun them and does not turn their previous status into a
-new verification fact. No command is inferred from package scripts. For a
-terminal target, the first deterministically ordered reproducible passed check
+new verification fact. For duplicate commands, the latest numeric CHK ordering
+is authoritative for status and proof source; Evidence refs from all occurrences
+are retained in CHK order. No command is inferred from package scripts. For a
+terminal target, the first deterministically ordered authoritative passed check
 becomes `next_safe_action.command`, unless an open human decision or explicit
-completion-packet `next_action` takes precedence.
+completion-packet `next_action` takes precedence. A command whose latest check
+failed is never recommended.
 
 `evidence_resolution_commands` contains one public metadata lookup per
 referenced Evidence ID. `changed_paths` and `documentation_candidates` are

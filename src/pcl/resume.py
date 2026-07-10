@@ -670,31 +670,14 @@ def _restart_context(
 
 
 def _verification_commands(completion_packet: dict[str, Any] | None) -> list[dict[str, Any]]:
-    if completion_packet is None:
-        return []
-    checks = completion_packet.get("checks")
-    if not isinstance(checks, list):
-        return []
     result = []
-    seen_commands: set[str] = set()
-    ordered = sorted(
-        (item for item in checks if isinstance(item, dict)),
-        key=lambda item: (str(item.get("id") or ""), str(item.get("command") or "")),
-    )
-    for item in ordered:
-        command = item.get("command")
-        if item.get("reproducible") is not True or not isinstance(command, str) or not command:
-            continue
-        if command in seen_commands:
-            continue
-        seen_commands.add(command)
-        artifact_ref = item.get("artifact_ref")
-        evidence_refs = [artifact_ref] if isinstance(artifact_ref, str) else []
+    for authoritative in _authoritative_reproducible_checks(completion_packet):
+        item = authoritative["check"]
         result.append(
             {
-                "command": command,
+                "command": item["command"],
                 "previous_status": str(item.get("status") or "unknown"),
-                "evidence_refs": evidence_refs,
+                "evidence_refs": authoritative["evidence_refs"],
                 "proof_source": f"completion-packet/v1.checks/{item.get('id')}",
             }
         )
@@ -702,21 +685,51 @@ def _verification_commands(completion_packet: dict[str, Any] | None) -> list[dic
 
 
 def _first_passed_replay_command(completion_packet: dict[str, Any] | None) -> str | None:
+    return next(
+        (
+            str(authoritative["check"]["command"])
+            for authoritative in _authoritative_reproducible_checks(completion_packet)
+            if authoritative["check"].get("status") == "passed"
+        ),
+        None,
+    )
+
+
+def _authoritative_reproducible_checks(
+    completion_packet: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
     if completion_packet is None or not isinstance(completion_packet.get("checks"), list):
-        return None
-    passed = sorted(
+        return []
+    ordered = sorted(
         (
             item
             for item in completion_packet["checks"]
             if isinstance(item, dict)
             and item.get("reproducible") is True
-            and item.get("status") == "passed"
             and isinstance(item.get("command"), str)
             and item["command"]
         ),
-        key=lambda item: (str(item.get("id") or ""), str(item["command"])),
+        key=_completion_check_sort_key,
     )
-    return str(passed[0]["command"]) if passed else None
+    by_command: dict[str, dict[str, Any]] = {}
+    for item in ordered:
+        command = str(item["command"])
+        current = by_command.setdefault(command, {"check": item, "evidence_refs": []})
+        current["check"] = item
+        artifact_ref = item.get("artifact_ref")
+        if isinstance(artifact_ref, str) and artifact_ref not in current["evidence_refs"]:
+            current["evidence_refs"].append(artifact_ref)
+    return sorted(
+        by_command.values(),
+        key=lambda authoritative: _completion_check_sort_key(authoritative["check"]),
+    )
+
+
+def _completion_check_sort_key(item: dict[str, Any]) -> tuple[int, str]:
+    check_id = str(item.get("id") or "")
+    _, separator, suffix = check_id.rpartition("-")
+    sequence = int(suffix) if separator and suffix.isdigit() else -1
+    return sequence, check_id
 
 
 def _referenced_evidence_ids(values: list[Any]) -> list[str]:
