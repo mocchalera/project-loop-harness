@@ -100,6 +100,7 @@ def _project_with_jsonl_lock(
 ) -> ProjectionResult:
     with jsonl_projector_lock(paths.loop_dir):
         delivered = 0
+        drained = False
         last_event_id: str | None = None
         last_sequence: int | None = None
         error: str | None = None
@@ -110,6 +111,7 @@ def _project_with_jsonl_lock(
             finally:
                 conn.close()
             if row is None:
+                drained = True
                 break
             last_event_id = str(row["event_id"])
             last_sequence = int(row["sequence"])
@@ -139,9 +141,22 @@ def _project_with_jsonl_lock(
             if disposition not in {"appended", "matched"}:  # pragma: no cover - defensive
                 raise AssertionError(disposition)
 
-        pending_count, first_pending_sequence, first_status, first_error = _pending_summary(
-            paths.db_path
-        )
+        if drained:
+            # This projector observed a fully drained queue while holding the
+            # JSONL writer lock. A concurrent mutation may commit immediately
+            # afterward; that mutation owns its own synchronous projection
+            # attempt and must not turn this completed attempt into a false
+            # ProjectionPendingError.
+            pending_count, first_pending_sequence, first_status, first_error = (
+                0,
+                None,
+                None,
+                None,
+            )
+        else:
+            pending_count, first_pending_sequence, first_status, first_error = _pending_summary(
+                paths.db_path
+            )
         if pending_count:
             error = error or first_error
             projection = "failed_needs_review" if first_status == "failed_needs_review" else "pending"

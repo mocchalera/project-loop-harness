@@ -37,3 +37,18 @@ Projector errors do not authorize deleting committed events or domain rows.
 Content mismatches, malformed tails, and unknown lines enter
 `failed_needs_review`; automatic truncation, overwrite, and skip are intentionally
 not implemented.
+
+## Integrity commands
+
+`pcl audit check --json` is read-only and does not flush pending projection.
+It reports audit and Evidence anomalies as repairable, human-review, or
+unsupported. `pcl audit repair` is preview-only unless `--apply` is explicit;
+the supported automatic repair is a pending/retryable SQLite suffix that the
+existing projector can deliver idempotently.
+
+`pcl audit rebuild-jsonl --from-sqlite` writes a canonical verified preview.
+With `--apply`, it retains the original JSONL and its hash in
+`.project-loop/reports/audit-backups/`, then uses atomic replace. Unknown and
+legacy lines remain available in that backup and are listed in the result.
+Neither repair command imports JSONL-only history into SQLite or claims to fix
+arbitrary SQLite corruption.

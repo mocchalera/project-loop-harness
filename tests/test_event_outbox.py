@@ -478,6 +478,32 @@ def test_concurrent_mutations_keep_contiguous_event_order(tmp_path: Path) -> Non
     assert len(rows) == len(jsonl) == before_count + 8
 
 
+def test_projector_drain_result_ignores_later_concurrent_commit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths = _init(tmp_path)
+    original_next = outbox_module._next_outbox_row
+    injected = False
+
+    def next_with_late_commit(conn):
+        nonlocal injected
+        row = original_next(conn)
+        if row is None and not injected:
+            injected = True
+            _insert_goal_pending(paths, "G-LATE-COMMIT", "committed after observed drain")
+        return row
+
+    monkeypatch.setattr(outbox_module, "_next_outbox_row", next_with_late_commit)
+    first = project_pending_events(paths)
+
+    assert first.ok is True
+    assert first.pending_count == 0
+    second = project_pending_events(paths)
+    assert second.ok is True
+    assert second.delivered == 1
+
+
 def test_fsync_occurs_before_delivered_commit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
