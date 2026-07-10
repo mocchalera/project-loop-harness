@@ -49,6 +49,41 @@ records canonical UTF-8 JSON byte size, `charclass/v1` estimated token count,
 and omitted sections. `packet_id` is a SHA-256 content ID over the canonical
 packet excluding the ID field itself.
 
+Generated packets include the optional additive `restart_context` object. It
+keeps the target intent factual, labels acceptance as `intent_only` when no
+work-brief Evidence ref was recorded, and labels it `work_brief_linked` only
+when the selected completion packet actually carries that ref. Existing valid
+v1 packets without `restart_context` remain valid.
+
+`verification_commands` are deduplicated reproducible commands copied from the
+selected completion packet's `checks`, together with their previous status,
+check Evidence refs, and proof-source check ID. They are replay instructions:
+`pcl resume` does not rerun them and does not turn their previous status into a
+new verification fact. No command is inferred from package scripts. For a
+terminal target, the first deterministically ordered reproducible passed check
+becomes `next_safe_action.command`, unless an open human decision or explicit
+completion-packet `next_action` takes precedence.
+
+`evidence_resolution_commands` contains one public metadata lookup per
+referenced Evidence ID. `changed_paths` and `documentation_candidates` are
+sorted, deduplicated navigation hints capped at 50 paths. A README,
+CONTRIBUTING file, or file under `docs/` is only a documentation candidate; the
+packet does not claim that it is authoritative. The restart context never
+infers a launch URL or acceptance criteria.
+
+## Evidence metadata lookup
+
+```bash
+pcl evidence show E-0001
+pcl evidence show E-0001 --json
+```
+
+`pcl evidence show` is read-only. It returns the Evidence ID, type, summary,
+caller-claimed command, recorded path, and creation time. For supported
+`adhoc-evidence/v0` manifests it also returns member paths, copied stored paths,
+and recorded hashes. It does not inline member bytes, completion-check output,
+or transcripts, and it never executes the claimed command.
+
 ## Contract fields
 
 The authoritative packaged schema is
@@ -62,5 +97,6 @@ The authoritative packaged schema is
 - bounds: `token_estimator`, `estimated_token_count`, `size_bytes`,
   `omitted_sections`.
 
-`intent_index_ref` and `budget_remaining` are optional. Markdown wording and
-layout are presentation behavior, not a second versioned artifact contract.
+`intent_index_ref`, `budget_remaining`, and `restart_context` are optional.
+Markdown wording and layout are presentation behavior, not a second versioned
+artifact contract.

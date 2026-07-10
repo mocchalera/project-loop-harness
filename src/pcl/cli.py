@@ -72,6 +72,7 @@ from .decisions import (
 )
 from .dispatch import assign_job, heartbeat_job, lease_job, reap_expired_leases, release_job
 from .evidence import record_adhoc_evidence
+from .evidence_show import render_evidence_metadata, show_evidence
 from .errors import DataStoreError, InvalidInputError, PclError
 from .exporters import export_csv
 from .finish_execution import emit_finish_packet, plan_finish_packet
@@ -651,7 +652,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_ingest = sub.add_parser("ingest-agent-run", help="Record an agent output file as evidence")
     p_ingest.add_argument("path")
 
-    p_evidence = sub.add_parser("evidence", help="Record standalone evidence artifacts")
+    p_evidence = sub.add_parser("evidence", help="Record or inspect standalone evidence artifacts")
     evidence_sub = p_evidence.add_subparsers(dest="evidence_command", required=True)
     p_evidence_add = evidence_sub.add_parser(
         "add",
@@ -704,6 +705,11 @@ def build_parser() -> argparse.ArgumentParser:
         dest="task_id",
         help="Existing task id to link this adhoc evidence row into task context packs.",
     )
+    p_evidence_show = evidence_sub.add_parser(
+        "show",
+        help="Resolve read-only Evidence metadata without inlining artifact bodies",
+    )
+    p_evidence_show.add_argument("evidence_id")
 
     p_contract = sub.add_parser("contract", help="Validate versioned artifact contracts")
     contract_sub = p_contract.add_subparsers(dest="contract_command", required=True)
@@ -2380,6 +2386,14 @@ def main(argv: list[str] | None = None) -> int:
                     print(f"WARNING: {warning}", file=sys.stderr)
                 evidence = result["evidence"]
                 print(f"{evidence['id']} {evidence['type']} {evidence['manifest_path']}")
+            return 0
+
+        if args.command == "evidence" and args.evidence_command == "show":
+            result = show_evidence(paths, args.evidence_id)
+            if json_output:
+                _print_json(result)
+            else:
+                print(render_evidence_metadata(result), end="")
             return 0
 
         if args.command == "context" and args.context_command == "pack":

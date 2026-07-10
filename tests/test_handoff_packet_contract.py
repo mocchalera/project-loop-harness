@@ -52,3 +52,27 @@ def test_packaged_handoff_schema_exposes_authoritative_contract() -> None:
     assert schema["properties"]["contract_version"]["const"] == "handoff-packet/v1"
     assert "omitted_sections" in schema["required"]
     assert schema["properties"]["token_estimator"]["const"] == "charclass/v1"
+    assert "restart_context" not in schema["required"]
+    assert schema["properties"]["restart_context"]["properties"]["changed_paths"]["maxItems"] == 50
+
+
+def test_handoff_packet_restart_context_is_additive_and_validated() -> None:
+    packet = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    packet["restart_context"] = {
+        "target_intent": "Repair executable resume context",
+        "acceptance_status": "intent_only",
+        "acceptance_ref": None,
+        "target_review_command": "pcl task read T-0001 --json",
+        "verification_commands": [{
+            "command": "pytest tests/test_resume.py",
+            "previous_status": "passed",
+            "evidence_refs": ["evidence:E-0001"],
+            "proof_source": "completion-packet/v1.checks/CHK-0001",
+        }],
+        "evidence_resolution_commands": ["pcl evidence show E-0001 --json"],
+        "changed_paths": ["src/pcl/resume.py"],
+        "documentation_candidates": [],
+    }
+    packet = finalize_handoff_packet(packet)
+
+    assert validate_handoff_packet(packet).ok is True

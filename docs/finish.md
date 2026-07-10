@@ -127,7 +127,10 @@ but the SQLite commit did not occur, `pcl audit check` reports
 The read-only [`pcl resume`](handoff-packet-v1.md) surface consumes the newest
 valid completion packet through its target-bound `completion_packet` Evidence
 link. It preserves the packet's verified/unverified boundary and does not alter
-finish state.
+finish state. Reproducible check commands are copied into restart context as
+replay instructions with their previous packet status; resume does not execute
+them. Their Evidence metadata can be resolved without reading artifact bodies
+with `pcl evidence show E-XXXX --json`.
 
 ### Outcomes and exits
 

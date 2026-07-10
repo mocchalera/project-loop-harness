@@ -39,8 +39,13 @@ _TOP_LEVEL_FIELDS = {
     "estimated_token_count",
     "size_bytes",
     "omitted_sections",
+    "restart_context",
 }
-_REQUIRED_TOP_LEVEL_FIELDS = _TOP_LEVEL_FIELDS - {"intent_index_ref", "budget_remaining"}
+_REQUIRED_TOP_LEVEL_FIELDS = _TOP_LEVEL_FIELDS - {
+    "intent_index_ref",
+    "budget_remaining",
+    "restart_context",
+}
 _PACKET_ID = re.compile(r"^hp-sha256:[0-9a-f]{64}$")
 _EVIDENCE_REF = re.compile(r"^evidence:E-[0-9]{4,}$")
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -50,6 +55,9 @@ _TARGETS = {
 }
 _PROOF_LEVELS = {"L1", "L2", "L3", "L4"}
 _FRESHNESS = {"current", "stale", "unknown"}
+_CHECK_STATUSES = {"passed", "failed", "skipped", "not_run", "timed_out"}
+_EVIDENCE_SHOW_COMMAND = re.compile(r"^pcl evidence show E-[0-9]{4,} --json$")
+_CHECK_PROOF_SOURCE = re.compile(r"^completion-packet/v1\.checks/CHK-[0-9]{4,}$")
 
 
 @dataclass(frozen=True)
@@ -139,6 +147,9 @@ def validate_handoff_packet(packet: Any) -> HandoffPacketValidationResult:
     _string_array(packet.get("risks"), "$.risks", errors)
     _next_action(packet.get("next_safe_action"), errors)
     _context_refs(packet.get("context_refs"), errors)
+    restart_context = packet.get("restart_context")
+    if restart_context is not None:
+        _restart_context(restart_context, errors)
     _optional_string(packet.get("intent_index_ref"), "$.intent_index_ref", errors)
     budget = packet.get("budget_remaining")
     if budget is not None and not isinstance(budget, dict):
@@ -258,6 +269,88 @@ def _context_refs(value: Any, errors: list[str]) -> None:
             if ref in seen:
                 errors.append(f"{path}.ref: duplicate context ref")
             seen.add(ref)
+
+
+def _restart_context(value: Any, errors: list[str]) -> None:
+    path = "$.restart_context"
+    if not _object(value, path, errors):
+        return
+    allowed = {
+        "target_intent",
+        "acceptance_status",
+        "acceptance_ref",
+        "target_review_command",
+        "verification_commands",
+        "evidence_resolution_commands",
+        "changed_paths",
+        "documentation_candidates",
+    }
+    _fields(value, path, allowed, allowed, errors)
+    _string(value.get("target_intent"), f"{path}.target_intent", errors)
+    if value.get("acceptance_status") not in {"intent_only", "work_brief_linked", "missing"}:
+        errors.append(
+            f"{path}.acceptance_status: must be one of intent_only, work_brief_linked, missing"
+        )
+    _optional_ref(value.get("acceptance_ref"), f"{path}.acceptance_ref", errors)
+    if value.get("acceptance_status") == "work_brief_linked" and value.get("acceptance_ref") is None:
+        errors.append(f"{path}.acceptance_ref: is required when work_brief_linked")
+    if value.get("acceptance_status") != "work_brief_linked" and value.get("acceptance_ref") is not None:
+        errors.append(f"{path}.acceptance_ref: requires work_brief_linked")
+    _string(value.get("target_review_command"), f"{path}.target_review_command", errors)
+    commands = value.get("verification_commands")
+    if _array(commands, f"{path}.verification_commands", errors):
+        seen: set[str] = set()
+        for index, item in enumerate(commands):
+            item_path = f"{path}.verification_commands[{index}]"
+            if not _object(item, item_path, errors):
+                continue
+            fields = {"command", "previous_status", "evidence_refs", "proof_source"}
+            _fields(item, item_path, fields, fields, errors)
+            _string(item.get("command"), f"{item_path}.command", errors)
+            if item.get("previous_status") not in _CHECK_STATUSES:
+                errors.append(f"{item_path}.previous_status: has invalid completion check status")
+            _ref_array(item.get("evidence_refs"), f"{item_path}.evidence_refs", errors)
+            _string(
+                item.get("proof_source"),
+                f"{item_path}.proof_source",
+                errors,
+                pattern=_CHECK_PROOF_SOURCE,
+            )
+            command = item.get("command")
+            if isinstance(command, str):
+                if command in seen:
+                    errors.append(f"{item_path}.command: duplicate verification command")
+                seen.add(command)
+    resolution_commands = value.get("evidence_resolution_commands")
+    _string_array(resolution_commands, f"{path}.evidence_resolution_commands", errors)
+    if isinstance(resolution_commands, list):
+        if len(set(resolution_commands)) != len(resolution_commands):
+            errors.append(f"{path}.evidence_resolution_commands: must not contain duplicates")
+        for index, command in enumerate(resolution_commands):
+            if isinstance(command, str) and _EVIDENCE_SHOW_COMMAND.fullmatch(command) is None:
+                errors.append(
+                    f"{path}.evidence_resolution_commands[{index}]: has invalid command format"
+                )
+    _bounded_string_array(value.get("changed_paths"), f"{path}.changed_paths", errors)
+    _bounded_string_array(
+        value.get("documentation_candidates"),
+        f"{path}.documentation_candidates",
+        errors,
+    )
+
+
+def _optional_ref(value: Any, path: str, errors: list[str]) -> None:
+    if value is not None:
+        _string(value, path, errors, pattern=_EVIDENCE_REF)
+
+
+def _bounded_string_array(value: Any, path: str, errors: list[str]) -> None:
+    _string_array(value, path, errors)
+    if isinstance(value, list):
+        if len(value) > 50:
+            errors.append(f"{path}: must contain at most 50 items")
+        if len(set(value)) != len(value):
+            errors.append(f"{path}: must not contain duplicates")
 
 
 def _fields(

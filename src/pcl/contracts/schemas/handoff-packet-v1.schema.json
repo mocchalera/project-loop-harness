@@ -93,6 +93,63 @@
         }
       }
     },
+    "restart_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "target_intent", "acceptance_status", "acceptance_ref",
+        "target_review_command", "verification_commands",
+        "evidence_resolution_commands", "changed_paths",
+        "documentation_candidates"
+      ],
+      "properties": {
+        "target_intent": {"type": "string", "minLength": 1},
+        "acceptance_status": {"enum": ["intent_only", "work_brief_linked", "missing"]},
+        "acceptance_ref": {
+          "oneOf": [
+            {"type": "string", "pattern": "^evidence:E-[0-9]{4,}$"},
+            {"type": "null"}
+          ]
+        },
+        "target_review_command": {"type": "string", "minLength": 1},
+        "verification_commands": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["command", "previous_status", "evidence_refs", "proof_source"],
+            "properties": {
+              "command": {"type": "string", "minLength": 1},
+              "previous_status": {"enum": ["passed", "failed", "skipped", "not_run", "timed_out"]},
+              "evidence_refs": {
+                "type": "array",
+                "items": {"type": "string", "pattern": "^evidence:E-[0-9]{4,}$"}
+              },
+              "proof_source": {
+                "type": "string",
+                "pattern": "^completion-packet/v1\\.checks/CHK-[0-9]{4,}$"
+              }
+            }
+          }
+        },
+        "evidence_resolution_commands": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^pcl evidence show E-[0-9]{4,} --json$"
+          }
+        },
+        "changed_paths": {
+          "type": "array", "maxItems": 50, "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "documentation_candidates": {
+          "type": "array", "maxItems": 50, "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1}
+        }
+      }
+    },
     "intent_index_ref": {"type": ["string", "null"]},
     "budget_remaining": {"type": ["object", "null"]},
     "token_estimator": {"const": "charclass/v1"},

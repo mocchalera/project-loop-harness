@@ -213,6 +213,13 @@ manifest. The optional `--command` value is the caller's claim about how the
 artifact was produced. PLH stores it verbatim on the evidence row; it does not
 run the command or verify that the command produced the files.
 
+`pcl evidence show E-XXXX [--json]` resolves the stable row metadata without
+changing state: ID, type, summary, caller-claimed command, recorded path, and
+creation time. For supported `adhoc-evidence/v0` manifests it additionally
+returns member paths, copied stored paths, and recorded hashes. It never inlines
+member contents or executes the claimed command. Unknown and malformed IDs are
+typed input errors.
+
 Schema version 6 adds `evidence.linked_task_id`, a nullable reference to
 `tasks.id`. `pcl evidence add --task T-XXXX` sets that column only when the
 task already exists. Unknown or invalid task ids are rejected before manifest

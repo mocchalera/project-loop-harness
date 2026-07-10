@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import re
 import sqlite3
 import subprocess
 from typing import Any
@@ -30,6 +31,8 @@ TERMINAL_TASK_STATUSES = {"done", "cancelled", "waived"}
 TERMINAL_GOAL_STATUSES = {"closed", "cancelled"}
 ACTIVE_TASK_STATUSES = {"in_progress", "ready", "todo", "blocked"}
 ACTIVE_GOAL_STATUSES = {"active", "open", "blocked"}
+RESTART_PATH_LIMIT = 50
+EVIDENCE_REF_PATTERN = re.compile(r"^evidence:(E-[0-9]{4,})$")
 
 
 class ResumeTargetSelectionRequiredError(PclError):
@@ -127,6 +130,42 @@ def render_handoff_markdown(packet: dict[str, Any]) -> str:
     lines.extend(["", "## Next safe action", "", action["text"]])
     if action["command"]:
         lines.extend(["", "```sh", action["command"], "```"])
+    restart_context = packet.get("restart_context")
+    if restart_context is not None:
+        lines.extend(["", "## Restart context", ""])
+        lines.extend(
+            [
+                f"- Target intent: {restart_context['target_intent']}",
+                f"- Acceptance status: {restart_context['acceptance_status']}",
+                f"- Acceptance ref: {restart_context['acceptance_ref'] or 'None.'}",
+                f"- Target review: `{restart_context['target_review_command']}`",
+                "- Replay status describes the completion packet; these commands were not rerun by resume.",
+            ]
+        )
+        lines.extend(["", "### Verification commands", ""])
+        if restart_context["verification_commands"]:
+            for item in restart_context["verification_commands"]:
+                refs = ", ".join(item["evidence_refs"]) or "none"
+                lines.append(
+                    f"- `{item['command']}` (previous: {item['previous_status']}; "
+                    f"source: {item['proof_source']}; Evidence: {refs})"
+                )
+        else:
+            lines.append("- None.")
+        lines.extend(["", "### Evidence resolution commands", ""])
+        lines.extend(
+            f"- `{command}`" for command in restart_context["evidence_resolution_commands"]
+        )
+        if not restart_context["evidence_resolution_commands"]:
+            lines.append("- None.")
+        lines.extend(["", "### Changed paths", ""])
+        lines.extend(f"- {path}" for path in restart_context["changed_paths"])
+        if not restart_context["changed_paths"]:
+            lines.append("- None.")
+        lines.extend(["", "### Documentation candidates", ""])
+        lines.extend(f"- {path}" for path in restart_context["documentation_candidates"])
+        if not restart_context["documentation_candidates"]:
+            lines.append("- None.")
     lines.extend(["", "## Context references", ""])
     if packet["context_refs"]:
         for item in packet["context_refs"]:
@@ -496,6 +535,11 @@ def _packet_body(
     if target.get("risk"):
         risks.append(f"Task risk is {target['risk']}.")
     action = _next_safe_action(target, completion_packet, decisions)
+    restart_context = _restart_context(
+        target=target,
+        completion=completion,
+        context_refs=context_refs,
+    )
     packet: dict[str, Any] = {
         "contract_version": HANDOFF_PACKET_CONTRACT_VERSION,
         "packet_id": "hp-sha256:" + "0" * 64,
@@ -504,7 +548,7 @@ def _packet_body(
         "target": {
             "type": target["type"],
             "id": target["id"],
-            "work_brief_ref": None,
+            "work_brief_ref": restart_context["acceptance_ref"],
             "repository_revision": repository_revision,
         },
         "current_state": str(target["status"]).upper(),
@@ -518,6 +562,7 @@ def _packet_body(
         "blockers": blockers,
         "risks": sorted(set(risks)),
         "next_safe_action": action,
+        "restart_context": restart_context,
         "context_refs": context_refs,
         "intent_index_ref": next(
             (
@@ -555,6 +600,12 @@ def _next_safe_action(
         else target["status"] in TERMINAL_GOAL_STATUSES
     )
     if terminal:
+        replay_command = _first_passed_replay_command(completion_packet)
+        if replay_command is not None:
+            return {
+                "text": "Rerun the first passed reproducible completion check.",
+                "command": replay_command,
+            }
         return {
             "text": "Review the verified, unverified, and residual risk sections before new work.",
             "command": None,
@@ -565,6 +616,133 @@ def _next_safe_action(
             "command": f"pcl context pack --task {target['id']} --include-code-context --json",
         }
     return {"text": "Inspect the next governed action for this goal.", "command": "pcl next --json"}
+
+
+def _restart_context(
+    *,
+    target: dict[str, Any],
+    completion: dict[str, Any] | None,
+    context_refs: list[dict[str, Any]],
+) -> dict[str, Any]:
+    completion_packet = completion["packet"] if completion else None
+    packet_target = completion_packet.get("target", {}) if completion_packet else {}
+    target_intent = str(packet_target.get("intent") or target["intent"])
+    acceptance_ref = packet_target.get("work_brief_ref")
+    if not isinstance(acceptance_ref, str):
+        acceptance_ref = None
+    acceptance_status = "work_brief_linked" if acceptance_ref else "intent_only"
+    verification_commands = _verification_commands(completion_packet)
+    referenced_values: list[Any] = [context_refs]
+    if completion_packet is not None:
+        referenced_values.append(completion_packet)
+    if completion is not None:
+        referenced_values.append(f"evidence:{completion['evidence_id']}")
+    evidence_ids = _referenced_evidence_ids(referenced_values)
+    changes = completion_packet.get("changes", []) if completion_packet else []
+    all_changed_paths = sorted(
+        {
+            str(item["path"])
+            for item in changes
+            if isinstance(item, dict) and isinstance(item.get("path"), str)
+        }
+    )
+    changed_paths = all_changed_paths[:RESTART_PATH_LIMIT]
+    documentation_candidates = [
+        path for path in all_changed_paths if _is_documentation_path(path)
+    ][:RESTART_PATH_LIMIT]
+    review_command = (
+        f"pcl task read {target['id']} --json"
+        if target["type"] == "task"
+        else f"pcl report goal {target['id']} --json"
+    )
+    return {
+        "target_intent": target_intent,
+        "acceptance_status": acceptance_status,
+        "acceptance_ref": acceptance_ref,
+        "target_review_command": review_command,
+        "verification_commands": verification_commands,
+        "evidence_resolution_commands": [
+            f"pcl evidence show {evidence_id} --json" for evidence_id in evidence_ids
+        ],
+        "changed_paths": changed_paths,
+        "documentation_candidates": documentation_candidates,
+    }
+
+
+def _verification_commands(completion_packet: dict[str, Any] | None) -> list[dict[str, Any]]:
+    if completion_packet is None:
+        return []
+    checks = completion_packet.get("checks")
+    if not isinstance(checks, list):
+        return []
+    result = []
+    seen_commands: set[str] = set()
+    ordered = sorted(
+        (item for item in checks if isinstance(item, dict)),
+        key=lambda item: (str(item.get("id") or ""), str(item.get("command") or "")),
+    )
+    for item in ordered:
+        command = item.get("command")
+        if item.get("reproducible") is not True or not isinstance(command, str) or not command:
+            continue
+        if command in seen_commands:
+            continue
+        seen_commands.add(command)
+        artifact_ref = item.get("artifact_ref")
+        evidence_refs = [artifact_ref] if isinstance(artifact_ref, str) else []
+        result.append(
+            {
+                "command": command,
+                "previous_status": str(item.get("status") or "unknown"),
+                "evidence_refs": evidence_refs,
+                "proof_source": f"completion-packet/v1.checks/{item.get('id')}",
+            }
+        )
+    return result
+
+
+def _first_passed_replay_command(completion_packet: dict[str, Any] | None) -> str | None:
+    if completion_packet is None or not isinstance(completion_packet.get("checks"), list):
+        return None
+    passed = sorted(
+        (
+            item
+            for item in completion_packet["checks"]
+            if isinstance(item, dict)
+            and item.get("reproducible") is True
+            and item.get("status") == "passed"
+            and isinstance(item.get("command"), str)
+            and item["command"]
+        ),
+        key=lambda item: (str(item.get("id") or ""), str(item["command"])),
+    )
+    return str(passed[0]["command"]) if passed else None
+
+
+def _referenced_evidence_ids(values: list[Any]) -> list[str]:
+    found: set[str] = set()
+
+    def visit(value: Any) -> None:
+        if isinstance(value, str):
+            match = EVIDENCE_REF_PATTERN.fullmatch(value)
+            if match:
+                found.add(match.group(1))
+        elif isinstance(value, list):
+            for item in value:
+                visit(item)
+        elif isinstance(value, dict):
+            for item in value.values():
+                visit(item)
+
+    visit(values)
+    return sorted(found, key=lambda value: int(value.removeprefix("E-")))
+
+
+def _is_documentation_path(path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    parts = normalized.split("/")
+    basename = parts[-1].upper()
+    return parts[0].lower() == "docs" or basename.startswith(("README", "CONTRIBUTING"))
 
 
 def _summary(target: dict[str, Any], completion_packet: dict[str, Any] | None) -> str:

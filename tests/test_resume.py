@@ -173,6 +173,23 @@ def test_resume_completed_packet_preserves_verified_semantics_and_markdown(
     )
     assert completion_ref["ref"] == f"evidence:{finish['packet']['evidence_id']}"
     assert completion_ref["sha256"].startswith("sha256:")
+    restart = packet["restart_context"]
+    assert restart["target_intent"] == "Exercise handoff packet resume"
+    assert restart["acceptance_status"] == "intent_only"
+    assert restart["acceptance_ref"] is None
+    assert restart["target_review_command"] == "pcl task read T-0001 --json"
+    assert restart["verification_commands"] == [{
+        "command": "python -m pytest -q test_sample.py",
+        "previous_status": "passed",
+        "evidence_refs": [restart["verification_commands"][0]["evidence_refs"][0]],
+        "proof_source": "completion-packet/v1.checks/CHK-0001",
+    }]
+    assert packet["next_safe_action"]["command"] == "python -m pytest -q test_sample.py"
+    assert "test_sample.py" in restart["changed_paths"]
+    assert restart["documentation_candidates"] == []
+    assert f"pcl evidence show {finish['packet']['evidence_id']} --json" in (
+        restart["evidence_resolution_commands"]
+    )
     assert _state_fingerprint(tmp_path) == before
 
     assert main([
@@ -183,6 +200,119 @@ def test_resume_completed_packet_preserves_verified_semantics_and_markdown(
     assert "## Verified" in markdown
     assert packet["verified"][0]["text"] in markdown
     assert "## Unverified" in markdown
+    assert "## Restart context" in markdown
+    assert "Acceptance status: intent_only" in markdown
+    assert "commands were not rerun by resume" in markdown
+
+
+def test_resume_restart_context_is_fresh_session_executable_from_public_commands(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _packet_project(tmp_path, capsys, passing=True)
+    exit_code, _finish_payload = _finish(tmp_path, capsys)
+    assert exit_code == 0
+    before = _state_fingerprint(tmp_path)
+
+    assert main(["--root", str(tmp_path), "resume", "--json"]) == 0
+    packet = _json_output(capsys)["handoff_packet"]
+    restart = packet["restart_context"]
+
+    for command in restart["evidence_resolution_commands"]:
+        argv = shlex.split(command)
+        assert argv.pop(0) == "pcl"
+        assert main(["--root", str(tmp_path), *argv]) == 0
+        resolved = _json_output(capsys)
+        assert resolved["evidence"]["id"] in command
+        assert "stdout" not in json.dumps(resolved).lower()
+
+    replay = subprocess.run(
+        shlex.split(restart["verification_commands"][0]["command"]),
+        cwd=tmp_path,
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+    assert replay.returncode == 0, replay.stdout + replay.stderr
+    assert _state_fingerprint(tmp_path) == before
+
+
+def test_restart_context_deduplicates_orders_bounds_and_marks_documentation_candidates() -> None:
+    from pcl.resume import _first_passed_replay_command, _restart_context
+
+    checks = [
+        {
+            "id": "CHK-0002", "command": "python -m pytest", "status": "passed",
+            "artifact_ref": "evidence:E-0002", "reproducible": True,
+        },
+        {
+            "id": "CHK-0001", "command": "ruff check .", "status": "passed",
+            "artifact_ref": "evidence:E-0001", "reproducible": True,
+        },
+        {
+            "id": "CHK-0003", "command": "ruff check .", "status": "failed",
+            "artifact_ref": "evidence:E-0003", "reproducible": True,
+        },
+        {
+            "id": "CHK-0004", "command": "manual browser", "status": "passed",
+            "artifact_ref": None, "reproducible": False,
+        },
+    ]
+    changes = [
+        {"path": "src/app.py", "change_type": "modified"},
+        {"path": "README.md", "change_type": "modified"},
+        {"path": "docs/usage.md", "change_type": "added"},
+    ] + [
+        {"path": f"src/path-{index:02d}.py", "change_type": "added"}
+        for index in range(60)
+    ] + [{"path": "src/README-extra.md", "change_type": "added"}]
+    completion = {
+        "evidence_id": "E-0099",
+        "packet": {
+            "target": {
+                "intent": "Ship executable resume context",
+                "work_brief_ref": "evidence:E-0042",
+            },
+            "checks": checks,
+            "changes": changes,
+        },
+    }
+
+    restart = _restart_context(
+        target={"type": "task", "id": "T-0001", "intent": "fallback"},
+        completion=completion,
+        context_refs=[],
+    )
+
+    assert restart["acceptance_status"] == "work_brief_linked"
+    assert restart["acceptance_ref"] == "evidence:E-0042"
+    assert [item["command"] for item in restart["verification_commands"]] == [
+        "ruff check .", "python -m pytest",
+    ]
+    assert len(restart["changed_paths"]) == 50
+    assert restart["documentation_candidates"] == [
+        "README.md", "docs/usage.md", "src/README-extra.md",
+    ]
+    assert restart["evidence_resolution_commands"] == [
+        "pcl evidence show E-0001 --json",
+        "pcl evidence show E-0002 --json",
+        "pcl evidence show E-0003 --json",
+        "pcl evidence show E-0042 --json",
+        "pcl evidence show E-0099 --json",
+    ]
+    duplicate_status_packet = {
+        "checks": [
+            {
+                "id": "CHK-0001", "command": "ruff check .", "status": "failed",
+                "reproducible": True,
+            },
+            {
+                "id": "CHK-0002", "command": "ruff check .", "status": "passed",
+                "reproducible": True,
+            },
+        ]
+    }
+    assert _first_passed_replay_command(duplicate_status_packet) == "ruff check ."
 
 
 def test_resume_incomplete_then_newer_packet_marks_older_packet_omitted(
