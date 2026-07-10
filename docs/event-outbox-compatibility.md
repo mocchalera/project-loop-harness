@@ -19,6 +19,28 @@ do not repeat it; run `pcl audit flush --json`.
 The installed package includes `db/migrations/008_event_outbox.sql` through the
 existing `db/migrations/*.sql` package-data rule.
 
+## Platform lock behavior
+
+POSIX platforms retain the ADR-002 lock model implemented with `fcntl.flock`:
+normal mutations and projectors take a shared project-operation lock, migrations
+take it exclusively, and JSONL projectors/rebuilds take a separate exclusive
+projector lock.
+
+Windows uses `msvcrt.locking`, which does not provide a shared-lock mode. Project
+Loop Harness therefore chooses the correctness-first fallback from task 0133:
+every Windows lock request is a one-byte exclusive advisory lock. Migrations and
+JSONL projectors retain their required exclusion, while normal mutations that may
+run concurrently on POSIX are serialized on Windows. SQLite `BEGIN IMMEDIATE`
+remains the authority for database writer serialization; the filesystem lock is
+not treated as database state.
+
+Both backends use non-blocking acquisition with bounded retries for `EACCES` and
+`EAGAIN`, the same 50 ms retry interval, and the SQLite busy timeout (30 seconds
+by default). Timeout is reported as a structured data-store error. If the native
+backend for the running platform (`fcntl.flock` on POSIX or `msvcrt.locking` on
+Windows) is unavailable, the operation fails with an explicit capability error;
+locks are never silently skipped.
+
 ## Downgrade and rollback
 
 An older binary cannot create a valid event on schema 8 because it does not
