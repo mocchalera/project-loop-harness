@@ -5,7 +5,7 @@ from json import JSONDecodeError
 from pathlib import Path
 from typing import Any
 
-from .db import connect_mutation
+from .db import connect_mutation, table_exists
 from .contracts.completion_packet import load_completion_packet, validate_completion_packet
 from .evidence import (
     LEGACY_INLINE_EVIDENCE_WARNING,
@@ -31,6 +31,7 @@ ACTIVE_JOB_STATUSES = {"queued", "running", "blocked"}
 TERMINAL_JOB_STATUSES = {"passed", "failed", "cancelled"}
 ACTIVE_RUN_STATUSES = {"queued", "running", "blocked"}
 ACTIVE_DEFECT_STATUSES = {"open", "triaged", "in_progress", "fixed", "verified"}
+TERMINAL_TASK_STATUSES = {"done", "cancelled", "waived"}
 
 
 class JobCompletionEvidenceError(PclError):
@@ -493,6 +494,7 @@ def close_goal(
                 code="goal_close_verification_required",
                 details={"goal_id": goal_id},
             )
+        _require_goal_tasks_terminal(conn, goal_id)
         active_runs = _active_runs_for_goal(conn, goal_id)
         if active_runs:
             raise InvalidInputError(
@@ -564,6 +566,31 @@ def close_goal(
         return result
     finally:
         conn.close()
+
+
+def _require_goal_tasks_terminal(conn, goal_id: str) -> None:
+    if not table_exists(conn, "tasks"):
+        return
+    terminal_statuses = sorted(TERMINAL_TASK_STATUSES)
+    placeholders = ", ".join("?" for _ in terminal_statuses)
+    rows = conn.execute(
+        f"""
+        SELECT id, status
+        FROM tasks
+        WHERE related_goal_id = ?
+          AND status NOT IN ({placeholders})
+        ORDER BY id
+        """,
+        (goal_id, *terminal_statuses),
+    ).fetchall()
+    if not rows:
+        return
+    incomplete_tasks = [{"id": str(row["id"]), "status": str(row["status"])} for row in rows]
+    raise EvidenceAddError(
+        f"Goal {goal_id} cannot close while related Tasks are non-terminal.",
+        code="goal_close_tasks_incomplete",
+        details={"goal_id": goal_id, "incomplete_tasks": incomplete_tasks},
+    )
 
 
 def cancel_goal(paths: ProjectPaths, *, goal_id: str, summary: str) -> dict[str, Any]:

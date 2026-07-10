@@ -301,6 +301,57 @@ def test_goal_close_accepts_same_target_completed_packet_and_rejects_cross_targe
     assert goal["closure_proof"]["evidence_id"] == evidence_id
 
 
+def test_completed_packet_cannot_close_goal_with_incomplete_start_task(tmp_path: Path, capsys) -> None:
+    _init(tmp_path, capsys)
+    assert main(["--root", str(tmp_path), "start", "Integrity follow-up", "--json"]) == 0
+    started = _json(capsys)
+    assert started["result"]["created_ids"]["goal"] == "G-0001"
+    assert started["result"]["created_ids"]["task"] == "T-0001"
+    packet = _completion_packet(tmp_path, goal_id="G-0001", outcome="COMPLETED_VERIFIED")
+    evidence_id = _insert_packet_evidence(tmp_path, packet, goal_id="G-0001")
+    before_counts = _counts(tmp_path)
+    before_rows = _goal_and_task_rows(tmp_path)
+
+    assert main([
+        "--root", str(tmp_path), "goal", "close", "G-0001", "--summary", "packet complete",
+        "--evidence-id", evidence_id, "--json",
+    ]) == 2
+    error = _json(capsys)["error"]
+    assert error["code"] == "goal_close_tasks_incomplete"
+    assert error["details"] == {
+        "goal_id": "G-0001",
+        "incomplete_tasks": [{"id": "T-0001", "status": "todo"}],
+    }
+    assert _counts(tmp_path) == before_counts
+    assert _goal_and_task_rows(tmp_path) == before_rows
+
+    assert main([
+        "--root", str(tmp_path), "task", "status", "T-0001", "done",
+        "--reason", "Implementation and acceptance checks completed",
+    ]) == 0
+    capsys.readouterr()
+    assert main([
+        "--root", str(tmp_path), "goal", "close", "G-0001", "--summary", "packet complete",
+        "--evidence-id", evidence_id, "--json",
+    ]) == 0
+    closed = _json(capsys)
+    assert closed["status"] == "closed"
+    assert closed["proof_type"] == "completion_packet"
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
+    assert _json(capsys)["ok"] is True
+
+
+def _goal_and_task_rows(root: Path) -> dict:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        return {
+            "goal": dict(conn.execute("SELECT status, completion_json, updated_at FROM goals WHERE id = 'G-0001'").fetchone()),
+            "task": dict(conn.execute("SELECT status, updated_at FROM tasks WHERE id = 'T-0001'").fetchone()),
+        }
+    finally:
+        conn.close()
+
+
 def _completion_packet(root: Path, *, goal_id: str, outcome: str) -> dict:
     from pcl.contracts.completion_packet import with_computed_packet_id
 
@@ -319,20 +370,24 @@ def _completion_packet(root: Path, *, goal_id: str, outcome: str) -> dict:
 
 
 def _insert_packet_evidence(root: Path, packet: dict, *, goal_id: str) -> str:
-    packet_path = root / ".project-loop" / "evidence" / "completion-packets" / "fixture.json"
-    packet_path.parent.mkdir(parents=True, exist_ok=True)
-    packet_path.write_text(json.dumps(packet, sort_keys=True) + "\n", encoding="utf-8")
     conn = connect(root / ".project-loop" / "project.db")
     try:
+        row = conn.execute(
+            "SELECT MAX(CAST(SUBSTR(id, 3) AS INTEGER)) AS max_id FROM evidence WHERE id LIKE 'E-%'"
+        ).fetchone()
+        evidence_id = f"E-{int(row['max_id'] or 0) + 1:04d}"
+        packet_path = root / ".project-loop" / "evidence" / "completion-packets" / f"{evidence_id.lower()}-fixture.json"
+        packet_path.parent.mkdir(parents=True, exist_ok=True)
+        packet_path.write_text(json.dumps(packet, sort_keys=True) + "\n", encoding="utf-8")
         conn.execute(
-            "INSERT INTO evidence(id, type, path, command, summary, created_at) VALUES ('E-0001', 'completion_packet', ?, 'pcl finish --emit-packet', 'fixture', '2026-07-10T00:00:00Z')",
-            (str(packet_path.relative_to(root)),),
+            "INSERT INTO evidence(id, type, path, command, summary, created_at) VALUES (?, 'completion_packet', ?, 'pcl finish --emit-packet', 'fixture', '2026-07-10T00:00:00Z')",
+            (evidence_id, str(packet_path.relative_to(root))),
         )
         conn.execute(
-            "INSERT INTO evidence_links(evidence_id, target_type, target_id, link_role, created_at) VALUES ('E-0001', 'goal', ?, 'completion_packet', '2026-07-10T00:00:00Z')",
-            (goal_id,),
+            "INSERT INTO evidence_links(evidence_id, target_type, target_id, link_role, created_at) VALUES (?, 'goal', ?, 'completion_packet', '2026-07-10T00:00:00Z')",
+            (evidence_id, goal_id),
         )
         conn.commit()
     finally:
         conn.close()
-    return "E-0001"
+    return evidence_id
