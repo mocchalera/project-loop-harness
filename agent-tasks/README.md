@@ -53,6 +53,10 @@ implement from the spec file, not from prompt summaries.
 | 0140b | Evidence-backed lifecycle integrity gate | v0.4.0 RC2 Integrity Gate | P0 | done (main ad082d7 + d5d2602) |
 | 0140c | Fail-open finish check guard | v0.4.0 RC2 Integrity Gate | P0 | done (main 131d9d4) |
 | 0141 | Idle routing without a redundant human gate | v0.4.1 Integrity Migration | P0 | done |
+| 0142 | Plan-only lifecycle repair action model | v0.4.1 Integrity Migration | P1 | approved |
+| 0143 | Terminal link mutation and structural repair apply | v0.4.1 Integrity Migration | P1 | approved |
+| 0144 | Schema-8 artifact/event-anchored Skill provenance | v0.4.1 Integrity Migration | P1 | approved |
+| 0145 | Structured validation diagnostics and repair guidance | v0.4.1 Integrity Migration | P1 | approved |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
@@ -72,6 +76,15 @@ crash/concurrency suite. 0131 executor hardening is parallel-safe after 0124.
 Wave A specs originate from `docs/roadmap/integrated/` (adopted 2026-07-10,
 Accept with modifications — see `docs/roadmap/integrated/ADOPTION.md` for the
 renumbering map and D-08).
+
+v0.4.1 dispatch order: **0141** neutral idle routing → **0142** completely
+plan-only repair action model → **0143** one-way consumer adding the internal
+link mutation service, dedicated link commands, and explicit structural apply
+→ **0144** schema-8 canonical artifact + event-hash Skill provenance → **0145**
+structured findings integrating the concrete repair route → enforced-policy
+dogfood. 0142 never imports or depends back on 0143 mutation code. Do not run
+0142–0145 as parallel workers: adjacent slices intentionally overlap `cli.py`,
+validators, Evidence services, reports, and their fixtures.
 
 ## Planned next (see growth plan for scope)
 

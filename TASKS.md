@@ -142,6 +142,10 @@ Give these tasks to coding agents in this order:
 138. `agent-tasks/0140b-lifecycle-integrity-gate.md` (v0.4.0 RC2 blocker, Evidence-ID-first terminal guards and target-bound direct Goal closure without schema migration)
 139. `agent-tasks/0140c-fail-open-check-guard.md` (v0.4.0 RC2 blocker, reject obvious fail-open finish checks before execution)
 140. `agent-tasks/0141-idle-routing-repair.md` (v0.4.1 Integrity Migration, replace the fabricated idle human gate with a neutral `idle` action and route explicit intent through `pcl start`)
+141. `agent-tasks/0142-lifecycle-repair-planner.md` (v0.4.1 Integrity Migration, completely plan-only lifecycle repair action model with fixed classification and sort contracts)
+142. `agent-tasks/0143-terminal-link-repair.md` (v0.4.1 Integrity Migration, consumes 0142 to add one internal link mutation service, dedicated link commands, and explicit structural apply)
+143. `agent-tasks/0144-skill-runtime-provenance.md` (v0.4.1 Integrity Migration, schema-8 canonical `execution-provenance/v1` artifact anchored by its event SHA-256)
+144. `agent-tasks/0145-structured-validation-diagnostics.md` (v0.4.1 Integrity Migration, additive structured validation findings with concrete safe inspection/repair guidance)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and
@@ -162,6 +166,6 @@ v0.3.1 = Handoff Integrity + Operator Experience, dispatch order: 0116 receipt/l
 v0.3.2 = master-trace / intent-index formalization, starting with 0123 contract docs before any first-class `pcl intent` or optional context-pack section.
 v0.3.3 = Trust Foundation (integrated Wave A), dispatch order: 0123 + 0124 in parallel -> 0125 -> 0126, with 0127 ADR (human gate) -> 0128 -> 0129 -> 0130; 0131 parallel-safe after 0124. Shipped 2026-07-10 (includes v0.3.2 scope; tag v0.3.3).
 v0.4.0 = Dogfood Operations + Three-command Wedge (Wave B) + RC2 Integrity Gate, see `docs/plan-v0.4.0.md`. Dispatch: 0134 + 0138 in parallel -> 0135 + 0136 after 0134 -> 0137 after 0135 -> 0139 + 0140 exit repairs -> 0140a + 0140b + 0140c in parallel -> integrated RC2 verification.
-v0.4.1 = Integrity Migration, see `docs/plan-v0.4.1.md`. Dispatch begins with 0141 idle routing, followed by lifecycle repair planning/link commands, Skill provenance, and structured diagnostics before enforced-policy dogfood. Adaptive Entry moves to v0.4.2.
+v0.4.1 = Integrity Migration, see `docs/plan-v0.4.1.md`. Dispatch is 0141 idle routing → 0142 plan-only lifecycle repair action model → 0143 one-way consumer implementing link mutation and explicit structural apply → 0144 schema-8 artifact/event-anchored Skill provenance → 0145 structured diagnostics → enforced-policy dogfood. 0142 has no mutation dependency back on 0143. The implementation slices are serialized because adjacent tasks share CLI, validator, Evidence, and report surfaces. Adaptive Entry moves to v0.4.2.
 
 Do not start with MCP as the runtime. Do not start with a hosted UI. The CLI/runtime must become reliable first. (Fixing the existing optional MCP server to match its declared spec — 0125/0126 — is reliability work, not a runtime pivot.)

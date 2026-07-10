@@ -16,17 +16,29 @@ semantic decisions on the operator's behalf.
 
 1. **0141 idle routing:** remove the fabricated idle human gate and route
    explicit intent through `pcl start`.
-2. **0142 lifecycle repair planner:** provide a read-only plan for existing
-   inconsistent rows; semantic repairs remain explicit commands.
-3. **0143 terminal link repair:** add dedicated, audited Test/Story/Evidence
-   link commands without changing same-status no-op behavior.
-4. **0144 Skill/runtime provenance:** record Skill paths and content hashes as
-   target-bound execution provenance Evidence.
+2. **0142 lifecycle repair planner:** provide a completely plan-only action
+   model for existing inconsistent rows; bare/default and `--dry-run` are the
+   only modes, and no mutation service is added.
+3. **0143 terminal link repair:** consume the 0142 action model to add the
+   internal link mutation service, dedicated audited Test/Story/Evidence link
+   commands, and explicit `repair lifecycle --apply-structural`, without
+   changing same-status no-op behavior.
+4. **0144 Skill/runtime provenance:** store canonical provenance JSON as
+   schema-8 `execution_provenance` Evidence and anchor its artifact SHA-256 in
+   the event before inspecting current Skill hashes.
 5. **0145 structured diagnostics:** add machine-readable validation findings
    and concrete safe inspection/repair commands while retaining legacy string
    errors and warnings.
 6. Dogfood the complete migration path before changing existing projects from
    advisory to enforced lifecycle validation.
+
+0142–0145 are dispatched serially. The dependency is one-way: 0142 publishes a
+read-only repair-plan action model and 0143 consumes it to implement every link
+mutation and structural apply path; 0142 never imports 0143 mutation services.
+0145 may reference those concrete commands only after they exist. 0144 precedes
+0145 because both touch report surfaces. This serialization also avoids
+cross-worker conflicts in the shared CLI, validator, Evidence, report, and
+fixture files.
 
 ## Boundaries
 
