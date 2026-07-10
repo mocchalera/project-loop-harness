@@ -1,0 +1,34 @@
+{
+  "invalid_params": {
+    "error": {
+      "code": -32602,
+      "message": "Params must be an object."
+    }
+  },
+  "unknown_method": {
+    "error": {
+      "code": -32601,
+      "message": "Method not found: unsupported/method"
+    }
+  },
+  "protocol_error": {
+    "error": {
+      "code": -32602,
+      "data": {
+        "arguments": [
+          "root"
+        ]
+      },
+      "message": "Project Loop Harness MCP tools do not accept arguments; the server root is fixed at startup."
+    }
+  },
+  "domain_error": {
+    "error": {
+      "code": -32000,
+      "data": {
+        "approval_mode": "read-only"
+      },
+      "message": "render_dashboard requires --approval-mode local-render."
+    }
+  }
+}
