@@ -21,6 +21,9 @@ FIXTURES = Path(__file__).parent / "fixtures"
 CONTEXT_PACK_CONTRACT_FIXTURES = json.loads(
     (FIXTURES / "context_pack_code_context_contract_v0.json").read_text(encoding="utf-8")
 )
+MASTER_TRACE_CONTEXT_FIXTURES = json.loads(
+    (FIXTURES / "master_trace_context_contract_v0.json").read_text(encoding="utf-8")
+)
 
 
 def _json_output(capsys) -> dict:
@@ -146,6 +149,102 @@ def _create_task_context(root: Path, capsys) -> None:
     assert main(["--root", str(root), "task", "depend", "T-0002", "--on", "T-0003"]) == 0
     assert main(["--root", str(root), "task", "depend", "T-0004", "--on", "T-0002"]) == 0
     capsys.readouterr()
+
+
+def _create_master_trace_task(root: Path, capsys) -> None:
+    assert main(["init", "--target", str(root), "--json"]) == 0
+    _json_output(capsys)
+    assert main([
+        "--root",
+        str(root),
+        "task",
+        "create",
+        "--title",
+        "Pull master trace context",
+        "--description",
+        "Resolve copied evidence references.",
+        "--json",
+    ]) == 0
+    _json_output(capsys)
+
+
+def _record_master_trace_fixture_evidence(
+    root: Path,
+    capsys,
+    *,
+    master_trace_count: int,
+    intent_index_count: int,
+) -> list[dict]:
+    recorded = []
+    for index in range(1, master_trace_count + 1):
+        path = root / f"master-trace-{index}.md"
+        path.write_text(
+            "---\n"
+            "contract_version: master-trace/v0\n"
+            f"trace_id: mt-fixture-{index}\n"
+            "source_kind: operator_notes\n"
+            "captured_at: 2026-07-10T00:00:00Z\n"
+            "---\n"
+            f"RAW_TRACE_SENTINEL_{index}\n",
+            encoding="utf-8",
+        )
+        recorded.append(_record_task_evidence(root, capsys, path.name, f"Master trace {index}"))
+    for index in range(1, intent_index_count + 1):
+        path = root / f"intent-index-{index}.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "contract_version": "intent-index/v0",
+                    "index_id": f"ii-fixture-{index}",
+                    "items": [{"claim": f"INDEX_CLAIM_SENTINEL_{index}"}],
+                },
+                sort_keys=True,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        recorded.append(_record_task_evidence(root, capsys, path.name, f"Intent index {index}"))
+    return recorded
+
+
+def _record_task_evidence(root: Path, capsys, path: str, summary: str) -> dict:
+    assert main([
+        "--root",
+        str(root),
+        "evidence",
+        "add",
+        "--file",
+        path,
+        "--summary",
+        summary,
+        "--copy",
+        "--task",
+        "T-0001",
+        "--json",
+    ]) == 0
+    return _json_output(capsys)["evidence"]
+
+
+def _context_mutation_snapshot(root: Path) -> dict:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        table_counts = {
+            table: int(conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
+            for table in ("evidence", "evidence_links", "events")
+        }
+    finally:
+        conn.close()
+    events_path = root / ".project-loop" / "events.jsonl"
+    outbox = root / ".project-loop" / "outbox"
+    return {
+        "table_counts": table_counts,
+        "events": events_path.read_bytes() if events_path.exists() else b"",
+        "outbox": {
+            path.relative_to(outbox).as_posix(): path.read_bytes()
+            for path in sorted(outbox.rglob("*"))
+            if path.is_file()
+        } if outbox.exists() else {},
+    }
 
 
 def _git(root: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -821,6 +920,113 @@ def test_context_pack_for_task_includes_linked_evidence_without_inlining_content
     assert ".project-loop/evidence/adhoc/e-0001-adhoc-v0.json" in markdown
     assert ".project-loop/evidence/adhoc-files/e-0001/01-intent-index.json" in markdown
     assert "DO_NOT_INLINE_MODEL_OUTPUT" not in markdown
+
+
+@pytest.mark.parametrize(
+    "case",
+    MASTER_TRACE_CONTEXT_FIXTURES["fixtures"],
+    ids=lambda case: case["id"],
+)
+def test_master_trace_context_contract_fixtures(
+    tmp_path: Path,
+    capsys,
+    case: dict,
+) -> None:
+    _create_master_trace_task(tmp_path, capsys)
+    setup = case["setup"]
+    evidence = _record_master_trace_fixture_evidence(
+        tmp_path,
+        capsys,
+        master_trace_count=setup["master_trace_count"],
+        intent_index_count=setup["intent_index_count"],
+    )
+    args = [
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0001",
+        "--json",
+    ]
+    if case["include"]:
+        args.insert(-1, "--master-trace-context")
+
+    before = _context_mutation_snapshot(tmp_path)
+    assert main(args) == 0
+    output = capsys.readouterr().out
+    assert _context_mutation_snapshot(tmp_path) == before
+    pack = json.loads(output)["context_pack"]
+    expected = case["expected"]
+
+    assert "RAW_TRACE_SENTINEL" not in output
+    assert "INDEX_CLAIM_SENTINEL" not in output
+    if expected["status"] == "omitted":
+        assert "master_trace_context" not in pack
+        assert "master_trace_context" not in pack["included_sections"]
+        assert "## Master Trace Context" not in pack["markdown"]
+        return
+
+    context = pack["master_trace_context"]
+    assert "master_trace_context" in pack["included_sections"]
+    assert "## Master Trace Context" in pack["markdown"]
+    assert context["contract_version"] == "master-trace-context/v0"
+    assert context["target"] == {"type": "task", "id": "T-0001"}
+    assert context["raw_transcript_inlined"] is False
+
+    if expected["status"] == "present":
+        assert set(context) == {
+            "contract_version",
+            "target",
+            "master_trace",
+            "intent_index",
+            "trust_model",
+            "source_ref_discipline",
+            "raw_transcript_inlined",
+        }
+        assert context["master_trace"] == {
+            "evidence_id": evidence[0]["id"],
+            "manifest_path": evidence[0]["manifest_path"],
+            "member_paths": ["master-trace-1.md"],
+            "stored_paths": [evidence[0]["members"][0]["stored_path"]],
+        }
+        assert context["intent_index"] == {
+            "evidence_id": evidence[1]["id"],
+            "manifest_path": evidence[1]["manifest_path"],
+            "member_paths": ["intent-index-1.json"],
+            "stored_paths": [evidence[1]["members"][0]["stored_path"]],
+        }
+        assert context["trust_model"] == "claims-not-facts"
+        assert context["source_ref_discipline"] == {
+            "line_numbering": "one-based-inclusive",
+            "read_target": "copied-master-trace-stored-path",
+            "worker_must_compare_claim_to_trace_lines": True,
+        }
+        return
+
+    assert context["status"] == expected["status"]
+    assert context.get("missing", []) == expected.get("missing", [])
+    assert context.get("ambiguous", []) == expected.get("ambiguous", [])
+    if expected["status"] == "selection_required":
+        trace_candidates = context["candidates"]["master_trace"]
+        assert [item["evidence_id"] for item in trace_candidates] == ["E-0001", "E-0002"]
+        assert context["candidates"]["intent_index"][0]["evidence_id"] == "E-0003"
+
+
+def test_master_trace_context_flag_is_task_only(tmp_path: Path, capsys) -> None:
+    _create_job(tmp_path, capsys)
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--job",
+        "J-0001",
+        "--master-trace-context",
+        "--json",
+    ]) == 2
+    error = _json_output(capsys)["error"]
+    assert error["code"] == "invalid_input"
 
 
 def test_context_pack_for_task_falls_back_to_linked_task_column_without_evidence_links(
@@ -2313,6 +2519,7 @@ def _section_heading(section_id: str) -> str:
         "recent_events": "## Recent Events",
         "agent_prompt": "## Agent Prompt",
         "target_task": "## Target Task",
+        "master_trace_context": "## Master Trace Context",
         "linked_evidence": "## Linked Evidence",
         "dependencies": "## Dependencies",
         "dependents": "## Dependents",

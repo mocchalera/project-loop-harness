@@ -15,7 +15,7 @@ or determine whether an index is correct, complete, or semantically sufficient.
   with copied evidence.
 - `intent-index/v0` is model output containing claims that point into one
   copied master trace. Its items are navigation pointers, not verified facts.
-- `master-trace-context/v0` is an illustrative future context-pack section. It
+- `master-trace-context/v0` is an opt-in context-pack section. It
   carries evidence and path references only; it never carries raw transcript
   contents.
 - SQLite state and append-only JSONL events remain authoritative for evidence
@@ -169,16 +169,21 @@ PYTHONPATH=src python -m pcl evidence add \
   --json
 ```
 
-Run the read-only preflight and build the task context pack:
+Run the read-only preflight and build the opt-in task context pack:
 
 ```bash
 PYTHONPATH=src python -m pcl context check --task T-0042 --json
-PYTHONPATH=src python -m pcl context pack --task T-0042 --json
+PYTHONPATH=src python -m pcl context pack \
+  --task T-0042 \
+  --master-trace-context \
+  --json
 ```
 
-The task pack exposes linked-evidence metadata and paths. The worker opens the
-copied members and applies the source-ref checks above. The pack does not inline
-either artifact.
+The task pack exposes linked-evidence metadata and paths. With the opt-in flag,
+it also emits `master_trace_context` after resolving the trace and index from
+supporting `evidence_links`. The worker opens the copied members and applies the
+source-ref checks above. The pack does not inline either artifact. Without the
+flag, context-pack output remains unchanged.
 
 If a task has not been selected yet, the base form is still available:
 
@@ -199,12 +204,12 @@ artifacts.
 Master-trace source-ref verification remains the worker's responsibility; the
 preflight does not validate the index's meaning.
 
-## Future `master-trace-context/v0`
+## Optional `master-trace-context/v0`
 
-The payload below is an illustrative candidate for an optional future
-`context-pack/v1` section. It is documented now so later implementation can be
-reviewed against a concrete boundary; current `pcl context pack` does not emit
-it.
+The payload below is emitted as an optional `context-pack/v1` section when
+`pcl context pack --task T-XXXX --master-trace-context` resolves exactly one
+linked `master-trace/v0` evidence item and exactly one linked
+`intent-index/v0` evidence item whose copied member paths resolve.
 
 ```json
 {
@@ -243,7 +248,7 @@ it.
 }
 ```
 
-A future implementation must preserve the following boundaries:
+The implementation preserves the following boundaries:
 
 - emit evidence IDs, manifest paths, member paths, and copied `stored_paths`;
 - do not inline raw trace or index contents in context packs or dashboard data;
@@ -251,20 +256,28 @@ A future implementation must preserve the following boundaries:
 - do not claim that an external model's output has been semantically validated;
 - keep context-pack generation read-only.
 
+The opt-in section reports `status: "absent"` with `missing` kinds when linked
+trace or index evidence cannot be found. If more than one candidate exists for
+either kind, it reports `status: "selection_required"`, the ambiguous kinds,
+and candidate evidence/path references instead of choosing by recency. If a
+single candidate pair exists but a copied member path cannot be resolved, it
+reports `status: "unavailable"` and the unresolved member references.
+
+`pcl context check --task T-XXXX` reports the same factual preflight under
+`master_trace_context`. The preflight reads evidence rows, manifests, and local
+artifact contract markers; it does not score or interpret intent-index claims.
+
 ## Future promotion gates
 
 These promotions are outside v0.3.2 and require separate work:
 
-1. An optional `master_trace_context` section in `context-pack/v1` may be
-   proposed only after this contract is accepted. It requires its own task,
-   implementation review, and contract fixtures.
-2. First-class `pcl intent` or `pcl collect` surfaces require a separate design
+1. First-class `pcl intent` or `pcl collect` surfaces require a separate design
    and human approval because they introduce product semantics and may require
    a schema migration.
-3. `pcl option` must be designed against the existing decision lifecycle, and
+2. `pcl option` must be designed against the existing decision lifecycle, and
    `pcl replan` must account for `pcl next` ordering. Both belong to later
    roadmap phases and require human approval before implementation.
-4. A knowledge ledger is also deferred. Any later design must keep durable
+3. A knowledge ledger is also deferred. Any later design must keep durable
    state in the PLH control plane and treat Markdown as an export or review
    surface; it requires separate human approval.
 

@@ -1,0 +1,35 @@
+{
+  "contract_version": "master-trace-context-contract-fixtures/v0",
+  "fixtures": [
+    {
+      "id": "present",
+      "setup": {"master_trace_count": 1, "intent_index_count": 1},
+      "include": true,
+      "expected": {"status": "present"}
+    },
+    {
+      "id": "omitted_without_flag",
+      "setup": {"master_trace_count": 1, "intent_index_count": 1},
+      "include": false,
+      "expected": {"status": "omitted"}
+    },
+    {
+      "id": "absent",
+      "setup": {"master_trace_count": 0, "intent_index_count": 0},
+      "include": true,
+      "expected": {
+        "status": "absent",
+        "missing": ["master_trace", "intent_index"]
+      }
+    },
+    {
+      "id": "ambiguous_master_trace",
+      "setup": {"master_trace_count": 2, "intent_index_count": 1},
+      "include": true,
+      "expected": {
+        "status": "selection_required",
+        "ambiguous": ["master_trace"]
+      }
+    }
+  ]
+}

@@ -614,6 +614,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Require a code-context receipt explicitly bound to the requested job or task.",
     )
+    p_context_pack.add_argument(
+        "--master-trace-context",
+        action="store_true",
+        help=(
+            "Include task-linked master-trace and intent-index evidence references; "
+            "valid only with --task."
+        ),
+    )
     p_context_check = context_sub.add_parser("check", help="Check target-bound context facts")
     context_check_target = p_context_check.add_mutually_exclusive_group(required=True)
     context_check_target.add_argument("--job", dest="job_id", default=None, help="Agent job id to check")
@@ -896,6 +904,9 @@ def _print_context_check_summary(payload: dict) -> None:
     if isinstance(receipt_ref, dict):
         print(f"Receipt: {receipt_ref.get('evidence_id', '')} ({receipt_ref.get('created_at', '')})")
     print(f"Supporting evidence: {payload['supporting_evidence_count']}")
+    master_trace_context = payload.get("master_trace_context")
+    if isinstance(master_trace_context, dict):
+        print(f"Master trace context: {master_trace_context.get('status', '')}")
     print(f"Canonical pack command: {payload['canonical_context_pack_command']}")
     refresh_command = payload.get("recommended_refresh_command")
     if refresh_command:
@@ -2012,6 +2023,11 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "context" and args.context_command == "pack":
             now = utc_now_iso()
             if args.job_id:
+                if args.master_trace_context:
+                    raise InvalidInputError(
+                        "--master-trace-context is valid only with --task.",
+                        details={"master_trace_context": True, "target_type": "agent_job"},
+                    )
                 pack = pack_context_for_job(
                     paths,
                     job_id=args.job_id,
@@ -2030,6 +2046,7 @@ def main(argv: list[str] | None = None) -> int:
                     max_tokens=args.max_tokens,
                     include_code_context=args.include_code_context,
                     require_bound_receipt=args.require_bound_receipt,
+                    include_master_trace_context=args.master_trace_context,
                 )
             if json_output:
                 _print_json({"ok": True, "context_pack": pack})
