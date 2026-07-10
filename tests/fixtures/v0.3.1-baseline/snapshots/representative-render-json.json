@@ -1,0 +1,16 @@
+{
+  "argv": [
+    "pcl",
+    "--root",
+    "<PROJECT_ROOT>",
+    "render",
+    "--json"
+  ],
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": {
+    "data_path": "<PROJECT_ROOT>/.project-loop/dashboard/dashboard-data.json",
+    "ok": true,
+    "path": "<PROJECT_ROOT>/.project-loop/dashboard/dashboard.html"
+  }
+}

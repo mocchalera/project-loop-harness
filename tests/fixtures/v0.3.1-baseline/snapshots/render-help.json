@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "pcl",
+    "render",
+    "--help"
+  ],
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "usage: pcl render [-h] [--locale LOCALE]\n\noptions:\n  -h, --help       show this help message and exit\n  --locale LOCALE  Dashboard HTML locale: en, ja\n"
+}
