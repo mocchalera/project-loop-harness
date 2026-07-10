@@ -1547,6 +1547,12 @@ def _active_workflow_next_action(paths: ProjectPaths) -> dict | None:
         conn.close()
 
 
+def active_workflow_next_action(paths: ProjectPaths) -> dict | None:
+    """Return the existing router action for a nonterminal workflow run, if any."""
+
+    return _active_workflow_next_action(paths)
+
+
 def _workflow_run_next_action(conn, run) -> dict:
     job_placeholders = ", ".join("?" for _ in ACTIVE_JOB_STATUSES)
     active_job = conn.execute(

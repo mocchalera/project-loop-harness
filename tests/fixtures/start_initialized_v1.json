@@ -1,0 +1,49 @@
+{
+  "command": "start",
+  "contract_version": "pcl-start/v1",
+  "mutated": true,
+  "next_actions": [
+    {
+      "command": "pcl context pack --task T-0001 --json",
+      "target": {
+        "id": "T-0001",
+        "type": "task"
+      },
+      "text": "Review the task context and begin the requested work."
+    }
+  ],
+  "result": {
+    "created_ids": {
+      "event": "<event-id>",
+      "evidence": "E-0001",
+      "goal": "G-0001",
+      "task": "T-0001"
+    },
+    "initialization": null,
+    "intent": "Snapshot intent",
+    "project_initialized": false,
+    "receipt": {
+      "actor": "pcl:start",
+      "contract_version": "start-receipt/v1",
+      "created_ids": {
+        "goal": "G-0001",
+        "task": "T-0001"
+      },
+      "event_id": "<event-id>",
+      "evidence_id": "E-0001",
+      "generated_at": "<generated-at>",
+      "intent": "Snapshot intent",
+      "repository_revision": "<repository-revision>",
+      "target": {
+        "id": "T-0001",
+        "type": "task"
+      }
+    },
+    "target": {
+      "id": "T-0001",
+      "type": "task"
+    }
+  },
+  "status": "started",
+  "warnings": []
+}

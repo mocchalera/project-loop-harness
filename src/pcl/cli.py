@@ -121,6 +121,7 @@ from .stories import (
     waive_story,
     waive_test_case,
 )
+from .start import start_work
 from .timeutil import utc_now_iso
 from .tasks import (
     TASK_RISKS,
@@ -174,6 +175,12 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("--force", action="store_true", help="Overwrite template files where safe")
     p_init.add_argument("--no-claude", action="store_true", help="Do not create/update CLAUDE.md")
     p_init.add_argument("--dry-run", action="store_true", help="Inspect the init plan without writing files")
+
+    p_start = sub.add_parser("start", help="Start one intent as minimal active project work")
+    p_start.add_argument("intent", help="Natural-language intent; preserved literally and never executed")
+    p_start.add_argument("--dry-run", action="store_true", help="Preview initialization and state changes without mutation")
+    p_start.add_argument("--no-init", action="store_true", help="Stop instead of initializing an uninitialized project")
+    p_start.add_argument("--new", action="store_true", help="Start separate work even when active work already exists")
 
     p_doctor = sub.add_parser("doctor", help="Check project-loop installation health")
     p_doctor.add_argument("--strict", action="store_true")
@@ -1116,6 +1123,31 @@ def _format_finish_summary(payload: dict) -> str:
     return "\n".join(lines)
 
 
+def _format_start_summary(payload: dict) -> str:
+    result = payload["result"]
+    lines = [
+        f"Start status: {payload['status']}",
+        f"Mutated: {_yes_no(bool(payload['mutated']))}",
+        f"Intent: {result['intent']}",
+    ]
+    target = result.get("target")
+    if isinstance(target, dict) and target.get("id"):
+        lines.append(f"Target: {target['type']} {target['id']}")
+    initialization = result.get("initialization")
+    if isinstance(initialization, dict):
+        lines.append("Initialization plan:")
+        for change in initialization.get("changes", []):
+            lines.append(f"- {change['action']}: {change['path']} ({change['reason']})")
+    for warning in payload["warnings"]:
+        lines.append(f"WARNING: {warning}")
+    if payload["next_actions"]:
+        action = payload["next_actions"][0]
+        lines.append(f"Next: {action['text']}")
+        if action["command"]:
+            lines.append(f"Run: {action['command']}")
+    return "\n".join(lines)
+
+
 def _run_finish_tail(paths) -> list[dict]:
     executed: list[dict] = []
     strict = validate_project(paths, strict=True)
@@ -1308,6 +1340,20 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(f"Initialized Project Loop Harness at {paths.root}")
             return 0
+
+        if args.command == "start":
+            payload = start_work(
+                paths,
+                intent=args.intent,
+                dry_run=args.dry_run,
+                no_init=args.no_init,
+                new=args.new,
+            )
+            if json_output:
+                _print_json(payload)
+            else:
+                print(_format_start_summary(payload))
+            return 1 if payload["status"] == "init_blocked" else 0
 
         if args.command == "doctor":
             result = validate_project(paths, strict=args.strict, include_config_advice=True)
