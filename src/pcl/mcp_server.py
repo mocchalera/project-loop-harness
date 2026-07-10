@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from enum import Enum, auto
 import json
 import sys
 from dataclasses import dataclass
@@ -24,6 +25,13 @@ SERVER_NAME = "pcl-mcp"
 APPROVAL_READ_ONLY = "read-only"
 APPROVAL_LOCAL_RENDER = "local-render"
 _SECRET_PATTERNS = SECRET_PATTERNS
+_SERVER_NOT_INITIALIZED = -32002
+
+
+class _InitializationState(Enum):
+    NOT_INITIALIZED = auto()
+    INITIALIZING = auto()
+    INITIALIZED = auto()
 
 
 @dataclass(frozen=True)
@@ -37,6 +45,7 @@ class ProjectLoopMcpServer:
     def __init__(self, paths: ProjectPaths, *, approval_mode: str = APPROVAL_READ_ONLY) -> None:
         self.paths = paths
         self.approval_mode = approval_mode
+        self._initialization_state = _InitializationState.NOT_INITIALIZED
 
     def handle(self, message: dict[str, Any]) -> dict[str, Any] | None:
         method = message.get("method")
@@ -45,6 +54,7 @@ class ProjectLoopMcpServer:
             self._handle_notification(method)
             return None
         try:
+            self._ensure_request_allowed(method)
             params = message.get("params", {})
             if params is None:
                 params = {}
@@ -69,8 +79,21 @@ class ProjectLoopMcpServer:
             }
 
     def _handle_notification(self, method: Any) -> None:
-        if method in {"notifications/initialized", "initialized"}:
+        if (
+            method in {"notifications/initialized", "initialized"}
+            and self._initialization_state is _InitializationState.INITIALIZING
+        ):
+            self._initialization_state = _InitializationState.INITIALIZED
+
+    def _ensure_request_allowed(self, method: Any) -> None:
+        if method == "ping":
             return
+        if method == "initialize":
+            if self._initialization_state is not _InitializationState.NOT_INITIALIZED:
+                raise JsonRpcError(-32600, "Server is already initialized.")
+            return
+        if self._initialization_state is not _InitializationState.INITIALIZED:
+            raise JsonRpcError(_SERVER_NOT_INITIALIZED, "Server is not initialized.")
 
     def _dispatch(self, method: Any, params: dict[str, Any]) -> dict[str, Any]:
         if method == "initialize":
@@ -88,7 +111,7 @@ class ProjectLoopMcpServer:
         protocol_version = (
             requested if requested in SUPPORTED_PROTOCOL_VERSIONS else PROTOCOL_VERSION
         )
-        return {
+        result = {
             "protocolVersion": protocol_version,
             "capabilities": {"tools": {}},
             "serverInfo": {"name": SERVER_NAME, "version": __version__},
@@ -100,6 +123,8 @@ class ProjectLoopMcpServer:
                 "--approval-mode local-render."
             ),
         }
+        self._initialization_state = _InitializationState.INITIALIZING
+        return result
 
     def _tools(self) -> list[dict[str, Any]]:
         tools = [

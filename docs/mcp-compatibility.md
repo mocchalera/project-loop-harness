@@ -15,16 +15,18 @@ The committed wire transcript is
 `tests/mcp/fixtures/wire-transcript.json`. It contains no project path, secret,
 or user content. The negative matrix in
 `tests/mcp/fixtures/negative-matrix.json` distinguishes JSON-RPC/schema errors
-(`-32601`/`-32602`) from a PLH domain/approval error (`-32000`).
+(`-32601`/`-32602`) from a PLH domain/approval error (`-32000`). Lifecycle
+conformance is tested separately: normal requests before initialization return
+`-32002` (`Server is not initialized.`).
 
-## Known limitation
+## Initialization lifecycle
 
-The server currently accepts `tools/list` before initialization. The
-2025-06-18 MCP lifecycle says initialization must be the first interaction and
-clients should not send non-ping requests first, but the 0125 implementation
-does not enforce this server-side. The conformance suite carries a strict
-expected-failure test so the limitation is visible. Fixing the server lifecycle
-belongs to a follow-up task and is intentionally outside 0126.
+The server enforces `initialize` -> `notifications/initialized` -> normal
+operation. `ping` remains available in every phase. Other requests received
+before the initialized notification return `-32002`; repeated `initialize`
+requests return JSON-RPC `-32600` (`Invalid Request`). An initialized
+notification received before an initialize response does not unlock normal
+operations.
 
 ## Manual clients not yet verified
 

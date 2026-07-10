@@ -81,18 +81,30 @@ def test_independent_process_client_matches_redacted_wire_fixture(process_client
 def test_protocol_negative_matrix(process_client, case_name: str, message: dict[str, Any]) -> None:
     expected = json.loads((FIXTURES / "negative-matrix.json").read_text(encoding="utf-8"))
 
-    exchange = process_client.exchange([message])
+    exchange = process_client.exchange(
+        [
+            _request(
+                "initialize",
+                {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "negative-matrix", "version": "1"},
+                },
+                request_id=1,
+            ),
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            message,
+        ]
+    )
 
     assert exchange.completed.returncode == 0
-    assert exchange.responses == [{"jsonrpc": "2.0", "id": message["id"], **expected[case_name]}]
+    assert exchange.responses[-1] == {
+        "jsonrpc": "2.0",
+        "id": message["id"],
+        **expected[case_name],
+    }
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "0125 does not enforce initialization lifecycle; server fix is outside task 0126 scope"
-    ),
-)
 def test_pre_initialize_tool_call_returns_lifecycle_error(process_client) -> None:
     exchange = process_client.exchange([_request("tools/list", {}, request_id=14)])
 
@@ -103,6 +115,33 @@ def test_pre_initialize_tool_call_returns_lifecycle_error(process_client) -> Non
             "error": {"code": -32002, "message": "Server is not initialized."},
         }
     ]
+
+
+def test_tools_require_initialized_notification_after_initialize(process_client) -> None:
+    exchange = process_client.exchange(
+        [
+            _request(
+                "initialize",
+                {
+                    "protocolVersion": "2025-06-18",
+                    "capabilities": {},
+                    "clientInfo": {"name": "lifecycle-matrix", "version": "1"},
+                },
+                request_id=20,
+            ),
+            _request("tools/list", {}, request_id=21),
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            _request("tools/list", {}, request_id=22),
+        ]
+    )
+
+    assert exchange.completed.returncode == 0
+    assert exchange.responses[1] == {
+        "jsonrpc": "2.0",
+        "id": 21,
+        "error": {"code": -32002, "message": "Server is not initialized."},
+    }
+    assert "result" in exchange.responses[2]
 
 
 def test_special_character_root_stdin_eof_and_debug_stdout_discipline(process_client) -> None:

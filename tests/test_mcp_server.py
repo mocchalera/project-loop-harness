@@ -44,6 +44,12 @@ def _init_project(root: Path) -> None:
     assert pcl_main(["init", "--target", str(root)]) == 0
 
 
+def _complete_initialization(server: ProjectLoopMcpServer) -> None:
+    response = server.handle(_request("initialize", {"protocolVersion": "2025-06-18"}))
+    assert response is not None and "result" in response
+    assert server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
+
+
 def test_mcp_initialize_and_tool_listing_read_only(tmp_path: Path) -> None:
     _init_project(tmp_path)
     server = _server(tmp_path)
@@ -51,6 +57,7 @@ def test_mcp_initialize_and_tool_listing_read_only(tmp_path: Path) -> None:
     init = server.handle(_request("initialize", {"protocolVersion": "2025-06-18"}))
     assert init["result"]["serverInfo"]["name"] == "pcl-mcp"
     assert init["result"]["capabilities"] == {"tools": {}}
+    assert server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
 
     tools = server.handle(_request("tools/list"))
     names = [tool["name"] for tool in tools["result"]["tools"]]
@@ -97,6 +104,7 @@ def test_mcp_read_tools_return_project_state(tmp_path: Path) -> None:
         "Blank page",
     ]) == 0
     server = _server(tmp_path)
+    _complete_initialization(server)
 
     status = _tool_payload(server.handle(_tool_call("get_status")))
     assert status["root"] == str(tmp_path)
@@ -146,6 +154,7 @@ def test_mcp_tool_results_redact_secret_like_values(tmp_path: Path) -> None:
         f"{'pass' + 'word'}={password_secret}",
     ]) == 0
     server = _server(tmp_path)
+    _complete_initialization(server)
 
     features = server.handle(_tool_call("list_features"))["result"]
     defects = server.handle(_tool_call("list_defects"))["result"]
@@ -162,6 +171,7 @@ def test_mcp_render_dashboard_requires_explicit_approval_mode(tmp_path: Path) ->
     _init_project(tmp_path)
 
     read_only = _server(tmp_path)
+    _complete_initialization(read_only)
     read_only_tools = read_only.handle(_request("tools/list"))["result"]["tools"]
     assert "render_dashboard" not in [tool["name"] for tool in read_only_tools]
     denied = read_only.handle(_tool_call("render_dashboard"))
@@ -169,6 +179,7 @@ def test_mcp_render_dashboard_requires_explicit_approval_mode(tmp_path: Path) ->
     assert "local-render" in denied["error"]["message"]
 
     writable = _server(tmp_path, approval_mode=APPROVAL_LOCAL_RENDER)
+    _complete_initialization(writable)
     writable_tools = writable.handle(_request("tools/list"))["result"]["tools"]
     render_tool = [tool for tool in writable_tools if tool["name"] == "render_dashboard"][0]
     assert render_tool["annotations"]["readOnlyHint"] is False
@@ -192,6 +203,7 @@ def test_mcp_render_dashboard_requires_explicit_approval_mode(tmp_path: Path) ->
 def test_mcp_tools_reject_arguments_to_preserve_root_boundary(tmp_path: Path) -> None:
     _init_project(tmp_path)
     server = _server(tmp_path)
+    _complete_initialization(server)
 
     response = server.handle(_tool_call("list_features", {"root": "/tmp/other"}))
 
@@ -202,6 +214,7 @@ def test_mcp_tools_reject_arguments_to_preserve_root_boundary(tmp_path: Path) ->
 def test_mcp_rejects_non_object_params(tmp_path: Path) -> None:
     _init_project(tmp_path)
     server = _server(tmp_path)
+    _complete_initialization(server)
 
     response = server.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": []})
 
@@ -289,6 +302,72 @@ def test_mcp_notification_has_no_response(tmp_path: Path) -> None:
     assert stdout.getvalue() == b""
 
 
+def test_mcp_requires_initialize_and_initialized_notification_before_tools(tmp_path: Path) -> None:
+    _init_project(tmp_path)
+    server = _server(tmp_path)
+
+    before_initialize = server.handle(_request("tools/list", request_id=1))
+    assert before_initialize == {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "error": {"code": -32002, "message": "Server is not initialized."},
+    }
+
+    initialize = server.handle(
+        _request("initialize", {"protocolVersion": "2025-06-18"}, request_id=2)
+    )
+    assert initialize is not None and "result" in initialize
+    before_notification = server.handle(_request("tools/list", request_id=3))
+    assert before_notification == {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "error": {"code": -32002, "message": "Server is not initialized."},
+    }
+
+    assert server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
+    after_notification = server.handle(_request("tools/list", request_id=4))
+    assert after_notification is not None and "result" in after_notification
+
+
+def test_mcp_ping_is_allowed_throughout_initialization(tmp_path: Path) -> None:
+    _init_project(tmp_path)
+    server = _server(tmp_path)
+
+    assert server.handle(_request("ping", request_id=1))["result"] == {}
+    assert server.handle(_request("initialize", request_id=2))["result"]
+    assert server.handle(_request("ping", request_id=3))["result"] == {}
+    server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"})
+    assert server.handle(_request("ping", request_id=4))["result"] == {}
+
+
+@pytest.mark.parametrize("send_initialized", [False, True])
+def test_mcp_rejects_repeated_initialize(tmp_path: Path, send_initialized: bool) -> None:
+    _init_project(tmp_path)
+    server = _server(tmp_path)
+
+    assert server.handle(_request("initialize", request_id=1))["result"]
+    if send_initialized:
+        server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+    repeated = server.handle(_request("initialize", request_id=2))
+    assert repeated == {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "error": {"code": -32600, "message": "Server is already initialized."},
+    }
+
+
+def test_mcp_initialized_notification_before_initialize_does_not_unlock_server(
+    tmp_path: Path,
+) -> None:
+    _init_project(tmp_path)
+    server = _server(tmp_path)
+
+    assert server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}) is None
+    response = server.handle(_request("tools/list"))
+    assert response["error"] == {"code": -32002, "message": "Server is not initialized."}
+
+
 def test_mcp_process_initialize_list_and_call_has_pure_stdout(tmp_path: Path) -> None:
     _init_project(tmp_path)
     requests = [
@@ -329,6 +408,7 @@ def test_mcp_process_initialize_list_and_call_has_pure_stdout(tmp_path: Path) ->
 def test_mcp_unknown_tool_returns_json_rpc_error(tmp_path: Path) -> None:
     _init_project(tmp_path)
     server = _server(tmp_path)
+    _complete_initialization(server)
 
     response = server.handle(_tool_call("delete_everything"))
 
