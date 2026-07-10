@@ -51,6 +51,7 @@ from .context import (
     pack_context_for_job,
     pack_context_for_task,
 )
+from .context_usage import record_context_pack_usage
 from .code_context.summary import render_receipt_summary
 from .decisions import (
     list_decisions,
@@ -71,6 +72,7 @@ from .escalations import (
     resolve_escalation,
 )
 from .init_project import init_project, plan_init_project
+from .kpi_report import report_kpi
 from .lifecycle import (
     cancel_goal,
     cancel_job,
@@ -698,6 +700,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Approximate token budget for the generated Markdown package.",
     )
     p_context_pack.add_argument(
+        "--record-usage",
+        action="store_true",
+        help="Explicitly record one local context_pack_generated usage event.",
+    )
+    p_context_pack.add_argument(
         "--include-code-context",
         action="store_true",
         help="Include the latest code context receipt summary when available.",
@@ -967,6 +974,8 @@ def build_parser() -> argparse.ArgumentParser:
     p_report_defect.add_argument("defect_id")
     p_report_validation = report_sub.add_parser("validation")
     p_report_validation.add_argument("--strict", action="store_true")
+    p_report_kpi = report_sub.add_parser("kpi", help="Read local dogfood KPI measurements")
+    p_report_kpi.add_argument("--since", default=None, help="Include records on or after YYYY-MM-DD")
 
     return parser
 
@@ -2200,6 +2209,8 @@ def main(argv: list[str] | None = None) -> int:
                     require_bound_receipt=args.require_bound_receipt,
                     include_master_trace_context=args.master_trace_context,
                 )
+            if args.record_usage:
+                record_context_pack_usage(paths, pack)
             if json_output:
                 _print_json({"ok": True, "context_pack": pack})
             else:
@@ -2626,6 +2637,14 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json(result)
             else:
                 print(result["path"])
+            return 0
+
+        if args.command == "report" and args.report_command == "kpi":
+            result = report_kpi(paths, since=args.since)
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result["sections"]))
             return 0
 
         parser.error("Unhandled command")

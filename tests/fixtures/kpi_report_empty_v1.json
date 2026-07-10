@@ -1,0 +1,86 @@
+{
+  "contract_version": "kpi-report/v1",
+  "ok": true,
+  "sections": {
+    "context_pack": {
+      "average_context_pack_tokens": {
+        "data_source": "events:context_pack_generated",
+        "reason": "no_data_in_window",
+        "value": null,
+        "window": {"since": null, "until": null}
+      },
+      "bound_receipt_coverage": {
+        "data_source": "events:context_pack_generated",
+        "reason": "no_data_in_window",
+        "value": null,
+        "window": {"since": null, "until": null}
+      },
+      "generation_count": {
+        "data_source": "events:context_pack_generated",
+        "value": 0,
+        "window": {"since": null, "until": null}
+      },
+      "measurement_scope": "recorded_opt_in_context_packs_only"
+    },
+    "finish": {
+      "finish_execution_count": {
+        "data_source": "not_available_until_task_0135",
+        "reason": "not_yet_measured",
+        "value": null,
+        "window": {"since": null, "until": null}
+      },
+      "finish_roundtrips_saved": {
+        "data_source": "not_available_until_task_0135",
+        "reason": "not_yet_measured",
+        "value": null,
+        "window": {"since": null, "until": null}
+      },
+      "packet_outcome_distribution": {
+        "data_source": "not_available_until_task_0135",
+        "reason": "not_yet_measured",
+        "value": null,
+        "window": {"since": null, "until": null}
+      }
+    },
+    "handoff": {
+      "packet_generation_count": {
+        "data_source": "not_available_until_task_0137",
+        "reason": "not_yet_measured",
+        "value": null,
+        "window": {"since": null, "until": null}
+      },
+      "resume_execution_count": {
+        "data_source": "not_available_until_task_0137",
+        "reason": "not_yet_measured",
+        "value": null,
+        "window": {"since": null, "until": null}
+      }
+    },
+    "verification_spend_efficiency": {
+      "executed_pass_rate": {
+        "data_source": "verification_feedback_stats:verification_feedback+evidence",
+        "reason": "no_data_in_window",
+        "value": null,
+        "window": {"since": null, "until": null}
+      },
+      "execution_rate": {
+        "data_source": "verification_feedback_stats:verification_feedback+evidence",
+        "reason": "no_data_in_window",
+        "value": null,
+        "window": {"since": null, "until": null}
+      },
+      "feedback_coverage_rate": {
+        "data_source": "verification_feedback_stats:verification_feedback+evidence",
+        "reason": "no_data_in_window",
+        "value": null,
+        "window": {"since": null, "until": null}
+      },
+      "verification_spend_efficiency": {
+        "data_source": "verification_feedback_stats:verification_feedback+evidence",
+        "reason": "no_data_in_window",
+        "value": null,
+        "window": {"since": null, "until": null}
+      }
+    }
+  }
+}

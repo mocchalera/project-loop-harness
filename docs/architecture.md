@@ -122,6 +122,14 @@ filter is not a secret scanner and does not prove that output is secret-free.
 It must not mutate SQLite, append events, write packs to disk, or parse
 generated dashboard HTML.
 
+That statement describes the default path. DEC-0004 adds an explicit
+`--record-usage` opt-in: after a successful pack build, the CLI records exactly
+one local `context_pack_generated` event through the normal mutation transaction
+and outbox. The event is usage accounting only and does not affect pack selection
+or content. If the mutation or projection cannot be completed, the command
+returns the normal explicit datastore or projection-pending error. KPI reports
+therefore cover only context packs generated with this opt-in flag.
+
 Job packs and task packs share the additive `context-pack/v1` JSON contract.
 Job packs include lease fields and rubric-aware verification columns. Task
 packs include task dependencies, dependents, linked goal/feature/defect

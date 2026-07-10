@@ -14,6 +14,7 @@ pcl context pack --job J-0001 --role verifier --max-tokens 12000 --json
 pcl context pack --task T-0001 --json
 pcl context pack --task T-0001 --include-code-context --json
 pcl context pack --task T-0001 --include-code-context --require-bound-receipt --json
+pcl context pack --task T-0001 --record-usage --json
 ```
 
 Exactly one of `--job` or `--task` is required.
@@ -298,6 +299,13 @@ The selected profile name is returned as `role_profile`.
 ## Boundaries
 
 - The command is read-only.
+- The default remains fully read-only. Passing `--record-usage` is an explicit
+  opt-in mutation that records exactly one local `context_pack_generated` event
+  after a successful pack build. Recording uses the normal SQLite transaction
+  and outbox projection path; a recording failure is returned as an error and
+  is never silently skipped.
+- KPI coverage derived from `context_pack_generated` includes only packs built
+  with `--record-usage`. Dogfood measurement should consistently pass that flag.
 - It does not write context packs to disk in v1.
 - It does not execute external agents.
 - Context-pack generation itself does not run migrations.

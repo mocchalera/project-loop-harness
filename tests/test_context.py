@@ -9,6 +9,7 @@ import pytest
 
 from pcl.context_binding import _receipt_target_binding_agrees
 import pcl.cli as cli_module
+import pcl.context_usage as context_usage_module
 from pcl.cli import main
 from pcl.context import TOKEN_ESTIMATOR, TRUNCATION_NOTE, estimate_token_count
 from pcl.db import connect
@@ -755,6 +756,97 @@ def test_context_pack_for_job_returns_machine_handoff(tmp_path: Path, capsys) ->
     assert "## Workflow Run" in markdown
     assert "## Agent Prompt" in markdown
     assert "# Agent Job J-0001" in markdown
+
+
+def test_context_pack_record_usage_emits_exactly_one_outbox_event(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_job(tmp_path, capsys)
+    before = _context_mutation_snapshot(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--job",
+        "J-0001",
+        "--record-usage",
+        "--json",
+    ]) == 0
+    pack = _json_output(capsys)["context_pack"]
+
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        rows = conn.execute(
+            """
+            SELECT events.event_type, events.entity_type, events.entity_id,
+                   events.payload_json, outbox_records.status
+            FROM events
+            JOIN outbox_records ON outbox_records.event_id = events.id
+            WHERE events.event_type = 'context_pack_generated'
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    assert len(rows) == 1
+    assert rows[0]["entity_type"] == "context_pack"
+    assert rows[0]["entity_id"] == "J-0001"
+    assert rows[0]["status"] == "delivered"
+    assert json.loads(rows[0]["payload_json"]) == {
+        "estimated_token_count": pack["estimated_token_count"],
+        "token_estimator": pack["token_estimator"],
+        "target": pack["target"],
+        "bound_receipt": False,
+        "truncated": pack["truncated"],
+    }
+    after = _context_mutation_snapshot(tmp_path)
+    assert after["table_counts"]["events"] == before["table_counts"]["events"] + 1
+
+
+def test_context_pack_without_record_usage_remains_zero_mutation(tmp_path: Path, capsys) -> None:
+    _create_job(tmp_path, capsys)
+    before = _context_mutation_snapshot(tmp_path)
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--job",
+        "J-0001",
+        "--json",
+    ]) == 0
+    _json_output(capsys)
+    assert _context_mutation_snapshot(tmp_path) == before
+
+
+def test_context_pack_record_usage_failure_is_explicit_and_rolls_back(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    _create_job(tmp_path, capsys)
+    before = _context_mutation_snapshot(tmp_path)
+
+    def fail_append_event(**kwargs):
+        raise __import__("sqlite3").OperationalError("injected usage event failure")
+
+    monkeypatch.setattr(context_usage_module, "append_event", fail_append_event)
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--job",
+        "J-0001",
+        "--record-usage",
+        "--json",
+    ]) == 4
+    error = _json_output(capsys)["error"]
+    assert error["code"] == "data_store_error"
+    assert "injected usage event failure" in error["message"]
+    assert _context_mutation_snapshot(tmp_path) == before
 
 
 def test_context_pack_non_json_prints_markdown(tmp_path: Path, capsys) -> None:
@@ -1908,6 +2000,41 @@ def test_context_pack_prefers_matching_task_bound_receipt_over_newer_unbound(
     assert pack["suggested_refresh_commands"][-1] == "pcl impact --diff --for-task T-0001 --json"
     assert all("pcl impact" not in command for command in pack["source_commands"])
     assert "- relevance: target_bound (binding: caller_asserted)" in pack["markdown"]
+
+
+def test_context_pack_record_usage_marks_target_bound_receipt(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_task_code_project(tmp_path, capsys)
+    bound = _write_code_context_receipt(
+        tmp_path,
+        capsys,
+        impact_args=["--for-task", "T-0001"],
+    )
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "pack",
+        "--task",
+        "T-0001",
+        "--include-code-context",
+        "--record-usage",
+        "--json",
+    ]) == 0
+    pack = _json_output(capsys)["context_pack"]
+    assert pack["code_context"]["receipt_ref"]["evidence_id"] == bound["evidence_id"]
+
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        row = conn.execute(
+            "SELECT payload_json FROM events WHERE event_type = 'context_pack_generated'"
+        ).fetchone()
+    finally:
+        conn.close()
+    assert json.loads(row["payload_json"])["bound_receipt"] is True
 
 
 def test_context_pack_prefers_matching_job_bound_receipt_over_newer_unbound(

@@ -142,19 +142,21 @@ def record_verification_feedback(
         conn.close()
 
 
-def verification_feedback_stats(paths: ProjectPaths) -> dict[str, Any]:
+def verification_feedback_stats(paths: ProjectPaths, *, since: str | None = None) -> dict[str, Any]:
     require_initialized(paths)
     conn = connect(paths.db_path)
     try:
-        receipt_rows = conn.execute(
-            """
+        receipt_sql = """
             SELECT id, type, path, created_at
             FROM evidence
             WHERE type = ?
-            ORDER BY created_at, id
-            """,
-            (CONTEXT_RECEIPT_EVIDENCE_TYPE,),
-        ).fetchall()
+        """
+        receipt_params: list[Any] = [CONTEXT_RECEIPT_EVIDENCE_TYPE]
+        if since is not None:
+            receipt_sql += " AND created_at >= ?"
+            receipt_params.append(since)
+        receipt_sql += " ORDER BY created_at, id"
+        receipt_rows = conn.execute(receipt_sql, tuple(receipt_params)).fetchall()
         addressable_suggestion_ids: set[str] = set()
         unaddressable_legacy_count = 0
         warnings: list[str] = []
@@ -171,7 +173,11 @@ def verification_feedback_stats(paths: ProjectPaths) -> dict[str, Any]:
             addressable_suggestion_ids.update(addressable)
             unaddressable_legacy_count += unaddressable
 
-        feedback_rows = _feedback_rows_for_suggestions(conn, addressable_suggestion_ids)
+        feedback_rows = _feedback_rows_for_suggestions(
+            conn,
+            addressable_suggestion_ids,
+            since=since,
+        )
         supporting_evidence_health = _supporting_evidence_health(paths, conn, feedback_rows)
     finally:
         conn.close()
@@ -373,20 +379,24 @@ def _suggestion_counts_from_receipt(receipt: dict[str, Any]) -> tuple[set[str], 
 def _feedback_rows_for_suggestions(
     conn: sqlite3.Connection,
     suggestion_ids: set[str],
+    *,
+    since: str | None = None,
 ) -> list[sqlite3.Row]:
     if not suggestion_ids or not table_exists(conn, "verification_feedback"):
         return []
     placeholders = ", ".join("?" for _ in suggestion_ids)
-    return conn.execute(
-        f"""
+    sql = f"""
         SELECT id, suggestion_id, receipt_evidence_id, status, result,
                supporting_evidence_id, note, created_at
         FROM verification_feedback
         WHERE suggestion_id IN ({placeholders})
-        ORDER BY created_at, id
-        """,
-        tuple(sorted(suggestion_ids)),
-    ).fetchall()
+    """
+    params: list[Any] = list(sorted(suggestion_ids))
+    if since is not None:
+        sql += " AND created_at >= ?"
+        params.append(since)
+    sql += " ORDER BY created_at, id"
+    return conn.execute(sql, tuple(params)).fetchall()
 
 
 def _supporting_evidence_health(
