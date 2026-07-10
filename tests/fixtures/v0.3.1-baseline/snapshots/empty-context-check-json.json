@@ -1,0 +1,25 @@
+{
+  "argv": [
+    "pcl",
+    "--root",
+    "<PROJECT_ROOT>",
+    "context",
+    "check",
+    "--task",
+    "T-0001",
+    "--json"
+  ],
+  "exit_code": 2,
+  "stderr": "",
+  "stdout": {
+    "error": {
+      "code": "impact_target_not_found",
+      "details": {
+        "field": "for_task",
+        "target_id": "T-0001"
+      },
+      "message": "Impact target does not exist: T-0001"
+    },
+    "ok": false
+  }
+}

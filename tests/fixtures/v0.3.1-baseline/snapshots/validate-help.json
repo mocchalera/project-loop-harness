@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "pcl",
+    "validate",
+    "--help"
+  ],
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "usage: pcl validate [-h] [--strict]\n\noptions:\n  -h, --help  show this help message and exit\n  --strict\n"
+}

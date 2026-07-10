@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "pcl",
+    "next",
+    "--help"
+  ],
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "usage: pcl next [-h] [--strict] [--explain]\n\noptions:\n  -h, --help  show this help message and exit\n  --strict    Route strict validation failures before normal next actions\n  --explain   Print a human-readable explanation of the next action\n"
+}

@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "pcl",
+    "--root",
+    "<PROJECT_ROOT>",
+    "context",
+    "check",
+    "--task",
+    "T-0001",
+    "--json"
+  ],
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": {
+    "context_check": {
+      "canonical_context_pack_command": "pcl context pack --task T-0001 --include-code-context --require-bound-receipt --json",
+      "recommended_refresh_command": "pcl impact --diff --for-task T-0001 --json",
+      "supporting_evidence_count": 0,
+      "target": {
+        "id": "T-0001",
+        "type": "task"
+      },
+      "target_bound_code_context": {
+        "status": "missing"
+      },
+      "warnings": [
+        "No target-bound code context receipt exists for this task."
+      ]
+    },
+    "ok": true
+  }
+}

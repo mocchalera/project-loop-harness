@@ -1,0 +1,41 @@
+{
+  "argv": [
+    "pcl",
+    "--root",
+    "<PROJECT_ROOT>",
+    "next",
+    "--json"
+  ],
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": {
+    "blocking": false,
+    "command": "pcl context pack --task T-0001 --json",
+    "expected_after": "The task context pack is reviewed and task T-0001 advances toward done.",
+    "human_guidance": "An agent or automation may run this command in the current project context.",
+    "priority": 59,
+    "reason": "This is the highest-priority ready task under an open goal with all dependencies satisfied.",
+    "requires_human": false,
+    "run_policy": "agent_safe",
+    "safe_to_run": true,
+    "target": {
+      "created_at": "<TIMESTAMP>",
+      "dependency_ids": [],
+      "dependent_ids": [],
+      "description": "Synthetic task used only by the public baseline fixture.",
+      "effort": null,
+      "id": "T-0001",
+      "owner": null,
+      "priority": 100,
+      "related_defect_id": null,
+      "related_feature_id": "F-0001",
+      "related_goal_id": "G-0001",
+      "related_goal_status": "open",
+      "risk": null,
+      "status": "todo",
+      "title": "Inspect baseline context",
+      "updated_at": "<TIMESTAMP>"
+    },
+    "type": "work_on_task"
+  }
+}

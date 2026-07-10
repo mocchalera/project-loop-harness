@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "pcl",
+    "--root",
+    "<PROJECT_ROOT>",
+    "validate",
+    "--strict",
+    "--json"
+  ],
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": {
+    "errors": [],
+    "ok": true,
+    "warnings": []
+  }
+}
