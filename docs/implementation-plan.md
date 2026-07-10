@@ -269,9 +269,9 @@ over Adaptive Entry.
 - Existing projects receive advisory lifecycle findings for one release; new
   projects default to enforced policy and all projects reject newly invalid
   terminal mutations.
-- v0.4.1 provides read-only repair planning, dedicated link repair, structured
-  diagnostics, idle routing repair, and Skill/runtime provenance before
-  enforcement is tightened.
+- v0.4.1 starts with 0141 idle routing repair, then provides read-only repair
+  planning, dedicated link repair, structured diagnostics, and Skill/runtime
+  provenance before enforcement is tightened.
 - Adaptive Entry moves to v0.4.2. Schema-backed generic Verification targets
   remain deferred until completion-packet dogfood proves they are needed.
 
