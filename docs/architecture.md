@@ -91,6 +91,22 @@ Agent Skills are instructions. They cannot reliably guarantee migrations, valida
 
 The CLI is the runtime body. The Skill only tells agents how to use it.
 
+## Guarded executor boundary
+
+`pcl workflow guard` and `pcl loop execute` use an allowlisted host-subprocess
+executor. The executor passes an argv list with `shell=False`, fixes the working
+directory to the project root, and inherits only an explicit environment-variable
+allowlist. It does not provide OS, network, or filesystem isolation. A future
+container backend may implement stronger isolation behind an explicit backend
+contract; the current host backend must never be presented as a sandbox.
+
+Each stdout and stderr stream is drained incrementally and retains at most 1 MiB
+by default. Evidence records the configured cap, original byte count, retained
+byte count, head-retention strategy, timeout/termination status, and truncation
+reason. Secret-shaped output is conservatively redacted before artifact storage;
+raw output is not retained elsewhere. Redaction metadata is reviewable, but the
+filter is not a secret scanner and does not prove that output is secret-free.
+
 ## Machine Context Packs
 
 `pcl context pack` is a read-only packaging surface for focused agent handoffs.

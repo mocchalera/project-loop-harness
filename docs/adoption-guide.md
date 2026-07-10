@@ -232,7 +232,7 @@ For a command-only smoke check of the executor:
 
 ```bash
 pcl workflow verify --template executor_smoke
-pcl workflow sandbox --template executor_smoke --json
+pcl workflow guard --template executor_smoke --json
 pcl loop execute executor_smoke --json
 pcl validate --strict
 ```

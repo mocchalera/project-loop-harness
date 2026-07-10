@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from dataclasses import dataclass
 from typing import Any, BinaryIO
@@ -12,6 +11,8 @@ from .commands import loop_status, next_action
 from .db import connect
 from .errors import PclError
 from .paths import ProjectPaths, resolve_paths
+from .redaction import REDACTED_SECRET as REDACTED_SECRET
+from .redaction import SECRET_PATTERNS, redact_text, redact_value
 from .renderer import render_dashboard
 from .validators import validate_project
 
@@ -22,20 +23,7 @@ MAX_STDIO_MESSAGE_BYTES = 1_048_576
 SERVER_NAME = "pcl-mcp"
 APPROVAL_READ_ONLY = "read-only"
 APPROVAL_LOCAL_RENDER = "local-render"
-REDACTED_SECRET = "[REDACTED_SECRET]"
-
-_SECRET_PATTERNS = [
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.DOTALL),
-    re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
-    re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b"),
-    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
-    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b"),
-]
-_KEY_VALUE_SECRET = re.compile(
-    r"\b(api[_-]?key|token|secret|password|private[_-]?key)\b(\s*[:=]\s*)(['\"]?)([^'\"\s,}]{8,})(['\"]?)",
-    re.IGNORECASE,
-)
+_SECRET_PATTERNS = SECRET_PATTERNS
 
 
 @dataclass(frozen=True)
@@ -249,34 +237,13 @@ def _tool_result(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _redact_secrets(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: REDACTED_SECRET if _is_secret_key(key) and item is not None else _redact_secrets(item)
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [_redact_secrets(item) for item in value]
-    if isinstance(value, str):
-        return _redact_text(value)
-    return value
-
-
-def _is_secret_key(key: str) -> bool:
-    normalized = re.sub(r"[^a-z0-9]", "", key.lower())
-    return any(marker in normalized for marker in ("secret", "password", "apikey", "token", "privatekey"))
+    redacted, _ = redact_value(value)
+    return redacted
 
 
 def _redact_text(value: str) -> str:
-    redacted = value
-    for pattern in _SECRET_PATTERNS:
-        redacted = pattern.sub(REDACTED_SECRET, redacted)
-    return _KEY_VALUE_SECRET.sub(_redact_key_value_secret, redacted)
-
-
-def _redact_key_value_secret(match: re.Match[str]) -> str:
-    quote = match.group(3)
-    closing_quote = match.group(5) if quote else ""
-    return f"{match.group(1)}{match.group(2)}{quote}{REDACTED_SECRET}{closing_quote}"
+    redacted, _ = redact_text(value)
+    return redacted
 
 
 def encode_message(message: dict[str, Any]) -> bytes:

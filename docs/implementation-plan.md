@@ -78,12 +78,12 @@ Only after static workflows are stable:
 - workflow proposal mode as non-executable review artifacts;
 - human approval and cancellation of workflow proposals;
 - workflow verifier for proposed and approved workflow YAML;
-- limited execution sandbox for explicit local dry-run and allowlisted execution.
+- guarded host-process execution for explicit local dry-run and allowlisted execution.
 
 ## Milestone 7: Automatic execution, guarded
 
 - Add an explicit workflow executor that drives approved templates through
-  run creation, command sandbox execution, agent adapter execution, evidence,
+  run creation, guarded command execution, agent adapter execution, evidence,
   automated verification, run completion, and render.
 - Add a bundled executor smoke workflow so initialized projects can dogfood the
   guarded executor immediately.
@@ -124,7 +124,7 @@ Only after static workflows are stable:
   commands.
 - Filter workflow proposal review lists by derived status so dogfooding agents
   can inspect proposed, approved, or cancelled proposal queues directly.
-- Treat sandbox execute runs with zero runnable commands as non-successful
+- Treat guarded executor runs with zero runnable commands as non-successful
   no-ops instead of reporting a misleading successful execution.
 - Reject guarded executor runs with no executable command or agent steps before
   creating a workflow run.
