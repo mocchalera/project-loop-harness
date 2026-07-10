@@ -37,7 +37,10 @@ dev = [
   "pytest>=8",
   "ruff>=0.6",
   "setuptools>=69",
-  "wheel"
+  "wheel",
+]
+mcp-test = [
+  "mcp==1.28.1",
 ]
 
 [project.scripts]
