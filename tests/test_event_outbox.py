@@ -291,6 +291,56 @@ def test_schema7_baseline_upgrade_preserves_legacy_prefix_and_accepts_new_event(
     assert any(record.get("entity_id") == goal_id for record in records)
 
 
+def test_schema7_upgrade_projects_missing_jsonl_from_sqlite(tmp_path: Path) -> None:
+    paths = _schema7_project(tmp_path)
+    paths.events_path.unlink()
+
+    result = apply_migrations(paths)
+    assert result.projection is not None and result.projection.ok is True
+    records = [json.loads(line) for line in paths.events_path.read_text().splitlines()]
+    assert [record["sequence"] for record in records] == list(range(1, len(records) + 1))
+    assert len(records) == 9
+
+
+def test_schema7_upgrade_appends_db_only_suffix_after_exact_legacy_prefix(tmp_path: Path) -> None:
+    paths = _schema7_project(tmp_path)
+    legacy_lines = paths.events_path.read_bytes().splitlines(keepends=True)
+    prefix = b"".join(legacy_lines[:4])
+    paths.events_path.write_bytes(prefix)
+
+    result = apply_migrations(paths)
+    assert result.projection is not None and result.projection.ok is True
+    assert paths.events_path.read_bytes().startswith(prefix)
+    records = [json.loads(line) for line in paths.events_path.read_text().splitlines()]
+    assert [record.get("sequence", index) for index, record in enumerate(records, start=1)] == list(
+        range(1, 10)
+    )
+
+
+def test_schema7_upgrade_refuses_mismatch_without_mutating_schema(tmp_path: Path) -> None:
+    paths = _schema7_project(tmp_path)
+    records = [json.loads(line) for line in paths.events_path.read_text().splitlines()]
+    records[0]["event_type"] = "tampered"
+    paths.events_path.write_text(
+        "".join(json.dumps(record) + "\n" for record in records),
+        encoding="utf-8",
+    )
+    before_jsonl = paths.events_path.read_bytes()
+
+    with pytest.raises(Exception, match="migration refused"):
+        apply_migrations(paths)
+
+    conn = connect(paths.db_path)
+    try:
+        assert "sequence" not in {row["name"] for row in conn.execute("PRAGMA table_info(events)")}
+        assert conn.execute(
+            "SELECT 1 FROM schema_migrations WHERE version = 8"
+        ).fetchone() is None
+    finally:
+        conn.close()
+    assert paths.events_path.read_bytes() == before_jsonl
+
+
 def test_migration_statement_failure_rolls_back_schema_metadata_and_event(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -344,6 +394,74 @@ def test_read_only_commands_do_not_change_outbox(tmp_path: Path, capsys) -> None
     finally:
         conn.close()
     assert after == before
+
+
+def test_audit_flush_cli_projects_pending_event(tmp_path: Path, capsys) -> None:
+    paths = _init(tmp_path)
+    capsys.readouterr()
+    event_id = _insert_goal_pending(paths, "G-FLUSH", "flush explicitly")
+
+    assert main(["--root", str(tmp_path), "audit", "flush", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["projection"] == "delivered"
+    assert payload["pending_count"] == 0
+    assert sum(
+        json.loads(line)["id"] == event_id for line in paths.events_path.read_text().splitlines()
+    ) == 1
+
+
+def test_old_style_event_insert_is_rejected_by_schema8(tmp_path: Path) -> None:
+    paths = _init(tmp_path)
+    conn = connect(paths.db_path)
+    try:
+        with pytest.raises(sqlite3.IntegrityError, match="NOT NULL"):
+            conn.execute(
+                """
+                INSERT INTO events(id, event_type, entity_type, entity_id, payload_json, created_at)
+                VALUES ('EV-OLD-BINARY', 'old', 'system', NULL, '{}', 'now')
+                """
+            )
+    finally:
+        conn.close()
+
+
+def test_transient_projector_failure_reaches_attempt_limit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    paths = _init(tmp_path)
+    event_id = _insert_goal_pending(paths, "G-RETRY-LIMIT", "retry limit")
+
+    def fail_append(*args, **kwargs):
+        raise OSError("persistent injected failure")
+
+    monkeypatch.setattr(outbox_module, "_append_or_match", fail_append)
+    for _ in range(5):
+        result = project_pending_events(paths)
+        conn = connect(paths.db_path)
+        try:
+            conn.execute(
+                """
+                UPDATE outbox_records
+                SET status = CASE WHEN status = 'retry_wait' THEN 'pending' ELSE status END,
+                    next_attempt_at = NULL
+                WHERE event_id = ?
+                """,
+                (event_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    assert result.projection == "failed_needs_review"
+    conn = connect(paths.db_path)
+    try:
+        row = conn.execute(
+            "SELECT status, attempts FROM outbox_records WHERE event_id = ?", (event_id,)
+        ).fetchone()
+        assert dict(row) == {"status": "failed_needs_review", "attempts": 5}
+    finally:
+        conn.close()
 
 
 def test_concurrent_mutations_keep_contiguous_event_order(tmp_path: Path) -> None:
