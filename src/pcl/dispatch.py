@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 from typing import Any
 
-from .db import connect
+from .db import connect, connect_mutation
 from .errors import InvalidInputError
 from .escalations import open_escalation
 from .events import append_event
@@ -23,7 +23,7 @@ def assign_job(paths: ProjectPaths, *, job_id: str, agent_id: str) -> dict[str, 
     _validate_identifier(agent_id, "agent_id")
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         job = _get_job(conn, job_id)
         agent = _get_agent(conn, agent_id)
@@ -73,7 +73,7 @@ def lease_job(
     now = utc_now_iso()
     lease_expires_at = _add_seconds(now, ttl)
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         job = _get_job(conn, job_id)
         agent = _get_agent(conn, agent_id)
@@ -161,7 +161,7 @@ def heartbeat_job(
     now = utc_now_iso()
     lease_expires_at = _add_seconds(now, ttl)
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         job = _get_job(conn, job_id)
         _require_job_status(job, "running")
@@ -208,7 +208,7 @@ def release_job(paths: ProjectPaths, *, job_id: str, reason: str) -> dict[str, A
     cleaned_reason = _require_text(reason, "--reason is required to release a job lease.")
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         job = _get_job(conn, job_id)
         _require_job_status(job, "running")
@@ -253,7 +253,7 @@ def reap_expired_leases(paths: ProjectPaths) -> dict[str, Any]:
     reaped: list[dict[str, Any]] = []
     blocked: list[dict[str, Any]] = []
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         rows = conn.execute(
             """

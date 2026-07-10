@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .commands import FEATURE_STATUSES, to_pretty_json
-from .db import connect
+from .db import connect, connect_mutation
 from .errors import InvalidInputError
 from .events import append_event
 from .guards import require_initialized
@@ -118,7 +118,7 @@ def run_workflow(
 ) -> dict[str, Any]:
     require_initialized(paths)
     template = load_workflow_template(paths, workflow_id)
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         _validate_target(conn, goal_id=goal_id, defect_id=defect_id)
         _validate_retry_metadata(

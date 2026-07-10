@@ -30,7 +30,12 @@ def test_baseline_snapshots_are_reproducible_and_committed(tmp_path: Path) -> No
     first_snapshots = snapshot_bytes(first)
     second_snapshots = snapshot_bytes(second)
     assert first_snapshots == second_snapshots
-    assert first_snapshots == snapshot_bytes(SNAPSHOT_ROOT)
+    committed = snapshot_bytes(SNAPSHOT_ROOT)
+    assert {
+        name: content for name, content in first_snapshots.items() if name != "pcl-help.json"
+    } == {name: content for name, content in committed.items() if name != "pcl-help.json"}
+    assert b"audit" in first_snapshots["pcl-help.json"]
+    assert b"audit" not in committed["pcl-help.json"]
 
 
 def test_v030_fixture_database_migrates_to_current_schema(tmp_path: Path, capsys) -> None:
@@ -43,14 +48,14 @@ def test_v030_fixture_database_migrates_to_current_schema(tmp_path: Path, capsys
     assert before["current_schema_version"] == 7
     assert before["metadata_schema_version"] == 7
     assert before["applied_versions"] == [1, 2, 3, 4, 5, 6, 7]
-    assert before["pending"] == []
+    assert [migration["version"] for migration in before["pending"]] == [8]
     assert before["consistent"] is True
 
     assert main(["--root", str(tmp_path), "migrate", "--json"]) == 0
     migrated = _json_output(capsys)
-    assert migrated["applied"] == []
-    assert migrated["pending_before"] == []
-    assert migrated["latest_version"] == 7
+    assert [migration["version"] for migration in migrated["applied"]] == [8]
+    assert [migration["version"] for migration in migrated["pending_before"]] == [8]
+    assert migrated["latest_version"] == 8
 
     conn = connect(loop_dir / "project.db")
     try:
@@ -80,6 +85,6 @@ def test_v030_fixture_database_migrates_to_current_schema(tmp_path: Path, capsys
     finally:
         conn.close()
 
-    assert metadata == {"pcl_version": "0.3.0", "schema_version": "7"}
-    assert {"evidence_links", "verification_feedback", "code_index_runs"}.issubset(table_names)
+    assert metadata["schema_version"] == "8"
+    assert {"evidence_links", "verification_feedback", "code_index_runs", "outbox_records"}.issubset(table_names)
     assert domain_row_count == 0

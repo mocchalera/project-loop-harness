@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from .db import connect
+from .db import connect_mutation
 from .events import append_event
 from .errors import DataStoreError, InvalidInputError, ProjectNotInitializedError
 from .ids import next_prefixed_id
@@ -596,7 +596,7 @@ def _stage_sandbox_run_dir(paths: ProjectPaths) -> Path:
 
 
 def _record_sandbox_evidence(paths: ProjectPaths, sandbox: dict[str, Any], *, stage_dir: Path) -> None:
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     final_dir: Path | None = None
     try:
         evidence_id = next_prefixed_id(conn, "evidence", "E")

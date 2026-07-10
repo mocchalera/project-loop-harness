@@ -5,7 +5,7 @@ from json import JSONDecodeError
 from pathlib import Path
 from typing import Any
 
-from .db import connect
+from .db import connect_mutation
 from .evidence import record_inline_evidence
 from .errors import EXIT_USAGE, InvalidInputError, PclError
 from .events import append_event
@@ -54,7 +54,7 @@ def complete_job(
     normalized_evidence_id = _normalize_evidence_id(evidence_id)
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         job = _get_job(conn, job_id)
         _require_active_status("Agent job", job_id, str(job["status"]), ACTIVE_JOB_STATUSES)
@@ -112,7 +112,7 @@ def fail_job(paths: ProjectPaths, *, job_id: str, summary: str) -> dict[str, Any
     _require_summary(summary)
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         job = _get_job(conn, job_id)
         _require_active_status("Agent job", job_id, str(job["status"]), ACTIVE_JOB_STATUSES)
@@ -184,7 +184,7 @@ def cancel_job(paths: ProjectPaths, *, job_id: str, summary: str) -> dict[str, A
     _require_summary(summary)
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         job = _get_job(conn, job_id)
         _require_active_status("Agent job", job_id, str(job["status"]), ACTIVE_JOB_STATUSES)
@@ -250,7 +250,7 @@ def record_verification(
     cleaned_reasons = [reason.strip() for reason in reasons if reason.strip()]
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         run = _get_run(conn, workflow_run_id)
         if target_job_id:
@@ -312,7 +312,7 @@ def complete_workflow_run(paths: ProjectPaths, *, workflow_run_id: str, summary:
     _require_summary(summary)
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         run = _get_run(conn, workflow_run_id)
         _require_active_status("Workflow run", workflow_run_id, str(run["status"]), ACTIVE_RUN_STATUSES)
@@ -359,7 +359,7 @@ def fail_workflow_run(paths: ProjectPaths, *, workflow_run_id: str, summary: str
     _require_summary(summary)
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         run = _get_run(conn, workflow_run_id)
         _require_active_status("Workflow run", workflow_run_id, str(run["status"]), ACTIVE_RUN_STATUSES)
@@ -400,7 +400,7 @@ def cancel_workflow_run(paths: ProjectPaths, *, workflow_run_id: str, summary: s
     _require_summary(summary)
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         run = _get_run(conn, workflow_run_id)
         _require_active_status("Workflow run", workflow_run_id, str(run["status"]), ACTIVE_RUN_STATUSES)
@@ -466,7 +466,7 @@ def close_goal(
     _require_summary(summary)
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         goal = _get_goal(conn, goal_id)
         goal_status = str(goal["status"])
@@ -527,7 +527,7 @@ def cancel_goal(paths: ProjectPaths, *, goal_id: str, summary: str) -> dict[str,
     _require_summary(summary)
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         goal = _get_goal(conn, goal_id)
         goal_status = str(goal["status"])
@@ -593,7 +593,7 @@ def fix_defect(paths: ProjectPaths, *, defect_id: str, summary: str, evidence: s
     _require_text(evidence, "--evidence is required to mark a defect fixed.")
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         defect = _get_defect(conn, defect_id)
         _require_active_status("Defect", defect_id, str(defect["status"]), {"in_progress"})
@@ -641,7 +641,7 @@ def verify_defect(
     _require_summary(summary)
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         defect = _get_defect(conn, defect_id)
         _require_active_status("Defect", defect_id, str(defect["status"]), {"fixed"})
@@ -682,7 +682,7 @@ def close_defect(paths: ProjectPaths, *, defect_id: str, summary: str, evidence:
     _require_text(evidence, "--evidence is required to close a defect.")
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         defect = _get_defect(conn, defect_id)
         _require_active_status("Defect", defect_id, str(defect["status"]), {"verified"})
@@ -732,7 +732,7 @@ def waive_defect(paths: ProjectPaths, *, defect_id: str, reason: str) -> dict[st
     _require_text(reason, "--reason is required to waive a defect.")
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         defect = _get_defect(conn, defect_id)
         _require_active_status("Defect", defect_id, str(defect["status"]), ACTIVE_DEFECT_STATUSES)
@@ -789,7 +789,7 @@ def _transition_defect(
     _require_summary(summary)
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         defect = _get_defect(conn, defect_id)
         _require_active_status("Defect", defect_id, str(defect["status"]), allowed_statuses)

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .agents import generate_agent_command
-from .db import connect
+from .db import connect, connect_mutation
 from .errors import InvalidInputError
 from .events import append_event
 from .guards import require_initialized
@@ -575,7 +575,7 @@ def _step_id_from_job_summary(summary: str) -> str:
 
 
 def _mark_execution_started(paths: ProjectPaths, result: dict[str, Any]) -> None:
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         now = utc_now_iso()
         conn.execute("UPDATE workflow_runs SET status = ? WHERE id = ?", ("running", result["workflow_run_id"]))
@@ -603,7 +603,7 @@ def _mark_execution_started(paths: ProjectPaths, result: dict[str, Any]) -> None
 
 
 def _mark_execution_resumed(paths: ProjectPaths, result: dict[str, Any]) -> None:
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         now = utc_now_iso()
         previous = conn.execute(
@@ -636,7 +636,7 @@ def _mark_execution_resumed(paths: ProjectPaths, result: dict[str, Any]) -> None
 
 
 def _mark_execution_finished(paths: ProjectPaths, result: dict[str, Any]) -> None:
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         append_event(
             conn=conn,

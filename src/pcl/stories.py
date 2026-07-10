@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .db import connect
+from .db import connect, connect_mutation
 from .errors import InvalidInputError
 from .events import append_event
 from .evidence import record_inline_evidence
@@ -34,7 +34,7 @@ def draft_story(
     _require_text(expected_behavior, "--expected-behavior is required to draft a story.")
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         _get_feature(conn, feature_id)
         story_id = next_prefixed_id(conn, "user_stories", "US")
@@ -191,7 +191,7 @@ def plan_test_case(
     _require_text(expected, "--expected is required to plan a test case.")
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         _get_feature(conn, feature_id)
         if story_id:
@@ -426,7 +426,7 @@ def _transition_story(
     _require_text(summary, f"--{text_field.replace('_', '-')} is required.")
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         story = _get_story(conn, story_id)
         if story["status"] not in allowed_statuses:
@@ -504,7 +504,7 @@ def _transition_test_case(
     _require_text(summary, f"--{text_field.replace('_', '-')} is required.")
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         test_case = _get_test_case(conn, test_case_id)
         if test_case["status"] == status:

@@ -4,7 +4,7 @@ import json
 import subprocess
 from typing import Any
 
-from .db import connect
+from .db import connect, connect_mutation
 from .evidence import record_inline_evidence
 from .events import append_event
 from .errors import InvalidInputError
@@ -115,7 +115,7 @@ def record_checkpoint(
         )
 
     before = checkpoint_status(paths)
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         evidence_id = record_inline_evidence(
             conn,

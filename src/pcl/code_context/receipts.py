@@ -7,7 +7,7 @@ from typing import Any
 
 from .scan import LARGE_FILE_BYTES, _detect_language, _line_count, _looks_binary, _relative_path, _sha256_file
 from .store import IndexSnapshot, _snapshot_consistency_for_path
-from ..db import connect
+from ..db import connect, connect_mutation
 from ..evidence import insert_evidence_link
 from ..errors import DataStoreError
 from ..events import append_event
@@ -85,7 +85,7 @@ def _record_context_receipt(
 ) -> tuple[str, str]:
     receipt_dir = paths.context_receipts_dir
     receipt_dir.mkdir(parents=True, exist_ok=True)
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     receipt_path: Path | None = None
     tmp_path: Path | None = None
     try:

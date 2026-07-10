@@ -79,6 +79,7 @@ from .lifecycle import (
     waive_defect,
 )
 from .migrations import apply_migrations, migration_status
+from .outbox import project_pending_events
 from .paths import resolve_paths
 from .renderer import render_dashboard
 from .receipt_show import receipt_summary_for_ref
@@ -169,6 +170,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use `status` to inspect migrations without applying them.",
     )
     p_migrate.add_argument("--status", action="store_true", dest="migrate_status", help="Inspect migrations without applying them.")
+
+    p_audit = sub.add_parser("audit", help="Manage the SQLite-backed audit projection")
+    audit_sub = p_audit.add_subparsers(dest="audit_command", required=True)
+    audit_sub.add_parser("flush", help="Project eligible committed events to events.jsonl")
 
     p_render = sub.add_parser("render", help="Render dashboard from state")
     p_render.add_argument("--locale", default=None, help="Dashboard HTML locale: en, ja")
@@ -1178,6 +1183,14 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print("No pending migrations")
             return 0
+
+        if args.command == "audit" and args.audit_command == "flush":
+            result = project_pending_events(paths)
+            if json_output:
+                _print_json({"ok": result.ok, **result.to_dict()})
+            else:
+                print(to_pretty_json(result.to_dict()))
+            return 0 if result.ok else 6
 
         if args.command == "render":
             result = validate_project(paths)

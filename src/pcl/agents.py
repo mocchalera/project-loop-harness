@@ -6,7 +6,7 @@ from shlex import quote
 import sys
 from typing import Any
 
-from .db import connect
+from .db import connect_mutation
 from .errors import InvalidInputError
 from .events import append_event
 from .guards import require_initialized
@@ -221,7 +221,7 @@ def ingest_agent_run(paths: ProjectPaths, output_path: str | Path) -> dict[str, 
     job_id = _infer_job_id(paths, path)
     relative_path = _relative_or_absolute(paths, path)
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         row = conn.execute(
             """

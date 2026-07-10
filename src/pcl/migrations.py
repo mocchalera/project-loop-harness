@@ -2,13 +2,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import json
 import re
 from importlib import resources
+from pathlib import Path
+import sqlite3
 
 from . import __version__ as PCL_VERSION
 from .db import connect, get_metadata, table_exists
 from .errors import DataStoreError, ProjectNotInitializedError
 from .events import append_event
+from .locks import project_operation_lock
+from .outbox import ProjectionResult, project_pending_events
 from .paths import ProjectPaths
 from .timeutil import utc_now_iso
 
@@ -43,6 +48,7 @@ class MigrationResult:
     pending_before: list[Migration]
     latest_version: int
     metadata_repair: dict[str, object] | None = None
+    projection: ProjectionResult | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -52,6 +58,7 @@ class MigrationResult:
             "latest_version": self.latest_version,
             "metadata_repaired": self.metadata_repair is not None,
             "metadata_repair": self.metadata_repair,
+            "projection": self.projection.to_dict() if self.projection is not None else None,
         }
 
 
@@ -302,95 +309,222 @@ def apply_migrations(paths: ProjectPaths) -> MigrationResult:
 
     migrations = discover_migrations()
     latest = max((migration.version for migration in migrations), default=0)
-    conn = connect(paths.db_path)
+    projection: ProjectionResult | None = None
+    with project_operation_lock(paths.loop_dir, exclusive=True):
+        conn = connect(paths.db_path)
+        try:
+            status = _migration_status_for_conn(conn=conn, paths=paths, migrations=migrations)
+            if status.is_ahead_of_binary:
+                raise SchemaVersionAheadError(status=status)
+            pending = status.pending
+            legacy_delivered_ids: set[str] = set()
+            if any(migration.version == 8 for migration in pending) and table_exists(conn, "events"):
+                legacy_delivered_ids = _preflight_legacy_jsonl(conn, paths.events_path)
+
+            conn.execute("BEGIN IMMEDIATE")
+            try:
+                ensure_schema_migrations_table(conn)
+                applied: list[Migration] = []
+                for migration in pending:
+                    _execute_sql_script(conn, migration.sql)
+                    ensure_schema_migrations_table(conn)
+                    conn.execute(
+                        """
+                        INSERT INTO schema_migrations(version, name, checksum, applied_at)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        (migration.version, migration.name, migration.checksum, utc_now_iso()),
+                    )
+                    if table_exists(conn, "metadata"):
+                        conn.execute(
+                            "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
+                            ("schema_version", str(migration.version)),
+                        )
+                        conn.execute(
+                            "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
+                            ("pcl_version", PCL_VERSION),
+                        )
+                    if migration.version == 8:
+                        _backfill_legacy_outbox(conn, legacy_delivered_ids)
+                    applied.append(migration)
+
+                if pending and table_exists(conn, "outbox_records"):
+                    for migration in pending:
+                        append_event(
+                            conn=conn,
+                            events_path=paths.events_path,
+                            event_type="migration_applied",
+                            entity_type="system",
+                            entity_id=f"migration:{migration.id}",
+                            payload={
+                                "version": migration.version,
+                                "name": migration.name,
+                                "filename": migration.filename,
+                                "checksum": migration.checksum,
+                            },
+                        )
+
+                repair: dict[str, object] | None = None
+                status_after = _migration_status_for_conn(conn=conn, paths=paths, migrations=migrations)
+                if status_after.repairable_metadata:
+                    from_version = status_after.metadata_schema_version
+                    to_version = status_after.max_applied_version
+                    conn.execute(
+                        "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
+                        ("schema_version", str(to_version)),
+                    )
+                    repair = {
+                        "from_schema_version": from_version,
+                        "to_schema_version": to_version,
+                        "reason": (
+                            "metadata.schema_version was behind schema_migrations; no DDL was run"
+                        ),
+                        "schema_migration_applied": False,
+                    }
+                    if table_exists(conn, "outbox_records"):
+                        append_event(
+                            conn=conn,
+                            events_path=paths.events_path,
+                            event_type="schema_metadata_repaired",
+                            entity_type="system",
+                            entity_id="metadata:schema_version",
+                            payload=repair,
+                        )
+                elif latest and table_exists(conn, "metadata"):
+                    current_metadata = _schema_version(conn)
+                    applied_max = max(_applied_versions(conn), default=None)
+                    stamp_version = max(
+                        version
+                        for version in [latest, current_metadata, applied_max]
+                        if version is not None
+                    )
+                    conn.execute(
+                        "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
+                        ("schema_version", str(stamp_version)),
+                    )
+                conn.commit()
+            except BaseException:
+                conn.rollback()
+                raise
+        finally:
+            conn.close()
+
+    if pending or repair is not None:
+        projection = project_pending_events(paths)
+    return MigrationResult(
+        applied=applied,
+        pending_before=pending,
+        latest_version=latest,
+        metadata_repair=repair,
+        projection=projection,
+    )
+
+
+def _execute_sql_script(conn: sqlite3.Connection, sql: str) -> None:
+    statement = ""
+    for line in sql.splitlines(keepends=True):
+        statement += line
+        if not sqlite3.complete_statement(statement):
+            continue
+        stripped = statement.strip()
+        statement = ""
+        if not stripped:
+            continue
+        if stripped.upper().startswith("PRAGMA FOREIGN_KEYS"):
+            continue
+        conn.execute(stripped)
+    if statement.strip():
+        raise DataStoreError("Migration contains an incomplete SQL statement.")
+
+
+def _preflight_legacy_jsonl(conn: sqlite3.Connection, events_path: Path) -> set[str]:
+    db_rows = conn.execute(
+        """
+        SELECT id, event_type, entity_type, entity_id, payload_json, created_at
+        FROM events ORDER BY rowid
+        """
+    ).fetchall()
+    if not events_path.exists():
+        return set()
     try:
-        ensure_schema_migrations_table(conn)
-        status = _migration_status_for_conn(conn=conn, paths=paths, migrations=migrations)
-        if status.is_ahead_of_binary:
-            raise SchemaVersionAheadError(status=status)
-        pending = status.pending
-        applied: list[Migration] = []
-        for migration in pending:
-            conn.executescript(migration.sql)
-            ensure_schema_migrations_table(conn)
-            conn.execute(
-                """
-                INSERT INTO schema_migrations(version, name, checksum, applied_at)
-                VALUES (?, ?, ?, ?)
-                """,
-                (migration.version, migration.name, migration.checksum, utc_now_iso()),
+        raw = events_path.read_bytes()
+    except OSError as exc:
+        raise DataStoreError(
+            "Could not read legacy events.jsonl before migration.",
+            details={"path": str(events_path), "error": str(exc)},
+        ) from exc
+    if raw and not raw.endswith(b"\n"):
+        raise DataStoreError("Legacy events.jsonl has a partial trailing line; migration refused.")
+    jsonl_rows: list[dict[str, object]] = []
+    seen_ids: set[str] = set()
+    for line_number, line in enumerate(raw.splitlines(), start=1):
+        try:
+            value = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise DataStoreError(
+                f"Legacy events.jsonl line {line_number} is malformed; migration refused."
+            ) from exc
+        if not isinstance(value, dict) or not value.get("id"):
+            raise DataStoreError(
+                f"Legacy events.jsonl line {line_number} is an unknown record; migration refused."
             )
-            if table_exists(conn, "metadata"):
-                conn.execute(
-                    "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
-                    ("schema_version", str(migration.version)),
-                )
-                conn.execute(
-                    "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
-                    ("pcl_version", PCL_VERSION),
-                )
-            if table_exists(conn, "events"):
-                append_event(
-                    conn=conn,
-                    events_path=paths.events_path,
-                    event_type="migration_applied",
-                    entity_type="system",
-                    entity_id=f"migration:{migration.id}",
-                    payload={
-                        "version": migration.version,
-                        "name": migration.name,
-                        "filename": migration.filename,
-                        "checksum": migration.checksum,
-                    },
-                )
-            conn.commit()
-            applied.append(migration)
-        repair: dict[str, object] | None = None
-        status_after = _migration_status_for_conn(conn=conn, paths=paths, migrations=migrations)
-        if status_after.repairable_metadata:
-            from_version = status_after.metadata_schema_version
-            to_version = status_after.max_applied_version
-            conn.execute(
-                "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
-                ("schema_version", str(to_version)),
+        event_id = str(value["id"])
+        if event_id in seen_ids:
+            raise DataStoreError(
+                f"Legacy events.jsonl contains duplicate event id {event_id}; migration refused."
             )
-            repair = {
-                "from_schema_version": from_version,
-                "to_schema_version": to_version,
-                "reason": (
-                    "metadata.schema_version was behind schema_migrations; "
-                    "no DDL was run"
-                ),
-                "schema_migration_applied": False,
-            }
-            if table_exists(conn, "events"):
-                append_event(
-                    conn=conn,
-                    events_path=paths.events_path,
-                    event_type="schema_metadata_repaired",
-                    entity_type="system",
-                    entity_id="metadata:schema_version",
-                    payload=repair,
-                )
-            conn.commit()
-        elif latest and table_exists(conn, "metadata"):
-            current_metadata = _schema_version(conn)
-            applied_max = max(_applied_versions(conn), default=None)
-            stamp_version = max(
-                version
-                for version in [latest, current_metadata, applied_max]
-                if version is not None
+        seen_ids.add(event_id)
+        jsonl_rows.append(value)
+    if len(jsonl_rows) > len(db_rows):
+        raise DataStoreError("Legacy events.jsonl contains events absent from SQLite; migration refused.")
+
+    delivered: set[str] = set()
+    for position, value in enumerate(jsonl_rows):
+        db_row = db_rows[position]
+        expected = {
+            "id": str(db_row["id"]),
+            "event_type": str(db_row["event_type"]),
+            "entity_type": str(db_row["entity_type"]),
+            "entity_id": db_row["entity_id"],
+            "payload": json.loads(str(db_row["payload_json"])),
+            "created_at": str(db_row["created_at"]),
+        }
+        actual = {key: value.get(key) for key in expected}
+        if actual != expected:
+            raise DataStoreError(
+                "Legacy events.jsonl does not exactly match SQLite event order/content; "
+                "migration refused.",
+                details={
+                    "position": position + 1,
+                    "db_event_id": expected["id"],
+                    "jsonl_event_id": value.get("id"),
+                },
             )
-            conn.execute(
-                "INSERT OR REPLACE INTO metadata(key, value) VALUES (?, ?)",
-                ("schema_version", str(stamp_version)),
+        delivered.add(str(db_row["id"]))
+    return delivered
+
+
+def _backfill_legacy_outbox(conn: sqlite3.Connection, delivered_ids: set[str]) -> None:
+    now = utc_now_iso()
+    rows = conn.execute("SELECT id FROM events ORDER BY sequence").fetchall()
+    for row in rows:
+        event_id = str(row["id"])
+        delivered = event_id in delivered_ids
+        conn.execute(
+            """
+            INSERT INTO outbox_records(
+              id, event_id, sink, idempotency_key, status, attempts,
+              next_attempt_at, last_error, created_at, updated_at, delivered_at
             )
-            conn.commit()
-        return MigrationResult(
-            applied=applied,
-            pending_before=pending,
-            latest_version=latest,
-            metadata_repair=repair,
+            VALUES (?, ?, 'jsonl', ?, ?, 0, NULL, NULL, ?, ?, ?)
+            """,
+            (
+                f"OB-LEGACY-{hashlib.sha256(event_id.encode('utf-8')).hexdigest()[:16].upper()}",
+                event_id,
+                f"jsonl:{event_id}",
+                "delivered" if delivered else "pending",
+                now,
+                now,
+                now if delivered else None,
+            ),
         )
-    finally:
-        conn.close()

@@ -10,7 +10,7 @@ import tempfile
 import time
 from typing import Any
 
-from .db import connect, table_exists
+from .db import connect, connect_mutation, table_exists
 from .errors import DataStoreError, EXIT_USAGE, InvalidInputError, PclError, ProjectNotInitializedError
 from .events import append_event
 from .ids import next_prefixed_id
@@ -111,7 +111,7 @@ def record_adhoc_evidence(
     evidence_type = ADHOC_ARTIFACT_TYPE if len(members) == 1 else ADHOC_BUNDLE_TYPE
     include_sensitive_count = allow_sensitive_evidence or sensitive_path_warning_count > 0
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     manifest_path: Path | None = None
     tmp_path: Path | None = None
     final_copy_dir: Path | None = None

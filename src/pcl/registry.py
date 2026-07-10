@@ -5,7 +5,7 @@ from json import JSONDecodeError
 from typing import Any
 
 from .agents import ADAPTERS
-from .db import connect
+from .db import connect, connect_mutation
 from .errors import InvalidInputError
 from .events import append_event
 from .guards import require_initialized
@@ -48,7 +48,7 @@ def register_agent(
     metadata = _normalized_json_object(metadata_json, "metadata-json")
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         if _agent_name_exists(conn, cleaned_name):
             raise InvalidInputError(
@@ -169,7 +169,7 @@ def update_agent(
         )
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         before = dict(_get_agent(conn, agent_id))
         if "name" in updates and updates["name"] != before["name"] and _agent_name_exists(
@@ -218,7 +218,7 @@ def retire_agent(paths: ProjectPaths, agent_id: str, *, reason: str) -> dict[str
     cleaned_reason = _require_text(reason, "--reason is required to retire an agent.")
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         agent = dict(_get_agent(conn, agent_id))
         active_job_ids = _active_lease_job_ids(conn, agent_id)

@@ -71,6 +71,21 @@ def _create_migrated_db_with_metadata(root: Path, *, schema_version: int, applie
     )
 
 
+def _insert_task_fixture(root: Path) -> None:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        conn.execute(
+            """
+            INSERT INTO tasks(id, title, status, created_at, updated_at)
+            VALUES ('T-0001', 'Review linked evidence', 'todo',
+                    '2026-07-08T00:00:00+00:00', '2026-07-08T00:00:00+00:00')
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -489,16 +504,7 @@ def test_evidence_add_task_requires_migration_with_zero_traces(
     capsys,
 ) -> None:
     _create_migrated_db_with_metadata(tmp_path, schema_version=5, applied_through=5)
-    assert main([
-        "--root",
-        str(tmp_path),
-        "task",
-        "create",
-        "--title",
-        "Review linked evidence",
-        "--json",
-    ]) == 0
-    _json_output(capsys)
+    _insert_task_fixture(tmp_path)
     artifact = tmp_path / "pytest-out.txt"
     artifact.write_text("pytest passed\n", encoding="utf-8")
     before_events = _event_count(tmp_path)
@@ -541,16 +547,7 @@ def test_evidence_add_task_requires_evidence_links_migration_with_zero_traces(
     capsys,
 ) -> None:
     _create_migrated_db_with_metadata(tmp_path, schema_version=6, applied_through=6)
-    assert main([
-        "--root",
-        str(tmp_path),
-        "task",
-        "create",
-        "--title",
-        "Review linked evidence",
-        "--json",
-    ]) == 0
-    _json_output(capsys)
+    _insert_task_fixture(tmp_path)
     artifact = tmp_path / "pytest-out.txt"
     artifact.write_text("pytest passed\n", encoding="utf-8")
     before_events = _event_count(tmp_path)

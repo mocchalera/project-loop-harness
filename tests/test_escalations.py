@@ -243,8 +243,12 @@ def test_escalation_resolve_can_reference_linked_decision(tmp_path: Path, capsys
     assert resolved["status"] == "resolved"
     assert resolved["decision_id"] == "DEC-0001"
 
-    events = (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8")
-    assert '"decision_id": "DEC-0001"' in events
+    events = [
+        json.loads(line)
+        for line in (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    resolved_event = next(item for item in events if item["event_type"] == "escalation_resolved")
+    assert resolved_event["payload"]["decision_id"] == "DEC-0001"
 
 
 def test_escalation_resolve_rejects_missing_or_unlinked_decision(tmp_path: Path, capsys) -> None:

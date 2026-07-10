@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .db import connect
+from .db import connect, connect_mutation
 from .errors import InvalidInputError
 from .events import append_event
 from .guards import require_initialized
@@ -31,7 +31,7 @@ def open_escalation(
         _validate_identifier(workflow_run_id, "workflow_run_id")
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         if workflow_run_id:
             _require_workflow_run(conn, workflow_run_id)
@@ -178,7 +178,7 @@ def _close_escalation(
     _require_text(summary, "--summary is required to close an escalation.")
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         escalation = _get_escalation(conn, escalation_id)
         if escalation["status"] != "open":

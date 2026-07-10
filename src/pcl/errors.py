@@ -8,6 +8,7 @@ EXIT_VALIDATION_FAILED = 1
 EXIT_USAGE = 2
 EXIT_NOT_INITIALIZED = 3
 EXIT_DATA_ERROR = 4
+EXIT_RECOVERABLE_PENDING = 6
 
 
 @dataclass
@@ -97,4 +98,17 @@ class DataStoreError(PclError):
             code="data_store_error",
             exit_code=EXIT_DATA_ERROR,
             details=details or {},
+        )
+
+
+class ProjectionPendingError(PclError):
+    def __init__(self, *, details: dict[str, Any]) -> None:
+        super().__init__(
+            message=(
+                "The SQLite mutation committed, but events.jsonl projection is pending. "
+                "Do not retry the mutation; run `pcl audit flush --json`."
+            ),
+            code="audit_projection_pending",
+            exit_code=EXIT_RECOVERABLE_PENDING,
+            details=details,
         )

@@ -13,7 +13,7 @@ from .scan import _relative_path
 from .scan import _scan_working_tree
 from .scan import _sha256_file
 from .test_hints import _attach_test_hints
-from ..db import connect, table_exists
+from ..db import connect, connect_mutation, table_exists
 from ..errors import DataStoreError, InvalidInputError
 from ..events import append_event
 from ..guards import require_initialized
@@ -68,7 +68,7 @@ def build_code_index(paths: ProjectPaths, *, include_files: bool = False) -> dic
     _attach_test_hints(scan.files)
     summary = _index_summary(scan)
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         _ensure_index_schema(conn)
         run_id = next_prefixed_id(conn, "code_index_runs", "CI")

@@ -104,9 +104,13 @@ def test_ingest_valid_output_returns_validation_and_event_contract(tmp_path: Pat
         "summary": "# Valid agent result",
     }
 
-    events = (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8")
-    assert '"contract_version": "agent-output/v1"' in events
-    assert '"validation"' in events
+    events = [
+        json.loads(line)
+        for line in (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    event = next(item for item in events if item["event_type"] == "agent_output_ingested")
+    assert event["payload"]["contract_version"] == "agent-output/v1"
+    assert event["payload"]["validation"]["ok"] is True
 
 
 def test_agent_output_docs_match_validation_contract() -> None:

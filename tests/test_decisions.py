@@ -163,8 +163,12 @@ def test_decision_open_can_link_to_open_escalation(tmp_path: Path, capsys) -> No
     assert "ESC-0001" in html
     assert "DEC-0001" in html
 
-    events = (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8")
-    assert '"escalation_id": "ESC-0001"' in events
+    events = [
+        json.loads(line)
+        for line in (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    opened_event = next(item for item in events if item["event_type"] == "decision_opened")
+    assert opened_event["payload"]["escalation_id"] == "ESC-0001"
 
 
 def test_decision_open_rejects_missing_or_closed_escalation_link(tmp_path: Path, capsys) -> None:

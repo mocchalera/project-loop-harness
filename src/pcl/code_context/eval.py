@@ -28,7 +28,7 @@ from .store import (
 )
 from .search import search_code
 from .. import __version__
-from ..db import connect
+from ..db import connect, connect_mutation
 from ..errors import EXIT_USAGE, DataStoreError, InvalidInputError, PclError
 from ..events import append_event
 from ..guards import require_initialized
@@ -202,7 +202,7 @@ def propose_retrieval_fixture(
             },
         ) from exc
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         append_event(
             conn=conn,
@@ -246,7 +246,7 @@ def record_retrieval_baseline(paths: ProjectPaths, *, fixture_path: str) -> dict
     provenance = _baseline_provenance(paths, fixture_path=fixture_path)
     evaluation = evaluate_retrieval(paths, fixture_path=fixture_path)["evaluation"]
     baseline_dir = paths.evidence_dir / "retrieval-eval"
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     artifact_path: Path | None = None
     tmp_path: Path | None = None
     try:

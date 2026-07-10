@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .db import initialize_database
-from .db import connect
+from .db import connect_mutation
 from .events import append_event
 from .migrations import migration_status
 from .paths import ProjectPaths
@@ -289,7 +289,7 @@ def init_project(paths: ProjectPaths, *, overwrite: bool = False, with_claude: b
 
     event_appended = (not was_initialized) or overwrite or (not events_existed)
     if event_appended:
-        conn = connect(paths.db_path)
+        conn = connect_mutation(paths)
         try:
             append_event(
                 conn=conn,

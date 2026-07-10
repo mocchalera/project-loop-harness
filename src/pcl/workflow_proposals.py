@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from .db import connect
+from .db import connect, connect_mutation
 from .errors import InvalidInputError
 from .events import append_event
 from .guards import require_initialized
@@ -32,7 +32,7 @@ def propose_workflow(paths: ProjectPaths, *, source_path: str, summary: str = ""
     data = validate_workflow_proposal_text(text, source_label=str(source))
 
     paths.workflow_proposals_dir.mkdir(parents=True, exist_ok=True)
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         proposal_id = _next_proposal_id(conn, paths.workflow_proposals_dir)
         proposal_path = paths.workflow_proposals_dir / f"{proposal_id}.yaml"
@@ -98,7 +98,7 @@ def approve_workflow_proposal(paths: ProjectPaths, proposal_id: str, *, summary:
             },
         )
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         events = _proposal_events_by_id(conn)
         event_group = events.get(proposal_id, {})
@@ -166,7 +166,7 @@ def cancel_workflow_proposal(paths: ProjectPaths, proposal_id: str, *, summary: 
 
     text = path.read_text(encoding="utf-8")
     data = validate_workflow_proposal_text(text, source_label=str(path))
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         events = _proposal_events_by_id(conn)
         event_group = events.get(proposal_id, {})

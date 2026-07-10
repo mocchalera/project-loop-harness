@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .db import connect
+from .db import connect, connect_mutation
 from .errors import InvalidInputError
 from .events import append_event
 from .guards import require_initialized
@@ -57,7 +57,7 @@ def create_task(
     _validate_optional_identifier(defect_id, "defect_id")
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         if goal_id:
             _get_entity(conn, "goals", goal_id, "Goal", "goal_id")
@@ -190,7 +190,7 @@ def set_task_status(paths: ProjectPaths, task_id: str, *, status: str, reason: s
     _require_task_status(status)
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         task = _get_task(conn, task_id)
         previous_status = str(task["status"])
@@ -238,7 +238,7 @@ def add_dependency(paths: ProjectPaths, task_id: str, *, depends_on_task_id: str
     _validate_identifier(depends_on_task_id, "depends_on_task_id")
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         _get_task(conn, task_id)
         _get_task(conn, depends_on_task_id)
@@ -283,7 +283,7 @@ def remove_dependency(paths: ProjectPaths, task_id: str, *, depends_on_task_id: 
     _validate_identifier(task_id, "task_id")
     _validate_identifier(depends_on_task_id, "depends_on_task_id")
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         _get_task(conn, task_id)
         _get_task(conn, depends_on_task_id)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .db import connect
+from .db import connect, connect_mutation
 from .errors import InvalidInputError
 from .events import append_event
 from .guards import require_initialized
@@ -33,7 +33,7 @@ def open_decision(
         normalized_blocks_json = normalized_json_array(blocks_json, "blocks-json")
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         if escalation_id:
             _require_open_escalation(conn, escalation_id)
@@ -87,7 +87,7 @@ def resolve_decision(
     _require_text(reason, "--reason is required to resolve a decision.")
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         decision = _get_decision(conn, decision_id)
         if decision["status"] != "open":
@@ -140,7 +140,7 @@ def waive_decision(paths: ProjectPaths, *, decision_id: str, reason: str) -> dic
     _require_text(reason, "--reason is required to waive a decision.")
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         decision = _get_decision(conn, decision_id)
         if decision["status"] != "open":

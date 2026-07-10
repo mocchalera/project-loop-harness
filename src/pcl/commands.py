@@ -4,7 +4,7 @@ import json
 from json import JSONDecodeError
 
 from .checkpoints import checkpoint_status
-from .db import connect
+from .db import connect, connect_mutation
 from .dispatch import expired_lease_job_ids
 from .evidence import record_inline_evidence
 from .events import append_event
@@ -45,7 +45,7 @@ def create_goal(paths: ProjectPaths, *, title: str, completion_json: str = "{}",
     completion_json = _normalized_json_object(completion_json, "completion-json")
     budget_json = _normalized_json_object(budget_json, "budget-json")
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         goal_id = next_prefixed_id(conn, "goals", "G")
         now = utc_now_iso()
@@ -73,7 +73,7 @@ def create_goal(paths: ProjectPaths, *, title: str, completion_json: str = "{}",
 def add_feature(paths: ProjectPaths, *, name: str, surface: str, description: str = "", evidence: str = "") -> str:
     require_initialized(paths)
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         feature_id = next_prefixed_id(conn, "features", "F")
         now = utc_now_iso()
@@ -163,7 +163,7 @@ def set_feature_status(
     _validate_identifier(feature_id, "feature_id")
     _require_feature_status(status)
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         feature = conn.execute(
             "SELECT id, status FROM features WHERE id = ?",
@@ -246,7 +246,7 @@ def open_defect(
 ) -> str:
     require_initialized(paths)
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         row = conn.execute("SELECT id FROM features WHERE id = ?", (feature_id,)).fetchone()
         if row is None:

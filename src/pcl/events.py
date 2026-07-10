@@ -20,22 +20,32 @@ def append_event(
 ) -> str:
     event_id = f"EV-{uuid.uuid4().hex[:12].upper()}"
     created_at = utc_now_iso()
-    record = {
-        "id": event_id,
-        "event_type": event_type,
-        "entity_type": entity_type,
-        "entity_id": entity_id,
-        "payload": payload,
-        "created_at": created_at,
-    }
-    events_path.parent.mkdir(parents=True, exist_ok=True)
-    with events_path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record, ensure_ascii=False, sort_keys=True) + "\n")
+    del events_path  # retained in the public signature for caller compatibility
+    sequence = int(conn.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM events").fetchone()[0])
     conn.execute(
         """
-        INSERT INTO events(id, event_type, entity_type, entity_id, payload_json, created_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO events(id, sequence, event_type, entity_type, entity_id, payload_json, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
-        (event_id, event_type, entity_type, entity_id, json.dumps(payload, ensure_ascii=False), created_at),
+        (
+            event_id,
+            sequence,
+            event_type,
+            entity_type,
+            entity_id,
+            json.dumps(payload, ensure_ascii=False),
+            created_at,
+        ),
+    )
+    outbox_id = f"OB-{uuid.uuid4().hex[:12].upper()}"
+    conn.execute(
+        """
+        INSERT INTO outbox_records(
+          id, event_id, sink, idempotency_key, status, attempts,
+          next_attempt_at, last_error, created_at, updated_at, delivered_at
+        )
+        VALUES (?, ?, 'jsonl', ?, 'pending', 0, NULL, NULL, ?, ?, NULL)
+        """,
+        (outbox_id, event_id, f"jsonl:{event_id}", created_at, created_at),
     )
     return event_id

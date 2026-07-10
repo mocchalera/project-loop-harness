@@ -10,7 +10,7 @@ from .code_context.receipts import (
     CONTEXT_RECEIPT_VERSION,
     resolve_context_receipt_path,
 )
-from .db import connect, table_exists
+from .db import connect, connect_mutation, table_exists
 from .evidence import ADHOC_EVIDENCE_TYPES, assess_adhoc_evidence
 from .errors import EXIT_USAGE, PclError
 from .events import append_event
@@ -57,7 +57,7 @@ def record_verification_feedback(
     receipt_evidence_id = _receipt_evidence_id_from_suggestion(suggestion_id)
     now = utc_now_iso()
 
-    conn = connect(paths.db_path)
+    conn = connect_mutation(paths)
     try:
         receipt_row = _context_receipt_row(conn, receipt_evidence_id)
         if receipt_row is None:

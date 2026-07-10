@@ -371,6 +371,11 @@ def test_strict_validate_rejects_verified_defect_without_evidence_or_verificatio
 def test_strict_validate_rejects_closed_defect_missing_fix_evidence(tmp_path: Path, capsys) -> None:
     _create_closed_defect(tmp_path, capsys)
 
+    _update_db(
+        tmp_path,
+        "DELETE FROM outbox_records WHERE event_id IN "
+        "(SELECT id FROM events WHERE entity_id = 'D-0001' AND event_type = 'defect_fixed')",
+    )
     _update_db(tmp_path, "DELETE FROM events WHERE entity_id = 'D-0001' AND event_type = 'defect_fixed'")
     _update_db(tmp_path, "DELETE FROM evidence WHERE id = 'E-0001'")
 
@@ -383,6 +388,11 @@ def test_strict_validate_rejects_closed_defect_missing_close_evidence(tmp_path: 
     _create_closed_defect(tmp_path, capsys)
 
     _update_db(tmp_path, "UPDATE defects SET evidence_id = 'E-0001' WHERE id = 'D-0001'")
+    _update_db(
+        tmp_path,
+        "DELETE FROM outbox_records WHERE event_id IN "
+        "(SELECT id FROM events WHERE entity_id = 'D-0001' AND event_type = 'defect_closed')",
+    )
     _update_db(tmp_path, "DELETE FROM events WHERE entity_id = 'D-0001' AND event_type = 'defect_closed'")
     _update_db(tmp_path, "DELETE FROM evidence WHERE id = 'E-0002'")
 
@@ -487,6 +497,11 @@ def test_strict_validate_rejects_terminal_test_case_missing_transition_event(
 ) -> None:
     _create_terminal_test_case(tmp_path, capsys, "waive")
 
+    _update_db(
+        tmp_path,
+        "DELETE FROM outbox_records WHERE event_id IN "
+        "(SELECT id FROM events WHERE entity_id = 'TC-0001' AND event_type = 'test_case_waived')",
+    )
     _update_db(tmp_path, "DELETE FROM events WHERE entity_id = 'TC-0001' AND event_type = 'test_case_waived'")
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 1

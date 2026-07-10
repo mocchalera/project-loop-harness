@@ -14,11 +14,27 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY,
+  sequence INTEGER NOT NULL UNIQUE CHECK(sequence > 0),
   event_type TEXT NOT NULL,
   entity_type TEXT NOT NULL,
   entity_id TEXT,
   payload_json TEXT NOT NULL,
   created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS outbox_records (
+  id TEXT PRIMARY KEY,
+  event_id TEXT NOT NULL REFERENCES events(id) ON DELETE RESTRICT,
+  sink TEXT NOT NULL CHECK(sink IN ('jsonl')),
+  idempotency_key TEXT NOT NULL UNIQUE,
+  status TEXT NOT NULL CHECK(status IN ('pending', 'retry_wait', 'delivered', 'failed_needs_review')),
+  attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
+  next_attempt_at TEXT,
+  last_error TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  delivered_at TEXT,
+  UNIQUE(event_id, sink)
 );
 
 CREATE TABLE IF NOT EXISTS goals (
@@ -174,6 +190,8 @@ CREATE TABLE IF NOT EXISTS escalations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_entity ON events(entity_type, entity_id);
+CREATE INDEX IF NOT EXISTS idx_outbox_delivery
+  ON outbox_records(sink, status, next_attempt_at, event_id);
 CREATE INDEX IF NOT EXISTS idx_defects_status ON defects(status, severity);
 CREATE INDEX IF NOT EXISTS idx_features_status ON features(status);
 CREATE INDEX IF NOT EXISTS idx_workflow_runs_goal ON workflow_runs(goal_id, status);
