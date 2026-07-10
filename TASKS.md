@@ -130,6 +130,7 @@ Give these tasks to coding agents in this order:
 126. `agent-tasks/0130-crash-concurrency-test-suite.md` (v0.3.3 Wave A, crash injection + concurrent writer reliability suite)
 127. `agent-tasks/0131-guarded-executor-hardening.md` (v0.3.3 Wave A, guarded executor terminology/caps/redaction hardening; parallel-safe after 0124)
 128. `agent-tasks/0132-master-trace-context-pack-section.md` (v0.3.2, optional `master_trace_context` section in context-pack/v1; cut after 0123 contract acceptance DEC-0002)
+129. `agent-tasks/0133-windows-lock-fallback.md` (v0.3.3 release blocker, msvcrt advisory-lock fallback; found by the Windows conformance CI job)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and
