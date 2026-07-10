@@ -1,0 +1,17 @@
+{
+  "contract_version": "completion-packet-negative-fixtures/v1",
+  "fixtures": [
+    {
+      "path": "negative-critical-proof.json",
+      "expected_reason": "completed outcomes require critical claims at L2 or above"
+    },
+    {
+      "path": "negative-passed-result.json",
+      "expected_reason": "passed status requires exit_code 0"
+    },
+    {
+      "path": "negative-budget-next-action.json",
+      "expected_reason": "INCOMPLETE_BUDGET_EXHAUSTED requires a next action"
+    }
+  ]
+}

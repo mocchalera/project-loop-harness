@@ -1,0 +1,21 @@
+{
+  "contract_version": "completion-packet/v1",
+  "packet_id": "cp-sha256:e19a485d154334b56f64667c41b48bdb51942026e74a02466bcef0e0a45646db",
+  "producer": {"name": "project-loop-harness", "version": "0.4.0"},
+  "generated_at": "2026-07-10T13:10:00Z",
+  "outcome": "INCOMPLETE_BUDGET_EXHAUSTED",
+  "target": {"type": "task", "id": "T-0134", "intent": "Validate budget outcome", "work_brief_ref": null},
+  "repository": {
+    "base_revision": "06fcee9",
+    "head_revision": "9acbdef",
+    "diff_sha256": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+    "dirty": true
+  },
+  "changes": [],
+  "checks": [{"id": "CHK-0001", "command": "pytest", "status": "not_run", "exit_code": null, "artifact_ref": null, "reproducible": true, "reason": "Wall-time budget exhausted"}],
+  "claims": [],
+  "unverified_claims": [{"text": "The suite passes", "reason": "The suite was not run", "critical": true}],
+  "risks": [{"severity": "high", "text": "Validation is incomplete", "mitigation": "Run pytest"}],
+  "human_decisions": [],
+  "next_action": null
+}

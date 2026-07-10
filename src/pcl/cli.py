@@ -52,6 +52,11 @@ from .context import (
     pack_context_for_task,
 )
 from .context_usage import record_context_pack_usage
+from .contracts.completion_packet import (
+    COMPLETION_PACKET_CONTRACT_VERSION,
+    load_completion_packet,
+    validate_completion_packet,
+)
 from .code_context.summary import render_receipt_summary
 from .decisions import (
     list_decisions,
@@ -686,6 +691,20 @@ def build_parser() -> argparse.ArgumentParser:
         help="Existing task id to link this adhoc evidence row into task context packs.",
     )
 
+    p_contract = sub.add_parser("contract", help="Validate versioned artifact contracts")
+    contract_sub = p_contract.add_subparsers(dest="contract_command", required=True)
+    p_contract_validate = contract_sub.add_parser(
+        "validate",
+        help="Validate a contract artifact without mutating project state",
+    )
+    p_contract_validate.add_argument(
+        "--type",
+        required=True,
+        choices=[COMPLETION_PACKET_CONTRACT_VERSION],
+        dest="contract_type",
+    )
+    p_contract_validate.add_argument("file", help="Path to the JSON contract artifact")
+
     p_context = sub.add_parser("context", help="Build focused machine context packages")
     context_sub = p_context.add_subparsers(dest="context_command", required=True)
     p_context_pack = context_sub.add_parser("pack", help="Build a focused context pack for an agent job or task")
@@ -984,6 +1003,33 @@ def _print_json(payload: object) -> None:
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
 
 
+def _validate_contract_file(path_value: str, *, json_output: bool) -> int:
+    try:
+        packet = load_completion_packet(path_value)
+    except OSError as exc:
+        raise InvalidInputError(
+            f"Could not read contract file: {path_value}",
+            details={"path": path_value, "reason": str(exc)},
+        ) from exc
+    except json.JSONDecodeError as exc:
+        raise InvalidInputError(
+            f"Contract file is not valid JSON: {path_value}",
+            details={"column": exc.colno, "line": exc.lineno, "path": path_value},
+        ) from exc
+
+    result = validate_completion_packet(packet)
+    payload = result.to_dict()
+    payload["path"] = path_value
+    if json_output:
+        _print_json(payload)
+    elif result.ok:
+        print(f"Valid {COMPLETION_PACKET_CONTRACT_VERSION}: {path_value}")
+    else:
+        for error in result.errors:
+            print(f"ERROR: {error}", file=sys.stderr)
+    return 0 if result.ok else 1
+
+
 def _impact_text_payload(impact: dict) -> tuple[dict, str | None]:
     display = dict(impact)
     excluded = display.pop("excluded_changed_files", [])
@@ -1237,6 +1283,9 @@ def main(argv: list[str] | None = None) -> int:
     json_output = json_override or args.json
 
     try:
+        if args.command == "contract" and args.contract_command == "validate":
+            return _validate_contract_file(args.file, json_output=json_output)
+
         if args.command == "init":
             if args.dry_run:
                 plan = plan_init_project(paths, overwrite=args.force, with_claude=not args.no_claude)

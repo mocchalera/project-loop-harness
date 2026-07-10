@@ -1,0 +1,90 @@
+{
+  "contract_version": "completion-packet/v1",
+  "packet_id": "cp-sha256:2fab3268bc994d3aefd4b4cd754c1944b49ada953da21fd7b0720f84f0152294",
+  "producer": {
+    "name": "project-loop-harness",
+    "version": "0.4.0"
+  },
+  "generated_at": "2026-07-10T12:30:00Z",
+  "outcome": "COMPLETED_WITH_RISK",
+  "target": {
+    "type": "task",
+    "id": "T-0134",
+    "intent": "Define the completion packet contract",
+    "work_brief_ref": "evidence:E-0134"
+  },
+  "repository": {
+    "base_revision": "06fcee9",
+    "head_revision": "9acbdef",
+    "diff_sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "dirty": false
+  },
+  "changes": [
+    {
+      "path": "src/pcl/contracts/completion_packet.py",
+      "change_type": "added",
+      "previous_path": null
+    }
+  ],
+  "checks": [
+    {
+      "id": "CHK-0001",
+      "command": "python -m pytest -q tests",
+      "status": "passed",
+      "exit_code": 0,
+      "artifact_ref": "evidence:E-0200",
+      "reproducible": true,
+      "reason": null
+    },
+    {
+      "id": "CHK-0002",
+      "command": "manual cross-platform smoke",
+      "status": "not_run",
+      "exit_code": null,
+      "artifact_ref": null,
+      "reproducible": false,
+      "reason": "Only the local platform was available"
+    }
+  ],
+  "claims": [
+    {
+      "id": "CL-0001",
+      "text": "The local test suite passed",
+      "critical": true,
+      "proof_level": "L2",
+      "evidence_refs": ["evidence:E-0200"]
+    },
+    {
+      "id": "CL-0002",
+      "text": "A reviewer inspected the contract",
+      "critical": false,
+      "proof_level": "L1",
+      "evidence_refs": ["evidence:E-0201"]
+    }
+  ],
+  "unverified_claims": [
+    {
+      "text": "The contract works on every supported platform",
+      "reason": "Cross-platform smoke was not run",
+      "critical": false
+    }
+  ],
+  "risks": [
+    {
+      "severity": "low",
+      "text": "Cross-platform behavior remains unobserved",
+      "mitigation": "Run the fixture matrix in CI"
+    }
+  ],
+  "human_decisions": ["Approve promotion of completion-packet/v1 from candidate to stable"],
+  "next_action": {
+    "text": "Run the cross-platform CI matrix",
+    "command": null
+  },
+  "verifier_provenance": {
+    "kind": "model",
+    "name": "external-reviewer",
+    "version": "1",
+    "evidence_ref": "evidence:E-0201"
+  }
+}

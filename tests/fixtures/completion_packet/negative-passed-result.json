@@ -1,0 +1,21 @@
+{
+  "contract_version": "completion-packet/v1",
+  "packet_id": "cp-sha256:ff216ad35691bd8f7441f626889a0a2f1fed7c0d9e20f39cac31d1a0cb0bf221",
+  "producer": {"name": "project-loop-harness", "version": "0.4.0"},
+  "generated_at": "2026-07-10T13:05:00Z",
+  "outcome": "INCOMPLETE_VALIDATION",
+  "target": {"type": "task", "id": "T-0134", "intent": "Validate recorded check truthfulness", "work_brief_ref": null},
+  "repository": {
+    "base_revision": "06fcee9",
+    "head_revision": "9acbdef",
+    "diff_sha256": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "dirty": true
+  },
+  "changes": [{"path": "tests/test_completion_packet_contract.py", "change_type": "added", "previous_path": null}],
+  "checks": [{"id": "CHK-0001", "command": "pytest", "status": "passed", "exit_code": 1, "artifact_ref": "evidence:E-0200", "reproducible": true, "reason": null}],
+  "claims": [],
+  "unverified_claims": [],
+  "risks": [],
+  "human_decisions": [],
+  "next_action": {"text": "Fix the failing suite", "command": "pytest"}
+}

@@ -25,6 +25,9 @@ personal information, or real-project content. It was generated from the
 
 ## Intended changes since v0.3.1 freeze
 
+- 2026-07-10 — `snapshots/pcl-help.json` regenerated to include the additive
+  read-only `contract` command introduced by task 0134 for validating
+  `completion-packet/v1` artifacts. No existing command was removed or renamed.
 - 2026-07-10 — `snapshots/representative-context-check-json.json` intentionally
   changed so `context check --json` always includes the additive
   `master_trace_context` preflight block for task targets. This is the intended

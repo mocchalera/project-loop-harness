@@ -54,7 +54,8 @@ where = ["src"]
 pcl = [
   "templates/**/*",
   "db/*.sql",
-  "db/migrations/*.sql"
+  "db/migrations/*.sql",
+  "contracts/schemas/*.json"
 ]
 
 [tool.pytest.ini_options]

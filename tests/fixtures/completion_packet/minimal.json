@@ -1,0 +1,29 @@
+{
+  "contract_version": "completion-packet/v1",
+  "packet_id": "cp-sha256:7c012fa368e132097b3bea1b2de7f0ded3c0a743b5ab9c27bc2a4224b67b1baf",
+  "producer": {
+    "name": "project-loop-harness",
+    "version": "0.4.0"
+  },
+  "generated_at": "2026-07-10T12:00:00Z",
+  "outcome": "NO_CHANGES",
+  "target": {
+    "type": "goal",
+    "id": "G-0001",
+    "intent": "Characterize the existing behavior",
+    "work_brief_ref": null
+  },
+  "repository": {
+    "base_revision": "06fcee9",
+    "head_revision": "06fcee9",
+    "diff_sha256": "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "dirty": false
+  },
+  "changes": [],
+  "checks": [],
+  "claims": [],
+  "unverified_claims": [],
+  "risks": [],
+  "human_decisions": [],
+  "next_action": null
+}

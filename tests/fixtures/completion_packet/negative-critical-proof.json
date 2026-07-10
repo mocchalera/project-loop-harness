@@ -1,0 +1,21 @@
+{
+  "contract_version": "completion-packet/v1",
+  "packet_id": "cp-sha256:1d027ba96de35710280fae3824ea0d9d7b38447f93898f0600d9617ae1cb9e33",
+  "producer": {"name": "project-loop-harness", "version": "0.4.0"},
+  "generated_at": "2026-07-10T13:00:00Z",
+  "outcome": "COMPLETED_VERIFIED",
+  "target": {"type": "task", "id": "T-0134", "intent": "Validate proof consistency", "work_brief_ref": null},
+  "repository": {
+    "base_revision": "06fcee9",
+    "head_revision": "9acbdef",
+    "diff_sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "dirty": false
+  },
+  "changes": [{"path": "src/pcl/contracts/completion_packet.py", "change_type": "added", "previous_path": null}],
+  "checks": [],
+  "claims": [{"id": "CL-0001", "text": "Implementation is complete", "critical": true, "proof_level": "L1", "evidence_refs": ["evidence:E-0201"]}],
+  "unverified_claims": [],
+  "risks": [],
+  "human_decisions": [],
+  "next_action": null
+}
