@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from pathlib import PurePosixPath
@@ -82,20 +83,21 @@ def test_codex_plugin_manifest_paths_stay_in_package_inventory() -> None:
 
 
 def test_project_control_loop_skill_is_synced_across_packages() -> None:
-    root_skill = (ROOT / "skills" / "project-control-loop" / "SKILL.md").read_text(
-        encoding="utf-8"
-    )
     expected_paths = [
+        ROOT / "skills" / "project-control-loop" / "SKILL.md",
         ROOT / "src" / "pcl" / "templates" / "skills" / "project-control-loop" / "SKILL.md",
         PLUGIN / "skills" / "project-control-loop" / "SKILL.md",
-        ROOT / ".agents" / "skills" / "project-control-loop" / "SKILL.md",
     ]
+    skill_copies = [path.read_bytes() for path in expected_paths]
 
-    for path in expected_paths:
-        assert path.read_text(encoding="utf-8") == root_skill
+    assert len({hashlib.sha256(content).hexdigest() for content in skill_copies}) == 1
+    assert len(set(skill_copies)) == 1
 
+    root_skill = skill_copies[0].decode("utf-8")
     assert "pcl prompt job J-0001" in root_skill
     assert "pcl ingest-agent-run .project-loop/evidence/agent-runs/J-0001/output.md" in root_skill
+    assert "pcl feature status F-XXXX --status done --summary \"...\" --evidence-id E-XXXX" in root_skill
+    assert "pcl goal close G-XXXX --summary \"...\" --verification V-XXXX" in root_skill
 
 
 def test_codex_plugin_hooks_are_safe_and_optional() -> None:

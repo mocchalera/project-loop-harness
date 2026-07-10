@@ -81,7 +81,9 @@ def test_wheel_install_smoke_runs_cli_mcp_and_bundled_templates(tmp_path: Path) 
     assert (target / "pcl.yaml").exists()
     assert (target / ".project-loop" / "workflows" / "feature_coverage.yaml").exists()
     assert (target / ".project-loop" / "workflows" / "executor_smoke.yaml").exists()
-    assert (target / ".agents" / "skills" / "project-control-loop" / "SKILL.md").exists()
+    installed_skill = target / ".agents" / "skills" / "project-control-loop" / "SKILL.md"
+    canonical_skill = ROOT / "skills" / "project-control-loop" / "SKILL.md"
+    assert installed_skill.read_bytes() == canonical_skill.read_bytes()
 
     migration_status = _json_output(
         _run([pcl, "--root", target, "--json", "migrate", "status"], env=wheel_env)
