@@ -22,3 +22,11 @@ absolute project paths, UUIDs, and 40/64-character hexadecimal hashes.
 The database contains no goals, features, stories, tests, tasks, evidence,
 personal information, or real-project content. It was generated from the
 `v0.3.0` tag with `pcl init` and then copied here as an immutable input fixture.
+
+## Intended changes since v0.3.1 freeze
+
+- 2026-07-10 — `snapshots/representative-context-check-json.json` intentionally
+  changed so `context check --json` always includes the additive
+  `master_trace_context` preflight block for task targets. This is the intended
+  contract change from task 0132 and follows
+  `docs/master-trace-intent-index.md`; it is not a v0.3.1 regression.
