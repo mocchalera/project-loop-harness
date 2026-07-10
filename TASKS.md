@@ -131,18 +131,26 @@ Give these tasks to coding agents in this order:
 127. `agent-tasks/0131-guarded-executor-hardening.md` (v0.3.3 Wave A, guarded executor terminology/caps/redaction hardening; parallel-safe after 0124)
 128. `agent-tasks/0132-master-trace-context-pack-section.md` (v0.3.2, optional `master_trace_context` section in context-pack/v1; cut after 0123 contract acceptance DEC-0002)
 129. `agent-tasks/0133-windows-lock-fallback.md` (v0.3.3 release blocker, msvcrt advisory-lock fallback; found by the Windows conformance CI job)
+130. `agent-tasks/0134-completion-packet-v1-contract.md` (v0.4.0 Wave B, completion-packet/v1 schema + validator + fixtures + `pcl contract validate`; bundle 0131 renumbered)
+131. `agent-tasks/0135-finish-emits-completion-packet.md` (v0.4.0 Wave B, backward-compatible `pcl finish` extension: guarded checks -> validation -> packet -> transactional commit; bundle 0132 renumbered)
+132. `agent-tasks/0136-lite-pcl-start.md` (v0.4.0 Wave B, lite `pcl start "<intent>"` entry point reusing init/goal/task services; bundle 0133 renumbered)
+133. `agent-tasks/0137-handoff-packet-pcl-resume.md` (v0.4.0 Wave B, handoff-packet/v1 + read-only `pcl resume`; bundle 0134 renumbered)
+134. `agent-tasks/0138-kpi-report-surface.md` (v0.4.0 Dogfood Operations, `pcl report kpi` read-only aggregation + `context_pack_generated` usage event + dogfood report template; growth-plan-derived, not bundle)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and
 `docs/roadmap/integrated/ADOPTION.md` records the decision, the renumbering map
 (bundle 0123–0130 -> repo 0124–0131), and D-08 (master-trace stays at v0.3.2 and
-runs parallel to Wave A; Trust Foundation becomes v0.3.3). Wave B+ proposals in
-`docs/roadmap/integrated/agent-tasks-proposed/` are not yet numbered tasks.
+runs parallel to Wave A; Trust Foundation becomes v0.3.3). Wave B (bundle M2
+Three-command Wedge) was activated 2026-07-10 (DEC-0003, `docs/plan-v0.4.0.md`):
+bundle 0131–0134 -> repo 0134–0137. Wave C+ proposals in
+`docs/roadmap/integrated/agent-tasks-proposed/` remain unnumbered.
 
 Roadmap through v0.5.0: see `docs/growth-plan-v0.2.4-v0.5.md` (approved 2026-07-08, amended by §10 on 2026-07-10).
 Numbering is creation order; milestones interleave. v0.3.0 = {0108, 0113, 0114, 0115}.
 v0.3.1 = Handoff Integrity + Operator Experience, dispatch order: 0116 receipt/link agreement -> 0117 Markdown refresh command -> 0118 canonical target-bound docs -> 0119 `pcl context check` -> 0120 `pcl finish` -> 0121 human-gate ja -> 0122 feature_coverage no-op. (0116+0117 = the integrity pair, dispatched first; supersedes the earlier 0109/0110/0111/0116 reservation from the v0.3.0 planning note.)
 v0.3.2 = master-trace / intent-index formalization, starting with 0123 contract docs before any first-class `pcl intent` or optional context-pack section.
-v0.3.3 = Trust Foundation (integrated Wave A), dispatch order: 0123 + 0124 in parallel -> 0125 -> 0126, with 0127 ADR (human gate) -> 0128 -> 0129 -> 0130; 0131 parallel-safe after 0124.
+v0.3.3 = Trust Foundation (integrated Wave A), dispatch order: 0123 + 0124 in parallel -> 0125 -> 0126, with 0127 ADR (human gate) -> 0128 -> 0129 -> 0130; 0131 parallel-safe after 0124. Shipped 2026-07-10 (includes v0.3.2 scope; tag v0.3.3).
+v0.4.0 = Dogfood Operations + Three-command Wedge (Wave B), see `docs/plan-v0.4.0.md`. Dispatch: 0134 + 0138 in parallel -> 0135 + 0136 after 0134 -> 0137 after 0135; dogfood KPI report is an operations deliverable alongside.
 
 Do not start with MCP as the runtime. Do not start with a hosted UI. The CLI/runtime must become reliable first. (Fixing the existing optional MCP server to match its declared spec — 0125/0126 — is reliability work, not a runtime pivot.)
