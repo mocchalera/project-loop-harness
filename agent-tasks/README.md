@@ -41,6 +41,7 @@ implement from the spec file, not from prompt summaries.
 | 0130 | Crash injection + concurrent writer suite | v0.3.3 Trust Foundation (Wave A) | P0 | done (main cee0026) |
 | 0131 | Guarded executor hardening (terminology, caps, redaction) | v0.3.3 Trust Foundation (Wave A) | P1 | done (main cdbcf3a) |
 | 0132 | Optional master_trace_context section in context-pack/v1 | v0.3.2 Master Trace / Intent Index | P1 | done (main a2a09d9) |
+| 0133 | Windows advisory-lock fallback (msvcrt) | v0.3.3 Trust Foundation (release blocker) | P0 | done (main 6a3212a; shipped v0.3.3) |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
