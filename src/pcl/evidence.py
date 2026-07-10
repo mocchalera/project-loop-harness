@@ -50,6 +50,10 @@ EVIDENCE_TASK_LINK_REQUIRED_SCHEMA_VERSION = 6
 EVIDENCE_TASK_LINK_MIGRATION_ID = "006_evidence_task_link"
 EVIDENCE_LINK_SUPPORTING_ROLE = "supporting"
 EVIDENCE_LINK_TASK_TARGET = "task"
+LEGACY_INLINE_EVIDENCE_WARNING = {
+    "code": "legacy_inline_evidence",
+    "message": "--evidence is deprecated for terminal proof; use --evidence-id with hash-pinned Evidence.",
+}
 
 
 class EvidenceAddError(PclError):
@@ -60,6 +64,49 @@ class EvidenceAddError(PclError):
             exit_code=EXIT_USAGE,
             details=details,
         )
+
+
+def require_healthy_terminal_evidence(
+    paths: ProjectPaths,
+    conn: sqlite3.Connection,
+    *,
+    evidence_id: str,
+    error_code: str,
+    allowed_types: set[str] | None = None,
+) -> sqlite3.Row:
+    evidence_id = str(evidence_id or "").strip()
+    row = conn.execute(
+        "SELECT id, type, path, command, summary, created_at FROM evidence WHERE id = ?",
+        (evidence_id,),
+    ).fetchone()
+    if row is None:
+        raise EvidenceAddError(
+            f"Evidence does not exist: {evidence_id}",
+            code=error_code,
+            details={"evidence_id": evidence_id, "reason": "missing_evidence"},
+        )
+    evidence_type = str(row["type"])
+    if allowed_types is not None and evidence_type not in allowed_types:
+        raise EvidenceAddError(
+            f"Evidence {evidence_id} has unsupported type {evidence_type} for this terminal transition.",
+            code=error_code,
+            details={"evidence_id": evidence_id, "evidence_type": evidence_type, "reason": "wrong_evidence_type"},
+        )
+    if evidence_type in ADHOC_EVIDENCE_TYPES:
+        assessment = assess_adhoc_evidence(
+            paths,
+            evidence_id=evidence_id,
+            evidence_type=evidence_type,
+            manifest_path_value=str(row["path"] or ""),
+            validate_optional_fields=True,
+        )
+        if assessment["health"] != "ok":
+            raise EvidenceAddError(
+                f"Evidence {evidence_id} is not healthy enough for terminal proof.",
+                code=error_code,
+                details={"evidence_id": evidence_id, "reason": "artifact_unhealthy", "assessment": assessment},
+            )
+    return row
 
 
 def record_inline_evidence(

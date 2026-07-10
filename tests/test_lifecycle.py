@@ -80,12 +80,20 @@ def _valid_rubric(evidence_id: str | None = None) -> dict:
 def _create_test_evidence(root: Path, capsys) -> None:
     assert main(["--root", str(root), "feature", "add", "--name", "Rubric", "--surface", "cli:pcl"]) == 0
     assert main([
+        "--root", str(root), "story", "draft", "--feature", "F-0001",
+        "--actor", "reviewer", "--goal", "verify rubric",
+        "--expected-behavior", "rubric evidence is traceable",
+    ]) == 0
+    assert main(["--root", str(root), "story", "approve", "US-0001", "--summary", "reviewed"]) == 0
+    assert main([
         "--root",
         str(root),
         "test",
         "plan",
         "--feature",
         "F-0001",
+        "--story",
+        "US-0001",
         "--type",
         "acceptance",
         "--scenario",
@@ -829,8 +837,8 @@ def test_lifecycle_rejects_invalid_transitions(tmp_path: Path, capsys) -> None:
         "--json",
     ]) == 2
     payload = _json_output(capsys)
-    assert payload["error"]["code"] == "invalid_input"
-    assert "requires --evidence or --verification" in payload["error"]["message"]
+    assert payload["error"]["code"] == "goal_close_verification_required"
+    assert "requires approved --verification or completed packet --evidence-id" in payload["error"]["message"]
 
     assert main([
         "--root",

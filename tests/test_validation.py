@@ -182,6 +182,13 @@ def _create_closed_defect(root: Path, capsys) -> None:
 def _create_terminal_test_case(root: Path, capsys, transition: str) -> None:
     assert main(["init", "--target", str(root)]) == 0
     assert main(["--root", str(root), "feature", "add", "--name", "Export", "--surface", "cli:pcl export"]) == 0
+    if transition == "pass":
+        assert main([
+            "--root", str(root), "story", "draft", "--feature", "F-0001",
+            "--actor", "operator", "--goal", "trace a passing test",
+            "--expected-behavior", "passing evidence is reviewable",
+        ]) == 0
+        assert main(["--root", str(root), "story", "approve", "US-0001", "--summary", "reviewed"]) == 0
     assert main([
         "--root",
         str(root),
@@ -189,6 +196,7 @@ def _create_terminal_test_case(root: Path, capsys, transition: str) -> None:
         "plan",
         "--feature",
         "F-0001",
+        *(["--story", "US-0001"] if transition == "pass" else []),
         "--type",
         "unit",
         "--scenario",
@@ -197,6 +205,8 @@ def _create_terminal_test_case(root: Path, capsys, transition: str) -> None:
         f"{transition} expected behavior",
     ]) == 0
     if transition == "pass":
+        assert main(["--root", str(root), "goal", "create", "--title", "Validation run"]) == 0
+        assert main(["--root", str(root), "loop", "run", "feature_coverage", "--goal", "G-0001"]) == 0
         assert main([
             "--root",
             str(root),
@@ -207,6 +217,8 @@ def _create_terminal_test_case(root: Path, capsys, transition: str) -> None:
             "Passed",
             "--evidence",
             "pytest passed",
+            "--run",
+            "WR-0001",
         ]) == 0
     elif transition == "fail":
         assert main([
@@ -404,6 +416,18 @@ def test_strict_validate_rejects_closed_defect_missing_close_evidence(tmp_path: 
 def test_strict_validate_accepts_terminal_test_case_evidence(tmp_path: Path, capsys) -> None:
     assert main(["init", "--target", str(tmp_path)]) == 0
     assert main(["--root", str(tmp_path), "feature", "add", "--name", "Export", "--surface", "cli:pcl export"]) == 0
+    assert main([
+        "--root", str(tmp_path), "story", "draft", "--feature", "F-0001",
+        "--actor", "operator", "--goal", "verify terminal evidence",
+        "--expected-behavior", "passing tests link reviewed behavior",
+    ]) == 0
+    assert main(["--root", str(tmp_path), "story", "approve", "US-0001", "--summary", "reviewed"]) == 0
+    artifact = tmp_path / "pass.txt"
+    artifact.write_text("pytest pass\n", encoding="utf-8")
+    assert main([
+        "--root", str(tmp_path), "evidence", "add", "--file", "pass.txt",
+        "--summary", "pass output", "--copy",
+    ]) == 0
     for index, (command_name, expected_status) in enumerate(
         [("pass", "passing"), ("fail", "failing"), ("waive", "waived")],
         start=1,
@@ -415,6 +439,8 @@ def test_strict_validate_accepts_terminal_test_case_evidence(tmp_path: Path, cap
             "plan",
             "--feature",
             "F-0001",
+            "--story",
+            "US-0001",
             "--type",
             "unit",
             "--scenario",
@@ -432,6 +458,11 @@ def test_strict_validate_accepts_terminal_test_case_evidence(tmp_path: Path, cap
                 test_case_id,
                 "--reason",
                 "Out of scope",
+            ]) == 0
+        elif command_name == "pass":
+            assert main([
+                "--root", str(tmp_path), "test", "pass", test_case_id,
+                "--summary", "pass summary", "--evidence-id", "E-0001",
             ]) == 0
         else:
             assert main([

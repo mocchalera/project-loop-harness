@@ -94,6 +94,13 @@ def test_feature_list_filters_by_status(tmp_path: Path, capsys) -> None:
         "feature can be listed and read",
     ]) == 0
     capsys.readouterr()
+    artifact = tmp_path / "feature-list-pass.txt"
+    artifact.write_text("pytest tests/test_features.py passed\n", encoding="utf-8")
+    assert main([
+        "--root", str(tmp_path), "evidence", "add", "--file", artifact.name,
+        "--summary", "Feature CLI inspection", "--copy", "--json",
+    ]) == 0
+    evidence_id = _json_output(capsys)["evidence"]["id"]
     assert main([
         "--root",
         str(tmp_path),
@@ -139,8 +146,8 @@ def test_feature_list_filters_by_status(tmp_path: Path, capsys) -> None:
         "TC-0001",
         "--summary",
         "Feature CLI inspection passed",
-        "--evidence",
-        "pytest tests/test_features.py passed",
+        "--evidence-id",
+        evidence_id,
     ]) == 0
     capsys.readouterr()
 
@@ -225,6 +232,13 @@ def test_feature_status_updates_with_evidence_and_typed_errors(tmp_path: Path, c
         "previous_status": "discovered",
         "status": "passing",
         "summary": "Migration flow verified",
+        "evidence_mode": "legacy_inline",
+        "warnings": [
+            {
+                "code": "legacy_inline_evidence",
+                "message": "--evidence is deprecated for terminal proof; use --evidence-id with hash-pinned Evidence.",
+            }
+        ],
     }
 
     assert main(["--root", str(tmp_path), "feature", "read", feature_id, "--json"]) == 0
@@ -252,6 +266,7 @@ def test_feature_status_updates_with_evidence_and_typed_errors(tmp_path: Path, c
     assert payload == {
         "evidence": "pytest tests/test_migrations.py passed",
         "evidence_id": "E-0001",
+        "evidence_mode": "legacy_inline",
         "previous_status": "discovered",
         "source": "manual",
         "status": "passing",
@@ -272,7 +287,7 @@ def test_feature_status_updates_with_evidence_and_typed_errors(tmp_path: Path, c
     ]) == 2
     missing_evidence = _json_output(capsys)
     assert missing_evidence["error"]["code"] == "invalid_input"
-    assert "--evidence is required" in missing_evidence["error"]["message"]
+    assert "--evidence or --evidence-id is required" in missing_evidence["error"]["message"]
 
     before_no_op = _audit_counts(tmp_path)
     assert main([

@@ -375,12 +375,20 @@ def test_story_and_test_case_invalid_inputs_return_typed_json(tmp_path: Path, ca
     assert "Invalid test case status" in payload["error"]["message"]
 
     assert main([
+        "--root", str(tmp_path), "story", "approve", "US-0001",
+        "--summary", "Reviewed for passing",
+    ]) == 0
+    capsys.readouterr()
+
+    assert main([
         "--root",
         str(tmp_path),
         "test",
         "plan",
         "--feature",
         feature_id,
+        "--story",
+        "US-0001",
         "--type",
         "unit",
         "--scenario",
@@ -404,6 +412,14 @@ def test_story_and_test_case_invalid_inputs_return_typed_json(tmp_path: Path, ca
     assert payload["error"]["code"] == "invalid_input"
     assert "evidence is required" in payload["error"]["message"]
 
+    artifact = tmp_path / "pass.txt"
+    artifact.write_text("pytest passed\n", encoding="utf-8")
+    assert main([
+        "--root", str(tmp_path), "evidence", "add", "--file", "pass.txt",
+        "--summary", "passing output", "--copy", "--json",
+    ]) == 0
+    evidence_id = _json_output(capsys)["evidence"]["id"]
+
     assert main([
         "--root",
         str(tmp_path),
@@ -412,8 +428,8 @@ def test_story_and_test_case_invalid_inputs_return_typed_json(tmp_path: Path, ca
         "TC-0001",
         "--summary",
         "Passed once",
-        "--evidence",
-        "pytest passed",
+        "--evidence-id",
+        evidence_id,
     ]) == 0
     capsys.readouterr()
 

@@ -6,7 +6,14 @@ from json import JSONDecodeError
 from .checkpoints import checkpoint_status
 from .db import connect, connect_mutation
 from .dispatch import expired_lease_job_ids
-from .evidence import record_inline_evidence
+from .evidence import (
+    ADHOC_EVIDENCE_TYPES,
+    LEGACY_INLINE_EVIDENCE_WARNING,
+    EvidenceAddError,
+    insert_evidence_link,
+    record_inline_evidence,
+    require_healthy_terminal_evidence,
+)
 from .events import append_event
 from .errors import InvalidInputError
 from .guards import require_initialized
@@ -157,7 +164,8 @@ def set_feature_status(
     *,
     status: str,
     summary: str,
-    evidence: str,
+    evidence: str = "",
+    evidence_id: str | None = None,
 ) -> dict:
     require_initialized(paths)
     _validate_identifier(feature_id, "feature_id")
@@ -186,20 +194,49 @@ def set_feature_status(
             }
 
         _require_text(summary, "--summary is required to update feature status.")
-        _require_text(
-            evidence,
-            "--evidence is required to update feature status. Use command output, artifact path, "
-            "screenshot path, commit, or report path.",
-        )
+        selected_evidence_id = str(evidence_id or "").strip() or None
+        evidence_mode = "id" if selected_evidence_id else "legacy_inline"
+        if not selected_evidence_id:
+            _require_text(
+                evidence,
+                "--evidence or --evidence-id is required to update feature status.",
+            )
+
+        if status == "done":
+            _guard_feature_done(conn, feature_id)
+            if not selected_evidence_id:
+                raise EvidenceAddError(
+                    "Feature done requires healthy target-bound Evidence via --evidence-id.",
+                    code="feature_done_evidence_required",
+                    details={"feature_id": feature_id},
+                )
+        if selected_evidence_id:
+            require_healthy_terminal_evidence(
+                paths,
+                conn,
+                evidence_id=selected_evidence_id,
+                error_code="feature_done_evidence_required",
+                allowed_types=ADHOC_EVIDENCE_TYPES,
+            )
 
         now = utc_now_iso()
-        evidence_id = record_inline_evidence(
-            conn,
-            evidence_type="feature_status",
-            summary=evidence.strip(),
-            context=f"feature/{feature_id}/status",
-            command="pcl feature status",
-        )
+        if selected_evidence_id is None:
+            selected_evidence_id = record_inline_evidence(
+                conn,
+                evidence_type="feature_status",
+                summary=evidence.strip(),
+                context=f"feature/{feature_id}/status",
+                command="pcl feature status",
+            )
+        else:
+            insert_evidence_link(
+                conn,
+                evidence_id=selected_evidence_id,
+                target_type="feature",
+                target_id=feature_id,
+                link_role="acceptance" if status == "done" else "supporting",
+                created_at=now,
+            )
         conn.execute(
             "UPDATE features SET status = ?, updated_at = ? WHERE id = ?",
             (status, now, feature_id),
@@ -215,22 +252,62 @@ def set_feature_status(
                 "status": status,
                 "summary": summary.strip(),
                 "evidence": evidence.strip(),
-                "evidence_id": evidence_id,
+                "evidence_id": selected_evidence_id,
+                "evidence_mode": evidence_mode,
                 "source": "manual",
             },
         )
         conn.commit()
-        return {
+        result = {
             "ok": True,
             "feature_id": feature_id,
             "previous_status": previous_status,
             "status": status,
             "summary": summary.strip(),
-            "evidence_id": evidence_id,
+            "evidence_id": selected_evidence_id,
+            "evidence_mode": evidence_mode,
             "changed": True,
         }
+        if evidence_mode == "legacy_inline":
+            result["warnings"] = [dict(LEGACY_INLINE_EVIDENCE_WARNING)]
+        return result
     finally:
         conn.close()
+
+
+def _guard_feature_done(conn, feature_id: str) -> None:
+    stories = conn.execute(
+        "SELECT id, status FROM user_stories WHERE feature_id = ? ORDER BY id",
+        (feature_id,),
+    ).fetchall()
+    incomplete_stories = [dict(row) for row in stories if row["status"] not in {"approved", "waived"}]
+    if not stories or incomplete_stories:
+        raise EvidenceAddError(
+            f"Feature {feature_id} has missing or incomplete Stories.",
+            code="feature_done_story_incomplete",
+            details={"feature_id": feature_id, "stories": incomplete_stories, "story_count": len(stories)},
+        )
+    tests = conn.execute(
+        "SELECT id, status FROM test_cases WHERE feature_id = ? AND status != 'waived' ORDER BY id",
+        (feature_id,),
+    ).fetchall()
+    incomplete_tests = [dict(row) for row in tests if row["status"] != "passing"]
+    if not tests or incomplete_tests:
+        raise EvidenceAddError(
+            f"Feature {feature_id} has missing or incomplete non-waived Tests.",
+            code="feature_done_tests_incomplete",
+            details={"feature_id": feature_id, "tests": incomplete_tests, "test_count": len(tests)},
+        )
+    defects = conn.execute(
+        "SELECT id, status FROM defects WHERE feature_id = ? AND status NOT IN ('closed', 'waived') ORDER BY id",
+        (feature_id,),
+    ).fetchall()
+    if defects:
+        raise EvidenceAddError(
+            f"Feature {feature_id} has active Defects.",
+            code="feature_done_open_defects",
+            details={"feature_id": feature_id, "defects": [dict(row) for row in defects]},
+        )
 
 
 def open_defect(

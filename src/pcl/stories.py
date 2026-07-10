@@ -5,7 +5,14 @@ from typing import Any
 from .db import connect, connect_mutation
 from .errors import InvalidInputError
 from .events import append_event
-from .evidence import record_inline_evidence
+from .evidence import (
+    ADHOC_EVIDENCE_TYPES,
+    LEGACY_INLINE_EVIDENCE_WARNING,
+    EvidenceAddError,
+    insert_evidence_link,
+    record_inline_evidence,
+    require_healthy_terminal_evidence,
+)
 from .guards import require_initialized
 from .ids import next_prefixed_id
 from .paths import ProjectPaths
@@ -274,7 +281,8 @@ def pass_test_case(
     *,
     test_case_id: str,
     summary: str,
-    evidence: str,
+    evidence: str = "",
+    evidence_id: str | None = None,
     workflow_run_id: str | None = None,
 ) -> dict[str, Any]:
     return _transition_test_case(
@@ -284,6 +292,7 @@ def pass_test_case(
         event_type="test_case_passed",
         summary=summary,
         evidence=evidence,
+        evidence_id=evidence_id,
         workflow_run_id=workflow_run_id,
         evidence_type="test_case_pass",
         require_evidence=True,
@@ -296,7 +305,8 @@ def fail_test_case(
     *,
     test_case_id: str,
     summary: str,
-    evidence: str,
+    evidence: str = "",
+    evidence_id: str | None = None,
     workflow_run_id: str | None = None,
 ) -> dict[str, Any]:
     return _transition_test_case(
@@ -306,6 +316,7 @@ def fail_test_case(
         event_type="test_case_failed",
         summary=summary,
         evidence=evidence,
+        evidence_id=evidence_id,
         workflow_run_id=workflow_run_id,
         evidence_type="test_case_fail",
         require_evidence=True,
@@ -492,6 +503,7 @@ def _transition_test_case(
     summary: str,
     workflow_run_id: str | None = None,
     evidence: str = "",
+    evidence_id: str | None = None,
     evidence_type: str | None = None,
     require_evidence: bool = False,
     text_field: str = "summary",
@@ -528,22 +540,69 @@ def _transition_test_case(
                     "requested_status": status,
                 },
             )
-        if require_evidence:
+        if require_evidence and not evidence_id:
             _require_text(
                 evidence,
                 "--evidence is required for this test case transition. Use command output, "
                 "artifact path, screenshot path, commit, or report path.",
             )
+        if status == "passing":
+            story_id = str(test_case["story_id"] or "")
+            if not story_id:
+                raise EvidenceAddError(
+                    f"Test case {test_case_id} must link to a Story before it can pass.",
+                    code="test_story_required",
+                    details={"test_case_id": test_case_id},
+                )
+            story = _get_story(conn, story_id)
+            if story["feature_id"] != test_case["feature_id"]:
+                raise EvidenceAddError(
+                    f"Story {story_id} does not belong to test case feature {test_case['feature_id']}.",
+                    code="test_story_required",
+                    details={"test_case_id": test_case_id, "story_id": story_id},
+                )
+            if story["status"] not in {"approved", "waived"}:
+                raise EvidenceAddError(
+                    f"Story {story_id} is {story['status']}; passing requires approved or waived.",
+                    code="test_story_not_terminal",
+                    details={"test_case_id": test_case_id, "story_id": story_id, "story_status": story["status"]},
+                )
         if workflow_run_id:
             _get_workflow_run(conn, workflow_run_id)
-        evidence_id = None
-        if evidence_type and evidence.strip():
-            evidence_id = record_inline_evidence(
+        selected_evidence_id = str(evidence_id or "").strip() or None
+        evidence_mode = "id" if selected_evidence_id else None
+        if selected_evidence_id:
+            require_healthy_terminal_evidence(
+                paths,
+                conn,
+                evidence_id=selected_evidence_id,
+                error_code="test_acceptance_evidence_required",
+                allowed_types=ADHOC_EVIDENCE_TYPES,
+            )
+        elif status == "passing" and not workflow_run_id:
+            raise EvidenceAddError(
+                "Direct test passing requires healthy hash-pinned Evidence via --evidence-id.",
+                code="test_acceptance_evidence_required",
+                details={"test_case_id": test_case_id, "reason": "direct_evidence_required"},
+            )
+        elif evidence_type and evidence.strip():
+            selected_evidence_id = record_inline_evidence(
                 conn,
                 evidence_type=evidence_type,
                 summary=evidence.strip(),
                 context=f"test-case/{test_case_id}/{status}",
                 command=command_name,
+            )
+            if command_name in {"pcl test pass", "pcl test fail"}:
+                evidence_mode = "legacy_inline"
+        if selected_evidence_id and evidence_mode == "id":
+            insert_evidence_link(
+                conn,
+                evidence_id=selected_evidence_id,
+                target_type="test_case",
+                target_id=test_case_id,
+                link_role="acceptance" if status == "passing" else "supporting",
+                created_at=now,
             )
         conn.execute(
             """
@@ -551,40 +610,48 @@ def _transition_test_case(
             SET status = ?, last_run_id = COALESCE(?, last_run_id), evidence_id = COALESCE(?, evidence_id), updated_at = ?
             WHERE id = ?
             """,
-            (status, workflow_run_id, evidence_id, now, test_case_id),
+            (status, workflow_run_id, selected_evidence_id, now, test_case_id),
         )
         feature_status = _refresh_feature_status_for_tests(conn, paths, str(test_case["feature_id"]), now)
         cleaned_summary = summary.strip()
+        event_payload = {
+            text_field: cleaned_summary,
+            "feature_id": test_case["feature_id"],
+            "story_id": test_case["story_id"],
+            "workflow_run_id": workflow_run_id,
+            "evidence_id": selected_evidence_id,
+            "previous_status": test_case["status"],
+            "status": status,
+            "feature_status": feature_status,
+        }
+        if evidence_mode is not None:
+            event_payload["evidence_mode"] = evidence_mode
         append_event(
             conn=conn,
             events_path=paths.events_path,
             event_type=event_type,
             entity_type="test_case",
             entity_id=test_case_id,
-            payload={
-                text_field: cleaned_summary,
-                "feature_id": test_case["feature_id"],
-                "story_id": test_case["story_id"],
-                "workflow_run_id": workflow_run_id,
-                "evidence_id": evidence_id,
-                "previous_status": test_case["status"],
-                "status": status,
-                "feature_status": feature_status,
-            },
+            payload=event_payload,
         )
         conn.commit()
-        return {
+        result = {
             "ok": True,
             "id": test_case_id,
             "feature_id": test_case["feature_id"],
             "story_id": test_case["story_id"],
             "status": status,
             "workflow_run_id": workflow_run_id,
-            "evidence_id": evidence_id,
+            "evidence_id": selected_evidence_id,
             text_field: cleaned_summary,
             "feature_status": feature_status,
             "changed": True,
         }
+        if evidence_mode is not None:
+            result["evidence_mode"] = evidence_mode
+        if evidence_mode == "legacy_inline":
+            result["warnings"] = [dict(LEGACY_INLINE_EVIDENCE_WARNING)]
+        return result
     finally:
         conn.close()
 

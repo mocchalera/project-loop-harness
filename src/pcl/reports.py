@@ -58,10 +58,12 @@ def report_goal(paths: ProjectPaths, goal_id: str) -> dict[str, Any]:
         ]
         events = _events_for_entities(conn, entities)
         evidence = _evidence_for_report(conn, events=events, jobs=jobs)
+        closure_proof = _closure_proof(goal.get("completion_json"))
         data = {
             "kind": "goal",
             "id": goal_id,
             "goal": goal,
+            "closure_proof": closure_proof,
             "workflow_runs": runs,
             "agent_jobs": jobs,
             "verifications": verifications,
@@ -266,6 +268,9 @@ def _render_goal_report(data: dict[str, Any]) -> str:
         "## Completion",
         _json_block(goal.get("completion_json")),
         "",
+        "## Closure Proof",
+        _kv_table(data["closure_proof"], ["proof_type", "evidence_id", "verification_id", "packet_outcome"]),
+        "",
         *_goal_tasks_section(data["tasks"]),
         "## Workflow Runs",
         _table(data["workflow_runs"], ["id", "workflow_id", "status", "iteration", "started_at", "ended_at", "summary"]),
@@ -299,6 +304,22 @@ def _render_goal_report(data: dict[str, Any]) -> str:
         "",
     ]
     return "\n".join(parts)
+
+
+def _closure_proof(raw_completion: Any) -> dict[str, Any]:
+    try:
+        completion = json.loads(raw_completion or "{}") if isinstance(raw_completion, str) else raw_completion
+    except json.JSONDecodeError:
+        completion = {}
+    closure = completion.get("closure", {}) if isinstance(completion, dict) else {}
+    if not isinstance(closure, dict):
+        closure = {}
+    return {
+        "proof_type": closure.get("proof_type"),
+        "evidence_id": closure.get("evidence_id"),
+        "verification_id": closure.get("verification_id"),
+        "packet_outcome": closure.get("packet_outcome"),
+    }
 
 
 def _render_run_report(data: dict[str, Any]) -> str:

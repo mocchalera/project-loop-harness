@@ -263,7 +263,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_goal_close = goal_sub.add_parser("close")
     p_goal_close.add_argument("goal_id")
     p_goal_close.add_argument("--summary", required=True)
-    p_goal_close.add_argument("--evidence", default="")
+    goal_evidence = p_goal_close.add_mutually_exclusive_group()
+    goal_evidence.add_argument("--evidence", default="")
+    goal_evidence.add_argument("--evidence-id", default=None)
     p_goal_close.add_argument("--verification", default=None)
     p_goal_cancel = goal_sub.add_parser("cancel")
     p_goal_cancel.add_argument("goal_id")
@@ -292,11 +294,13 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Target feature status: {_choices_help(FEATURE_STATUSES)}",
     )
     p_feature_status.add_argument("--summary", default="")
-    p_feature_status.add_argument(
+    feature_evidence = p_feature_status.add_mutually_exclusive_group()
+    feature_evidence.add_argument(
         "--evidence",
         default="",
         help="Reviewer-checkable proof, such as command output, artifact path, screenshot path, commit, or report path.",
     )
+    feature_evidence.add_argument("--evidence-id", default=None)
 
     p_story = sub.add_parser("story", help="Manage user stories")
     story_sub = p_story.add_subparsers(dest="story_command", required=True)
@@ -340,20 +344,24 @@ def build_parser() -> argparse.ArgumentParser:
     p_test_pass = test_sub.add_parser("pass")
     p_test_pass.add_argument("test_case_id")
     p_test_pass.add_argument("--summary", required=True)
-    p_test_pass.add_argument(
+    test_pass_evidence = p_test_pass.add_mutually_exclusive_group()
+    test_pass_evidence.add_argument(
         "--evidence",
         default="",
         help="Reviewer-checkable proof, such as command output, artifact path, screenshot path, commit, or report path.",
     )
+    test_pass_evidence.add_argument("--evidence-id", default=None)
     p_test_pass.add_argument("--run", default=None)
     p_test_fail = test_sub.add_parser("fail")
     p_test_fail.add_argument("test_case_id")
     p_test_fail.add_argument("--summary", required=True)
-    p_test_fail.add_argument(
+    test_fail_evidence = p_test_fail.add_mutually_exclusive_group()
+    test_fail_evidence.add_argument(
         "--evidence",
         default="",
         help="Reviewer-checkable proof, such as failing command output, artifact path, screenshot path, or report path.",
     )
+    test_fail_evidence.add_argument("--evidence-id", default=None)
     p_test_fail.add_argument("--run", default=None)
     p_test_block = test_sub.add_parser("block")
     p_test_block.add_argument("test_case_id")
@@ -1057,6 +1065,16 @@ def _print_json(payload: object) -> None:
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True))
 
 
+def _print_legacy_evidence_warning(result: dict, *, json_output: bool) -> None:
+    if json_output:
+        return
+    if any(warning.get("code") == "legacy_inline_evidence" for warning in result.get("warnings", [])):
+        print(
+            "WARNING: --evidence is deprecated for terminal proof; use --evidence-id with hash-pinned Evidence.",
+            file=sys.stderr,
+        )
+
+
 def _validate_contract_file(
     path_value: str,
     *,
@@ -1586,8 +1604,10 @@ def main(argv: list[str] | None = None) -> int:
                 goal_id=args.goal_id,
                 summary=args.summary,
                 evidence=args.evidence,
+                evidence_id=args.evidence_id,
                 verification_id=args.verification,
             )
+            _print_legacy_evidence_warning(result, json_output=json_output)
             if json_output:
                 _print_json(result)
             elif result.get("changed") is False:
@@ -1646,7 +1666,9 @@ def main(argv: list[str] | None = None) -> int:
                 status=args.status,
                 summary=args.summary,
                 evidence=args.evidence,
+                evidence_id=args.evidence_id,
             )
+            _print_legacy_evidence_warning(result, json_output=json_output)
             if json_output:
                 _print_json(result)
             elif result.get("changed") is False:
@@ -1734,8 +1756,10 @@ def main(argv: list[str] | None = None) -> int:
                 test_case_id=args.test_case_id,
                 summary=args.summary,
                 evidence=args.evidence,
+                evidence_id=args.evidence_id,
                 workflow_run_id=args.run,
             )
+            _print_legacy_evidence_warning(result, json_output=json_output)
             if json_output:
                 _print_json(result)
             elif result.get("changed") is False:
@@ -1750,8 +1774,10 @@ def main(argv: list[str] | None = None) -> int:
                 test_case_id=args.test_case_id,
                 summary=args.summary,
                 evidence=args.evidence,
+                evidence_id=args.evidence_id,
                 workflow_run_id=args.run,
             )
+            _print_legacy_evidence_warning(result, json_output=json_output)
             if json_output:
                 _print_json(result)
             elif result.get("changed") is False:

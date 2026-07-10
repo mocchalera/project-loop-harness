@@ -89,6 +89,42 @@ def _assert_guided_action(action: dict) -> None:
     assert isinstance(action["expected_after"], str)
 
 
+def _add_done_feature(root: Path, capsys, index: int) -> None:
+    feature_id = f"F-{index:04d}"
+    story_id = f"US-{index:04d}"
+    test_id = f"TC-{index:04d}"
+    assert main([
+        "--root", str(root), "feature", "add", "--name", f"Feature {index}",
+        "--surface", f"surface:{index}",
+    ]) == 0
+    assert main([
+        "--root", str(root), "story", "draft", "--feature", feature_id,
+        "--actor", "operator", "--goal", f"complete feature {index}",
+        "--expected-behavior", f"Feature {index} is verified",
+    ]) == 0
+    assert main(["--root", str(root), "story", "approve", story_id, "--summary", "reviewed"]) == 0
+    assert main([
+        "--root", str(root), "test", "plan", "--feature", feature_id, "--story", story_id,
+        "--type", "acceptance", "--scenario", f"Feature {index} works", "--expected", "passing",
+    ]) == 0
+    capsys.readouterr()
+    artifact = root / f"feature-{index}-result.txt"
+    artifact.write_text("passed\n", encoding="utf-8")
+    assert main([
+        "--root", str(root), "evidence", "add", "--file", artifact.name,
+        "--summary", f"Feature {index} acceptance", "--copy", "--json",
+    ]) == 0
+    evidence_id = str(_json_output(capsys)["evidence"]["id"])
+    assert main([
+        "--root", str(root), "test", "pass", test_id, "--summary", "passed",
+        "--evidence-id", evidence_id,
+    ]) == 0
+    assert main([
+        "--root", str(root), "feature", "status", feature_id, "--status", "done",
+        "--summary", f"Feature {index} complete", "--evidence-id", evidence_id,
+    ]) == 0
+
+
 def _approve_workflow(tmp_path: Path, capsys, workflow_text: str) -> None:
     source = tmp_path / "workflow.yaml"
     source.write_text(workflow_text, encoding="utf-8")
@@ -155,29 +191,7 @@ def test_next_routes_checkpoint_review_before_more_goal_continuation(tmp_path: P
     assert main(["init", "--target", str(tmp_path)]) == 0
     assert main(["--root", str(tmp_path), "goal", "create", "--title", "Improve UX"]) == 0
     for index in range(1, 6):
-        assert main([
-            "--root",
-            str(tmp_path),
-            "feature",
-            "add",
-            "--name",
-            f"Feature {index}",
-            "--surface",
-            f"surface:{index}",
-        ]) == 0
-        assert main([
-            "--root",
-            str(tmp_path),
-            "feature",
-            "status",
-            f"F-000{index}",
-            "--status",
-            "done",
-            "--summary",
-            f"Feature {index} complete",
-            "--evidence",
-            f"Verification evidence for feature {index}",
-        ]) == 0
+        _add_done_feature(tmp_path, capsys, index)
     capsys.readouterr()
 
     assert main(["--root", str(tmp_path), "next", "--json"]) == 0
@@ -279,29 +293,7 @@ def test_next_routes_checkpoint_review_before_ready_task(tmp_path: Path, capsys)
         "Ready for routing",
     ]) == 0
     for index in range(1, 6):
-        assert main([
-            "--root",
-            str(tmp_path),
-            "feature",
-            "add",
-            "--name",
-            f"Feature {index}",
-            "--surface",
-            f"surface:{index}",
-        ]) == 0
-        assert main([
-            "--root",
-            str(tmp_path),
-            "feature",
-            "status",
-            f"F-000{index}",
-            "--status",
-            "done",
-            "--summary",
-            f"Feature {index} complete",
-            "--evidence",
-            f"Verification evidence for feature {index}",
-        ]) == 0
+        _add_done_feature(tmp_path, capsys, index)
     capsys.readouterr()
 
     assert main(["--root", str(tmp_path), "next", "--json"]) == 0

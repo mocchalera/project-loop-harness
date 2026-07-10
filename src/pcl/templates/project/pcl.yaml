@@ -47,6 +47,9 @@ loop:
   require_human_after_repeated_failure: true
   stop_if_same_failure_repeats: true
 
+validation:
+  lifecycle_integrity: enforced
+
 permissions:
   agent_may_modify:
     - src/

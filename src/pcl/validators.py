@@ -9,6 +9,7 @@ import sqlite3
 from typing import Any
 
 from .context_binding import _receipt_target_binding_agrees
+from .contracts.completion_packet import load_completion_packet, validate_completion_packet
 from .db import connect, table_exists
 from .evidence import ADHOC_EVIDENCE_TYPES, assess_adhoc_evidence
 from .errors import DataStoreError, InvalidInputError
@@ -79,6 +80,7 @@ DECISION_BLOCK_TARGET_TABLES = {
     "workflow_run": "workflow_runs",
 }
 ADHOC_DRIFT_WARNING_PREFIX = "Adhoc evidence "
+LIFECYCLE_ADVISORY_PREFIX = "Lifecycle integrity advisory: "
 
 
 @dataclass
@@ -103,6 +105,8 @@ class ValidationResult:
 
 
 def _strict_warning_remains_warning(warning: str) -> bool:
+    if warning.startswith(LIFECYCLE_ADVISORY_PREFIX):
+        return True
     return warning.startswith(ADHOC_DRIFT_WARNING_PREFIX) and (
         " drifted: " in warning or warning.endswith(" is outside the project root.")
     )
@@ -265,10 +269,13 @@ def _validate_strict_invariants(paths: ProjectPaths, conn: sqlite3.Connection, r
     _validate_foreign_keys(conn, result)
     _validate_verification_feedback_references(conn, result)
     _validate_evidence_links(paths, conn, result)
-    _validate_closed_goals(conn, result)
+    _validate_closed_goals(paths, conn, result)
     _validate_passed_workflow_runs(conn, result)
     _validate_verified_or_closed_defects(conn, result)
     _validate_terminal_test_cases(conn, result)
+    _validate_story_test_traceability(paths, conn, result)
+    _validate_done_features(paths, conn, result)
+    _validate_direct_test_evidence(paths, conn, result)
     _validate_duplicate_active_runs(conn, result)
     _validate_terminal_parent_children(conn, result)
     _validate_decision_block_links(conn, result)
@@ -732,7 +739,7 @@ def _validate_code_context_link_binding(
     )
 
 
-def _validate_closed_goals(conn: sqlite3.Connection, result: ValidationResult) -> None:
+def _validate_closed_goals(paths: ProjectPaths, conn: sqlite3.Connection, result: ValidationResult) -> None:
     rows = conn.execute(
         "SELECT id, completion_json FROM goals WHERE status = 'closed' ORDER BY id"
     ).fetchall()
@@ -743,7 +750,9 @@ def _validate_closed_goals(conn: sqlite3.Connection, result: ValidationResult) -
         evidence = str(closure.get("evidence") or "").strip()
         verification_id = closure.get("verification_id")
         verification_id = str(verification_id).strip() if verification_id else ""
-        if not evidence and not verification_id:
+        evidence_id = str(closure.get("evidence_id") or "").strip()
+        proof_type = str(closure.get("proof_type") or "").strip()
+        if not evidence and not evidence_id and not verification_id:
             result.add_error(f"Closed goal {goal_id} has no closure evidence or verification.")
         if verification_id:
             verification = conn.execute(
@@ -763,6 +772,42 @@ def _validate_closed_goals(conn: sqlite3.Connection, result: ValidationResult) -
                 )
             elif verification["goal_id"] != goal_id:
                 result.add_error(f"Closed goal {goal_id} references verification {verification_id} from another goal.")
+        has_packet_proof = False
+        if evidence_id and proof_type == "completion_packet":
+            link = conn.execute(
+                "SELECT 1 FROM evidence_links WHERE evidence_id = ? AND target_type = 'goal' AND target_id = ? AND link_role = 'completion_packet'",
+                (evidence_id, goal_id),
+            ).fetchone()
+            row_evidence = conn.execute("SELECT type, path FROM evidence WHERE id = ?", (evidence_id,)).fetchone()
+            has_packet_proof = link is not None and row_evidence is not None and row_evidence["type"] == "completion_packet"
+            if has_packet_proof:
+                has_packet_proof = _completion_packet_is_valid_for_goal(paths, str(row_evidence["path"]), goal_id)
+        if not verification_id and not has_packet_proof:
+            _add_lifecycle_finding(
+                paths,
+                result,
+                f"goal_close_verification_required: Closed goal {goal_id} has neither approved same-goal Verification nor valid completed packet Evidence.",
+            )
+
+
+def _completion_packet_is_valid_for_goal(paths: ProjectPaths, path_value: str, goal_id: str) -> bool:
+    path = Path(path_value)
+    packet_path = path if path.is_absolute() else paths.root / path
+    try:
+        packet = load_completion_packet(packet_path)
+    except (OSError, json.JSONDecodeError):
+        return False
+    if not validate_completion_packet(packet).ok or not isinstance(packet, dict):
+        return False
+    target = packet.get("target")
+    if not isinstance(target, dict) or target.get("type") != "goal" or target.get("id") != goal_id:
+        return False
+    if packet.get("outcome") not in {"COMPLETED_VERIFIED", "COMPLETED_WITH_RISK"}:
+        return False
+    risks = packet.get("risks", [])
+    return isinstance(risks, list) and all(
+        isinstance(risk, dict) and risk.get("severity") == "low" for risk in risks
+    )
 
 
 def _validate_passed_workflow_runs(conn: sqlite3.Connection, result: ValidationResult) -> None:
@@ -866,7 +911,9 @@ def _validate_terminal_test_cases(conn: sqlite3.Connection, result: ValidationRe
             evidence_type = _evidence_type(conn, evidence_id)
             if evidence_type is None:
                 result.add_error(f"Test case {test_case_id} references missing evidence {evidence_id}.")
-            elif evidence_type != expected_evidence_type:
+            elif evidence_type != expected_evidence_type and not (
+                status == "passing" and evidence_type in ADHOC_EVIDENCE_TYPES
+            ):
                 result.add_error(
                     f"Test case {test_case_id} has current evidence {evidence_id} with type "
                     f"{evidence_type}, expected {expected_evidence_type}."
@@ -878,7 +925,91 @@ def _validate_terminal_test_cases(conn: sqlite3.Connection, result: ValidationRe
             status=status,
             event_type=event_type,
             evidence_type=expected_evidence_type,
+            alternative_types=ADHOC_EVIDENCE_TYPES if status == "passing" else set(),
         )
+
+
+def _add_lifecycle_finding(paths: ProjectPaths, result: ValidationResult, message: str) -> None:
+    policy = _simple_yaml_section(
+        (paths.root / "pcl.yaml").read_text(encoding="utf-8").splitlines()
+        if (paths.root / "pcl.yaml").exists()
+        else [],
+        "validation",
+    ).get("lifecycle_integrity", "advisory")
+    if policy == "enforced":
+        result.add_error(message)
+    else:
+        result.add_warning(f"{LIFECYCLE_ADVISORY_PREFIX}{message}")
+
+
+def _validate_story_test_traceability(paths: ProjectPaths, conn: sqlite3.Connection, result: ValidationResult) -> None:
+    rows = conn.execute(
+        """
+        SELECT tc.id, tc.feature_id, tc.story_id, us.feature_id AS story_feature_id, us.status AS story_status
+        FROM test_cases AS tc
+        LEFT JOIN user_stories AS us ON us.id = tc.story_id
+        WHERE tc.status = 'passing'
+        ORDER BY tc.id
+        """
+    ).fetchall()
+    for row in rows:
+        test_id = str(row["id"])
+        story_id = str(row["story_id"] or "")
+        if not story_id or row["story_feature_id"] != row["feature_id"]:
+            _add_lifecycle_finding(paths, result, f"test_story_required: Passing test {test_id} has no same-Feature Story link.")
+        elif row["story_status"] not in {"approved", "waived"}:
+            _add_lifecycle_finding(
+                paths,
+                result,
+                f"test_story_not_terminal: Passing test {test_id} links Story {story_id} in {row['story_status']} status.",
+            )
+
+
+def _validate_done_features(paths: ProjectPaths, conn: sqlite3.Connection, result: ValidationResult) -> None:
+    for feature in conn.execute("SELECT id FROM features WHERE status = 'done' ORDER BY id").fetchall():
+        feature_id = str(feature["id"])
+        stories = conn.execute("SELECT id, status FROM user_stories WHERE feature_id = ?", (feature_id,)).fetchall()
+        if not stories or any(row["status"] not in {"approved", "waived"} for row in stories):
+            ids = ",".join(str(row["id"]) for row in stories if row["status"] not in {"approved", "waived"}) or "none"
+            _add_lifecycle_finding(paths, result, f"feature_done_story_incomplete: Done feature {feature_id} has incomplete Stories: {ids}.")
+        tests = conn.execute("SELECT id, status FROM test_cases WHERE feature_id = ? AND status != 'waived'", (feature_id,)).fetchall()
+        if not tests or any(row["status"] != "passing" for row in tests):
+            _add_lifecycle_finding(paths, result, f"feature_done_tests_incomplete: Done feature {feature_id} lacks complete passing Tests.")
+        defects = conn.execute("SELECT id FROM defects WHERE feature_id = ? AND status NOT IN ('closed', 'waived')", (feature_id,)).fetchall()
+        if defects:
+            _add_lifecycle_finding(paths, result, f"feature_done_open_defects: Done feature {feature_id} has active Defects.")
+        linked = conn.execute(
+            "SELECT 1 FROM evidence_links WHERE target_type = 'feature' AND target_id = ? AND link_role IN ('acceptance', 'completion_packet')",
+            (feature_id,),
+        ).fetchone()
+        if linked is None:
+            _add_lifecycle_finding(paths, result, f"feature_done_evidence_required: Done feature {feature_id} lacks target-bound completion Evidence.")
+
+
+def _validate_direct_test_evidence(paths: ProjectPaths, conn: sqlite3.Connection, result: ValidationResult) -> None:
+    rows = conn.execute(
+        "SELECT id, last_run_id, evidence_id FROM test_cases WHERE status = 'passing' ORDER BY id"
+    ).fetchall()
+    for row in rows:
+        if row["last_run_id"]:
+            continue
+        evidence_id = str(row["evidence_id"] or "")
+        evidence = conn.execute("SELECT type, path FROM evidence WHERE id = ?", (evidence_id,)).fetchone()
+        link = conn.execute(
+            "SELECT 1 FROM evidence_links WHERE evidence_id = ? AND target_type = 'test_case' AND target_id = ? AND link_role = 'acceptance'",
+            (evidence_id, row["id"]),
+        ).fetchone()
+        healthy = False
+        if evidence is not None and evidence["type"] in ADHOC_EVIDENCE_TYPES and link is not None:
+            healthy = assess_adhoc_evidence(
+                paths,
+                evidence_id=evidence_id,
+                evidence_type=str(evidence["type"]),
+                manifest_path_value=str(evidence["path"]),
+                validate_optional_fields=True,
+            )["health"] == "ok"
+        if not healthy:
+            _add_lifecycle_finding(paths, result, f"test_acceptance_evidence_required: Direct passing test {row['id']} lacks healthy target-bound acceptance Evidence.")
 
 
 def _validate_duplicate_active_runs(conn: sqlite3.Connection, result: ValidationResult) -> None:
@@ -1498,6 +1629,7 @@ def _validate_test_case_transition_evidence(
     status: str,
     event_type: str,
     evidence_type: str,
+    alternative_types: set[str] | None = None,
 ) -> None:
     rows = conn.execute(
         """
@@ -1527,7 +1659,7 @@ def _validate_test_case_transition_evidence(
     mismatches: list[str] = []
     for evidence_id in sorted(set(evidence_ids)):
         actual_type = _evidence_type(conn, evidence_id)
-        if actual_type == evidence_type:
+        if actual_type == evidence_type or actual_type in (alternative_types or set()):
             return
         if actual_type is None:
             mismatches.append(f"{evidence_id}=missing")

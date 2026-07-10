@@ -31,6 +31,33 @@ def _add_done_feature(root: Path, capsys, index: int) -> str:
     ]) == 0
     feature_id = str(_json_output(capsys)["id"])
     assert main([
+        "--root", str(root), "story", "draft", "--feature", feature_id,
+        "--actor", "operator", "--goal", f"complete feature {index}",
+        "--expected-behavior", f"Feature {index} is verified",
+    ]) == 0
+    capsys.readouterr()
+    story_id = f"US-{index:04d}"
+    assert main(["--root", str(root), "story", "approve", story_id, "--summary", "reviewed"]) == 0
+    capsys.readouterr()
+    assert main([
+        "--root", str(root), "test", "plan", "--feature", feature_id, "--story", story_id,
+        "--type", "acceptance", "--scenario", f"Feature {index} works", "--expected", "passing",
+    ]) == 0
+    capsys.readouterr()
+    artifact = root / f"feature-{index}-result.txt"
+    artifact.write_text("passed\n", encoding="utf-8")
+    assert main([
+        "--root", str(root), "evidence", "add", "--file", artifact.name,
+        "--summary", f"Feature {index} acceptance", "--copy", "--json",
+    ]) == 0
+    evidence_id = str(_json_output(capsys)["evidence"]["id"])
+    test_id = f"TC-{index:04d}"
+    assert main([
+        "--root", str(root), "test", "pass", test_id, "--summary", "passed",
+        "--evidence-id", evidence_id,
+    ]) == 0
+    capsys.readouterr()
+    assert main([
         "--root",
         str(root),
         "feature",
@@ -40,8 +67,8 @@ def _add_done_feature(root: Path, capsys, index: int) -> str:
         "done",
         "--summary",
         f"Feature {index} complete",
-        "--evidence",
-        f"Verification evidence for feature {index}",
+        "--evidence-id",
+        evidence_id,
         "--json",
     ]) == 0
     _json_output(capsys)

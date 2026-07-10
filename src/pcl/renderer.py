@@ -47,6 +47,34 @@ def _one(conn, sql: str, params: tuple = ()) -> dict[str, Any] | None:
     return None if row is None else dict(row)
 
 
+def _goal_rows(conn) -> list[dict[str, Any]]:
+    rows = _rows(
+        conn,
+        """
+        SELECT id, title, status, completion_json, updated_at
+        FROM goals
+        ORDER BY created_at DESC, id DESC
+        LIMIT 20
+        """,
+    )
+    for row in rows:
+        try:
+            completion = json.loads(str(row.get("completion_json") or "{}"))
+        except json.JSONDecodeError:
+            completion = {}
+        closure = completion.get("closure", {}) if isinstance(completion, dict) else {}
+        if not isinstance(closure, dict):
+            closure = {}
+        row["closure_proof"] = {
+            "proof_type": closure.get("proof_type"),
+            "evidence_id": closure.get("evidence_id"),
+            "verification_id": closure.get("verification_id"),
+            "packet_outcome": closure.get("packet_outcome"),
+        }
+        row.pop("completion_json", None)
+    return rows
+
+
 def render_dashboard(paths: ProjectPaths, *, locale: str | None = None) -> None:
     require_initialized(paths)
     resolved_locale = resolve_dashboard_locale(paths, locale)
@@ -163,15 +191,7 @@ def render_dashboard(paths: ProjectPaths, *, locale: str | None = None) -> None:
                 """,
             ),
             "tasks": _task_rows(conn),
-            "goals": _rows(
-                conn,
-                """
-                SELECT id, title, status, updated_at
-                FROM goals
-                ORDER BY created_at DESC, id DESC
-                LIMIT 20
-                """,
-            ),
+            "goals": _goal_rows(conn),
             "workflow_runs": _rows(
                 conn,
                 """
