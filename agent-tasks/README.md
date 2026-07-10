@@ -31,15 +31,16 @@ implement from the spec file, not from prompt summaries.
 | 0120 | `pcl finish` terminal close-out planner (F7) | v0.3.1 Operator Experience | P1 | done (shipped v0.3.1) |
 | 0121 | Japanese human-gate guidance in `pcl next` (F5) | v0.3.1 Operator Experience | P1 | done (shipped v0.3.1) |
 | 0122 | feature_coverage no-op when all covered (F4) | v0.3.1 Operator Experience | P1 | done (shipped v0.3.1) |
-| 0123 | Master trace / intent-index v0 contract formalization | v0.3.2 Master Trace / Intent Index | P1 | dispatched (T-0007) |
-| 0124 | Freeze v0.3.1 baseline (snapshot fixtures + baseline doc) | v0.3.3 Trust Foundation (Wave A) | P0 | dispatched (T-0008) |
-| 0125 | MCP stdio framing + version negotiation spec compliance | v0.3.3 Trust Foundation (Wave A) | P0 | ready (after 0124) |
-| 0126 | MCP external conformance fixtures + compatibility matrix | v0.3.3 Trust Foundation (Wave A) | P0 | ready (after 0125) |
-| 0127 | Transactional audit outbox ADR + failure model | v0.3.3 Trust Foundation (Wave A) | P0 | ready (after 0124; ADR acceptance is a human gate) |
-| 0128 | Event outbox + idempotent JSONL projector | v0.3.3 Trust Foundation (Wave A) | P0 | blocked (needs 0127 ADR accepted) |
+| 0123 | Master trace / intent-index v0 contract formalization | v0.3.2 Master Trace / Intent Index | P1 | done (main 3821e7a; contract accepted DEC-0002) |
+| 0124 | Freeze v0.3.1 baseline (snapshot fixtures + baseline doc) | v0.3.3 Trust Foundation (Wave A) | P0 | done (main c9ebd32) |
+| 0125 | MCP stdio framing + version negotiation spec compliance | v0.3.3 Trust Foundation (Wave A) | P0 | done (main 6997dfc) |
+| 0126 | MCP external conformance fixtures + compatibility matrix | v0.3.3 Trust Foundation (Wave A) | P0 | dispatched (T-0011) |
+| 0127 | Transactional audit outbox ADR + failure model | v0.3.3 Trust Foundation (Wave A) | P0 | done (main 29c995a; ADR-002 Accepted DEC-0001) |
+| 0128 | Event outbox + idempotent JSONL projector | v0.3.3 Trust Foundation (Wave A) | P0 | ready (ADR-002 accepted) |
 | 0129 | Audit check / repair / rebuild (extends validate --strict integrity check) | v0.3.3 Trust Foundation (Wave A) | P0 | blocked (needs 0128) |
 | 0130 | Crash injection + concurrent writer suite | v0.3.3 Trust Foundation (Wave A) | P0 | blocked (needs 0128, 0129) |
-| 0131 | Guarded executor hardening (terminology, caps, redaction) | v0.3.3 Trust Foundation (Wave A) | P1 | ready (after 0124, parallel-safe) |
+| 0131 | Guarded executor hardening (terminology, caps, redaction) | v0.3.3 Trust Foundation (Wave A) | P1 | dispatched (T-0012) |
+| 0132 | Optional master_trace_context section in context-pack/v1 | v0.3.2 Master Trace / Intent Index | P1 | ready (contract accepted DEC-0002) |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the

@@ -1,9 +1,13 @@
 # ADR-002: SQLite transaction を権威とし、JSONL は transactional outbox から投影する
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-10
+- Accepted: 2026-07-10 — 坂本（maintainer）承認、pcl decision DEC-0001。
+  hash chain の v1 guarantee からの defer を含めて Accept。
+  orchestrator (Fable 5) が実装非担当 reviewer として transaction /
+  projector / lock 境界を検分済み（evidence E-0035）。
 - Owners: Architecture / Reliability
-- Decision gate: Maintainer と、実装担当ではない reviewer 1 名以上
+- Decision gate: Maintainer と、実装担当ではない reviewer 1 名以上 — 充足
 - Supersedes on acceptance: `docs/adr/0001-hybrid-state.md` の SQLite/JSONL 整合性に関する dual-write 前提
 - Origin: `docs/roadmap/integrated/adr/ADR-002-transactional-audit-outbox.md`
 
@@ -554,6 +558,9 @@ explicit retry で必要な guarantee を満たせる。
 | Projector trigger | post-commit synchronous bounded attempt + explicit flush | proposed; human acceptance required |
 | fsync | default on | proposed; platform verification required |
 | Legacy migration | ID/full-content/order mapping; non-destructive; anomalies block | proposed; fixture verification required |
-| Review | maintainer + independent reviewer | **pending** |
+| Review | maintainer + independent reviewer | accepted 2026-07-10 (DEC-0001) |
 
-この文書の Status は Proposed のままとする。作成者は Accepted を自己記録しない。
+作成者（実装 worker）は Accepted を自己記録しない、という規律のもとで本文書は
+Proposed として提出された。2026-07-10 に maintainer（坂本）が承認し（pcl
+decision DEC-0001）、orchestrator が実装非担当 reviewer として検分したため、
+Status を Accepted に更新した。hash chain の v1 guarantee からの defer を含む。
