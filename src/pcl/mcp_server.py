@@ -16,7 +16,9 @@ from .renderer import render_dashboard
 from .validators import validate_project
 
 
-PROTOCOL_VERSION = "2025-06-18"
+SUPPORTED_PROTOCOL_VERSIONS = ("2025-06-18",)
+PROTOCOL_VERSION = SUPPORTED_PROTOCOL_VERSIONS[0]
+MAX_STDIO_MESSAGE_BYTES = 1_048_576
 SERVER_NAME = "pcl-mcp"
 APPROVAL_READ_ONLY = "read-only"
 APPROVAL_LOCAL_RENDER = "local-render"
@@ -95,7 +97,9 @@ class ProjectLoopMcpServer:
 
     def _initialize(self, params: dict[str, Any]) -> dict[str, Any]:
         requested = params.get("protocolVersion")
-        protocol_version = str(requested or PROTOCOL_VERSION)
+        protocol_version = (
+            requested if requested in SUPPORTED_PROTOCOL_VERSIONS else PROTOCOL_VERSION
+        )
         return {
             "protocolVersion": protocol_version,
             "capabilities": {"tools": {}},
@@ -277,29 +281,70 @@ def _redact_key_value_secret(match: re.Match[str]) -> str:
 
 def encode_message(message: dict[str, Any]) -> bytes:
     body = json.dumps(message, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-    return b"Content-Length: " + str(len(body)).encode("ascii") + b"\r\n\r\n" + body
+    return body + b"\n"
 
 
-def read_message(stream: BinaryIO) -> dict[str, Any] | None:
-    headers: dict[str, str] = {}
+def read_message(
+    stream: BinaryIO, *, max_line_bytes: int = MAX_STDIO_MESSAGE_BYTES
+) -> dict[str, Any] | None:
+    line = stream.readline(max_line_bytes + 2)
+    if line == b"":
+        return None
+    terminated = line.endswith(b"\n")
+    payload = line[:-1] if terminated else line
+    if payload.endswith(b"\r"):
+        payload = payload[:-1]
+    if len(payload) > max_line_bytes:
+        _discard_until_newline(stream, line, chunk_size=max_line_bytes + 2)
+        raise JsonRpcError(
+            -32700,
+            f"JSON-RPC message exceeds maximum line size of {max_line_bytes} bytes.",
+        )
+    if not terminated:
+        raise JsonRpcError(-32700, "JSON-RPC message ended before newline delimiter.")
+    if not payload:
+        raise JsonRpcError(-32700, "Empty JSON-RPC message line.")
+    try:
+        message = json.loads(payload.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise JsonRpcError(-32700, "Invalid JSON-RPC message.") from exc
+    if not isinstance(message, dict):
+        raise JsonRpcError(-32600, "JSON-RPC message must be an object.")
+    return message
+
+
+def _discard_until_newline(stream: BinaryIO, initial: bytes, *, chunk_size: int) -> None:
+    chunk = initial
+    while not chunk.endswith(b"\n"):
+        chunk = stream.readline(chunk_size)
+        if chunk == b"":
+            return
+
+
+def _error_response(error: JsonRpcError) -> dict[str, Any]:
+    payload: dict[str, Any] = {"code": error.code, "message": error.message}
+    if error.data is not None:
+        payload["data"] = error.data
+    return {"jsonrpc": "2.0", "id": None, "error": payload}
+
+
+def serve_stdio(
+    server: ProjectLoopMcpServer,
+    *,
+    stdin: BinaryIO,
+    stdout: BinaryIO,
+    stderr: BinaryIO | None = None,
+) -> None:
     while True:
-        line = stream.readline()
-        if line == b"":
-            return None
-        if line in {b"\r\n", b"\n"}:
-            break
-        key, _, value = line.decode("ascii").partition(":")
-        headers[key.strip().lower()] = value.strip()
-    length = int(headers.get("content-length", "0"))
-    if length <= 0:
-        raise JsonRpcError(-32700, "Missing Content-Length header.")
-    body = stream.read(length)
-    return json.loads(body.decode("utf-8"))
-
-
-def serve_stdio(server: ProjectLoopMcpServer, *, stdin: BinaryIO, stdout: BinaryIO) -> None:
-    while True:
-        request = read_message(stdin)
+        try:
+            request = read_message(stdin)
+        except JsonRpcError as exc:
+            if stderr is not None:
+                stderr.write(f"pcl-mcp stdio: {exc.message}\n".encode("utf-8"))
+                stderr.flush()
+            stdout.write(encode_message(_error_response(exc)))
+            stdout.flush()
+            continue
         if request is None:
             return
         response = server.handle(request)
@@ -328,7 +373,12 @@ def main(argv: list[str] | None = None) -> int:
     if not args.stdio:
         parser.error("Only --stdio transport is implemented.")
     server = ProjectLoopMcpServer(resolve_paths(args.root), approval_mode=args.approval_mode)
-    serve_stdio(server, stdin=sys.stdin.buffer, stdout=sys.stdout.buffer)
+    serve_stdio(
+        server,
+        stdin=sys.stdin.buffer,
+        stdout=sys.stdout.buffer,
+        stderr=sys.stderr.buffer,
+    )
     return 0
 
 

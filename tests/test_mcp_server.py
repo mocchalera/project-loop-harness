@@ -2,15 +2,24 @@ from __future__ import annotations
 
 from io import BytesIO
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
+
+import pytest
 
 from pcl.cli import main as pcl_main
 from pcl.mcp_server import (
     APPROVAL_LOCAL_RENDER,
     APPROVAL_READ_ONLY,
+    MAX_STDIO_MESSAGE_BYTES,
     ProjectLoopMcpServer,
+    SUPPORTED_PROTOCOL_VERSIONS,
+    JsonRpcError,
     encode_message,
     read_message,
+    serve_stdio,
 )
 from pcl.paths import resolve_paths
 
@@ -47,6 +56,27 @@ def test_mcp_initialize_and_tool_listing_read_only(tmp_path: Path) -> None:
     names = [tool["name"] for tool in tools["result"]["tools"]]
     assert names == ["get_status", "list_features", "list_defects", "list_escalations"]
     assert all(tool["annotations"]["readOnlyHint"] is True for tool in tools["result"]["tools"])
+
+
+@pytest.mark.parametrize(
+    ("requested", "expected"),
+    [
+        ("2025-06-18", "2025-06-18"),
+        ("2025-03-26", "2025-06-18"),
+        ("unsupported-version", "2025-06-18"),
+        (None, "2025-06-18"),
+    ],
+)
+def test_mcp_initialize_negotiates_supported_protocol_version(
+    tmp_path: Path, requested: str | None, expected: str
+) -> None:
+    _init_project(tmp_path)
+    server = _server(tmp_path)
+
+    response = server.handle(_request("initialize", {"protocolVersion": requested}))
+
+    assert SUPPORTED_PROTOCOL_VERSIONS == ("2025-06-18",)
+    assert response["result"]["protocolVersion"] == expected
 
 
 def test_mcp_read_tools_return_project_state(tmp_path: Path) -> None:
@@ -179,16 +209,121 @@ def test_mcp_rejects_non_object_params(tmp_path: Path) -> None:
     assert response["error"]["message"] == "Params must be an object."
 
 
-def test_mcp_message_framing_round_trip() -> None:
-    message = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+@pytest.mark.parametrize("line_ending", [b"\n", b"\r\n"])
+def test_mcp_message_framing_round_trip_lf_and_crlf(line_ending: bytes) -> None:
+    message = {"jsonrpc": "2.0", "id": 1, "method": "ping", "params": {"text": "a\nb"}}
 
     encoded = encode_message(message)
-    decoded = read_message(BytesIO(encoded))
+    decoded = read_message(BytesIO(encoded[:-1] + line_ending))
 
     assert decoded == message
-    assert encoded.startswith(b"Content-Length: ")
-    body = encoded.split(b"\r\n\r\n", 1)[1]
-    assert json.loads(body.decode("utf-8")) == message
+    assert encoded.endswith(b"\n")
+    assert encoded.count(b"\n") == 1
+    assert b"Content-Length" not in encoded
+    assert json.loads(encoded.decode("utf-8")) == message
+
+
+def test_mcp_message_reader_handles_clean_eof_and_rejects_partial_eof() -> None:
+    message = {"jsonrpc": "2.0", "id": 1, "method": "ping"}
+    encoded = encode_message(message)
+
+    stream = BytesIO(encoded)
+    assert read_message(stream) == message
+    assert read_message(stream) is None
+    with pytest.raises(JsonRpcError, match="ended before newline delimiter") as partial:
+        read_message(BytesIO(encoded.rstrip(b"\n")))
+    assert partial.value.code == -32700
+
+
+def test_mcp_message_reader_rejects_malformed_json_and_empty_line() -> None:
+    with pytest.raises(JsonRpcError, match="Invalid JSON-RPC message") as malformed:
+        read_message(BytesIO(b'{"jsonrpc":"2.0",bad}\n'))
+    assert malformed.value.code == -32700
+
+    with pytest.raises(JsonRpcError, match="Empty JSON-RPC message line") as empty:
+        read_message(BytesIO(b"\r\n"))
+    assert empty.value.code == -32700
+
+    with pytest.raises(JsonRpcError, match="Invalid JSON-RPC message") as legacy:
+        read_message(BytesIO(b"Content-Length: 2\r\n"))
+    assert legacy.value.code == -32700
+
+
+def test_mcp_message_reader_rejects_oversized_line_and_recovers_boundary() -> None:
+    following = encode_message({"jsonrpc": "2.0", "id": 2, "method": "ping"})
+    stream = BytesIO(b"x" * (MAX_STDIO_MESSAGE_BYTES + 1) + b"\n" + following)
+
+    with pytest.raises(JsonRpcError, match="exceeds maximum line size") as oversized:
+        read_message(stream)
+    assert oversized.value.code == -32700
+    assert read_message(stream)["id"] == 2
+
+
+def test_mcp_stdio_reports_parse_error_without_corrupting_protocol_channel(tmp_path: Path) -> None:
+    _init_project(tmp_path)
+    stdout = BytesIO()
+    stderr = BytesIO()
+    requests = b"not-json\n" + encode_message(_request("ping", request_id=2))
+
+    serve_stdio(_server(tmp_path), stdin=BytesIO(requests), stdout=stdout, stderr=stderr)
+
+    messages = [json.loads(line) for line in stdout.getvalue().splitlines()]
+    assert messages == [
+        {
+            "jsonrpc": "2.0",
+            "id": None,
+            "error": {"code": -32700, "message": "Invalid JSON-RPC message."},
+        },
+        {"jsonrpc": "2.0", "id": 2, "result": {}},
+    ]
+    assert b"Invalid JSON-RPC message" in stderr.getvalue()
+
+
+def test_mcp_notification_has_no_response(tmp_path: Path) -> None:
+    _init_project(tmp_path)
+    stdout = BytesIO()
+    notification = {"jsonrpc": "2.0", "method": "notifications/initialized"}
+
+    serve_stdio(_server(tmp_path), stdin=BytesIO(encode_message(notification)), stdout=stdout)
+
+    assert stdout.getvalue() == b""
+
+
+def test_mcp_process_initialize_list_and_call_has_pure_stdout(tmp_path: Path) -> None:
+    _init_project(tmp_path)
+    requests = [
+        _request("initialize", {"protocolVersion": "unsupported-version"}, request_id=1),
+        {"jsonrpc": "2.0", "method": "notifications/initialized"},
+        _request("tools/list", request_id=2),
+        _tool_call("list_features", request_id=3),
+    ]
+    wire_input = b"".join(encode_message(message) for message in requests)
+    env = os.environ.copy()
+    source_root = Path(__file__).resolve().parents[1] / "src"
+    env["PYTHONPATH"] = str(source_root)
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "pcl.mcp_server", "--stdio", "--root", str(tmp_path)],
+        input=wire_input,
+        capture_output=True,
+        check=False,
+        env=env,
+    )
+
+    assert completed.returncode == 0
+    stdout_lines = completed.stdout.splitlines()
+    assert len(stdout_lines) == 3
+    responses = [json.loads(line) for line in stdout_lines]
+    assert responses[0]["result"]["protocolVersion"] == "2025-06-18"
+    assert [tool["name"] for tool in responses[1]["result"]["tools"]] == [
+        "get_status",
+        "list_features",
+        "list_defects",
+        "list_escalations",
+    ]
+    assert responses[2]["result"]["structuredContent"] == {"features": []}
+    assert all(line.startswith(b'{"jsonrpc":"2.0",') for line in stdout_lines)
+    assert completed.stderr == b""
 
 
 def test_mcp_unknown_tool_returns_json_rpc_error(tmp_path: Path) -> None:

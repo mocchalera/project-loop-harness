@@ -87,6 +87,24 @@ Run locally over stdio:
 pcl-mcp --stdio --root target-project
 ```
 
+The default stdio transport follows the MCP `2025-06-18`
+[stdio transport specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports):
+each UTF-8 JSON-RPC message is compact JSON on one newline-delimited line.
+Messages must not contain literal embedded newlines, and input lines larger than
+1 MiB receive a JSON-RPC parse error after the server discards the rest of that
+line. Empty or malformed lines and a partial message at EOF also receive a parse
+error; clean EOF shuts the server down. Diagnostics are written only to stderr,
+while every non-empty stdout line is a protocol message.
+
+Following the MCP `2025-06-18`
+[version negotiation rules](https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle#version-negotiation),
+the server currently supports protocol version `2025-06-18`. It returns that
+version when an initialize request asks for an unsupported version; clients
+that do not support the returned version should disconnect. The v0.3.1
+`Content-Length` stdio framing is no longer accepted and has no legacy mode.
+Rollback for clients that still require it is to run the previous package
+version.
+
 `render_dashboard` is available only when local writes are explicitly approved:
 
 ```bash
