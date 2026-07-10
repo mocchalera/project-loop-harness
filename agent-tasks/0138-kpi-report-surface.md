@@ -38,16 +38,27 @@ migration 005）は CLI から取れるが、context pack の token 推定は生
      `not_yet_measured` を明示）
    - `handoff`: resume/packet 生成回数（0137 未 merge の間は同上）
    - 各指標に `data_source`（event type / table）と `window` を明記する。
-2. **context pack usage の最小記録**: `pcl context pack` 成功時に
-   `context_pack_generated` event（estimated_token_count / token_estimator /
-   target / bound_receipt 有無 / truncated 有無）を 0128 outbox 経由で emit
-   する。これは context pack の「project state を変えない」性質のうち
-   **成果物 selection には影響しない**追加であり、audit trail への操作記録と
-   して位置づける。契約影響（0115 fixtures、read-only を assert している既存
-   test）を characterize し、変更点を docs / fixture README（`tests/fixtures/
-   v0.3.1-baseline/README.md` の Intended changes 節）に記録する。
-   ※ event 追加が既存 read-only contract test と両立不能な場合は、opt-out
-   （`--no-usage-event`）ではなく**設計相談として halt して報告**する。
+2. **context pack usage の明示 opt-in 記録**（DEC-0004、2026-07-10 設計確定。
+   characterization の結果、default-on の event 追加は既存 read-only 契約
+   — `tests/test_context.py::test_master_trace_context_contract_fixtures` が
+   pack 前後の events 件数 / `events.jsonl` bytes / outbox 完全一致を assert、
+   `docs/architecture.md` / `docs/context-pack.md` も明文化 — と両立せず、
+   さらに 0128 以降 event 書込みは write lock + outbox transaction を要する
+   ため read path の運用退行（Windows では mutation と直列化）になると判断）:
+   - `pcl context pack` の**既定挙動は完全 read-only のまま変えない**
+     （既存 test / docs は無修正で green のこと）。
+   - 新 flag `--record-usage` 指定時のみ、`context_pack_generated` event
+     （estimated_token_count / token_estimator / target / bound_receipt 有無 /
+     truncated 有無）を 0128 outbox 経由の通常 mutation transaction で
+     **正確に 1 件** emit する。event 内容は pack の成果物 selection に影響
+     しない。
+   - `--record-usage` 指定時に記録へ失敗した場合は明示的に失敗する
+     （silent skip 禁止）。
+   - docs（`docs/context-pack.md` / `docs/architecture.md`）へ additive に
+     「既定 read-only、usage 記録は明示 opt-in」を追記する。
+   - dogfood report 雛形と KPI report の `context_pack` section に、記録
+     coverage は opt-in 実行分に限られる旨（計測手順として dogfood では
+     `--record-usage` を常用する旨）を明記する。
 3. 未計測値の扱い: データが無い指標は `null` + `reason`（`not_yet_measured` /
    `no_data_in_window`）を返す。**擬似精度禁止** — 推定値を実測値のように
    出さない。master_brief_tokens_saved は transcript 比較の手動計測（dogfood
@@ -72,8 +83,10 @@ migration 005）は CLI から取れるが、context pack の token 推定は生
 - `pcl report kpi --json` が上記 section を stable schema で返す（fixture）。
 - verification 指標が `verification_feedback_stats` と一致する（同一 DB での
   equality test）。
-- `context_pack_generated` event が pack 成功時に記録され、平均 token 集計が
-  event から再現できる（統合 test）。
+- `--record-usage` 付き pack 成功時に `context_pack_generated` event が
+  正確に 1 件記録され、平均 token 集計が event から再現できる（統合 test）。
+  flag なしの pack は従来どおり zero mutation（既存 read-only test が無修正で
+  green）。`--record-usage` の記録失敗が明示的エラーになる test。
 - 未計測指標が null + reason で返る（0135/0137 前の状態を fixture 化）。
 - dogfood report 雛形が存在し、KPI 表の各行に計測手段が書かれている。
 - ruff + full pytest green。baseline fixture への影響があれば Intended
