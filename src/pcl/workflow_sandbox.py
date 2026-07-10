@@ -36,6 +36,7 @@ SAFE_PCL_COMMANDS = {
     ("workflow", "verify"),
 }
 SAFE_PROJECT_COMMAND_KEYS = {"lint", "typecheck", "test", "e2e", "build"}
+FINISH_CHECK_COMMAND_KEYS = ("lint", "typecheck", "test", "e2e", "build")
 BLOCKED_PROJECT_EXECUTABLES = {
     "bash",
     "chmod",
@@ -295,6 +296,26 @@ def execute_planned_guarded_command(
         redaction_patterns=redaction_patterns,
         allowed_env_names=allowed_env_names,
     )
+
+
+def plan_guarded_project_checks(paths: ProjectPaths) -> list[dict[str, Any]]:
+    """Plan configured finish checks with the guarded executor allowlist."""
+
+    project_commands = _load_project_commands(paths)
+    planned: list[dict[str, Any]] = []
+    for key in FINISH_CHECK_COMMAND_KEYS:
+        if not project_commands.get(key):
+            continue
+        planned.append(
+            _plan_command(
+                "finish_checks",
+                len(planned) + 1,
+                len(planned) + 1,
+                f"{PROJECT_COMMAND_PREFIX}{key}",
+                project_commands,
+            )
+        )
+    return planned
 
 
 def _guard_loaded_target(

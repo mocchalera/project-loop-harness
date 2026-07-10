@@ -14,6 +14,8 @@ plan.
 pcl finish
 pcl finish --json
 pcl finish --execute
+pcl finish --emit-packet --dry-run --task T-0001 --json
+pcl finish --emit-packet --task T-0001 --base HEAD --json
 pcl finish --run WR-0001 --json
 pcl finish --goal G-0001 --json
 ```
@@ -73,3 +75,75 @@ pcl render
 The command does not run `pcl report`, does not record verification, and does
 not close goals. Operators run the planned commands themselves after reviewing
 the state and evidence.
+
+## Completion packet mode
+
+`--emit-packet` is a separate, explicit execution mode. It does not change the
+default planner and it does not change `--execute`. The two execution flags are
+mutually exclusive. `--dry-run` previews the selected target, Git snapshot,
+changed paths, and guarded check plan without executing commands or mutating
+Project Loop state.
+
+In non-interactive use, invoking `--emit-packet` without `--dry-run` is the
+operator's confirmation to run the displayed project-configured check plan.
+There is no prompt and no implicit arbitrary command. The plan contains only
+non-empty `pcl.yaml` entries from `commands.lint`, `typecheck`, `test`, `e2e`,
+and `build`, in that order. Every command must pass the guarded-executor
+allowlist. Missing checks or a blocked configured check return exit 2 before
+execution.
+
+`--task` selects a task directly. Existing `--goal` and goal-backed `--run`
+targets are also accepted. Without an explicit target, packet mode uses the
+normal finish goal target first, then the highest-priority active task. A run
+without a goal cannot be represented by `completion-packet/v1` and is rejected.
+
+### Repository snapshot and race guard
+
+`--base <revision>` selects the Git base; the default is `HEAD`. The producer
+records the resolved base and head commit IDs, porcelain dirty state, changed
+paths, and a deterministic diff hash. The hashed bytes are the exact output of
+`git diff --binary --no-ext-diff <resolved-base> --`, followed by sorted,
+length-prefixed path/content records for Git-unignored untracked files.
+
+The snapshot is captured before checks and again afterward. Any base, head,
+dirty-state, changed-path, or diff-hash change yields
+`INCOMPLETE_VALIDATION`; finish records the check Evidence and packet but does
+not complete the target.
+
+### Evidence and commit boundary
+
+Each check uses the host guarded executor with argv execution, fixed project
+root, environment allowlist, bounded stdout/stderr, and redaction. Its result
+JSON and redacted streams are recorded as Evidence. The validated packet is
+stored under `.project-loop/evidence/completion-packets/` by its content hash.
+
+Check Evidence rows, packet Evidence/reference, a successful task transition,
+and events commit in one `BEGIN IMMEDIATE` transaction through the service
+layer and transactional outbox. A projector failure returns recoverable exit
+6: do not retry; run `pcl audit flush --json`. If a packet file was finalized
+but the SQLite commit did not occur, `pcl audit check` reports
+`orphan_completion_packet` for human review.
+
+### Outcomes and exits
+
+- `COMPLETED_VERIFIED`: configured checks and strict validation pass, the
+  snapshot is stable, changes exist, and no gate blocks completion. A task
+  transitions to `done` in the packet transaction.
+- `COMPLETED_WITH_RISK`: the completed conditions hold but strict validation
+  returned warnings; the warnings are packet risks.
+- `INCOMPLETE_VALIDATION`: a check or strict validation fails, or the repository
+  changes during checks. The packet is retained, the target stays active, and
+  the command exits 1.
+- `INCOMPLETE_HUMAN_DECISION_REQUIRED`: a linked open decision or an existing
+  human-required finish step blocks completion. The target stays active.
+- `INCOMPLETE_BUDGET_EXHAUSTED`: the target goal has explicit
+  `budget_json.exhausted: true`. The target stays active.
+- `NO_CHANGES`: the captured change list is empty. Checks are still recorded,
+  but the task stays active because repository acceptance Evidence was not
+  established.
+
+Successfully emitted incomplete/no-change packets return a normal JSON payload;
+only `INCOMPLETE_VALIDATION` uses exit 1. Usage and unsafe-plan errors use exit
+2. Repeating packet mode for an unchanged terminal target and repository
+snapshot returns the existing packet with `idempotent: true`, `changed: false`,
+and does not create another completion event.

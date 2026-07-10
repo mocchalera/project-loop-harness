@@ -69,6 +69,7 @@ from .dispatch import assign_job, heartbeat_job, lease_job, reap_expired_leases,
 from .evidence import record_adhoc_evidence
 from .errors import DataStoreError, InvalidInputError, PclError
 from .exporters import export_csv
+from .finish_execution import emit_finish_packet, plan_finish_packet
 from .escalations import (
     cancel_escalation,
     list_escalations,
@@ -981,8 +982,27 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_finish = sub.add_parser("finish", help="Plan terminal loop close-out steps")
     p_finish.add_argument("--execute", action="store_true", help="Run validate/render only when no finish steps remain")
+    p_finish.add_argument(
+        "--emit-packet",
+        action="store_true",
+        help="Run configured guarded checks and emit a completion-packet/v1 artifact",
+    )
+    p_finish.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="With --emit-packet, preview the target, repository snapshot, and guarded check plan",
+    )
     p_finish.add_argument("--run", default=None, help="Target a workflow run explicitly")
     p_finish.add_argument("--goal", default=None, help="Target a goal explicitly")
+    p_finish.add_argument("--task", default=None, help="Target a task for completion packet emission")
+    p_finish.add_argument("--base", default=None, help="Git base revision for the completion packet diff")
+    p_finish.add_argument("--timeout", type=int, default=120, help="Per-check timeout in seconds")
+    p_finish.add_argument(
+        "--max-output-bytes",
+        type=int,
+        default=1_048_576,
+        help="Maximum retained stdout and stderr bytes per check stream",
+    )
 
     p_export = sub.add_parser("export", help="Export state")
     export_sub = p_export.add_subparsers(dest="export_command", required=True)
@@ -2671,6 +2691,40 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "finish":
+            packet_only_flags = any(
+                [args.dry_run, args.task, args.base, args.timeout != 120, args.max_output_bytes != 1_048_576]
+            )
+            if args.execute and args.emit_packet:
+                raise InvalidInputError("--execute and --emit-packet are separate modes and cannot be combined.")
+            if packet_only_flags and not args.emit_packet:
+                raise InvalidInputError(
+                    "--dry-run, --task, --base, --timeout, and --max-output-bytes require --emit-packet."
+                )
+            if args.emit_packet:
+                if args.dry_run:
+                    packet_payload = plan_finish_packet(
+                        paths,
+                        run_id=args.run,
+                        goal_id=args.goal,
+                        task_id=args.task,
+                        base_revision=args.base,
+                    )
+                    packet_payload["exit_code"] = 0
+                else:
+                    packet_payload = emit_finish_packet(
+                        paths,
+                        run_id=args.run,
+                        goal_id=args.goal,
+                        task_id=args.task,
+                        base_revision=args.base,
+                        timeout_seconds=args.timeout,
+                        max_output_bytes=args.max_output_bytes,
+                    )
+                if json_output:
+                    _print_json({"ok": True, "finish": packet_payload})
+                else:
+                    print(to_pretty_json(packet_payload))
+                return int(packet_payload["exit_code"])
             payload = finish_plan(paths, run_id=args.run, goal_id=args.goal)
             exit_code = 0
             if args.execute:

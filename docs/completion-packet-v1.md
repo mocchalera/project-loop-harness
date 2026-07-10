@@ -7,8 +7,9 @@ exposing database rows or making the packet another state store.
 
 The packaged JSON Schema is
 `pcl/contracts/schemas/completion-packet-v1.schema.json`. The Python contract
-module is `pcl.contracts.completion_packet`. Task 0135 may later make
-`pcl finish` emit this artifact; v1 itself does not change finish behavior.
+module is `pcl.contracts.completion_packet`. `pcl finish --emit-packet` emits
+this artifact through the opt-in execution path documented in `docs/finish.md`;
+the default finish planner and the existing `--execute` tail remain unchanged.
 
 ## Trust model: claims, not facts
 

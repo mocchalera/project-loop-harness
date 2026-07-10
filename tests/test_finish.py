@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import subprocess
+
+import pytest
 
 from pcl.cli import main
+from pcl.contracts.completion_packet import load_completion_packet, validate_completion_packet
 from pcl.db import connect
+from pcl.outbox import ProjectionResult
 
 
 COUNT_TABLES = [
@@ -108,6 +113,69 @@ def _finish_payload(capsys) -> dict:
     payload = _json_output(capsys)
     assert payload["ok"] is True
     return payload["finish"]
+
+
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=root, check=True, capture_output=True)
+
+
+def _create_packet_project(
+    root: Path,
+    capsys,
+    *,
+    failing: bool = False,
+    with_change: bool = True,
+    exhausted_budget: bool = False,
+) -> None:
+    assert main(["init", "--target", str(root)]) == 0
+    config_path = root / "pcl.yaml"
+    config = config_path.read_text(encoding="utf-8")
+    config = config.replace('test: ""', 'test: "python -m pytest -q test_sample.py"')
+    config_path.write_text(config, encoding="utf-8")
+    test_path = root / "test_sample.py"
+    test_path.write_text("def test_sample():\n    assert True\n", encoding="utf-8")
+    gitignore = root / ".gitignore"
+    gitignore.write_text(
+        gitignore.read_text(encoding="utf-8") + "\n__pycache__/\n.pytest_cache/\n",
+        encoding="utf-8",
+    )
+    _git(root, "init", "-b", "main")
+    _git(root, "config", "user.email", "pcl@example.test")
+    _git(root, "config", "user.name", "PCL Test")
+    _git(root, "add", ".")
+    _git(root, "commit", "-m", "baseline")
+    goal_args: list[str] = []
+    if exhausted_budget:
+        assert main([
+            "--root", str(root), "goal", "create", "--title", "Budgeted goal",
+            "--budget-json", '{"exhausted": true}',
+        ]) == 0
+        goal_args = ["--goal", "G-0001"]
+    assert main([
+        "--root", str(root), "task", "create", "--title", "Finish packet task",
+        "--description", "Exercise completion packet emission",
+        *goal_args,
+    ]) == 0
+    assert main([
+        "--root", str(root), "task", "status", "T-0001", "in_progress", "--reason", "Start work",
+    ]) == 0
+    if with_change:
+        assertion = "False" if failing else "True"
+        test_path.write_text(
+            f"def test_sample():\n    assert {assertion}\n\n# completion packet change\n",
+            encoding="utf-8",
+        )
+    capsys.readouterr()
+
+
+def _evidence_count(root: Path, evidence_type: str) -> int:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        return int(
+            conn.execute("SELECT COUNT(*) FROM evidence WHERE type = ?", (evidence_type,)).fetchone()[0]
+        )
+    finally:
+        conn.close()
 
 
 def test_finish_plans_active_workflow_without_mutation(tmp_path: Path, capsys) -> None:
@@ -220,3 +288,203 @@ def test_finish_no_active_run_and_no_open_goal_is_finished(tmp_path: Path, capsy
         "remaining_steps": [],
         "next_command": None,
     }
+
+
+def test_finish_help_and_plan_only_json_contract_remain_backward_compatible(
+    tmp_path: Path, capsys
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(["finish", "--help"])
+    assert exc_info.value.code == 0
+    help_output = capsys.readouterr().out
+    assert "usage: pcl finish" in help_output
+    assert "--execute" in help_output
+    assert "--run RUN" in help_output
+    assert "--goal GOAL" in help_output
+
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "finish", "--json"]) == 0
+    assert _finish_payload(capsys) == {
+        "target": {"run": None, "goal": None},
+        "finished": True,
+        "remaining_steps": [],
+        "next_command": None,
+    }
+
+
+def test_finish_emit_packet_dry_run_plans_without_mutation(tmp_path: Path, capsys) -> None:
+    _create_packet_project(tmp_path, capsys)
+    before = _state_counts(tmp_path)
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet", "--dry-run", "--task", "T-0001", "--json",
+    ]) == 0
+    finish = _finish_payload(capsys)
+
+    assert finish["mode"] == "emit_packet"
+    assert finish["dry_run"] is True
+    assert finish["target"]["id"] == "T-0001"
+    assert finish["check_plan"] == [
+        {
+            "id": "finish_checks:1",
+            "config_key": "test",
+            "command": "python -m pytest -q test_sample.py",
+            "safe_to_run": True,
+            "blocked_reason": "",
+        }
+    ]
+    assert finish["safe_to_execute"] is True
+    assert _state_counts(tmp_path) == before
+
+
+def test_finish_emit_packet_success_and_idempotent_rerun(tmp_path: Path, capsys) -> None:
+    _create_packet_project(tmp_path, capsys)
+
+    command = [
+        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001", "--json",
+    ]
+    assert main(command) == 0
+    finish = _finish_payload(capsys)
+
+    assert finish["packet"]["outcome"] == "COMPLETED_VERIFIED"
+    assert finish["target_transition"] == {
+        "changed": True,
+        "from_status": "in_progress",
+        "to_status": "done",
+    }
+    assert finish["checks"][0]["status"] == "passed"
+    packet = load_completion_packet(tmp_path / finish["packet"]["path"])
+    assert validate_completion_packet(packet).ok is True
+    assert packet["repository"]["diff_sha256"] == finish["repository"]["diff_sha256"]
+    assert packet["checks"][0]["artifact_ref"] == f"evidence:{finish['checks'][0]['evidence_id']}"
+    before = _state_counts(tmp_path)
+
+    assert main(command) == 0
+    rerun = _finish_payload(capsys)
+    assert rerun["idempotent"] is True
+    assert rerun["changed"] is False
+    assert rerun["packet"] == finish["packet"]
+    assert _state_counts(tmp_path) == before
+
+
+def test_finish_emit_packet_failure_keeps_task_active(tmp_path: Path, capsys) -> None:
+    _create_packet_project(tmp_path, capsys, failing=True)
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001", "--json",
+    ]) == 1
+    finish = _finish_payload(capsys)
+
+    assert finish["packet"]["outcome"] == "INCOMPLETE_VALIDATION"
+    assert finish["checks"][0]["status"] == "failed"
+    assert finish["target_transition"]["changed"] is False
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        assert conn.execute("SELECT status FROM tasks WHERE id = 'T-0001'").fetchone()[0] == "in_progress"
+    finally:
+        conn.close()
+
+
+def test_finish_emit_packet_no_changes_keeps_task_active(tmp_path: Path, capsys) -> None:
+    _create_packet_project(tmp_path, capsys, with_change=False)
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001", "--json",
+    ]) == 0
+    finish = _finish_payload(capsys)
+
+    assert finish["packet"]["outcome"] == "NO_CHANGES"
+    assert finish["target_transition"]["changed"] is False
+    assert finish["packet"]["path"].endswith(".json")
+
+
+def test_finish_detects_repository_change_during_checks(tmp_path: Path, capsys, monkeypatch) -> None:
+    _create_packet_project(tmp_path, capsys)
+    from pcl import finish_execution
+
+    execute = finish_execution.execute_planned_guarded_command
+
+    def execute_and_mutate(*args, **kwargs):
+        execute(*args, **kwargs)
+        path = tmp_path / "test_sample.py"
+        path.write_text(path.read_text(encoding="utf-8") + "# raced\n", encoding="utf-8")
+
+    monkeypatch.setattr(finish_execution, "execute_planned_guarded_command", execute_and_mutate)
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001", "--json",
+    ]) == 1
+    finish = _finish_payload(capsys)
+    assert finish["race_detected"] is True
+    assert finish["packet"]["outcome"] == "INCOMPLETE_VALIDATION"
+    assert finish["target_transition"]["changed"] is False
+
+
+def test_finish_human_gate_emits_incomplete_packet_and_next_action(tmp_path: Path, capsys) -> None:
+    _create_packet_project(tmp_path, capsys)
+    assert main([
+        "--root", str(tmp_path), "decision", "open",
+        "--question", "May this task close?", "--recommendation", "Review Evidence",
+        "--blocks-json", '[{"type":"task","id":"T-0001"}]',
+    ]) == 0
+    capsys.readouterr()
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001", "--json",
+    ]) == 0
+    finish = _finish_payload(capsys)
+    assert finish["packet"]["outcome"] == "INCOMPLETE_HUMAN_DECISION_REQUIRED"
+    packet = load_completion_packet(tmp_path / finish["packet"]["path"])
+    assert packet["human_decisions"] == ["May this task close?"]
+    assert packet["next_action"]["command"] == "pcl decision list --status open"
+    assert finish["target_transition"]["changed"] is False
+
+
+def test_finish_budget_block_emits_incomplete_packet(tmp_path: Path, capsys) -> None:
+    _create_packet_project(tmp_path, capsys, exhausted_budget=True)
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001", "--json",
+    ]) == 0
+    finish = _finish_payload(capsys)
+    assert finish["packet"]["outcome"] == "INCOMPLETE_BUDGET_EXHAUSTED"
+    packet = load_completion_packet(tmp_path / finish["packet"]["path"])
+    assert packet["next_action"]["command"] is None
+    assert finish["target_transition"]["changed"] is False
+
+
+def test_finish_projector_failure_reports_committed_packet_without_duplicate(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    from pcl import outbox
+
+    def pending_projection(*args, **kwargs):
+        return ProjectionResult(
+            committed=True,
+            projection="pending",
+            delivered=0,
+            pending_count=1,
+            first_pending_sequence=1,
+            safe_next_action="Run `pcl audit flush --json`; do not retry the committed mutation.",
+            error="injected projector failure",
+        )
+
+    monkeypatch.setattr(outbox, "project_pending_events", pending_projection)
+    command = [
+        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001", "--json",
+    ]
+    assert main(command) == 6
+    error = _json_output(capsys)
+    assert error["error"]["code"] == "audit_projection_pending"
+    assert _evidence_count(tmp_path, "completion_packet") == 1
+
+    monkeypatch.undo()
+    assert main(["--root", str(tmp_path), "audit", "flush", "--json"]) == 0
+    capsys.readouterr()
+    assert main(command) == 0
+    rerun = _finish_payload(capsys)
+    assert rerun["idempotent"] is True
+    assert _evidence_count(tmp_path, "completion_packet") == 1

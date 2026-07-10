@@ -406,6 +406,9 @@ def test_audit_check_reports_evidence_missing_hash_mismatch_and_orphan_temp(
     source.write_text("changed", encoding="utf-8")
     orphan = tmp_path / ".project-loop" / "evidence" / "orphan.tmp"
     orphan.write_text("partial", encoding="utf-8")
+    orphan_packet = tmp_path / ".project-loop" / "evidence" / "completion-packets" / "orphan.json"
+    orphan_packet.parent.mkdir(parents=True, exist_ok=True)
+    orphan_packet.write_text("{}\n", encoding="utf-8")
     conn = connect(tmp_path / ".project-loop" / "project.db")
     try:
         conn.execute(
@@ -425,9 +428,11 @@ def test_audit_check_reports_evidence_missing_hash_mismatch_and_orphan_temp(
         "evidence_file_missing",
         "evidence_metadata_file_mismatch",
         "orphan_temp_evidence",
+        "orphan_completion_packet",
     }.issubset(types)
     assert report["counts"]["evidence_missing_files"] == 1
     assert report["counts"]["orphan_temp_evidence"] == 1
+    assert report["counts"]["orphan_completion_packets"] == 1
     assert evidence["id"] in {
         item["details"].get("evidence_id")
         for item in report["anomalies"]["human_review"]

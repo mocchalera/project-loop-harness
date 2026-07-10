@@ -654,6 +654,7 @@ def _check_evidence(
 
     orphan_temp_count = 0
     orphan_manifest_count = 0
+    orphan_completion_packet_count = 0
     if paths.evidence_dir.exists():
         for candidate in sorted(paths.evidence_dir.rglob("*")):
             if not candidate.is_file():
@@ -682,11 +683,22 @@ def _check_evidence(
                     "quarantine_or_report",
                     path=_relative_or_absolute(paths, candidate),
                 )
+            elif candidate.parent == paths.evidence_dir / "completion-packets" and candidate.suffix == ".json":
+                orphan_completion_packet_count += 1
+                _add_anomaly(
+                    anomalies,
+                    "human_review",
+                    "orphan_completion_packet",
+                    "Unreferenced finalized completion packet requires review; it was not deleted.",
+                    "quarantine_or_report",
+                    path=_relative_or_absolute(paths, candidate),
+                )
     return {
         "evidence_missing_files": missing_count,
         "evidence_mismatches": mismatch_count,
         "orphan_temp_evidence": orphan_temp_count,
         "orphan_evidence_manifests": orphan_manifest_count,
+        "orphan_completion_packets": orphan_completion_packet_count,
     }
 
 
