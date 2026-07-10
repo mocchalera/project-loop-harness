@@ -3,9 +3,11 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime
 from importlib.resources import files
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 from typing import Any
@@ -110,7 +112,7 @@ def with_computed_packet_id(packet: Mapping[str, Any]) -> dict[str, Any]:
 
 def load_completion_packet(path: str | Path) -> Any:
     with Path(path).open(encoding="utf-8") as handle:
-        return json.load(handle)
+        return json.load(handle, parse_constant=_reject_non_finite_json_number)
 
 
 def calculate_proof_level(evidence_classes: Iterable[str]) -> str:
@@ -137,6 +139,10 @@ def validate_completion_packet(packet: Any) -> CompletionPacketValidationResult:
     if not isinstance(packet, dict):
         return CompletionPacketValidationResult(("$: must be an object",))
 
+    non_finite_errors: list[str] = []
+    _collect_non_finite_json_numbers(packet, path="$", errors=non_finite_errors)
+    errors.extend(non_finite_errors)
+
     _check_object_fields(
         packet,
         path="$",
@@ -146,7 +152,7 @@ def validate_completion_packet(packet: Any) -> CompletionPacketValidationResult:
     )
     _expect_equal(packet.get("contract_version"), COMPLETION_PACKET_CONTRACT_VERSION, "$.contract_version", errors)
     _validate_string(packet.get("packet_id"), "$.packet_id", errors, pattern=_PACKET_ID)
-    _validate_string(packet.get("generated_at"), "$.generated_at", errors, pattern=_TIMESTAMP)
+    _validate_timestamp(packet.get("generated_at"), "$.generated_at", errors)
     _expect_enum(packet.get("outcome"), _OUTCOMES, "$.outcome", errors)
 
     _validate_producer(packet.get("producer"), errors)
@@ -162,7 +168,11 @@ def validate_completion_packet(packet: Any) -> CompletionPacketValidationResult:
     _validate_verifier_provenance(packet.get("verifier_provenance"), errors)
 
     packet_id = packet.get("packet_id")
-    if isinstance(packet_id, str) and _PACKET_ID.fullmatch(packet_id):
+    if (
+        isinstance(packet_id, str)
+        and _PACKET_ID.fullmatch(packet_id)
+        and not non_finite_errors
+    ):
         expected_id = compute_packet_id(packet)
         if packet_id != expected_id:
             errors.append("$.packet_id: does not match the canonical packet content hash")
@@ -420,3 +430,40 @@ def _validate_string_array(value: Any, path: str, errors: list[str]) -> None:
         return
     for index, item in enumerate(value):
         _validate_string(item, f"{path}[{index}]", errors)
+
+
+def _validate_timestamp(value: Any, path: str, errors: list[str]) -> None:
+    if not isinstance(value, str) or not value:
+        errors.append(f"{path}: must be a non-empty string")
+        return
+    if not _TIMESTAMP.fullmatch(value):
+        errors.append(f"{path}: has invalid canonical format")
+        return
+    try:
+        datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        errors.append(
+            f"{path}: must be a real RFC 3339 UTC date-time at whole-second precision"
+        )
+
+
+def _reject_non_finite_json_number(value: str) -> None:
+    raise ValueError(f"non-finite JSON number {value} is not allowed")
+
+
+def _collect_non_finite_json_numbers(
+    value: Any,
+    *,
+    path: str,
+    errors: list[str],
+) -> None:
+    if isinstance(value, float) and not math.isfinite(value):
+        errors.append(f"{path}: non-finite JSON number is not allowed")
+        return
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _collect_non_finite_json_numbers(item, path=f"{path}.{key}", errors=errors)
+        return
+    if isinstance(value, list):
+        for index, item in enumerate(value):
+            _collect_non_finite_json_numbers(item, path=f"{path}[{index}]", errors=errors)

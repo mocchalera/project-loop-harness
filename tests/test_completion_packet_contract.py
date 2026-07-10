@@ -67,6 +67,26 @@ def test_packet_id_detects_content_changes() -> None:
     assert "$.packet_id: does not match the canonical packet content hash" in result.errors
 
 
+def test_generated_at_rejects_nonexistent_calendar_date() -> None:
+    packet = json.loads((FIXTURE_ROOT / "minimal.json").read_text(encoding="utf-8"))
+    packet["generated_at"] = "2026-02-31T00:00:00Z"
+    packet = with_computed_packet_id(packet)
+
+    result = validate_completion_packet(packet)
+
+    assert "$.generated_at: must be a real RFC 3339 UTC date-time at whole-second precision" in result.errors
+
+
+@pytest.mark.parametrize("non_finite", [float("nan"), float("inf"), float("-inf")])
+def test_validator_fails_closed_for_direct_non_finite_values(non_finite: float) -> None:
+    packet = json.loads((FIXTURE_ROOT / "minimal.json").read_text(encoding="utf-8"))
+    packet["repository"]["dirty"] = non_finite
+
+    result = validate_completion_packet(packet)
+
+    assert "$.repository.dirty: non-finite JSON number is not allowed" in result.errors
+
+
 @pytest.mark.parametrize(
     ("evidence_classes", "expected"),
     [

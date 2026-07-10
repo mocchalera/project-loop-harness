@@ -37,7 +37,9 @@ never raises proof above L1.
   produces a changed ID without requiring mutable ID allocation or database
   access.
 - `generated_at` is an RFC 3339 UTC timestamp at whole-second precision:
-  `YYYY-MM-DDTHH:MM:SSZ`.
+  `YYYY-MM-DDTHH:MM:SSZ`. Validation checks that the value is a real calendar
+  date, including month lengths and leap years, not only that it matches the
+  textual shape.
 - `repository.diff_sha256` is `sha256:<64 lowercase hex>` over the exact diff
   bytes selected by the future producer. v1 validates the representation; the
   producer must document/select the bytes and the consumer must reproduce them
@@ -101,6 +103,11 @@ The command is read-only and does not require an initialized project.
 - exit `0`: valid packet;
 - exit `1`: readable JSON that violates schema or semantic invariants;
 - exit `2`: usage error, unsupported type, unreadable file, or malformed JSON.
+
+Python-style non-standard JSON constants (`NaN`, `Infinity`, and `-Infinity`)
+are malformed input and return exit 2. Direct Python validator calls fail
+closed with path-addressed errors if a non-finite float is supplied in an
+already-decoded payload.
 
 With `--json`, stdout contains exactly one JSON object and diagnostics do not
 leak to stderr. Without `--json`, success goes to stdout and validation errors

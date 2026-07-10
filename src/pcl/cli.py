@@ -1016,6 +1016,11 @@ def _validate_contract_file(path_value: str, *, json_output: bool) -> int:
             f"Contract file is not valid JSON: {path_value}",
             details={"column": exc.colno, "line": exc.lineno, "path": path_value},
         ) from exc
+    except ValueError as exc:
+        raise InvalidInputError(
+            f"Contract file contains an invalid JSON value: {path_value}",
+            details={"path": path_value, "reason": str(exc)},
+        ) from exc
 
     result = validate_completion_packet(packet)
     payload = result.to_dict()

@@ -50,6 +50,41 @@ def test_contract_validate_malformed_json_is_usage_error(tmp_path: Path, capsys)
     assert payload["error"]["details"]["path"] == str(malformed)
 
 
+def test_contract_validate_rejects_nonexistent_calendar_date(tmp_path: Path, capsys) -> None:
+    packet = json.loads((FIXTURE_ROOT / "minimal.json").read_text(encoding="utf-8"))
+    packet["generated_at"] = "2026-02-31T00:00:00Z"
+    invalid_date = tmp_path / "invalid-date.json"
+    invalid_date.write_text(json.dumps(packet), encoding="utf-8")
+
+    assert main(["contract", "validate", "--type", "completion-packet/v1", str(invalid_date), "--json"]) == 1
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert captured.err == ""
+    assert any("must be a real RFC 3339 UTC date-time" in error for error in payload["errors"])
+
+
+def test_contract_validate_non_finite_json_is_structured_usage_error(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    packet = json.loads((FIXTURE_ROOT / "minimal.json").read_text(encoding="utf-8"))
+    packet["repository"]["dirty"] = float("nan")
+    non_finite = tmp_path / "non-finite.json"
+    non_finite.write_text(json.dumps(packet), encoding="utf-8")
+
+    assert main(["contract", "validate", "--type", "completion-packet/v1", str(non_finite), "--json"]) == 2
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert captured.err == ""
+    assert payload["error"]["code"] == "invalid_input"
+    assert payload["error"]["details"] == {
+        "path": str(non_finite),
+        "reason": "non-finite JSON number NaN is not allowed",
+    }
+
+
 def test_contract_validate_is_read_only(tmp_path: Path, capsys) -> None:
     fixture = FIXTURE_ROOT / "full.json"
 
