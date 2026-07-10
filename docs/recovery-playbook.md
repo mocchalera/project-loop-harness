@@ -2,7 +2,9 @@
 
 This playbook is for operators when Project Loop Harness stops, reports validation errors, or looks out of sync.
 
-The source of truth is `.project-loop/project.db` plus `.project-loop/events.jsonl`. The dashboard and reports are generated review artifacts.
+The source of truth is `.project-loop/project.db`. `events.jsonl` is a derived,
+rebuildable audit projection. The dashboard and reports are generated review
+artifacts.
 
 ## First Diagnostics
 
@@ -45,7 +47,7 @@ The next safe action is to read `.project-loop/reports/validation-strict.md` and
 | Duplicate active workflow runs | Strict validation reports duplicate active runs for one goal or defect | Cancel the incorrect run with `pcl loop cancel WR-0001 --summary "..."`, then rerun strict validation. |
 | Schema metadata behind applied migrations | `pcl migrate status --json` reports `metadata_schema_version` lower than `max_applied_version`, `consistent: false`, and no pending migrations | Run `pcl migrate --root <project>` to repair metadata only. This appends `schema_metadata_repaired` and applies no DDL. |
 | Database ahead of binary | `pcl migrate status --json` warns that applied migrations or metadata are newer than the running binary | Upgrade `pcl`; do not run `pcl migrate` with the older binary. Read-only diagnostics can still be used. |
-| Audit-log integrity failure | DB and `events.jsonl` disagree, JSONL is invalid, or event order differs | Stop normal work, preserve both files, and escalate for human maintenance. |
+| Audit-log integrity failure | DB/outbox/`events.jsonl` disagree, JSONL is invalid, or event order differs | Stop normal work and run `pcl audit check --json`. Apply only a fully supported preview; otherwise preserve the report and use the reviewed rebuild path. |
 | Repeated workflow failure | The same run or defect repair keeps failing | Open an escalation instead of retrying indefinitely. |
 
 ## Safe Repairs
@@ -98,6 +100,50 @@ metadata repair, not a schema migration. It does not apply DDL.
 If status says the database is ahead of the running binary, upgrade `pcl`
 before running `pcl migrate`. The migrate command refuses that state to prevent
 another downgrade attempt.
+
+### Audit integrity recovery
+
+Start with the read-only check. It never flushes the projector:
+
+```bash
+pcl audit check --json
+```
+
+The report uses `audit-check/v1`, includes SQLite/JSONL hashes and counts, and
+separates anomalies into `repairable`, `human_review`, and `unsupported`.
+Exit 0 is clean, exit 6 means a supported or review-required issue, exit 7 means
+an unsupported format, and exit 8 means the check itself failed.
+
+For a pending or retryable outbox suffix, preview before applying:
+
+```bash
+pcl audit repair --dry-run --json
+pcl audit repair --apply --json
+```
+
+Apply refuses review-required and unsupported anomalies. A successful apply
+backs up the old JSONL, reports before/backup/after SHA-256 values, projects each
+pending event once, and appends `audit_repair_applied` through the ordinary
+event/outbox transaction.
+
+For duplicate, mismatched, malformed, JSONL-only, or legacy lines, generate a
+verified SQLite-derived preview and inspect the reported isolated lines:
+
+```bash
+pcl audit rebuild-jsonl --from-sqlite --output /tmp/events.rebuilt.jsonl --json
+pcl audit rebuild-jsonl --from-sqlite --apply --json
+```
+
+Apply writes and verifies a same-directory temp file, preserves the complete old
+file under `.project-loop/reports/audit-backups/`, atomically replaces JSONL,
+reconciles its outbox delivery markers, and appends `audit_jsonl_rebuilt`.
+Unknown data is preserved in the backup and reported; it is never imported into
+SQLite or silently discarded. This command does not repair corrupt SQLite and
+does not rebuild domain state from JSONL.
+
+Evidence missing files, metadata/content mismatches, and orphan temporary files
+are report-only in this version. Do not delete or fabricate them to make the
+check clean; preserve them for human review.
 
 ## Do Not Repair By Hand
 

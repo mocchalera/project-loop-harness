@@ -7,6 +7,16 @@ import sqlite3
 import sys
 
 from . import __version__
+from .audit import (
+    AuditCommandError,
+    EXIT_AUDIT_INTERNAL,
+    audit_check,
+    audit_check_exit_code,
+    audit_rebuild_exit_code,
+    audit_repair,
+    audit_repair_exit_code,
+    rebuild_jsonl_from_sqlite,
+)
 from .agents import generate_agent_command, ingest_agent_run, read_job_prompt, read_job_prompt_handoff
 from .checkpoints import checkpoint_status, record_checkpoint
 from .code_index import (
@@ -182,6 +192,30 @@ def build_parser() -> argparse.ArgumentParser:
     p_audit = sub.add_parser("audit", help="Manage the SQLite-backed audit projection")
     audit_sub = p_audit.add_subparsers(dest="audit_command", required=True)
     audit_sub.add_parser("flush", help="Project eligible committed events to events.jsonl")
+    audit_sub.add_parser("check", help="Read-only integrity check for audit and Evidence state")
+    p_audit_repair = audit_sub.add_parser(
+        "repair",
+        help="Preview or apply supported audit repairs; preview is the default",
+    )
+    repair_mode = p_audit_repair.add_mutually_exclusive_group()
+    repair_mode.add_argument("--dry-run", action="store_true", help="Preview without mutation")
+    repair_mode.add_argument("--apply", action="store_true", help="Apply the displayed repair plan")
+    p_audit_rebuild = audit_sub.add_parser(
+        "rebuild-jsonl",
+        help="Generate a verified events.jsonl projection from authoritative SQLite events",
+    )
+    p_audit_rebuild.add_argument(
+        "--from-sqlite",
+        action="store_true",
+        required=True,
+        help="Use authoritative SQLite events as the rebuild source",
+    )
+    p_audit_rebuild.add_argument("--output", default=None, help="Preview output path")
+    p_audit_rebuild.add_argument(
+        "--apply",
+        action="store_true",
+        help="Backup and atomically replace events.jsonl, then record an audit event",
+    )
 
     p_render = sub.add_parser("render", help="Render dashboard from state")
     p_render.add_argument("--locale", default=None, help="Dashboard HTML locale: en, ja")
@@ -1256,6 +1290,38 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(to_pretty_json(result.to_dict()))
             return 0 if result.ok else 6
+
+        if args.command == "audit" and args.audit_command == "check":
+            result = audit_check(paths)
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result))
+            return audit_check_exit_code(result)
+
+        if args.command == "audit" and args.audit_command == "repair":
+            result = audit_repair(paths, apply=args.apply)
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result))
+            return audit_repair_exit_code(result)
+
+        if args.command == "audit" and args.audit_command == "rebuild-jsonl":
+            output = None if args.output is None else Path(args.output).resolve()
+            try:
+                result = rebuild_jsonl_from_sqlite(paths, output=output, apply=args.apply)
+            except OSError as exc:
+                raise AuditCommandError(
+                    message=f"Audit JSONL rebuild was interrupted by an I/O error: {exc}",
+                    code="audit_rebuild_io_error",
+                    exit_code=6,
+                ) from exc
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result))
+            return audit_rebuild_exit_code(result)
 
         if args.command == "render":
             result = validate_project(paths)
@@ -2567,10 +2633,38 @@ def main(argv: list[str] | None = None) -> int:
     except PclError as exc:
         _print_error(exc, json_output=json_output)
         return exc.exit_code
+    except OSError as exc:
+        if args.command == "audit":
+            error = AuditCommandError(
+                message=f"Audit command failed: {exc}",
+                code="audit_internal_error",
+                exit_code=EXIT_AUDIT_INTERNAL,
+            )
+            _print_error(error, json_output=json_output)
+            return error.exit_code
+        raise
     except sqlite3.Error as exc:
+        if args.command == "audit":
+            error = AuditCommandError(
+                message=f"SQLite error while running audit: {exc}",
+                code="audit_internal_error",
+                exit_code=EXIT_AUDIT_INTERNAL,
+            )
+            _print_error(error, json_output=json_output)
+            return error.exit_code
         error = DataStoreError(f"SQLite error while running {args.command}: {exc}")
         _print_error(error, json_output=json_output)
         return error.exit_code
+    except Exception as exc:
+        if args.command == "audit":
+            error = AuditCommandError(
+                message=f"Audit command failed unexpectedly: {exc}",
+                code="audit_internal_error",
+                exit_code=EXIT_AUDIT_INTERNAL,
+            )
+            _print_error(error, json_output=json_output)
+            return error.exit_code
+        raise
 
 
 if __name__ == "__main__":
