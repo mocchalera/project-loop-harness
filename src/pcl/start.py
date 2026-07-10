@@ -2,14 +2,28 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+import sqlite3
 import subprocess
 from typing import Any
 
 from .commands import active_workflow_next_action, create_goal, loop_status, next_action
 from .db import connect_mutation
-from .evidence import record_inline_evidence
+from .evidence import (
+    EXECUTION_PROVENANCE_CONTRACT_VERSION,
+    EXECUTION_PROVENANCE_EVIDENCE_TYPE,
+    EXECUTION_PROVENANCE_LINK_ROLE,
+    canonical_provenance_bytes,
+    execution_provenance_document,
+    insert_evidence_link,
+    inspect_skill_files,
+    preflight_provenance_destination,
+    public_skill_entries,
+    record_inline_evidence,
+    write_provenance_artifact,
+)
 from .events import append_event
-from .errors import InvalidInputError, ProjectNotInitializedError
+from .errors import DataStoreError, InvalidInputError, ProjectNotInitializedError
+from .ids import next_prefixed_id
 from .init_project import init_project, plan_init_project
 from .paths import ProjectPaths
 from .tasks import create_task
@@ -28,10 +42,12 @@ def start_work(
     dry_run: bool = False,
     no_init: bool = False,
     new: bool = False,
+    skills: list[str] | None = None,
 ) -> dict[str, Any]:
     if not intent.strip():
         raise InvalidInputError("intent must not be empty.", details={"field": "intent"})
 
+    planned_skills = inspect_skill_files(paths, skills or [])
     initialized = paths.db_path.is_file()
     if not initialized and no_init:
         raise ProjectNotInitializedError(root=str(paths.root))
@@ -65,6 +81,12 @@ def start_work(
         if active is not None:
             return _active_payload(intent=intent, active=active)
 
+    if initialized and planned_skills:
+        try:
+            preflight_provenance_destination(paths)
+        except OSError as exc:
+            raise DataStoreError(f"Could not prepare execution provenance: {exc}") from exc
+
     if dry_run:
         return _payload(
             status="planned",
@@ -87,6 +109,7 @@ def start_work(
                 "created_ids": {},
                 "target": {"type": "task", "id": None},
                 "receipt": None,
+                "planned_provenance": public_skill_entries(planned_skills),
             },
             next_actions=[
                 _next_action(
@@ -115,7 +138,12 @@ def start_work(
         "created_ids": {"goal": goal_id, "task": task_id},
         "target": {"type": "task", "id": task_id},
     }
-    evidence_id, event_id = _record_start_receipt(paths, receipt=receipt)
+    evidence_id, event_id, provenance = _record_start_receipt(
+        paths, receipt=receipt, planned_skills=planned_skills,
+    )
+    created_ids = {"goal": goal_id, "task": task_id, "evidence": evidence_id, "event": event_id}
+    if provenance is not None:
+        created_ids["provenance_evidence"] = provenance["evidence_id"]
 
     return _payload(
         status="started",
@@ -124,9 +152,10 @@ def start_work(
             "intent": intent,
             "project_initialized": project_initialized,
             "initialization": None if init_plan is None else init_plan.to_dict(),
-            "created_ids": {"goal": goal_id, "task": task_id, "evidence": evidence_id, "event": event_id},
+            "created_ids": created_ids,
             "target": {"type": "task", "id": task_id},
             "receipt": {**receipt, "evidence_id": evidence_id, "event_id": event_id},
+            "provenance": provenance,
         },
         next_actions=[
             _next_action(
@@ -181,8 +210,11 @@ def _active_payload(*, intent: str, active: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _record_start_receipt(paths: ProjectPaths, *, receipt: dict[str, Any]) -> tuple[str, str]:
+def _record_start_receipt(
+    paths: ProjectPaths, *, receipt: dict[str, Any], planned_skills: list[dict[str, str]],
+) -> tuple[str, str, dict[str, Any] | None]:
     conn = connect_mutation(paths)
+    artifact_path: Path | None = None
     try:
         evidence_id = record_inline_evidence(
             conn,
@@ -191,16 +223,65 @@ def _record_start_receipt(paths: ProjectPaths, *, receipt: dict[str, Any]) -> tu
             context=f"start:{receipt['target']['id']}",
             command="pcl start",
         )
+        provenance = None
+        event_provenance = None
+        if planned_skills:
+            provenance_id = next_prefixed_id(conn, "evidence", "E")
+            document = execution_provenance_document(
+                skills=planned_skills,
+                repository_revision=receipt["repository_revision"],
+                task_id=str(receipt["target"]["id"]),
+            )
+            content = canonical_provenance_bytes(document)
+            artifact_path, artifact_sha256 = write_provenance_artifact(
+                paths, evidence_id=provenance_id, content=content,
+            )
+            relative_path = str(artifact_path.relative_to(paths.root))
+            now = utc_now_iso()
+            conn.execute(
+                "INSERT INTO evidence(id, type, path, command, summary, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (provenance_id, EXECUTION_PROVENANCE_EVIDENCE_TYPE, relative_path, "pcl start", f"Execution provenance for task {receipt['target']['id']} with {len(planned_skills)} Skill file(s).", now),
+            )
+            insert_evidence_link(
+                conn, evidence_id=provenance_id, target_type="task",
+                target_id=str(receipt["target"]["id"]), link_role=EXECUTION_PROVENANCE_LINK_ROLE,
+                created_at=now,
+            )
+            event_provenance = {
+                "evidence_id": provenance_id,
+                "artifact_sha256": artifact_sha256,
+                "contract_version": EXECUTION_PROVENANCE_CONTRACT_VERSION,
+                "target": receipt["target"],
+            }
+            provenance = {**event_provenance, "path": relative_path}
+        payload = {"evidence_id": evidence_id, "receipt": receipt}
+        if event_provenance is not None:
+            payload["execution_provenance"] = event_provenance
         event_id = append_event(
             conn=conn,
             events_path=paths.events_path,
             event_type="work_started",
             entity_type="task",
             entity_id=str(receipt["target"]["id"]),
-            payload={"evidence_id": evidence_id, "receipt": receipt},
+            payload=payload,
         )
         conn.commit()
-        return evidence_id, event_id
+        return evidence_id, event_id, provenance
+    except BaseException as exc:
+        committed = bool(getattr(conn, "_authoritative_commit_completed", False))
+        if not committed:
+            try:
+                conn.rollback()
+            except BaseException:
+                pass
+            if artifact_path is not None:
+                try:
+                    artifact_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+        if isinstance(exc, (OSError, sqlite3.Error)):
+            raise DataStoreError(f"Could not record execution provenance: {exc}") from exc
+        raise
     finally:
         conn.close()
 

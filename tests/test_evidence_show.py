@@ -94,3 +94,41 @@ def test_evidence_show_resolves_inline_metadata_and_returns_typed_errors(
     ]) == 2
     assert _json_output(capsys)["error"]["code"] == "invalid_evidence_id"
     assert _fingerprint(tmp_path) == before
+
+
+def test_evidence_show_execution_provenance_reports_drift_and_fails_closed_on_tamper(
+    tmp_path: Path, capsys, monkeypatch,
+) -> None:
+    skill = tmp_path / "skill" / "SKILL.md"
+    skill.parent.mkdir()
+    skill.write_text("before\n", encoding="utf-8")
+    root = tmp_path / "project"
+    assert main(["--root", str(root), "start", "Inspect", "--skill", str(skill), "--json"]) == 0
+    started = _json_output(capsys)
+    provenance = started["result"]["provenance"]
+
+    assert main(["--root", str(root), "evidence", "show", provenance["evidence_id"], "--json"]) == 0
+    shown = _json_output(capsys)["evidence"]["provenance"]
+    assert shown["artifact_health"] == "ok"
+    assert shown["skills"][0]["health"] == "ok"
+
+    skill.write_text("after\n", encoding="utf-8")
+    assert main(["--root", str(root), "evidence", "show", provenance["evidence_id"], "--json"]) == 0
+    assert _json_output(capsys)["evidence"]["provenance"]["skills"][0]["health"] == "drifted"
+
+    artifact = root / provenance["path"]
+    artifact.write_text(json.dumps({"contract_version": "execution-provenance/v1", "skills": [{"path": str(skill)}]}) + "\n")
+    original_read_bytes = Path.read_bytes
+    followed = False
+    def guarded_read(path: Path):
+        nonlocal followed
+        if path == skill:
+            followed = True
+            raise AssertionError("unverified embedded path was followed")
+        return original_read_bytes(path)
+    monkeypatch.setattr(Path, "read_bytes", guarded_read)
+    assert main(["--root", str(root), "evidence", "show", provenance["evidence_id"], "--json"]) == 0
+    assessment = _json_output(capsys)["evidence"]["provenance"]
+    assert assessment["artifact_health"] == "artifact_hash_mismatch"
+    assert assessment["skills"] == []
+    assert followed is False

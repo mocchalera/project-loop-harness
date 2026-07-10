@@ -195,6 +195,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_start.add_argument("--dry-run", action="store_true", help="Preview initialization and state changes without mutation")
     p_start.add_argument("--no-init", action="store_true", help="Stop instead of initializing an uninitialized project")
     p_start.add_argument("--new", action="store_true", help="Start separate work even when active work already exists")
+    p_start.add_argument("--skill", action="append", default=[], help="Readable Skill file to hash before mutation; repeatable")
 
     p_doctor = sub.add_parser("doctor", help="Check project-loop installation health")
     p_doctor.add_argument("--strict", action="store_true")
@@ -1509,6 +1510,7 @@ def main(argv: list[str] | None = None) -> int:
                 dry_run=args.dry_run,
                 no_init=args.no_init,
                 new=args.new,
+                skills=args.skill,
             )
             if json_output:
                 _print_json(payload)

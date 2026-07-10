@@ -25,6 +25,7 @@ EXPORT_TABLES: tuple[tuple[str, str], ...] = (
     ("tasks", "id"),
     ("task_dependencies", "task_id, depends_on_task_id"),
     ("evidence", "id"),
+    ("evidence_links", "evidence_id, target_type, target_id, link_role"),
     ("defects", "id"),
     ("decisions", "id"),
     ("verifications", "id"),

@@ -7,6 +7,7 @@ from typing import Any
 from .db import connect
 from .errors import InvalidInputError
 from .guards import require_initialized
+from .evidence import EXECUTION_PROVENANCE_EVIDENCE_TYPE, provenance_presentation
 from .links import enrich_decisions_with_links, enrich_escalations_with_links
 from .paths import ProjectPaths
 from .rubric import claims_rubric_v1
@@ -57,7 +58,7 @@ def report_goal(paths: ProjectPaths, goal_id: str) -> dict[str, Any]:
             *[("test_case", test_case["id"]) for test_case in test_cases],
         ]
         events = _events_for_entities(conn, entities)
-        evidence = _evidence_for_report(conn, events=events, jobs=jobs)
+        evidence = _evidence_for_report(conn, paths=paths, events=events, jobs=jobs)
         closure_proof = _closure_proof(goal.get("completion_json"))
         data = {
             "kind": "goal",
@@ -114,7 +115,7 @@ def report_run(paths: ProjectPaths, workflow_run_id: str) -> dict[str, Any]:
             *[("test_case", test_case["id"]) for test_case in test_cases],
         ]
         events = _events_for_entities(conn, entities)
-        evidence = _evidence_for_report(conn, events=events, jobs=jobs)
+        evidence = _evidence_for_report(conn, paths=paths, events=events, jobs=jobs)
         data = {
             "kind": "run",
             "id": workflow_run_id,
@@ -167,7 +168,7 @@ def report_feature(paths: ProjectPaths, feature_id: str) -> dict[str, Any]:
             *[("decision", decision["id"]) for decision in decisions],
         ]
         events = _events_for_entities(conn, entities)
-        evidence = _evidence_for_report(conn, events=events, jobs=jobs)
+        evidence = _evidence_for_report(conn, paths=paths, events=events, jobs=jobs)
         data = {
             "kind": "feature",
             "id": feature_id,
@@ -217,7 +218,7 @@ def report_defect(paths: ProjectPaths, defect_id: str) -> dict[str, Any]:
             *[("decision", decision["id"]) for decision in decisions],
         ]
         events = _events_for_entities(conn, entities)
-        evidence = _evidence_for_report(conn, defect_id=defect_id, events=events, jobs=jobs)
+        evidence = _evidence_for_report(conn, paths=paths, defect_id=defect_id, events=events, jobs=jobs)
         data = {
             "kind": "defect",
             "id": defect_id,
@@ -297,7 +298,7 @@ def _render_goal_report(data: dict[str, Any]) -> str:
         _table(data["test_cases"], ["id", "feature_id", "story_id", "type", "scenario", "expected", "status", "last_run_id", "evidence_id", "updated_at"]),
         "",
         "## Evidence",
-        _table(data["evidence"], ["id", "type", "path", "command", "summary", "created_at"]),
+        _table(data["evidence"], ["id", "type", "path", "command", "summary", "skill_names", "skill_recorded_hashes", "skill_health", "created_at"]),
         "",
         "## Events",
         _table(data["events"], ["id", "event_type", "entity_type", "entity_id", "created_at", "payload_json"]),
@@ -353,7 +354,7 @@ def _render_run_report(data: dict[str, Any]) -> str:
         _table(data["test_cases"], ["id", "feature_id", "story_id", "type", "scenario", "expected", "status", "last_run_id", "evidence_id", "updated_at"]),
         "",
         "## Evidence",
-        _table(data["evidence"], ["id", "type", "path", "command", "summary", "created_at"]),
+        _table(data["evidence"], ["id", "type", "path", "command", "summary", "skill_names", "skill_recorded_hashes", "skill_health", "created_at"]),
         "",
         "## Events",
         _table(data["events"], ["id", "event_type", "entity_type", "entity_id", "created_at", "payload_json"]),
@@ -395,7 +396,7 @@ def _render_feature_report(data: dict[str, Any]) -> str:
         _table(data["decisions"], ["id", "status", "question", "recommendation", "linked_escalation_ids", "selected_option", "reason", "blocks_json", "created_at"]),
         "",
         "## Evidence",
-        _table(data["evidence"], ["id", "type", "path", "command", "summary", "created_at"]),
+        _table(data["evidence"], ["id", "type", "path", "command", "summary", "skill_names", "skill_recorded_hashes", "skill_health", "created_at"]),
         "",
         "## Events",
         _table(data["events"], ["id", "event_type", "entity_type", "entity_id", "created_at", "payload_json"]),
@@ -431,7 +432,7 @@ def _render_defect_report(data: dict[str, Any]) -> str:
         _table(data["decisions"], ["id", "status", "question", "recommendation", "linked_escalation_ids", "selected_option", "reason", "blocks_json", "created_at"]),
         "",
         "## Evidence",
-        _table(data["evidence"], ["id", "type", "path", "command", "summary", "created_at"]),
+        _table(data["evidence"], ["id", "type", "path", "command", "summary", "skill_names", "skill_recorded_hashes", "skill_health", "created_at"]),
         "",
         "## Events",
         _table(data["events"], ["id", "event_type", "entity_type", "entity_id", "created_at", "payload_json"]),
@@ -781,6 +782,7 @@ def _workflow_runs_for_defect(conn, defect_id: str) -> list[str]:
 def _evidence_for_report(
     conn,
     *,
+    paths: ProjectPaths,
     defect_id: str | None = None,
     events: list[dict[str, Any]],
     jobs: list[dict[str, Any]],
@@ -796,6 +798,9 @@ def _evidence_for_report(
             value = payload.get(key)
             if isinstance(value, str) and value:
                 ids.append(value)
+        provenance = payload.get("execution_provenance")
+        if isinstance(provenance, dict) and isinstance(provenance.get("evidence_id"), str):
+            ids.append(provenance["evidence_id"])
     output_paths = sorted({str(job["output_path"]) for job in jobs if job.get("output_path")})
     if output_paths:
         placeholders = ", ".join("?" for _ in output_paths)
@@ -809,7 +814,15 @@ def _evidence_for_report(
     if not unique_ids:
         return []
     placeholders = ", ".join("?" for _ in unique_ids)
-    return _rows(conn, f"SELECT * FROM evidence WHERE id IN ({placeholders}) ORDER BY created_at, id", tuple(unique_ids))
+    rows = _rows(conn, f"SELECT * FROM evidence WHERE id IN ({placeholders}) ORDER BY created_at, id", tuple(unique_ids))
+    for row in rows:
+        if row["type"] == EXECUTION_PROVENANCE_EVIDENCE_TYPE:
+            row["provenance"] = provenance_presentation(paths, evidence_id=str(row["id"]))
+            skills = row["provenance"]["skills"]
+            row["skill_names"] = ", ".join(str(item["name"]) for item in skills)
+            row["skill_recorded_hashes"] = ", ".join(str(item["recorded_sha256"]) for item in skills)
+            row["skill_health"] = ", ".join(str(item["health"]) for item in skills)
+    return rows
 
 
 def _events_for_entities(conn, entities: list[tuple[str, str]]) -> list[dict[str, Any]]:

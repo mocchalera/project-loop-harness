@@ -20,7 +20,7 @@ from .contracts.completion_packet import (
 from .db import connect, connect_mutation
 from .errors import DataStoreError, InvalidInputError
 from .events import append_event
-from .evidence import insert_evidence_link
+from .evidence import insert_evidence_link, linked_task_provenance
 from .guarded_process import DEFAULT_MAX_OUTPUT_BYTES
 from .guards import require_initialized
 from .ids import next_prefixed_id
@@ -59,6 +59,8 @@ def plan_finish_packet(
         "blocked_checks": [
             _public_check_plan(command) for command in commands if not command["safe_to_run"]
         ],
+        "execution_provenance": linked_task_provenance(paths, task_id=target["id"])
+        if target["type"] == "task" else None,
     }
 
 

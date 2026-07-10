@@ -9,6 +9,7 @@ from .db import connect
 from .errors import EXIT_USAGE, PclError
 from .guards import require_initialized
 from .paths import ProjectPaths
+from .evidence import EXECUTION_PROVENANCE_EVIDENCE_TYPE, assess_execution_provenance
 
 
 EVIDENCE_ID_RE = re.compile(r"^E-[0-9]{4,}$")
@@ -64,6 +65,11 @@ def show_evidence(paths: ProjectPaths, evidence_id: str) -> dict[str, Any]:
     )
     if manifest is not None:
         evidence["manifest"] = manifest
+    if (
+        evidence["type"] == EXECUTION_PROVENANCE_EVIDENCE_TYPE
+        or evidence["recorded_path"].startswith(".project-loop/evidence/execution-provenance/")
+    ):
+        evidence["provenance"] = assess_execution_provenance(paths, evidence_id=evidence_id)
     return {"ok": True, "evidence": evidence}
 
 
@@ -85,6 +91,14 @@ def render_evidence_metadata(payload: dict[str, Any]) -> str:
             if member.get("stored_path"):
                 line += f" stored_path:{member['stored_path']}"
             lines.append(line)
+    provenance = evidence.get("provenance")
+    if isinstance(provenance, dict):
+        lines.append(f"provenance_artifact_health: {provenance['artifact_health']}")
+        for skill in provenance.get("skills", []):
+            lines.append(
+                f"skill: {skill.get('name', '')} scope:{skill.get('path_scope', '')} "
+                f"recorded_sha256:{str(skill.get('sha256', ''))[:12]} health:{skill.get('health', '')}"
+            )
     return "\n".join(lines) + "\n"
 
 

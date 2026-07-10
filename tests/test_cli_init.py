@@ -446,6 +446,7 @@ def test_export_csv_includes_reviewable_loop_state(tmp_path: Path, capsys) -> No
         "tasks.csv",
         "task_dependencies.csv",
         "evidence.csv",
+        "evidence_links.csv",
         "defects.csv",
         "decisions.csv",
         "verifications.csv",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -234,3 +235,63 @@ def test_start_json_matches_stable_snapshot(tmp_path: Path, capsys) -> None:
 
     expected = json.loads((FIXTURE_ROOT / "start_initialized_v1.json").read_text(encoding="utf-8"))
     assert payload == expected
+
+
+def test_start_skill_provenance_is_canonical_linked_and_anchored(tmp_path: Path, capsys) -> None:
+    skill_a = tmp_path / "skills" / "alpha" / "SKILL.md"
+    skill_b = tmp_path / "skills" / "beta" / "SKILL.md"
+    skill_a.parent.mkdir(parents=True)
+    skill_b.parent.mkdir(parents=True)
+    skill_a.write_text("---\nname: alpha-skill\n---\nA\n", encoding="utf-8")
+    skill_b.write_bytes(b"B\r\n")
+    root = tmp_path / "project"
+
+    assert main([
+        "--root", str(root), "start", "Provenance", "--skill", str(skill_a),
+        "--skill", str(skill_b), "--json",
+    ]) == 0
+    payload = _json_output(capsys)
+    provenance = payload["result"]["provenance"]
+    artifact = root / provenance["path"]
+    raw = artifact.read_bytes()
+    assert raw.endswith(b"\n")
+    assert hashlib.sha256(raw).hexdigest() == provenance["artifact_sha256"]
+    document = json.loads(raw)
+    assert [item["name"] for item in document["skills"]] == ["alpha-skill", "beta"]
+    assert document["target"] == {"type": "task", "id": "T-0001"}
+
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        evidence = conn.execute("SELECT type, path, summary FROM evidence WHERE id = ?", (provenance["evidence_id"],)).fetchone()
+        link = conn.execute("SELECT target_type, target_id, link_role FROM evidence_links WHERE evidence_id = ?", (provenance["evidence_id"],)).fetchone()
+        event = conn.execute("SELECT payload_json FROM events WHERE event_type = 'work_started'").fetchone()
+    finally:
+        conn.close()
+    assert evidence["type"] == "execution_provenance"
+    assert str(skill_a.resolve()) not in evidence["summary"]
+    assert dict(link) == {"target_type": "task", "target_id": "T-0001", "link_role": "execution_provenance"}
+    assert json.loads(event["payload_json"])["execution_provenance"]["artifact_sha256"] == provenance["artifact_sha256"]
+
+
+def test_start_skill_dry_run_hashes_without_creating_project_and_rejects_duplicates(tmp_path: Path, capsys) -> None:
+    skill = tmp_path / "one" / "SKILL.md"
+    skill.parent.mkdir()
+    skill.write_text("hello", encoding="utf-8")
+    root = tmp_path / "project"
+    assert main(["--root", str(root), "start", "Plan", "--skill", str(skill), "--dry-run", "--json"]) == 0
+    payload = _json_output(capsys)
+    assert payload["result"]["planned_provenance"][0]["sha256"] == hashlib.sha256(b"hello").hexdigest()
+    assert payload["result"]["planned_provenance"] == [{
+        "name": "one",
+        "path_basename": "SKILL.md",
+        "path_scope": "outside_project",
+        "sha256": hashlib.sha256(b"hello").hexdigest(),
+    }]
+    assert str(skill.resolve()) not in json.dumps(payload)
+    assert not root.exists()
+
+    assert main(["--root", str(root), "start", "Nope", "--skill", str(skill), "--skill", str(skill.parent / "." / "SKILL.md"), "--json"]) == 2
+    error = _json_output(capsys)
+    assert error["error"]["code"] == "skill_path_duplicate"
+    assert str(skill.resolve()) not in json.dumps(error)
+    assert not root.exists()

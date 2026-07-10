@@ -22,6 +22,7 @@
     "initialization": null,
     "intent": "Snapshot intent",
     "project_initialized": false,
+    "provenance": null,
     "receipt": {
       "actor": "pcl:start",
       "contract_version": "start-receipt/v1",

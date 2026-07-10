@@ -7,6 +7,7 @@ from typing import Any
 from .commands import decision_options, escalation_options, generic_human_options, next_action, verification_options
 from .db import connect, count_rows
 from .guards import require_initialized
+from .evidence import EXECUTION_PROVENANCE_EVIDENCE_TYPE, provenance_presentation
 from .links import enrich_decisions_with_links, enrich_escalations_with_links
 from .lifecycle import ACTIVE_RUN_STATUSES
 from .locales import dashboard_strings, resolve_dashboard_locale
@@ -263,6 +264,13 @@ def render_dashboard(paths: ProjectPaths, *, locale: str | None = None) -> None:
         enrich_jobs_with_evidence(conn, data["agent_jobs"])
         data["decisions"] = enrich_decisions_with_links(data["decisions"])
         data["escalations"] = enrich_escalations_with_links(data["escalations"], data["decisions"])
+        for evidence in data["evidence"]:
+            if evidence["type"] == EXECUTION_PROVENANCE_EVIDENCE_TYPE:
+                evidence["provenance"] = provenance_presentation(paths, evidence_id=str(evidence["id"]))
+                skills = evidence["provenance"]["skills"]
+                evidence["skill_names"] = ", ".join(str(item["name"]) for item in skills)
+                evidence["skill_recorded_hashes"] = ", ".join(str(item["recorded_sha256"]) for item in skills)
+                evidence["skill_health"] = ", ".join(str(item["health"]) for item in skills)
         _enrich_navigation(paths, data)
         data["risk_summary"] = _risk_summary(data, risk_rows)
         data["human_decisions"] = _human_decisions(
@@ -1594,6 +1602,9 @@ def _render_html(data: dict, *, locale: str = "en") -> str:
                 "related_report_paths",
                 "command",
                 "summary",
+                "skill_names",
+                "skill_recorded_hashes",
+                "skill_health",
                 "created_at",
             ],
             strings=strings,
