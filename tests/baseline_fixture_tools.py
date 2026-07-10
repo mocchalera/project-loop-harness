@@ -146,11 +146,22 @@ def _initialize_representative_project(root: Path) -> None:
 def _write_snapshot(path: Path, argv: list[str], *, project_root: Path | None) -> None:
     result = _run(argv)
     display_argv = ["<PROJECT_ROOT>" if project_root and token == str(project_root) else token for token in argv]
+    stdout = _normalized_output(result.stdout, project_root=project_root)
+    stderr = _normalized_output(result.stderr, project_root=project_root)
+    if "--help" in argv:
+        # argparse line-wrapping differs across Python versions even with a
+        # pinned COLUMNS (observed: pcl --help on 3.13 vs 3.10-3.12). Help
+        # snapshots assert content, not version-specific wrapping, so collapse
+        # all whitespace runs to a single space.
+        if isinstance(stdout, str):
+            stdout = " ".join(stdout.split())
+        if isinstance(stderr, str):
+            stderr = " ".join(stderr.split())
     payload = {
         "argv": ["pcl", *display_argv],
         "exit_code": result.returncode,
-        "stdout": _normalized_output(result.stdout, project_root=project_root),
-        "stderr": _normalized_output(result.stderr, project_root=project_root),
+        "stdout": stdout,
+        "stderr": stderr,
     }
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 

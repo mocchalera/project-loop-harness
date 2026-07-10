@@ -37,6 +37,10 @@ personal information, or real-project content. It was generated from the
   again the current expected contract.
 - 2026-07-10 — `snapshots/pcl-version.json` regenerated for the v0.3.3 release
   bump (`0.3.1` → `0.3.3`; v0.3.2 milestone scope ships inside v0.3.3).
+- 2026-07-10 — all `*-help` snapshots regenerated with whitespace-collapsed
+  stdout: argparse wraps help differently across Python versions even with a
+  pinned `COLUMNS` (CI run 29071085361 showed `pcl --help` diverging on
+  3.10–3.12 vs 3.13). Help snapshots assert content, not wrapping.
 
 Committed snapshots always describe the **current** expected contract; the
 original v0.3.1 freeze remains recoverable at git tag `v0.3.1`. When a task

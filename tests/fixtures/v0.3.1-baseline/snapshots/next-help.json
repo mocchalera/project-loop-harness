@@ -6,5 +6,5 @@
   ],
   "exit_code": 0,
   "stderr": "",
-  "stdout": "usage: pcl next [-h] [--strict] [--explain]\n\noptions:\n  -h, --help  show this help message and exit\n  --strict    Route strict validation failures before normal next actions\n  --explain   Print a human-readable explanation of the next action\n"
+  "stdout": "usage: pcl next [-h] [--strict] [--explain] options: -h, --help show this help message and exit --strict Route strict validation failures before normal next actions --explain Print a human-readable explanation of the next action"
 }

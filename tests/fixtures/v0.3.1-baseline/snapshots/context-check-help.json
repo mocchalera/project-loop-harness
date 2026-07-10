@@ -7,5 +7,5 @@
   ],
   "exit_code": 0,
   "stderr": "",
-  "stdout": "usage: pcl context check [-h] (--job JOB_ID | --task TASK_ID)\n                         [--require-bound-receipt]\n\noptions:\n  -h, --help            show this help message and exit\n  --job JOB_ID          Agent job id to check\n  --task TASK_ID        Task id to check\n  --require-bound-receipt\n                        Exit with a typed error unless a matching target-bound\n                        code-context receipt is present.\n"
+  "stdout": "usage: pcl context check [-h] (--job JOB_ID | --task TASK_ID) [--require-bound-receipt] options: -h, --help show this help message and exit --job JOB_ID Agent job id to check --task TASK_ID Task id to check --require-bound-receipt Exit with a typed error unless a matching target-bound code-context receipt is present."
 }

@@ -6,5 +6,5 @@
   ],
   "exit_code": 0,
   "stderr": "",
-  "stdout": "usage: pcl render [-h] [--locale LOCALE]\n\noptions:\n  -h, --help       show this help message and exit\n  --locale LOCALE  Dashboard HTML locale: en, ja\n"
+  "stdout": "usage: pcl render [-h] [--locale LOCALE] options: -h, --help show this help message and exit --locale LOCALE Dashboard HTML locale: en, ja"
 }
