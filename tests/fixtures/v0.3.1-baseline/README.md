@@ -30,3 +30,15 @@ personal information, or real-project content. It was generated from the
   `master_trace_context` preflight block for task targets. This is the intended
   contract change from task 0132 and follows
   `docs/master-trace-intent-index.md`; it is not a v0.3.1 regression.
+- 2026-07-10 — `snapshots/pcl-help.json` regenerated to include the `audit`
+  subcommand added by task 0129. Task 0128 had temporarily special-cased this
+  file inside the reproducibility test instead of regenerating it; that
+  special case was removed at the v0.3.3 release and the committed snapshot is
+  again the current expected contract.
+- 2026-07-10 — `snapshots/pcl-version.json` regenerated for the v0.3.3 release
+  bump (`0.3.1` → `0.3.3`; v0.3.2 milestone scope ships inside v0.3.3).
+
+Committed snapshots always describe the **current** expected contract; the
+original v0.3.1 freeze remains recoverable at git tag `v0.3.1`. When a task
+intentionally changes a snapshot, regenerate it and add an entry here — do not
+special-case files inside the test.

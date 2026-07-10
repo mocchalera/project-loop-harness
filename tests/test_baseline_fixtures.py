@@ -31,11 +31,11 @@ def test_baseline_snapshots_are_reproducible_and_committed(tmp_path: Path) -> No
     second_snapshots = snapshot_bytes(second)
     assert first_snapshots == second_snapshots
     committed = snapshot_bytes(SNAPSHOT_ROOT)
-    assert {
-        name: content for name, content in first_snapshots.items() if name != "pcl-help.json"
-    } == {name: content for name, content in committed.items() if name != "pcl-help.json"}
-    assert b"audit" in first_snapshots["pcl-help.json"]
-    assert b"audit" not in committed["pcl-help.json"]
+    # Committed snapshots are the current expected contract. Intended deltas
+    # against the original v0.3.1 freeze are listed in the fixture README
+    # ("Intended changes since v0.3.1 freeze"); the frozen originals remain
+    # recoverable at git tag v0.3.1. No per-file special cases here.
+    assert first_snapshots == committed
 
 
 def test_v030_fixture_database_migrates_to_current_schema(tmp_path: Path, capsys) -> None:
