@@ -5,6 +5,7 @@ from pathlib import Path
 
 from pcl.cli import main
 from pcl.db import connect
+from pcl.events import append_event
 from pcl.paths import ProjectPaths
 from pcl.verification_feedback import verification_feedback_stats
 
@@ -101,6 +102,26 @@ def _create_verification_feedback_fixture(root: Path, capsys) -> None:
     _json_output(capsys)
 
 
+def _record_completion_packet_event(root: Path, *, outcome: str) -> None:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        append_event(
+            conn=conn,
+            events_path=root / ".project-loop" / "events.jsonl",
+            event_type="completion_packet_created",
+            entity_type="task",
+            entity_id="T-0001",
+            payload={
+                "contract_version": "completion-packet/v1",
+                "packet_id": f"CP-{outcome}",
+                "outcome": outcome,
+            },
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def test_kpi_report_empty_contract_fixture_and_read_only(tmp_path: Path, capsys) -> None:
     _init(tmp_path, capsys)
     db_path = tmp_path / ".project-loop" / "project.db"
@@ -192,6 +213,69 @@ def test_kpi_context_pack_average_replays_recorded_events_and_since_window(
         "value": None,
         "reason": "no_data_in_window",
         "data_source": "events:context_pack_generated",
+        "window": {"since": "2999-01-01", "until": None},
+    }
+
+
+def test_kpi_finish_metrics_replay_recorded_events_and_explain_unrecorded_operations(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    _record_completion_packet_event(tmp_path, outcome="COMPLETED_VERIFIED")
+    _record_completion_packet_event(tmp_path, outcome="COMPLETED_WITH_RISK")
+    _record_completion_packet_event(tmp_path, outcome="COMPLETED_VERIFIED")
+    db_path = tmp_path / ".project-loop" / "project.db"
+    events_path = tmp_path / ".project-loop" / "events.jsonl"
+    before = (_state_counts(tmp_path), db_path.stat().st_size, events_path.read_bytes())
+
+    assert main(["--root", str(tmp_path), "report", "kpi", "--json"]) == 0
+    sections = _json_output(capsys)["sections"]
+
+    assert sections["finish"] == {
+        "finish_execution_count": {
+            "value": 3,
+            "data_source": "events:completion_packet_created",
+            "window": {"since": None, "until": None},
+        },
+        "packet_outcome_distribution": {
+            "value": {"COMPLETED_VERIFIED": 2, "COMPLETED_WITH_RISK": 1},
+            "data_source": "events:completion_packet_created",
+            "window": {"since": None, "until": None},
+        },
+        "finish_roundtrips_saved": {
+            "value": None,
+            "reason": "manual_comparison_not_recorded",
+            "data_source": "manual:finish_roundtrip_comparison",
+            "window": {"since": None, "until": None},
+        },
+    }
+    assert sections["handoff"] == {
+        name: {
+            "value": None,
+            "reason": "read_only_operation_not_recorded",
+            "data_source": "read_only_operation:pcl_resume",
+            "window": {"since": None, "until": None},
+        }
+        for name in ("resume_execution_count", "packet_generation_count")
+    }
+    assert (_state_counts(tmp_path), db_path.stat().st_size, events_path.read_bytes()) == before
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "report",
+        "kpi",
+        "--since",
+        "2999-01-01",
+        "--json",
+    ]) == 0
+    future = _json_output(capsys)["sections"]["finish"]
+    assert future["finish_execution_count"]["value"] == 0
+    assert future["packet_outcome_distribution"] == {
+        "value": None,
+        "reason": "no_data_in_window",
+        "data_source": "events:completion_packet_created",
         "window": {"since": "2999-01-01", "until": None},
     }
 

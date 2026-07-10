@@ -15,6 +15,9 @@ from .verification_feedback import verification_feedback_stats
 
 KPI_REPORT_CONTRACT_VERSION = "kpi-report/v1"
 OPT_IN_CONTEXT_PACK_SCOPE = "recorded_opt_in_context_packs_only"
+COMPLETION_PACKET_CREATED_EVENT = "completion_packet_created"
+FINISH_ROUNDTRIP_SOURCE = "manual:finish_roundtrip_comparison"
+READ_ONLY_RESUME_SOURCE = "read_only_operation:pcl_resume"
 
 
 def report_kpi(paths: ProjectPaths, *, since: str | None = None) -> dict[str, Any]:
@@ -23,6 +26,11 @@ def report_kpi(paths: ProjectPaths, *, since: str | None = None) -> dict[str, An
     window = {"since": normalized_since, "until": None}
     verification_stats = verification_feedback_stats(paths, since=normalized_since)["stats"]
     context_rows = _context_pack_events(paths, since=normalized_since)
+    finish_rows = _event_payloads(
+        paths,
+        event_type=COMPLETION_PACKET_CREATED_EVENT,
+        since=normalized_since,
+    )
 
     return {
         "ok": True,
@@ -33,14 +41,11 @@ def report_kpi(paths: ProjectPaths, *, since: str | None = None) -> dict[str, An
                 window=window,
             ),
             "context_pack": _context_pack_section(context_rows, window=window),
-            "finish": _unmeasured_section(
-                metrics=("finish_execution_count", "packet_outcome_distribution", "finish_roundtrips_saved"),
-                data_source="not_available_until_task_0135",
-                window=window,
-            ),
+            "finish": _finish_section(finish_rows, window=window),
             "handoff": _unmeasured_section(
                 metrics=("resume_execution_count", "packet_generation_count"),
-                data_source="not_available_until_task_0137",
+                data_source=READ_ONLY_RESUME_SOURCE,
+                reason="read_only_operation_not_recorded",
                 window=window,
             ),
         },
@@ -112,16 +117,54 @@ def _context_pack_section(
     }
 
 
+def _finish_section(
+    rows: list[dict[str, Any]],
+    *,
+    window: dict[str, str | None],
+) -> dict[str, Any]:
+    source = f"events:{COMPLETION_PACKET_CREATED_EVENT}"
+    outcome_counts: dict[str, int] = {}
+    for row in rows:
+        outcome = row.get("outcome")
+        if not isinstance(outcome, str) or not outcome:
+            raise InvalidInputError(
+                f"Invalid {COMPLETION_PACKET_CREATED_EVENT} event payload.",
+                details={"event_type": COMPLETION_PACKET_CREATED_EVENT},
+            )
+        outcome_counts[outcome] = outcome_counts.get(outcome, 0) + 1
+
+    return {
+        "finish_execution_count": _metric(
+            len(rows),
+            data_source=source,
+            window=window,
+        ),
+        "packet_outcome_distribution": _metric(
+            dict(sorted(outcome_counts.items())) if rows else None,
+            reason="no_data_in_window" if not rows else None,
+            data_source=source,
+            window=window,
+        ),
+        "finish_roundtrips_saved": _metric(
+            None,
+            reason="manual_comparison_not_recorded",
+            data_source=FINISH_ROUNDTRIP_SOURCE,
+            window=window,
+        ),
+    }
+
+
 def _unmeasured_section(
     *,
     metrics: tuple[str, ...],
     data_source: str,
+    reason: str,
     window: dict[str, str | None],
 ) -> dict[str, Any]:
     return {
         name: _metric(
             None,
-            reason="not_yet_measured",
+            reason=reason,
             data_source=data_source,
             window=window,
         )
@@ -143,6 +186,15 @@ def _metric(
 
 
 def _context_pack_events(paths: ProjectPaths, *, since: str | None) -> list[dict[str, Any]]:
+    return _event_payloads(paths, event_type=CONTEXT_PACK_GENERATED_EVENT, since=since)
+
+
+def _event_payloads(
+    paths: ProjectPaths,
+    *,
+    event_type: str,
+    since: str | None,
+) -> list[dict[str, Any]]:
     conn = connect(paths.db_path)
     try:
         sql = """
@@ -150,7 +202,7 @@ def _context_pack_events(paths: ProjectPaths, *, since: str | None) -> list[dict
             FROM events
             WHERE event_type = ?
         """
-        params: list[Any] = [CONTEXT_PACK_GENERATED_EVENT]
+        params: list[Any] = [event_type]
         if since is not None:
             sql += " AND created_at >= ?"
             params.append(since)
@@ -165,13 +217,13 @@ def _context_pack_events(paths: ProjectPaths, *, since: str | None) -> list[dict
             payload = json.loads(str(row["payload_json"]))
         except JSONDecodeError as exc:
             raise InvalidInputError(
-                f"Invalid {CONTEXT_PACK_GENERATED_EVENT} event payload.",
-                details={"event_type": CONTEXT_PACK_GENERATED_EVENT},
+                f"Invalid {event_type} event payload.",
+                details={"event_type": event_type},
             ) from exc
         if not isinstance(payload, dict):
             raise InvalidInputError(
-                f"Invalid {CONTEXT_PACK_GENERATED_EVENT} event payload.",
-                details={"event_type": CONTEXT_PACK_GENERATED_EVENT},
+                f"Invalid {event_type} event payload.",
+                details={"event_type": event_type},
             )
         payloads.append(payload)
     return payloads

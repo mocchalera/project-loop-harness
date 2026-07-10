@@ -34,7 +34,7 @@ transcript and the comparison push-style brief, then record the inputs used.
 |---|---:|---:|---|
 | `master_brief_tokens_saved` | `null` — no paired push-style brief | `null` — no paired source transcript and push-style brief | Manual `charclass/v1` comparison; inputs were not recorded before these runs |
 | `average_context_pack_tokens` | `1698.0` | `3251.0` | One opt-in `context_pack_generated` event per repository |
-| `finish_roundtrips_saved` | `null` — `not_yet_measured` | `null` — `not_yet_measured` | The current KPI contract exposes no measured finish baseline for these repositories; no estimate was substituted |
+| `finish_roundtrips_saved` | `null` — `manual_comparison_not_recorded` | `null` — `manual_comparison_not_recorded` | No paired manual finish baseline was recorded; no estimate was substituted |
 | `verification_spend_efficiency` | `0.3333` | `null` — `no_data_in_window` | `executed_pass_rate × execution_rate` from `verification_feedback_stats` |
 | `bound_receipt_coverage` | `0.0` | `0.0` | Neither of the two recorded packs had a bound receipt |
 | `feedback_coverage_rate` | `0.6666666666666666` | `null` — `no_data_in_window` | `verification_feedback_stats` |
@@ -52,10 +52,13 @@ transcript and the comparison push-style brief, then record the inputs used.
 - Manual comparison evidence paths: none; therefore
   `master_brief_tokens_saved` is `null` rather than estimated.
 - KPI values: average context pack `1698.0`; bound receipt coverage `0.0`;
+  recorded finish execution count `0`;
   verification spend efficiency `0.3333`; feedback coverage
   `0.6666666666666666`.
-- Missing-data reasons: finish metrics are `not_yet_measured`; no paired brief
-  exists for the manual token-saving comparison.
+- Missing-data reasons: the packet outcome distribution is `no_data_in_window`,
+  finish round-trip savings are `manual_comparison_not_recorded`, and read-only
+  resume/handoff operations are `read_only_operation_not_recorded`; no paired
+  brief exists for the manual token-saving comparison.
 - Operator observations: the opt-in pack targeted completed task `T-0023` and
   remained within its token budget. The three implementation handoffs for
   0135–0137 were independently reviewed, integrated, and passed the parent full
@@ -72,10 +75,12 @@ transcript and the comparison push-style brief, then record the inputs used.
   `.project-loop/reports/g-0008-ax1-moc1-kpi.json` in the PLH repository.
 - Manual comparison evidence paths: none; therefore
   `master_brief_tokens_saved` is `null` rather than estimated.
-- KPI values: average context pack `3251.0`; bound receipt coverage `0.0`.
-- Missing-data reasons: verification feedback is `no_data_in_window`; finish is
-  `not_yet_measured`; no packet-based resume handoff or paired manual token input
-  was recorded.
+- KPI values: average context pack `3251.0`; bound receipt coverage `0.0`;
+  recorded finish execution count `0`.
+- Missing-data reasons: verification feedback and the finish packet outcome
+  distribution are `no_data_in_window`; finish round-trip savings are
+  `manual_comparison_not_recorded`; read-only resume/handoff operations are
+  `read_only_operation_not_recorded`; no paired manual token input was recorded.
 - Operator observations: the Project Loop database was migrated from schema 5
   to schema 8 after explicit approval. The pre-migration DB and JSONL audit log
   are backed up under

@@ -24,34 +24,33 @@
     },
     "finish": {
       "finish_execution_count": {
-        "data_source": "not_available_until_task_0135",
-        "reason": "not_yet_measured",
-        "value": null,
+        "data_source": "events:completion_packet_created",
+        "value": 0,
         "window": {"since": null, "until": null}
       },
       "finish_roundtrips_saved": {
-        "data_source": "not_available_until_task_0135",
-        "reason": "not_yet_measured",
+        "data_source": "manual:finish_roundtrip_comparison",
+        "reason": "manual_comparison_not_recorded",
         "value": null,
         "window": {"since": null, "until": null}
       },
       "packet_outcome_distribution": {
-        "data_source": "not_available_until_task_0135",
-        "reason": "not_yet_measured",
+        "data_source": "events:completion_packet_created",
+        "reason": "no_data_in_window",
         "value": null,
         "window": {"since": null, "until": null}
       }
     },
     "handoff": {
       "packet_generation_count": {
-        "data_source": "not_available_until_task_0137",
-        "reason": "not_yet_measured",
+        "data_source": "read_only_operation:pcl_resume",
+        "reason": "read_only_operation_not_recorded",
         "value": null,
         "window": {"since": null, "until": null}
       },
       "resume_execution_count": {
-        "data_source": "not_available_until_task_0137",
-        "reason": "not_yet_measured",
+        "data_source": "read_only_operation:pcl_resume",
+        "reason": "read_only_operation_not_recorded",
         "value": null,
         "window": {"since": null, "until": null}
       }
