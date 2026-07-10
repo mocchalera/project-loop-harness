@@ -71,6 +71,8 @@ SAFE_PROJECT_EXECUTABLES = {
     "yarn",
 }
 SAFE_PYTHON_MODULES = {"mypy", "pytest", "pyright", "ruff"}
+FAIL_OPEN_CHECK_COMMAND_REASON = "fail_open_check_command"
+FAIL_OPEN_FALLBACK_EXECUTABLES = {"true", "echo", "printf"}
 FORBIDDEN_PCL_FLAGS = {"--root"}
 FORBIDDEN_PROJECT_TOKENS = {"deploy", "install", "publish", "release", "upload"}
 FORBIDDEN_COMMAND_FRAGMENTS = (
@@ -547,6 +549,9 @@ def _mark_project_command_safety(command: dict[str, Any], *, key: str) -> None:
     if not resolved:
         command["blocked_reason"] = f"project command is not configured: {key}"
         return
+    if _is_fail_open_check_command(resolved):
+        command["blocked_reason"] = FAIL_OPEN_CHECK_COMMAND_REASON
+        return
     unsafe = _forbidden_fragment(resolved)
     if unsafe:
         command["blocked_reason"] = f"command contains forbidden fragment: {unsafe}"
@@ -630,6 +635,34 @@ def _split_command(command: str) -> tuple[list[str], str]:
     if not argv:
         return [], "command is empty"
     return argv, ""
+
+
+def _is_fail_open_check_command(command: str) -> bool:
+    """Recognize bounded shell fallbacks that turn a failed check into success.
+
+    This deliberately is not a general shell parser. It tokenizes quoting so a
+    literal ``|| true`` argument is not mistaken for a shell operator, then
+    recognizes only direct success fallbacks after ``||``: true, echo, printf,
+    the ``:`` no-op, and ``exit 0``.
+    """
+
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars="|")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
+        return False
+
+    for index, token in enumerate(tokens[:-1]):
+        if token != "||":
+            continue
+        fallback = Path(tokens[index + 1]).name.lower()
+        if fallback in FAIL_OPEN_FALLBACK_EXECUTABLES or fallback == ":":
+            return True
+        if fallback == "exit" and index + 2 < len(tokens) and tokens[index + 2] == "0":
+            return True
+    return False
 
 
 def _forbidden_pcl_flag(argv: list[str]) -> str:

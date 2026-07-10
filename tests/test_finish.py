@@ -387,6 +387,51 @@ def test_finish_emit_packet_failure_keeps_task_active(tmp_path: Path, capsys) ->
         conn.close()
 
 
+def test_finish_rejects_fail_open_missing_path_check_before_execution(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    config_path = tmp_path / "pcl.yaml"
+    config_path.write_text(
+        config_path.read_text(encoding="utf-8").replace(
+            'test: "python -m pytest -q test_sample.py"',
+            'test: "test -e work/site || echo missing implementation"',
+        ),
+        encoding="utf-8",
+    )
+
+    def unexpected_execution(*args, **kwargs):
+        pytest.fail("blocked fail-open check was executed")
+
+    monkeypatch.setattr(
+        "pcl.finish_execution.execute_planned_guarded_command",
+        unexpected_execution,
+    )
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001", "--json",
+    ]) == 2
+    payload = _json_output(capsys)
+    assert payload["error"]["code"] == "invalid_input"
+    assert payload["error"]["details"]["blocked_checks"] == [
+        {
+            "id": "finish_checks:1",
+            "config_key": "test",
+            "command": "test -e work/site || echo missing implementation",
+            "safe_to_run": False,
+            "blocked_reason": "fail_open_check_command",
+        }
+    ]
+    assert _evidence_count(tmp_path, "completion_check") == 0
+    assert _evidence_count(tmp_path, "completion_packet") == 0
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        status = conn.execute("SELECT status FROM tasks WHERE id = 'T-0001'").fetchone()[0]
+    finally:
+        conn.close()
+    assert status == "in_progress"
+
+
 def test_finish_emit_packet_no_changes_keeps_task_active(tmp_path: Path, capsys) -> None:
     _create_packet_project(tmp_path, capsys, with_change=False)
 

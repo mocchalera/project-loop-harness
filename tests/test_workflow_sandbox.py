@@ -3,8 +3,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from pcl.cli import main
 from pcl.db import connect
+from pcl.paths import ProjectPaths
+from pcl.workflow_sandbox import plan_guarded_project_checks
 
 
 SAFE_COMMAND_WORKFLOW = """\
@@ -116,6 +120,56 @@ stop_conditions:
 def _json_output(capsys) -> dict:
     captured = capsys.readouterr()
     return json.loads(captured.out)
+
+
+def _plan_finish_check(tmp_path: Path, command: str) -> dict:
+    (tmp_path / "pcl.yaml").write_text(
+        "commands:\n"
+        f'  test: "{command}"\n',
+        encoding="utf-8",
+    )
+    return plan_guarded_project_checks(ProjectPaths(tmp_path))[0]
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python -m pytest missing.py || true",
+        "python -m pytest missing.py || /usr/bin/true",
+        "python -m pytest missing.py || echo 'missing target'",
+        "test -e work/site || printf '%s\\n' 'missing target'",
+        "test -f work/manifest.json || echo 'missing manifest'",
+        "python -m pytest missing.py || :",
+        "python -m pytest missing.py || exit 0",
+    ],
+)
+def test_finish_check_planner_blocks_recognized_fail_open_commands(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    planned = _plan_finish_check(tmp_path, command)
+
+    assert planned["resolved_command"] == command
+    assert planned["safe_to_run"] is False
+    assert planned["blocked_reason"] == "fail_open_check_command"
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "python -m pytest -q tests/test_echo.py",
+        "python -m pytest -q tests/test_printf.py",
+        "python -m pytest -k 'true'",
+    ],
+)
+def test_finish_check_planner_keeps_nearby_static_commands_safe(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    planned = _plan_finish_check(tmp_path, command)
+
+    assert planned["safe_to_run"] is True
+    assert planned["blocked_reason"] == ""
 
 
 def test_workflow_sandbox_template_dry_run_reports_safe_and_blocked_commands(
