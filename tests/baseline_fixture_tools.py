@@ -26,6 +26,16 @@ PROJECT_COMMANDS = {
     "context-check-json": ["context", "check", "--task", "T-0001", "--json"],
 }
 
+SNAPSHOT_ENV = {
+    "COLUMNS": "80",
+    "LANG": "C.UTF-8",
+    "LC_ALL": "C.UTF-8",
+    "LINES": "24",
+    "NO_COLOR": "1",
+    "PYTHONHASHSEED": "0",
+    "TZ": "UTC",
+}
+
 _ISO_TIMESTAMP_RE = re.compile(
     r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})\b"
 )
@@ -191,8 +201,7 @@ def _run(argv: list[str]) -> subprocess.CompletedProcess[str]:
     env["PYTHONPATH"] = (
         source_path if not existing_pythonpath else os.pathsep.join((source_path, existing_pythonpath))
     )
-    env["PYTHONHASHSEED"] = "0"
-    env["LC_ALL"] = "C"
+    env.update(SNAPSHOT_ENV)
     return subprocess.run(
         [sys.executable, "-m", "pcl", *argv],
         cwd=repo_root,
