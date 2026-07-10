@@ -49,9 +49,9 @@ implement from the spec file, not from prompt summaries.
 | 0138 | `pcl report kpi` surface | v0.4.0 Dogfood Operations | P1 | done (main 6f1c024) |
 | 0139 | Executable restart context repair | v0.4.0 Three-command Wedge | P0 | done (main bcb6cf5) |
 | 0140 | KPI post-integration data sources | v0.4.0 release candidate | P0 | done (main 9d2ff23) |
-| 0140a | Skill / CLI contract parity | v0.4.0 RC2 Integrity Gate | P0 | in progress |
-| 0140b | Evidence-backed lifecycle integrity gate | v0.4.0 RC2 Integrity Gate | P0 | in progress |
-| 0140c | Fail-open finish check guard | v0.4.0 RC2 Integrity Gate | P0 | in progress |
+| 0140a | Skill / CLI contract parity | v0.4.0 RC2 Integrity Gate | P0 | done (main 8bd6aa3) |
+| 0140b | Evidence-backed lifecycle integrity gate | v0.4.0 RC2 Integrity Gate | P0 | done (main ad082d7 + d5d2602) |
+| 0140c | Fail-open finish check guard | v0.4.0 RC2 Integrity Gate | P0 | done (main 131d9d4) |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the

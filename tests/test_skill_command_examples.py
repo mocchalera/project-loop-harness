@@ -20,15 +20,19 @@ SKILL_PARSER_CONTRACT_EXAMPLES = [
     'pcl story waive US-XXXX --reason "..."',
     'pcl test plan --feature F-XXXX --story US-XXXX --type acceptance --scenario "..." --expected "..."',
     'pcl evidence add --file artifacts/acceptance.txt --summary "..." --command "..." --copy',
+    'pcl test pass TC-XXXX --summary "..." --evidence-id E-XXXX',
+    'pcl feature status F-XXXX --status done --summary "..." --evidence-id E-XXXX',
+    'pcl task status T-XXXX done --reason "..."',
     'pcl finish --emit-packet --goal G-XXXX',
     'pcl verification record --run WR-XXXX --result approved --reason "..."',
+    'pcl goal close G-XXXX --summary "..." --evidence-id E-PACKET',
     'pcl goal close G-XXXX --summary "..." --verification V-XXXX',
 ]
 
 
 LEGACY_PARSER_CONTRACT_EXAMPLES = [
-    # P0-02 owns the canonical --evidence-id parser flags. These compatibility
-    # forms keep this parallel P0-01 branch checking every other required flag.
+    # Compatibility forms remain parseable while the Skill documents the
+    # hash-pinned Evidence-ID route as canonical terminal proof.
     'pcl test pass TC-XXXX --summary "..." --evidence "artifacts/acceptance.txt"',
     'pcl feature status F-XXXX --status done --summary "..." --evidence "artifacts/acceptance.txt"',
     'pcl goal close G-XXXX --summary "..." --evidence "artifacts/completion-packet.json"',
@@ -58,6 +62,7 @@ def test_direct_route_documents_canonical_terminal_contract() -> None:
     expected_commands = [
         'pcl test pass TC-XXXX --summary "..." --evidence-id E-XXXX',
         'pcl feature status F-XXXX --status done --summary "..." --evidence-id E-XXXX',
+        'pcl task status T-XXXX done --reason "..."',
         'pcl goal close G-XXXX --summary "..." --evidence-id E-PACKET',
         'pcl goal close G-XXXX --summary "..." --verification V-XXXX',
     ]
@@ -82,6 +87,7 @@ def test_direct_route_preserves_handoff_order() -> None:
         "pcl evidence add --file artifacts/acceptance.txt",
         "pcl test pass TC-XXXX",
         "pcl feature status F-XXXX",
+        "pcl task status T-XXXX done",
         "pcl finish --emit-packet --goal G-XXXX",
         "pcl goal close G-XXXX --summary \"...\" --evidence-id E-PACKET",
     ]

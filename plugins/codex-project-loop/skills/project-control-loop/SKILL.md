@@ -130,7 +130,14 @@ preceding command; do not invent IDs.
    pcl feature status F-XXXX --status done --summary "..." --evidence-id E-XXXX
    ```
 
-7. Emit a completion packet bound to the Goal. Continue only when its outcome
+7. Mark the Task created by `pcl start` terminal after its acceptance work is
+   complete. Do not leave a child Task active when closing its Goal:
+
+   ```bash
+   pcl task status T-XXXX done --reason "..."
+   ```
+
+8. Emit a completion packet bound to the Goal. Continue only when its outcome
    is `COMPLETED_VERIFIED` or `COMPLETED_WITH_RISK`; keep the packet's returned
    Evidence ID, shown here as `E-PACKET`:
 
@@ -138,7 +145,7 @@ preceding command; do not invent IDs.
    pcl finish --emit-packet --goal G-XXXX
    ```
 
-8. Close the direct-route Goal with the completed packet Evidence, then
+9. Close the direct-route Goal with the completed packet Evidence, then
    validate and render:
 
    ```bash
