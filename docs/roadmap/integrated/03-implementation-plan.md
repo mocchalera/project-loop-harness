@@ -20,6 +20,12 @@ Wave B: Product Wedge
 0131 ─ 0132 ─┬─ 0134
              └─ 0133
 
+Repo release insertion after real-task dogfood (not bundle IDs):
+repo 0140 ─┬─ repo 0140a (Skill / CLI parity)
+           ├─ repo 0140b (lifecycle integrity)
+           └─ repo 0140c (fail-open guard)
+                    └─ integrated v0.4.0 RC2 verification
+
 Wave C: Adaptive / Replan / Assurance
 0135 ─ 0136 ─ 0137 ─┬─ 0141
        └─ 0138 ─ 0139│
@@ -37,6 +43,9 @@ Wave E: Cost / Learning / Evidence
 ```
 
 M1 gate前にWave Bを設計・schema reviewすることは可能だが、状態変更を伴うmergeはM1完了後を原則とする。
+Wave Cのactivationは、repo 0140a〜0140cとv0.4.1 Integrity Migrationの
+exit後へ移動する。bundle内の0135以降はproposal-local IDであり、repoの
+0140a〜0140cとは別namespaceである。
 
 ## 3. Task index
 

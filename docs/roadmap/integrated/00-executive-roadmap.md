@@ -73,9 +73,10 @@ AI-PLCからは、Collection、発散と収束、Backtrack、maker≠checker、A
 |---|---|---|---|---|
 | M0 | v0.3.1 | 現在地を固定 | `0122`までをrelease、contract fixtureとbaselineをtag | mainとpackage/release notesが一致し、以後の比較基準が固定 |
 | M1 | v0.3.2 | Trust Foundation | MCP適合、transactional outbox、audit check/repair、crash test、executor安全化 | 外部MCP client smoke成功。強制終了後もDB/JSONL/Evidenceを検出・修復可能 |
-| M2 | v0.4.0 | Three-command Wedge | completion packet v1、`pcl start`、既存`pcl finish`拡張、`pcl resume` | 新規利用者がontologyを知らず、10分以内・3操作で有用packetを得る |
-| M3 | v0.4.1 | Adaptive Entry | work brief v1、route recommendation、multi-axis policy、explain/override | LLMなしでrouteと理由を再現。明確なタスクへのoverheadが目標内 |
-| M4 | v0.4.2 | Replan & Assurance | brief revision、stale/invalidation、verifier provenance、risk policy | 前提変更から安全に戻れ、高risk変更を自己承認だけで閉じられない |
+| M2 | v0.4.0 | Three-command Wedge + Integrity Gate | completion packet v1、`pcl start`、既存`pcl finish`拡張、`pcl resume`、Evidence-backed terminal guards | 10分以内・3操作で有用packetを得て、Story/Test/Goal不整合とfail-open checkを完了扱いにできない |
+| M2.1 | v0.4.1 | Integrity Migration | idle routing修復、lifecycle repair/link、structured diagnostics、Skill provenance | 既存projectを意味判断の自動承認なしにenforced lifecycleへ移行できる |
+| M3 | v0.4.2 | Adaptive Entry | work brief v1、route recommendation、multi-axis policy、explain/override | LLMなしでrouteと理由を再現。明確なタスクへのoverheadが目標内 |
+| M4 | v0.4.3 | Replan & Assurance | brief revision、stale/invalidation、verifier provenance、risk policy | 前提変更から安全に戻れ、高risk変更を自己承認だけで閉じられない |
 | M5 | v0.5.0 | Discovery Profile | profile contract、AI-PLC-inspired discovery、decision proposal、人間checkpoint | coreにOption tableを増やさず、曖昧タスクの手戻り低減を実測 |
 | M6 | v0.5.1 | Trace & Efficient Handoff | Master Trace/intent-index統合、claim-bound handoff | transcript全文なしで別session/modelが再開。出典のないclaimをfact化しない |
 | M7 | v0.6.x | Adaptive Cost & Learning | capability/budget profile、budget exhaustion packet、context cache、knowledge proposal実験 | 安いworker→deterministic check→必要時だけescalationが説明可能に動作 |

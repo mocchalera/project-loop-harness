@@ -254,6 +254,27 @@ for the full contract shapes, refinements, and approval record.
   instead of creating a parallel decision model, then add `pcl replan` only once
   there is a clear audited state to return to.
 
+## Milestone 15: v0.4 lifecycle integrity and migration
+
+Real-task dogfood of the local v0.4.0 release candidate exposed terminal states
+that had records but insufficient reviewable proof. This work takes precedence
+over Adaptive Entry.
+
+- v0.4.0 RC2 blocks publication on repo tasks 0140a–0140c: executable bundled
+  Skill commands, Evidence-ID-first lifecycle guards, target-bound direct Goal
+  closure, and pre-execution rejection of obvious fail-open checks.
+- Keep schema 8 and preserve the Workflow-backed route. A direct Test may have
+  no Workflow Run when its Story and hash-pinned Evidence satisfy the direct
+  contract.
+- Existing projects receive advisory lifecycle findings for one release; new
+  projects default to enforced policy and all projects reject newly invalid
+  terminal mutations.
+- v0.4.1 provides read-only repair planning, dedicated link repair, structured
+  diagnostics, idle routing repair, and Skill/runtime provenance before
+  enforcement is tightened.
+- Adaptive Entry moves to v0.4.2. Schema-backed generic Verification targets
+  remain deferred until completion-packet dogfood proves they are needed.
+
 ## Semantic promotion gate
 
 Embeddings, Tree-sitter, call graphs, and semantic retrieval stay out

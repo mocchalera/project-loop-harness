@@ -138,6 +138,9 @@ Give these tasks to coding agents in this order:
 134. `agent-tasks/0138-kpi-report-surface.md` (v0.4.0 Dogfood Operations, `pcl report kpi` read-only aggregation + `context_pack_generated` usage event + dogfood report template; growth-plan-derived, not bundle)
 135. `agent-tasks/0139-executable-resume-context.md` (v0.4.0 Wave B exit repair, read-only Evidence lookup + executable restart context after blind dogfood)
 136. `agent-tasks/0140-kpi-post-integration-sources.md` (v0.4.0 release blocker, replace stale pre-0135/0137 KPI placeholders with durable finish-event measurements and factual read-only resume reasons)
+137. `agent-tasks/0140a-skill-cli-contract-parity.md` (v0.4.0 RC2 blocker, make the three bundled project-control-loop Skill copies executable and parser-tested)
+138. `agent-tasks/0140b-lifecycle-integrity-gate.md` (v0.4.0 RC2 blocker, Evidence-ID-first terminal guards and target-bound direct Goal closure without schema migration)
+139. `agent-tasks/0140c-fail-open-check-guard.md` (v0.4.0 RC2 blocker, reject obvious fail-open finish checks before execution)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and
@@ -147,12 +150,16 @@ runs parallel to Wave A; Trust Foundation becomes v0.3.3). Wave B (bundle M2
 Three-command Wedge) was activated 2026-07-10 (DEC-0003, `docs/plan-v0.4.0.md`):
 bundle 0131–0134 -> repo 0134–0137. Wave C+ proposals in
 `docs/roadmap/integrated/agent-tasks-proposed/` remain unnumbered.
+Real-task dogfood then exposed false-completion and fail-open check paths in the
+local v0.4.0 RC. RC2 therefore inserts repo tasks 0140a–0140c before
+publication; the proposal's Wave C task numbers remain planning-only and do not
+conflict with these suffixed release blockers.
 
 Roadmap through v0.5.0: see `docs/growth-plan-v0.2.4-v0.5.md` (approved 2026-07-08, amended by §10 on 2026-07-10).
 Numbering is creation order; milestones interleave. v0.3.0 = {0108, 0113, 0114, 0115}.
 v0.3.1 = Handoff Integrity + Operator Experience, dispatch order: 0116 receipt/link agreement -> 0117 Markdown refresh command -> 0118 canonical target-bound docs -> 0119 `pcl context check` -> 0120 `pcl finish` -> 0121 human-gate ja -> 0122 feature_coverage no-op. (0116+0117 = the integrity pair, dispatched first; supersedes the earlier 0109/0110/0111/0116 reservation from the v0.3.0 planning note.)
 v0.3.2 = master-trace / intent-index formalization, starting with 0123 contract docs before any first-class `pcl intent` or optional context-pack section.
 v0.3.3 = Trust Foundation (integrated Wave A), dispatch order: 0123 + 0124 in parallel -> 0125 -> 0126, with 0127 ADR (human gate) -> 0128 -> 0129 -> 0130; 0131 parallel-safe after 0124. Shipped 2026-07-10 (includes v0.3.2 scope; tag v0.3.3).
-v0.4.0 = Dogfood Operations + Three-command Wedge (Wave B), see `docs/plan-v0.4.0.md`. Dispatch: 0134 + 0138 in parallel -> 0135 + 0136 after 0134 -> 0137 after 0135; dogfood KPI report is an operations deliverable alongside.
+v0.4.0 = Dogfood Operations + Three-command Wedge (Wave B) + RC2 Integrity Gate, see `docs/plan-v0.4.0.md`. Dispatch: 0134 + 0138 in parallel -> 0135 + 0136 after 0134 -> 0137 after 0135 -> 0139 + 0140 exit repairs -> 0140a + 0140b + 0140c in parallel -> integrated RC2 verification. v0.4.1 is reserved for compatibility repair/provenance; Adaptive Entry moves to v0.4.2.
 
 Do not start with MCP as the runtime. Do not start with a hosted UI. The CLI/runtime must become reliable first. (Fixing the existing optional MCP server to match its declared spec — 0125/0126 — is reliability work, not a runtime pivot.)

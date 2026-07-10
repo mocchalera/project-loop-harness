@@ -1,4 +1,4 @@
-# v0.4.0 Plan — Dogfood Operations + Three-command Wedge (Wave B)
+# v0.4.0 Plan — Dogfood Operations + Three-command Wedge + RC2 Integrity Gate
 
 - **Status:** Active
 - **Date:** 2026-07-10
@@ -8,7 +8,8 @@
   が本計画として具体化
 - **Basis:** `docs/growth-plan-v0.2.4-v0.5.md` §3 v0.4.0 + §10 amendment 5、
   `docs/roadmap/integrated/ADOPTION.md`（Wave B activation 節）、
-  `docs/roadmap/integrated/00-executive-roadmap.md` M2
+  `docs/roadmap/integrated/00-executive-roadmap.md` M2、2026-07-10
+  聴く仕事ラボ実タスク dogfood の false-completion handoff
 
 ## 1. Version label の統合判断
 
@@ -63,6 +64,31 @@ repo spec と実装コードレビューで確定する。
   first-class 化の反復需要を測る（v0.5 判断材料）。
 - Codex / Claude Code handoff runbook。
 
+### 2c. RC2 Integrity Gate（実タスクdogfood修復）
+
+聴く仕事ラボLPの実制作では、Feature、Story、Test、Goal、Evidenceが存在して
+いても、次の不整合を `pcl validate --strict` が成功扱いできた。
+
+- `done` Feature配下のStoryが`draft`のまま;
+- `passing` TestがStory未リンクで、reviewableなdirect Evidenceもない;
+- Goalがapproved Verificationまたはtarget-bound completed packetなしでclosed;
+- mutableなpath文字列だけがterminal proofとして残る;
+- 実対象がないcheckを`|| echo`でexit 0へ変換できる;
+- 同梱Skillのcopy-paste commandがCLI必須引数と一致しない。
+
+これらは追加機能ではなくM2の信頼性exitを否定するため、公開前RC2 blockerと
+して次を差し込む。
+
+| repo ID | 内容 | 依存 |
+|---|---|---|
+| 0140a | Skill / CLI契約一致、3copy同一性、command parser regression | 0140 |
+| 0140b | Evidence ID first、terminal mutation guard、direct Goal completion proof | 0140 |
+| 0140c | obvious fail-open finish checkの実行前block | 0140 |
+
+既存projectでpolicy keyがない場合、新lifecycle findingは1 release advisoryと
+する。新規projectはenforcedを既定にし、mutation guardはpolicyに関係なく新しい
+不整合を作らせない。P0はschema 8、dependency追加なしで実装する。
+
 ## 3. Exit 条件（version label より優先）
 
 1. **M2 wedge exit（bundle M2 準拠）**: 新規利用者が ontology を知らずに
@@ -75,6 +101,10 @@ repo spec と実装コードレビューで確定する。
    （または計測不能の明示的理由）が入っている。
 3. 既存 suite green + `pcl finish` 既存 contract の後方互換維持
    （0135 の characterization test が証拠）。
+4. **RC2 integrity exit**: synthetic dogfood fixtureで旧RCのfalse-passを再現し、
+   新RCでは不正なTest/Feature/Goal mutationとfail-open checkがzero-mutationで
+   rejectされる。hash-pinned Evidenceを使うdirect routeとapproved Verificationを
+   使うWorkflow routeの双方がpassし、同梱Skill commandがparser testを通る。
 
 ## 4. 実施順序
 
@@ -83,16 +113,19 @@ repo spec と実装コードレビューで確定する。
                    └─→ 0136 (start)
 0138 (KPI report) ── 並行・独立
 dogfood 計測 ─────── wedge 出荷後〜継続（report は随時追記）
+dogfood findings ─── 0140a + 0140b + 0140c ──→ integrated RC2 verification
 ```
 
 dispatch: 0134 + 0138 を並行起票 → 0135・0136 を 0134 merge 後に並行 →
 0137 は 0135 merge 後。全タスク spec-first / worktree worker / orchestrator
 独立検収（v0.3.3 と同じ運用）。
+0139/0140までのdogfood exit修復後、0140a〜0140cは異なる責務面で並行実装し、
+単一integration worktreeでfull suite、build、fresh-wheel smokeを再実行する。
 
 ## 5. やらないこと（この milestone で）
 
-- work brief / route recommendation / adaptive policy（M3 = Wave C。活性化
-  判断は v0.4.0 exit review で行う）
+- work brief / route recommendation / adaptive policy（M3 = Wave C、v0.4.2。
+  v0.4.1 Integrity Migrationの後に活性化する）
 - `pcl intent` / `pcl collect` の first-class table 化（dogfood 結果待ち）
 - LLM 呼び出しの core 追加、agent process の自動起動、cloud/remote 連携
 - README 導線の書き換え（M2 gate 後 = v0.5.0 の README split で実施）

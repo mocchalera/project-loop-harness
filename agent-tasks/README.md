@@ -48,7 +48,10 @@ implement from the spec file, not from prompt summaries.
 | 0137 | handoff-packet/v1 and read-only `pcl resume` | v0.4.0 Three-command Wedge | P0 | done (main 34ac60c) |
 | 0138 | `pcl report kpi` surface | v0.4.0 Dogfood Operations | P1 | done (main 6f1c024) |
 | 0139 | Executable restart context repair | v0.4.0 Three-command Wedge | P0 | done (main bcb6cf5) |
-| 0140 | KPI post-integration data sources | v0.4.0 release candidate | P0 | approved |
+| 0140 | KPI post-integration data sources | v0.4.0 release candidate | P0 | done (main 9d2ff23) |
+| 0140a | Skill / CLI contract parity | v0.4.0 RC2 Integrity Gate | P0 | in progress |
+| 0140b | Evidence-backed lifecycle integrity gate | v0.4.0 RC2 Integrity Gate | P0 | in progress |
+| 0140c | Fail-open finish check guard | v0.4.0 RC2 Integrity Gate | P0 | in progress |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
@@ -75,8 +78,9 @@ renumbering map and D-08).
 |---|---|
 | v0.3.2 | 0123 contract docs first; optional `master_trace_context` section only after contract acceptance |
 | v0.3.3 | Trust Foundation (integrated roadmap Wave A): MCP conformance + transactional outbox + recovery |
-| v0.4.0 | Dogfood operations + cost KPI measurement + first-class Intent/Collection decision |
-| v0.4.x | Possible `pcl intent` / `pcl collect` design if dogfood shows repeated need; integrated Wave B (3-command wedge) decision |
+| v0.4.0 | Dogfood operations + Three-command Wedge + RC2 lifecycle Integrity Gate |
+| v0.4.1 | Integrity migration: idle routing, lifecycle repair/link commands, diagnostics, Skill provenance |
+| v0.4.2 | Adaptive Entry: work brief, deterministic route recommendation, multi-axis explain/override |
 | v0.5.0 | Adoption: README split, contract stability policy, upstream-layer adoption decision |
 
 Everything with an ID below 0102 is completed design history; see `TASKS.md`
