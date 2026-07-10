@@ -14,6 +14,7 @@ from .errors import DataStoreError, ProjectNotInitializedError
 from .events import append_event
 from .locks import project_operation_lock
 from .outbox import ProjectionResult, project_pending_events
+from .test_faults import crash_if_requested
 from .paths import ProjectPaths
 from .timeutil import utc_now_iso
 
@@ -433,6 +434,7 @@ def _execute_sql_script(conn: sqlite3.Connection, sql: str) -> None:
         if stripped.upper().startswith("PRAGMA FOREIGN_KEYS"):
             continue
         conn.execute(stripped)
+        crash_if_requested("after_migration_statement")
     if statement.strip():
         raise DataStoreError("Migration contains an incomplete SQL statement.")
 

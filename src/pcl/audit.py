@@ -653,25 +653,40 @@ def _check_evidence(
                 )
 
     orphan_temp_count = 0
+    orphan_manifest_count = 0
     if paths.evidence_dir.exists():
         for candidate in sorted(paths.evidence_dir.rglob("*")):
-            if not candidate.is_file() or not candidate.name.endswith((".tmp", ".temp")):
+            if not candidate.is_file():
                 continue
             if candidate.resolve() in referenced:
                 continue
-            orphan_temp_count += 1
-            _add_anomaly(
-                anomalies,
-                "human_review",
-                "orphan_temp_evidence",
-                "Unreferenced temporary Evidence artifact requires review; it was not deleted.",
-                "quarantine_or_report",
-                path=_relative_or_absolute(paths, candidate),
-            )
+            if candidate.name.endswith((".tmp", ".temp")):
+                orphan_temp_count += 1
+                _add_anomaly(
+                    anomalies,
+                    "human_review",
+                    "orphan_temp_evidence",
+                    "Unreferenced temporary Evidence artifact requires review; it was not deleted.",
+                    "quarantine_or_report",
+                    path=_relative_or_absolute(paths, candidate),
+                )
+            elif candidate.parent == paths.evidence_dir / "adhoc" and candidate.name.endswith(
+                "-adhoc-v0.json"
+            ):
+                orphan_manifest_count += 1
+                _add_anomaly(
+                    anomalies,
+                    "human_review",
+                    "orphan_evidence_manifest",
+                    "Unreferenced finalized Evidence manifest requires review; it was not deleted.",
+                    "quarantine_or_report",
+                    path=_relative_or_absolute(paths, candidate),
+                )
     return {
         "evidence_missing_files": missing_count,
         "evidence_mismatches": mismatch_count,
         "orphan_temp_evidence": orphan_temp_count,
+        "orphan_evidence_manifests": orphan_manifest_count,
     }
 
 

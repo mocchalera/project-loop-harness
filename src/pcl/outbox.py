@@ -11,6 +11,7 @@ from typing import Any, Callable
 from .db import connect
 from .locks import jsonl_projector_lock, project_operation_lock
 from .paths import ProjectPaths
+from .test_faults import crash_if_requested, fault_requested
 from .timeutil import utc_now_iso
 
 
@@ -121,6 +122,7 @@ def _project_with_jsonl_lock(
             if str(row["status"]) == "retry_wait" and not _retry_is_due(row["next_attempt_at"]):
                 break
             attempt = _start_attempt(paths.db_path, str(row["outbox_id"]))
+            crash_if_requested("projector_after_attempt_before_append")
             try:
                 disposition = _append_or_match(
                     paths.db_path,
@@ -137,6 +139,7 @@ def _project_with_jsonl_lock(
                 _mark_failed_needs_review(paths.db_path, str(row["outbox_id"]), error)
                 break
             _mark_delivered(paths.db_path, str(row["outbox_id"]))
+            crash_if_requested("after_outbox_delivered_commit")
             delivered += 1
             if disposition not in {"appended", "matched"}:  # pragma: no cover - defensive
                 raise AssertionError(disposition)
@@ -247,16 +250,22 @@ def _append_or_match(
         )
     if fault is not None:
         fault("before_jsonl_append")
+    crash_if_requested("before_jsonl_append")
     events_path.parent.mkdir(parents=True, exist_ok=True)
     payload = canonical_event_bytes(expected)
     with events_path.open("ab", buffering=0) as file:
+        if fault_requested("during_jsonl_append"):
+            file.write(payload[: max(1, len(payload) // 2)])
+            crash_if_requested("during_jsonl_append")
         written = file.write(payload)
         if written != len(payload):
             raise OSError(f"Short events.jsonl write: expected {len(payload)} bytes, wrote {written}.")
+        crash_if_requested("after_jsonl_write_before_fsync")
         file.flush()
         os.fsync(file.fileno())
     if fault is not None:
         fault("after_jsonl_fsync_before_delivered_commit")
+    crash_if_requested("after_jsonl_fsync_before_delivered_commit")
     return "appended"
 
 

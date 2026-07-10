@@ -16,7 +16,11 @@ class MutationConnection(sqlite3.Connection):
     _authoritative_commit_completed = False
 
     def commit(self) -> None:
+        from .test_faults import crash_if_requested
+
+        crash_if_requested("before_sqlite_commit")
         super().commit()
+        crash_if_requested("after_sqlite_commit_before_projector")
         if self._paths is None or self._authoritative_commit_completed:
             return
         self._authoritative_commit_completed = True

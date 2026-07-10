@@ -15,6 +15,7 @@ from .errors import DataStoreError, EXIT_USAGE, InvalidInputError, PclError, Pro
 from .events import append_event
 from .ids import next_prefixed_id
 from .paths import ProjectPaths
+from .test_faults import crash_if_requested
 from .timeutil import utc_now_iso
 
 
@@ -141,11 +142,14 @@ def record_adhoc_evidence(
         if include_sensitive_count:
             manifest["sensitive_path_warning_count"] = sensitive_path_warning_count
         tmp_path = manifest_path.with_suffix(".json.tmp")
+        crash_if_requested("before_evidence_temp_write")
         tmp_path.write_text(
             json.dumps(manifest, ensure_ascii=False, sort_keys=True, indent=2) + "\n",
             encoding="utf-8",
         )
+        crash_if_requested("after_evidence_temp_write_before_rename")
         tmp_path.replace(manifest_path)
+        crash_if_requested("after_evidence_rename_before_commit")
         if linked_task_id:
             conn.execute(
                 """
