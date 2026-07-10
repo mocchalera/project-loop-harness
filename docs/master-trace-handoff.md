@@ -1,4 +1,11 @@
-# Master Trace Handoff
+# Master Trace Handoff (Historical M0 Dogfood Runbook)
+
+> **Historical document.** This page preserves the M0 dogfood procedure,
+> evidence references, reproduced limitation, and decisions as they occurred.
+> Future runs must use the normative
+> [Master Trace / Intent Index v0 contract](master-trace-intent-index.md), which
+> reflects the later task-evidence link and current handoff sequence. Do not
+> treat the M0 workaround below as the current product contract.
 
 M0 master-trace handoff is a dogfood workflow for pull-based agent
 continuation. The master records its working trace as evidence, an external
