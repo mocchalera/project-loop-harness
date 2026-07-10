@@ -126,7 +126,15 @@ from .workflow_proposals import (
     propose_workflow,
     read_workflow_proposal,
 )
-from .workflow_sandbox import sandbox_workflow_file, sandbox_workflow_proposal, sandbox_workflow_template
+from .workflow_sandbox import (
+    LEGACY_DEPRECATION,
+    guard_workflow_file,
+    guard_workflow_proposal,
+    guard_workflow_template,
+    sandbox_workflow_file,
+    sandbox_workflow_proposal,
+    sandbox_workflow_template,
+)
 from .workflow_verifier import verify_workflow_file, verify_workflow_proposal, verify_workflow_template
 from .workflow_executor import execute_workflow
 from .workflows import list_jobs, read_job, run_workflow
@@ -379,7 +387,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_loop_run.add_argument("workflow_id")
     p_loop_run.add_argument("--goal", default=None)
     p_loop_run.add_argument("--defect", default=None)
-    p_loop_execute = loop_sub.add_parser("execute", help="Execute an approved workflow through the guarded engine")
+    p_loop_execute = loop_sub.add_parser(
+        "execute",
+        help="Execute an approved workflow through the guarded executor (host subprocess, no OS isolation)",
+    )
     p_loop_execute.add_argument("workflow_id")
     p_loop_execute.add_argument("--goal", default=None)
     p_loop_execute.add_argument("--defect", default=None)
@@ -391,6 +402,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_loop_execute.add_argument("--allow-agent-exec", action="store_true")
     p_loop_execute.add_argument("--timeout-seconds", type=int, default=120)
+    p_loop_execute.add_argument("--max-output-bytes", type=int, default=1_048_576)
+    p_loop_execute.add_argument(
+        "--redact-pattern",
+        action="append",
+        default=[],
+        help="Additional Python regex applied before execution output is stored. Repeatable.",
+    )
+    p_loop_execute.add_argument(
+        "--allow-env",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Explicitly inherit an additional environment variable by name. Repeatable.",
+    )
     p_loop_execute.add_argument("--no-auto-verify", action="store_true")
     p_loop_execute.add_argument("--no-complete", action="store_true")
     p_loop_execute.add_argument("--close-goal", action="store_true")
@@ -418,13 +443,42 @@ def build_parser() -> argparse.ArgumentParser:
     workflow_verify_target.add_argument("--file", default=None, help="Workflow YAML file to verify")
     workflow_verify_target.add_argument("--proposal", default=None, help="Workflow proposal id to verify")
     workflow_verify_target.add_argument("--template", default=None, help="Approved workflow template id to verify")
-    p_workflow_sandbox = workflow_sub.add_parser("sandbox", help="Plan or execute allowlisted workflow commands")
+    p_workflow_guard = workflow_sub.add_parser(
+        "guard",
+        help="Plan or run allowlisted commands on the host (no OS/network/filesystem isolation)",
+    )
+    workflow_guard_target = p_workflow_guard.add_mutually_exclusive_group(required=True)
+    workflow_guard_target.add_argument("--file", default=None, help="Workflow YAML file to inspect")
+    workflow_guard_target.add_argument("--proposal", default=None, help="Workflow proposal id to inspect")
+    workflow_guard_target.add_argument("--template", default=None, help="Approved workflow template id")
+    p_workflow_guard.add_argument("--execute", action="store_true", help="Run guarded allowlisted commands")
+    p_workflow_guard.add_argument("--timeout-seconds", type=int, default=120)
+    p_workflow_guard.add_argument("--max-output-bytes", type=int, default=1_048_576)
+    p_workflow_guard.add_argument(
+        "--redact-pattern",
+        action="append",
+        default=[],
+        help="Additional Python regex applied before execution output is stored. Repeatable.",
+    )
+    p_workflow_guard.add_argument(
+        "--allow-env",
+        action="append",
+        default=[],
+        metavar="NAME",
+        help="Explicitly inherit an additional environment variable by name. Repeatable.",
+    )
+    p_workflow_sandbox = workflow_sub.add_parser(
+        "sandbox",
+        help="Deprecated alias for `workflow guard`; retained through the 0.3.x release line",
+    )
     workflow_sandbox_target = p_workflow_sandbox.add_mutually_exclusive_group(required=True)
-    workflow_sandbox_target.add_argument("--file", default=None, help="Workflow YAML file to sandbox-plan")
-    workflow_sandbox_target.add_argument("--proposal", default=None, help="Workflow proposal id to sandbox-plan")
-    workflow_sandbox_target.add_argument("--template", default=None, help="Approved workflow template id to sandbox")
-    p_workflow_sandbox.add_argument("--execute", action="store_true", help="Run sandbox-safe commands")
+    workflow_sandbox_target.add_argument("--file", default=None, help="Workflow YAML file to inspect")
+    workflow_sandbox_target.add_argument("--proposal", default=None, help="Workflow proposal id to inspect")
+    workflow_sandbox_target.add_argument("--template", default=None, help="Approved workflow template id")
+    p_workflow_sandbox.add_argument("--execute", action="store_true", help="Run guarded allowlisted commands")
     p_workflow_sandbox.add_argument("--timeout-seconds", type=int, default=120)
+    p_workflow_sandbox.add_argument("--max-output-bytes", type=int, default=1_048_576)
+    p_workflow_sandbox.add_argument("--allow-env", action="append", default=[], metavar="NAME")
     p_workflow_proposals = workflow_sub.add_parser("proposals", help="Inspect workflow proposals")
     proposals_sub = p_workflow_proposals.add_subparsers(dest="workflow_proposals_command", required=True)
     p_workflow_proposals_list = proposals_sub.add_parser("list", help="List workflow proposals")
@@ -1647,6 +1701,9 @@ def main(argv: list[str] | None = None) -> int:
                 agent_adapter=args.agent_adapter,
                 allow_agent_exec=args.allow_agent_exec,
                 timeout_seconds=args.timeout_seconds,
+                max_output_bytes=args.max_output_bytes,
+                redaction_patterns=args.redact_pattern,
+                allowed_env_names=args.allow_env,
                 auto_verify=not args.no_auto_verify,
                 complete=not args.no_complete,
                 close_goal_on_complete=args.close_goal,
@@ -1706,27 +1763,43 @@ def main(argv: list[str] | None = None) -> int:
                 print(to_pretty_json(payload))
             return 0 if result["ok"] else 1
 
-        if args.command == "workflow" and args.workflow_command == "sandbox":
+        if args.command == "workflow" and args.workflow_command in {"guard", "sandbox"}:
+            legacy_alias = args.workflow_command == "sandbox"
+            if legacy_alias:
+                print(f"WARNING: {LEGACY_DEPRECATION}", file=sys.stderr)
+            file_handler = sandbox_workflow_file if legacy_alias else guard_workflow_file
+            proposal_handler = sandbox_workflow_proposal if legacy_alias else guard_workflow_proposal
+            template_handler = sandbox_workflow_template if legacy_alias else guard_workflow_template
+            redaction_patterns = [] if legacy_alias else args.redact_pattern
             if args.file:
-                result = sandbox_workflow_file(
+                result = file_handler(
                     paths,
                     source_path=args.file,
                     execute=args.execute,
                     timeout_seconds=args.timeout_seconds,
+                    max_output_bytes=args.max_output_bytes,
+                    **({"redaction_patterns": redaction_patterns} if not legacy_alias else {}),
+                    allowed_env_names=args.allow_env,
                 )
             elif args.proposal:
-                result = sandbox_workflow_proposal(
+                result = proposal_handler(
                     paths,
                     proposal_id=args.proposal,
                     execute=args.execute,
                     timeout_seconds=args.timeout_seconds,
+                    max_output_bytes=args.max_output_bytes,
+                    **({"redaction_patterns": redaction_patterns} if not legacy_alias else {}),
+                    allowed_env_names=args.allow_env,
                 )
             else:
-                result = sandbox_workflow_template(
+                result = template_handler(
                     paths,
                     workflow_id=args.template,
                     execute=args.execute,
                     timeout_seconds=args.timeout_seconds,
+                    max_output_bytes=args.max_output_bytes,
+                    **({"redaction_patterns": redaction_patterns} if not legacy_alias else {}),
+                    allowed_env_names=args.allow_env,
                 )
             if json_output:
                 _print_json(result)

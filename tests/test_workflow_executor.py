@@ -357,7 +357,7 @@ def test_loop_execute_rejects_blocked_command_before_creating_run(
     assert main(["--root", str(tmp_path), "loop", "execute", "feature_coverage", "--json"]) == 2
     payload = _json_output(capsys)
     assert payload["error"]["code"] == "invalid_input"
-    assert "blocked by the sandbox" in payload["error"]["message"]
+    assert "blocked by the guarded executor" in payload["error"]["message"]
     assert payload["error"]["details"]["blocked_commands"][0]["raw_command"] == "pcl feature add"
 
     conn = connect(tmp_path / ".project-loop" / "project.db")

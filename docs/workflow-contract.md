@@ -70,32 +70,52 @@ The verifier is a static check. It parses declarative YAML, checks agent and ste
 references, validates budget shape, and rejects dangerous command fragments. It
 does not execute workflow commands.
 
-## Limited sandbox
+## Guarded command planning and execution
 
-Workflow command steps can be inspected with the sandbox:
+Workflow command steps can be inspected with the guarded executor:
 
 ```bash
-pcl workflow sandbox --template feature_coverage
-pcl workflow sandbox --proposal WP-0001
-pcl workflow sandbox --file workflow.yaml
+pcl workflow guard --template feature_coverage
+pcl workflow guard --proposal WP-0001
+pcl workflow guard --file workflow.yaml
 ```
 
-Sandbox output uses contract `workflow-sandbox/v1`. The default mode is dry-run:
+Guard output uses contract `guarded-executor/v1`. The default mode is dry-run:
 it parses command steps, resolves `project.commands.*` references from
 `pcl.yaml`, reports allowlisted argv, and explains blocked commands.
 
 Execution is explicit and template-only:
 
 ```bash
-pcl workflow sandbox --template feature_coverage --execute
+pcl workflow guard --template feature_coverage --execute
 ```
 
-`--execute` never runs proposals or arbitrary files. It only runs sandbox-safe
-commands from approved templates, skips blocked commands, captures stdout/stderr
-under `.project-loop/evidence/workflow-sandbox/`, records a
-`workflow_sandbox_run` evidence row, and appends a `workflow_sandbox_executed`
-event. If every command is blocked, execution returns a non-success result and
-does not record sandbox execution evidence.
+`--execute` never runs proposals or arbitrary files. It only runs allowlisted
+commands from approved templates, skips blocked commands, and captures bounded,
+redacted stdout/stderr under `.project-loop/evidence/guarded-executor/`. It
+records a `guarded_executor_run` evidence row and appends a
+`guarded_executor_executed` event. If every command is blocked, execution
+returns a non-success result and does not record guarded execution evidence.
+
+The default cap is 1 MiB per stdout/stderr stream and can be changed with
+`--max-output-bytes`. Evidence records the original byte count, retained byte
+count, head-retention strategy, truncation reason, timeout termination,
+binary/encoding classification, and `redacted` status. `--redact-pattern` adds
+repeatable Python regular expressions to the shared conservative filters.
+Filters run before artifact storage and no raw-output fallback is retained.
+They are not a secret scanner and do not prove that output is secret-free.
+
+The permission packet states the actual boundary: argv list, `shell=False`,
+project-root working directory, environment allowlist, and no OS, network, or
+filesystem isolation. The current backend is a host subprocess, not a sandbox.
+Use repeatable `--allow-env NAME` only when a command explicitly needs another
+parent variable; the packet records inherited names but never their values.
+
+For compatibility, `pcl workflow sandbox` remains an alias through the `0.3.x`
+release line. It emits a deprecation warning to stderr, retains the legacy
+`workflow-sandbox/v1` response key/contract and legacy Evidence identifiers, and
+uses the same hardened execution implementation. Migrate scripts to
+`pcl workflow guard` and the `guarded_executor` response key.
 
 Safe `pcl` execution is limited to local validation/render/read checks such as
 `pcl validate`, `pcl render`, `pcl doctor`, `pcl next`, and
@@ -118,7 +138,7 @@ pcl loop execute workflow_id --agent-adapter generic_shell --allow-agent-exec
 ```
 
 Executor output uses contract `workflow-executor/v1`. It verifies the template,
-preflights command steps through the sandbox, creates a workflow run, executes
+preflights command steps through the guarded executor, creates a workflow run, executes
 steps in workflow order, records workflow execution evidence, records an
 automated verification, completes the run, validates state, and renders the
 dashboard by default. Templates with no executable command or agent steps are

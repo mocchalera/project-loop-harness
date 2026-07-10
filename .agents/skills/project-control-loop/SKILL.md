@@ -158,15 +158,15 @@ pcl agent command J-0001 --adapter generic_shell
 pcl ingest-agent-run .project-loop/evidence/agent-runs/J-0001/output.md
 ```
 
-## Workflow sandbox commands
+## Guarded executor commands
 
 Workflow command steps are dry-run by default. Execution requires an approved
 template and explicit `--execute`:
 
 ```bash
 pcl workflow verify --template feature_coverage
-pcl workflow sandbox --template feature_coverage
-pcl workflow sandbox --template feature_coverage --execute
+pcl workflow guard --template feature_coverage
+pcl workflow guard --template feature_coverage --execute
 ```
 
 ## Automatic executor commands

@@ -31,16 +31,21 @@ The harness should be useful locally before it is powerful externally.
 
 MCP should be an optional bridge to external services. It should not replace local CLI state mutation in the first implementation.
 
-## Workflow sandbox guidance
+## Guarded executor guidance
 
-`pcl workflow sandbox` is local and explicit. Dry-run mode is the default.
+`pcl workflow guard` is local and explicit. Dry-run mode is the default.
 Execution requires `--execute`, applies only to approved workflow templates, and
-uses `subprocess.run(..., shell=False)` for allowlisted commands. Proposals and
-standalone files remain review artifacts and are not executable.
+uses an argv list with `shell=False` for allowlisted commands. Proposals and
+standalone files remain review artifacts and are not executable. The host process
+has no OS, network, or filesystem isolation. Parent environment inheritance is
+allowlisted, and output is capped and redacted before Evidence storage.
+
+`pcl workflow sandbox` remains a deprecated compatibility alias through the
+`0.3.x` release line. It emits a warning on stderr and does not imply isolation.
 
 ## Automatic executor guidance
 
 `pcl loop execute` is an explicit local automation boundary. It refuses blocked
-commands before creating a run, executes command steps only through the sandbox,
+commands before creating a run, executes command steps only through the guarded executor,
 and requires `--allow-agent-exec` before launching any agent adapter command.
 Generated execution evidence and events remain the source for review.

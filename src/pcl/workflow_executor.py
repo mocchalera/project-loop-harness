@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import json
 import shlex
-import subprocess
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable, Pattern
 
 from .agents import generate_agent_command
 from .db import connect
 from .errors import InvalidInputError
 from .events import append_event
+from .guarded_process import DEFAULT_MAX_OUTPUT_BYTES, execute_guarded_process
 from .guards import require_initialized
 from .ids import next_prefixed_id
 from .lifecycle import (
@@ -21,13 +21,13 @@ from .lifecycle import (
     record_verification,
 )
 from .paths import ProjectPaths
+from .redaction import compile_redaction_patterns, redact_value
 from .renderer import render_dashboard
 from .timeutil import utc_now_iso
 from .validators import validate_project
 from .workflow_sandbox import (
-    _subprocess_env,
-    execute_planned_sandbox_command,
-    plan_workflow_template_sandbox,
+    execute_planned_guarded_command,
+    plan_workflow_template_guard,
 )
 from .workflow_verifier import verify_workflow_template
 from .workflows import WorkflowTemplate, load_workflow_template, read_job, run_workflow
@@ -47,6 +47,9 @@ def execute_workflow(
     agent_adapter: str = "manual",
     allow_agent_exec: bool = False,
     timeout_seconds: int = 120,
+    max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
+    redaction_patterns: Iterable[str] = (),
+    allowed_env_names: Iterable[str] = (),
     auto_verify: bool = True,
     complete: bool = True,
     close_goal_on_complete: bool = False,
@@ -56,6 +59,10 @@ def execute_workflow(
 ) -> dict[str, Any]:
     require_initialized(paths)
     timeout_seconds = _normalize_timeout(timeout_seconds)
+    max_output_bytes = _normalize_max_output_bytes(max_output_bytes)
+    redaction_patterns = tuple(redaction_patterns)
+    allowed_env_names = tuple(allowed_env_names)
+    compiled_redaction_patterns = compile_redaction_patterns(redaction_patterns)
     if retry_run_id and resume_run_id:
         raise InvalidInputError(
             "--retry and --resume are mutually exclusive.",
@@ -98,10 +105,19 @@ def execute_workflow(
             f"Workflow template {workflow_id} failed verification.",
             details={"workflow_id": workflow_id, "errors": verification["errors"]},
         )
-    sandbox = plan_workflow_template_sandbox(paths, workflow_id=workflow_id, timeout_seconds=timeout_seconds)
-    _require_no_blocked_commands(sandbox)
+    guarded_executor = plan_workflow_template_guard(
+        paths,
+        workflow_id=workflow_id,
+        timeout_seconds=timeout_seconds,
+        max_output_bytes=max_output_bytes,
+    )
+    _require_no_blocked_commands(guarded_executor)
     agent_steps = _agent_steps(template)
-    _require_executable_steps(workflow_id=workflow_id, sandbox=sandbox, agent_steps=agent_steps)
+    _require_executable_steps(
+        workflow_id=workflow_id,
+        guarded_executor=guarded_executor,
+        agent_steps=agent_steps,
+    )
     if agent_steps and (not allow_agent_exec or agent_adapter not in EXECUTABLE_AGENT_ADAPTERS):
         raise InvalidInputError(
             "Workflow contains agent steps. Automatic agent execution requires "
@@ -139,7 +155,8 @@ def execute_workflow(
         allow_agent_exec=allow_agent_exec,
         timeout_seconds=timeout_seconds,
         verification=verification,
-        sandbox=sandbox,
+        guarded_executor=guarded_executor,
+        max_output_bytes=max_output_bytes,
         jobs=run_result["jobs"],
         execution_mode=execution_mode,
         retry_of_workflow_run_id=retry_context["id"] if retry_context else "",
@@ -150,7 +167,7 @@ def execute_workflow(
     else:
         _mark_execution_started(paths, result)
 
-    commands_by_step = _commands_by_step(sandbox)
+    commands_by_step = _commands_by_step(guarded_executor)
     jobs_by_step = {str(job["step_id"]): dict(job) for job in run_result["jobs"]}
 
     try:
@@ -172,8 +189,12 @@ def execute_workflow(
                     adapter=agent_adapter,
                     execution_dir=execution_dir,
                     timeout_seconds=timeout_seconds,
+                    max_output_bytes=max_output_bytes,
+                    redaction_patterns=compiled_redaction_patterns,
+                    allowed_env_names=allowed_env_names,
                 )
                 result["steps"].append(outcome)
+                _update_output_status(result, outcome)
                 if outcome["status"] == "failed":
                     result["status"] = "failed"
                     result["ok"] = False
@@ -187,8 +208,12 @@ def execute_workflow(
                     command=command,
                     execution_dir=execution_dir,
                     timeout_seconds=timeout_seconds,
+                    max_output_bytes=max_output_bytes,
+                    redaction_patterns=redaction_patterns,
+                    allowed_env_names=allowed_env_names,
                 )
                 result["steps"].append(outcome)
+                _update_output_status(result, outcome)
                 if outcome["status"] == "failed":
                     fail_workflow_run(paths, workflow_run_id=run_id, summary=outcome["summary"])
                     result["status"] = "failed"
@@ -238,7 +263,12 @@ def execute_workflow(
             evidence_id = _record_execution_evidence(paths, result)
             result["evidence_id"] = evidence_id
     except Exception as exc:
-        _capture_execution_exception(paths, result, exc)
+        _capture_execution_exception(
+            paths,
+            result,
+            exc,
+            redaction_patterns=compiled_redaction_patterns,
+        )
 
     _mark_execution_finished(paths, result)
     _maybe_render(paths, result, enabled=render)
@@ -254,6 +284,9 @@ def _execute_agent_step(
     adapter: str,
     execution_dir: Path,
     timeout_seconds: int,
+    max_output_bytes: int,
+    redaction_patterns: Iterable[Pattern[str]],
+    allowed_env_names: Iterable[str],
 ) -> dict[str, Any]:
     step_id = str(step.get("id") or "")
     job_id = str(job["id"])
@@ -266,33 +299,29 @@ def _execute_agent_step(
     argv = shlex.split(agent_command.command)
     stdout_path = execution_dir / f"{_safe_file_token(step_id)}-{job_id}.stdout.txt"
     stderr_path = execution_dir / f"{_safe_file_token(step_id)}-{job_id}.stderr.txt"
-    try:
-        completed = subprocess.run(
-            argv,
-            cwd=paths.root,
-            env=_subprocess_env(),
-            capture_output=True,
-            check=False,
-            shell=False,
-            text=True,
-            timeout=timeout_seconds,
-        )
-        exit_code = completed.returncode
-        stdout = completed.stdout
-        stderr = completed.stderr
-        timed_out = False
-    except subprocess.TimeoutExpired as exc:
-        exit_code = None
-        stdout = _decode_timeout_output(exc.stdout)
-        stderr = _decode_timeout_output(exc.stderr) or f"Timed out after {timeout_seconds} seconds.\n"
-        timed_out = True
-    stdout_path.write_text(stdout or "", encoding="utf-8")
-    stderr_path.write_text(stderr or "", encoding="utf-8")
+    process_result = execute_guarded_process(
+        argv,
+        cwd=paths.root,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+        timeout_seconds=timeout_seconds,
+        max_output_bytes=max_output_bytes,
+        redaction_patterns=redaction_patterns,
+        additional_allowed_env_names={"PCL_AGENT_COMMAND", *allowed_env_names},
+    )
+    process_result["stdout"]["path"] = str(stdout_path.relative_to(paths.root))
+    process_result["stderr"]["path"] = str(stderr_path.relative_to(paths.root))
+    exit_code = process_result["exit_code"]
+    timed_out = process_result["timed_out"]
     latest_job = read_job(paths, job_id)
     passed = exit_code == 0 and latest_job["status"] == "passed"
     if not passed and latest_job["status"] in {"queued", "running", "blocked"}:
         fail_job(paths, job_id=job_id, summary=f"Agent adapter {adapter} failed for step {step_id}.")
-    return {
+    agent_command_payload, command_redacted = redact_value(
+        agent_command.to_dict(),
+        additional_patterns=redaction_patterns,
+    )
+    outcome = {
         "kind": "agent",
         "step_id": step_id,
         "job_id": job_id,
@@ -300,6 +329,13 @@ def _execute_agent_step(
         "status": "passed" if passed else "failed",
         "exit_code": exit_code,
         "timed_out": timed_out,
+        "failure_kind": process_result["failure_kind"],
+        "output_truncated": process_result["output_truncated"],
+        "redacted": process_result["redacted"] or command_redacted,
+        "stdout": process_result["stdout"],
+        "stderr": process_result["stderr"],
+        "termination": process_result["termination"],
+        "permission_contract": process_result["permission_contract"],
         "summary": (
             f"Agent adapter {adapter} completed job {job_id}."
             if passed
@@ -309,8 +345,14 @@ def _execute_agent_step(
         "latest_evidence_id": latest_job.get("latest_evidence_id") or "",
         "stdout_path": str(stdout_path.relative_to(paths.root)),
         "stderr_path": str(stderr_path.relative_to(paths.root)),
-        "agent_command": agent_command.to_dict(),
+        "agent_command": agent_command_payload,
     }
+    redacted_outcome, outcome_redacted = redact_value(
+        outcome,
+        additional_patterns=redaction_patterns,
+    )
+    redacted_outcome["redacted"] = bool(redacted_outcome["redacted"] or outcome_redacted)
+    return redacted_outcome
 
 
 def _execute_command_step(
@@ -320,17 +362,23 @@ def _execute_command_step(
     command: dict[str, Any],
     execution_dir: Path,
     timeout_seconds: int,
+    max_output_bytes: int,
+    redaction_patterns: Iterable[str],
+    allowed_env_names: Iterable[str],
 ) -> dict[str, Any]:
     command = dict(command)
-    execute_planned_sandbox_command(
+    execute_planned_guarded_command(
         paths,
         command,
         run_dir=execution_dir,
         timeout_seconds=timeout_seconds,
+        max_output_bytes=max_output_bytes,
+        redaction_patterns=redaction_patterns,
+        allowed_env_names=allowed_env_names,
     )
     status = str(command["status"])
     raw_command = str(command["raw_command"])
-    return {
+    outcome = {
         "kind": "command",
         "step_id": step_id,
         "command_id": command["id"],
@@ -339,6 +387,13 @@ def _execute_command_step(
         "status": status,
         "exit_code": command["exit_code"],
         "timed_out": command["timed_out"],
+        "failure_kind": command["failure_kind"],
+        "output_truncated": command["output_truncated"],
+        "redacted": command["redacted"],
+        "stdout": command["stdout"],
+        "stderr": command["stderr"],
+        "termination": command["termination"],
+        "permission_contract": command["permission_contract"],
         "summary": (
             f"Command step {step_id} passed: {raw_command}"
             if status == "passed"
@@ -347,6 +402,12 @@ def _execute_command_step(
         "stdout_path": command["stdout_path"],
         "stderr_path": command["stderr_path"],
     }
+    redacted_outcome, outcome_redacted = redact_value(
+        outcome,
+        additional_patterns=compile_redaction_patterns(redaction_patterns),
+    )
+    redacted_outcome["redacted"] = bool(redacted_outcome["redacted"] or outcome_redacted)
+    return redacted_outcome
 
 
 def _record_execution_evidence(paths: ProjectPaths, result: dict[str, Any]) -> str:
@@ -656,6 +717,8 @@ def _mark_execution_finished(paths: ProjectPaths, result: dict[str, Any]) -> Non
                 "evidence_path": result["evidence_path"],
                 "verification_id": result["verification_id"],
                 "step_count": len(result["steps"]),
+                "output_truncated": result["output_truncated"],
+                "redacted": result["redacted"],
                 "failure_reason": result["failure_reason"],
             },
         )
@@ -684,8 +747,19 @@ def _latest_execution_has_finished(paths: ProjectPaths, workflow_run_id: str) ->
         conn.close()
 
 
-def _capture_execution_exception(paths: ProjectPaths, result: dict[str, Any], exc: Exception) -> None:
-    summary = f"Workflow executor failed unexpectedly: {exc.__class__.__name__}: {exc}"
+def _capture_execution_exception(
+    paths: ProjectPaths,
+    result: dict[str, Any],
+    exc: Exception,
+    *,
+    redaction_patterns: Iterable[Pattern[str]],
+) -> None:
+    raw_summary = f"Workflow executor failed unexpectedly: {exc.__class__.__name__}: {exc}"
+    summary, summary_redacted = redact_value(
+        raw_summary,
+        additional_patterns=redaction_patterns,
+    )
+    result["redacted"] = result["redacted"] or summary_redacted
     result["ok"] = False
     result["status"] = "failed"
     result["failure_reason"] = summary
@@ -743,18 +817,23 @@ def _write_execution_result(paths: ProjectPaths, result: dict[str, Any]) -> None
     path.write_text(json.dumps(result, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def _require_no_blocked_commands(sandbox: dict[str, Any]) -> None:
-    if not sandbox["verification"]["ok"]:
+def _require_no_blocked_commands(guarded_executor: dict[str, Any]) -> None:
+    if not guarded_executor["verification"]["ok"]:
         raise InvalidInputError(
-            f"Workflow template {sandbox['target_id']} failed verification.",
-            details={"workflow_id": sandbox["target_id"], "errors": sandbox["verification"]["errors"]},
+            f"Workflow template {guarded_executor['target_id']} failed verification.",
+            details={
+                "workflow_id": guarded_executor["target_id"],
+                "errors": guarded_executor["verification"]["errors"],
+            },
         )
-    blocked = [command for command in sandbox["commands"] if not command["safe_to_run"]]
+    blocked = [
+        command for command in guarded_executor["commands"] if not command["safe_to_run"]
+    ]
     if blocked:
         raise InvalidInputError(
-            f"Workflow {sandbox['target_id']} contains command steps blocked by the sandbox.",
+            f"Workflow {guarded_executor['target_id']} contains command steps blocked by the guarded executor.",
             details={
-                "workflow_id": sandbox["target_id"],
+                "workflow_id": guarded_executor["target_id"],
                 "blocked_commands": [
                     {
                         "step_id": command["step_id"],
@@ -770,10 +849,10 @@ def _require_no_blocked_commands(sandbox: dict[str, Any]) -> None:
 def _require_executable_steps(
     *,
     workflow_id: str,
-    sandbox: dict[str, Any],
+    guarded_executor: dict[str, Any],
     agent_steps: list[dict[str, Any]],
 ) -> None:
-    command_count = int(sandbox.get("command_count") or 0)
+    command_count = int(guarded_executor.get("command_count") or 0)
     agent_step_count = len(agent_steps)
     if command_count or agent_step_count:
         return
@@ -787,9 +866,9 @@ def _require_executable_steps(
     )
 
 
-def _commands_by_step(sandbox: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
+def _commands_by_step(guarded_executor: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = {}
-    for command in sandbox["commands"]:
+    for command in guarded_executor["commands"]:
         grouped.setdefault(str(command["step_id"]), []).append(dict(command))
     return grouped
 
@@ -812,7 +891,8 @@ def _initial_result(
     allow_agent_exec: bool,
     timeout_seconds: int,
     verification: dict[str, Any],
-    sandbox: dict[str, Any],
+    guarded_executor: dict[str, Any],
+    max_output_bytes: int,
     jobs: list[dict[str, Any]],
     execution_mode: str,
     retry_of_workflow_run_id: str,
@@ -833,12 +913,21 @@ def _initial_result(
         "execution_mode": execution_mode,
         "retry_of_workflow_run_id": retry_of_workflow_run_id,
         "resumed_from_workflow_run_id": resumed_from_workflow_run_id,
-        "sandbox": {
-            "contract_version": sandbox["contract_version"],
-            "command_count": sandbox["command_count"],
-            "safe_command_count": sandbox["safe_command_count"],
-            "blocked_command_count": sandbox["blocked_command_count"],
+        "guarded_executor": {
+            "contract_version": guarded_executor["contract_version"],
+            "command_count": guarded_executor["command_count"],
+            "safe_command_count": guarded_executor["safe_command_count"],
+            "blocked_command_count": guarded_executor["blocked_command_count"],
+            "permission_contract": guarded_executor["permission_contract"],
+            "redaction_contract": guarded_executor["redaction_contract"],
         },
+        "output_limits": {
+            "max_bytes_per_stream": max_output_bytes,
+            "capture_strategy": "head",
+            "timeout_seconds_per_step": timeout_seconds,
+        },
+        "output_truncated": False,
+        "redacted": False,
         "jobs": jobs,
         "steps": [],
         "failure_reason": "",
@@ -852,6 +941,13 @@ def _initial_result(
         "dashboard_data_path": "",
         "machine_context": "",
     }
+
+
+def _update_output_status(result: dict[str, Any], outcome: dict[str, Any]) -> None:
+    result["output_truncated"] = result["output_truncated"] or bool(
+        outcome.get("output_truncated")
+    )
+    result["redacted"] = result["redacted"] or bool(outcome.get("redacted"))
 
 
 def _execution_command(result: dict[str, Any]) -> str:
@@ -872,16 +968,9 @@ def _execution_command(result: dict[str, Any]) -> str:
 def _execution_summary(result: dict[str, Any]) -> str:
     return (
         f"Workflow executor {result['status']}: workflow={result['workflow_id']} "
-        f"run={result['workflow_run_id']} mode={result['execution_mode']} steps={len(result['steps'])}"
+        f"run={result['workflow_run_id']} mode={result['execution_mode']} steps={len(result['steps'])} "
+        f"truncated={result['output_truncated']} redacted={result['redacted']}"
     )
-
-
-def _decode_timeout_output(value: str | bytes | None) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, bytes):
-        return value.decode("utf-8", errors="replace")
-    return value
 
 
 def _safe_file_token(value: str) -> str:
@@ -900,6 +989,20 @@ def _normalize_timeout(timeout_seconds: int) -> int:
             details={"timeout_seconds": timeout_seconds},
         )
     return timeout_seconds
+
+
+def _normalize_max_output_bytes(max_output_bytes: int) -> int:
+    if max_output_bytes < 1:
+        raise InvalidInputError(
+            "Workflow executor output cap must be at least 1 byte.",
+            details={"max_output_bytes": max_output_bytes},
+        )
+    if max_output_bytes > 67_108_864:
+        raise InvalidInputError(
+            "Workflow executor output cap must be 67108864 bytes or less.",
+            details={"max_output_bytes": max_output_bytes},
+        )
+    return max_output_bytes
 
 
 def _validate_identifier(value: str, field_name: str) -> None:
