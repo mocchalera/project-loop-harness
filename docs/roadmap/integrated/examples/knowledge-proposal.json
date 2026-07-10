@@ -1,0 +1,25 @@
+{
+  "contract_version": "knowledge-proposal/v0",
+  "id": "K-0001",
+  "type": "test_pattern",
+  "scope": {
+    "level": "repository",
+    "ref": "repo:example"
+  },
+  "claim": "Authentication integration tests require a seeded user fixture.",
+  "provenance": {
+    "evidence_refs": [
+      "evidence:E-0030"
+    ],
+    "work_brief_ref": "evidence:WB-0003",
+    "completion_packet_ref": "evidence:CP-0003"
+  },
+  "confidence": "high",
+  "status": "proposed",
+  "valid_from_revision": "abc123",
+  "valid_until_revision": null,
+  "expires_at": null,
+  "supersedes": null,
+  "created_at": "2026-07-09T15:00:00Z",
+  "reviewed_by": null
+}

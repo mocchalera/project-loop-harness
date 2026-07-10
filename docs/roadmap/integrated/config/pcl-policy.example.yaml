@@ -1,0 +1,95 @@
+# Proposed policy example. Field names are not stable until task 0137 is accepted.
+policy_version: adaptive-policy/v1
+
+defaults:
+  profile: direct
+  planning_depth: light
+  verification_depth: standard
+  execution_chunk_size: medium
+  checkpoint_frequency: low
+  context_budget_bytes: 24000
+  tool_call_budget: 40
+  wall_time_budget_seconds: 3600
+  strong_model_escalations: 1
+
+risk_rules:
+  - id: auth-permission
+    when:
+      path_globs:
+        - "**/auth/**"
+        - "**/permissions/**"
+        - "**/security/**"
+    set:
+      risk_level: R3
+      profile: assure
+      verification_depth: human
+      execution_chunk_size: small
+      checkpoint_frequency: high
+    reason_codes:
+      - auth_or_permission_change
+
+  - id: migrations
+    when:
+      path_globs:
+        - "**/migrations/**"
+        - "**/schema/**"
+    set:
+      risk_level: R3
+      verification_depth: independent
+      execution_chunk_size: small
+    reason_codes:
+      - migration_change
+
+  - id: dependencies
+    when:
+      filenames:
+        - pyproject.toml
+        - package.json
+        - package-lock.json
+        - pnpm-lock.yaml
+        - uv.lock
+        - poetry.lock
+    set:
+      risk_level: R2
+      verification_depth: independent
+    reason_codes:
+      - dependency_change
+
+ambiguity_rules:
+  - id: missing-acceptance
+    when:
+      acceptance_criteria_count_lt: 1
+    set:
+      profile: discover
+      planning_depth: full
+    reason_codes:
+      - missing_acceptance
+
+capability_adjustments:
+  - id: weak-tool-reliability
+    when:
+      tool_reliability: low
+    set:
+      execution_chunk_size: small
+      checkpoint_frequency: high
+    reason_codes:
+      - weak_tool_reliability
+
+budget_rules:
+  on_exhaustion:
+    outcome: INCOMPLETE_BUDGET_EXHAUSTED
+    require_handoff_packet: true
+    allow_silent_completion: false
+
+verification:
+  proof_levels:
+    L2_requires:
+      - deterministic_check
+    L3_requires_one_of:
+      - independent_acceptance
+      - observational_artifact
+    L4_requires:
+      - human_judgment
+  forbid_self_close_for_risk:
+    - R3
+    - R4

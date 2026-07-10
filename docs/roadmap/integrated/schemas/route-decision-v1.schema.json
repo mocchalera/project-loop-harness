@@ -1,0 +1,152 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop-harness.dev/schemas/route-decision-v1.schema.json",
+  "title": "PLH Route Decision v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "policy_version",
+    "profile",
+    "risk_level",
+    "axes",
+    "reason_codes",
+    "inputs_digest"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "route-decision/v1"
+    },
+    "policy_version": {
+      "type": "string",
+      "minLength": 1
+    },
+    "profile": {
+      "enum": [
+        "direct",
+        "discover",
+        "assure"
+      ]
+    },
+    "risk_level": {
+      "enum": [
+        "R0",
+        "R1",
+        "R2",
+        "R3",
+        "R4"
+      ]
+    },
+    "axes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "planning_depth",
+        "verification_depth",
+        "execution_chunk_size",
+        "checkpoint_frequency",
+        "context_budget_bytes",
+        "strong_model_escalations"
+      ],
+      "properties": {
+        "planning_depth": {
+          "enum": [
+            "none",
+            "light",
+            "full"
+          ]
+        },
+        "verification_depth": {
+          "enum": [
+            "basic",
+            "standard",
+            "independent",
+            "human"
+          ]
+        },
+        "execution_chunk_size": {
+          "enum": [
+            "large",
+            "medium",
+            "small"
+          ]
+        },
+        "checkpoint_frequency": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ]
+        },
+        "context_budget_bytes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "tool_call_budget": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "wall_time_budget_seconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "strong_model_escalations": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "reason_codes": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z0-9_.-]+$"
+      }
+    },
+    "inputs_digest": {
+      "type": "string",
+      "minLength": 1
+    },
+    "override": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "profile",
+        "reason",
+        "actor",
+        "at"
+      ],
+      "properties": {
+        "profile": {
+          "enum": [
+            "direct",
+            "discover",
+            "assure"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "actor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    }
+  }
+}

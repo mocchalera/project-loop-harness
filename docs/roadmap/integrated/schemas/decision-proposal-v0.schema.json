@@ -1,0 +1,131 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop-harness.dev/schemas/decision-proposal-v0.schema.json",
+  "title": "PLH Decision Proposal v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "id",
+    "work_brief_ref",
+    "question",
+    "candidates",
+    "recommended_candidate_id",
+    "generated_at",
+    "producer"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "decision-proposal/v0"
+    },
+    "id": {
+      "type": "string"
+    },
+    "work_brief_ref": {
+      "type": "string"
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1
+    },
+    "candidates": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "hypothesis",
+          "tradeoffs",
+          "uncertainty",
+          "reversibility",
+          "evidence_refs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "hypothesis": {
+            "type": "string"
+          },
+          "tradeoffs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "uncertainty": {
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "unknown"
+            ]
+          },
+          "reversibility": {
+            "enum": [
+              "easy",
+              "moderate",
+              "hard",
+              "irreversible"
+            ]
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ordinal_ratings": {
+            "type": "object",
+            "additionalProperties": {
+              "enum": [
+                "low",
+                "medium",
+                "high",
+                "unknown"
+              ]
+            }
+          }
+        }
+      }
+    },
+    "recommended_candidate_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "recommendation_rationale": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "kind"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "human",
+            "agent",
+            "profile"
+          ]
+        }
+      }
+    }
+  }
+}

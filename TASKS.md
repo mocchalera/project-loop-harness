@@ -120,10 +120,27 @@ Give these tasks to coding agents in this order:
 116. `agent-tasks/0120-pcl-finish-terminal-closeout.md` (v0.3.1, F7 `pcl finish` terminal close-out planner; plans all, auto-runs only safe generation)
 117. `agent-tasks/0121-human-gate-japanese-guidance.md` (v0.3.1, F5 additive Japanese human-gate guidance in `pcl next`)
 118. `agent-tasks/0122-feature-coverage-noop.md` (v0.3.1, F4 feature_coverage no-op when all features already covered)
+119. `agent-tasks/0123-master-trace-intent-index-contract.md` (v0.3.2, master-trace / intent-index v0 contract formalization; AI-PLC Collection layer translated into evidence-backed PLH contracts)
+120. `agent-tasks/0124-baseline-fixtures-v0-3-1.md` (v0.3.3 Wave A, freeze v0.3.1 baseline: snapshot fixtures + baseline doc; reduced from integrated-roadmap proposal 0123)
+121. `agent-tasks/0125-mcp-stdio-framing-negotiation.md` (v0.3.3 Wave A, MCP 2025-06-18 newline-delimited framing + honest version negotiation; fixes verified defects at mcp_server.py:280/:98)
+122. `agent-tasks/0126-mcp-external-conformance.md` (v0.3.3 Wave A, MCP external conformance fixtures + compatibility matrix; after 0125)
+123. `agent-tasks/0127-transactional-audit-outbox-design.md` (v0.3.3 Wave A, ADR-002 outbox failure model; ADR acceptance is a human gate before 0128)
+124. `agent-tasks/0128-event-outbox-jsonl-projector.md` (v0.3.3 Wave A, transactional event outbox + idempotent JSONL projector; fixes non-atomic dual-write in events.py)
+125. `agent-tasks/0129-audit-check-repair-rebuild.md` (v0.3.3 Wave A, audit check/repair/rebuild; extends existing `_validate_audit_log_integrity`, no silent repair)
+126. `agent-tasks/0130-crash-concurrency-test-suite.md` (v0.3.3 Wave A, crash injection + concurrent writer reliability suite)
+127. `agent-tasks/0131-guarded-executor-hardening.md` (v0.3.3 Wave A, guarded executor terminology/caps/redaction hardening; parallel-safe after 0124)
 
-Roadmap through v0.5.0: see `docs/growth-plan-v0.2.4-v0.5.md` (approved 2026-07-08).
+Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
+modifications: `docs/roadmap/integrated/` holds the planning proposal, and
+`docs/roadmap/integrated/ADOPTION.md` records the decision, the renumbering map
+(bundle 0123–0130 -> repo 0124–0131), and D-08 (master-trace stays at v0.3.2 and
+runs parallel to Wave A; Trust Foundation becomes v0.3.3). Wave B+ proposals in
+`docs/roadmap/integrated/agent-tasks-proposed/` are not yet numbered tasks.
+
+Roadmap through v0.5.0: see `docs/growth-plan-v0.2.4-v0.5.md` (approved 2026-07-08, amended by §10 on 2026-07-10).
 Numbering is creation order; milestones interleave. v0.3.0 = {0108, 0113, 0114, 0115}.
 v0.3.1 = Handoff Integrity + Operator Experience, dispatch order: 0116 receipt/link agreement -> 0117 Markdown refresh command -> 0118 canonical target-bound docs -> 0119 `pcl context check` -> 0120 `pcl finish` -> 0121 human-gate ja -> 0122 feature_coverage no-op. (0116+0117 = the integrity pair, dispatched first; supersedes the earlier 0109/0110/0111/0116 reservation from the v0.3.0 planning note.)
-v0.3.2 = master-trace / intent-index formalization.
+v0.3.2 = master-trace / intent-index formalization, starting with 0123 contract docs before any first-class `pcl intent` or optional context-pack section.
+v0.3.3 = Trust Foundation (integrated Wave A), dispatch order: 0123 + 0124 in parallel -> 0125 -> 0126, with 0127 ADR (human gate) -> 0128 -> 0129 -> 0130; 0131 parallel-safe after 0124.
 
-Do not start with MCP. Do not start with a hosted UI. The CLI/runtime must become reliable first.
+Do not start with MCP as the runtime. Do not start with a hosted UI. The CLI/runtime must become reliable first. (Fixing the existing optional MCP server to match its declared spec — 0125/0126 — is reliability work, not a runtime pivot.)

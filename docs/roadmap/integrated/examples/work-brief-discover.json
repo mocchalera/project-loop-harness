@@ -1,0 +1,81 @@
+{
+  "contract_version": "work-brief/v1",
+  "id": "WB-0001",
+  "revision": 1,
+  "supersedes": null,
+  "status": "approved",
+  "target": {
+    "type": "goal",
+    "id": "G-0001"
+  },
+  "intent": {
+    "problem": "New users do not reach the first successful action",
+    "desired_outcome": "Increase onboarding activation without changing authentication or billing",
+    "target_user": "New self-serve trial users"
+  },
+  "acceptance_criteria": [
+    {
+      "id": "AC-1",
+      "text": "A new user can see and complete an activation checklist",
+      "critical": true,
+      "evidence_refs": []
+    },
+    {
+      "id": "AC-2",
+      "text": "Existing authentication behavior remains unchanged",
+      "critical": true,
+      "evidence_refs": [
+        "E-0004"
+      ]
+    }
+  ],
+  "constraints": [
+    {
+      "id": "C-1",
+      "text": "Do not change authentication or billing",
+      "strength": "invariant",
+      "source_evidence_refs": [
+        "E-0004"
+      ]
+    }
+  ],
+  "non_goals": [
+    "Billing redesign",
+    "Authentication schema changes"
+  ],
+  "assumptions": [
+    {
+      "id": "A-1",
+      "text": "Lack of guidance is the main activation blocker",
+      "status": "unverified",
+      "evidence_refs": []
+    }
+  ],
+  "decision_refs": [
+    "D-0003"
+  ],
+  "route": {
+    "contract_version": "route-decision/v1",
+    "policy_version": "adaptive-policy/v1",
+    "profile": "discover",
+    "risk_level": "R2",
+    "axes": {
+      "planning_depth": "full",
+      "verification_depth": "standard",
+      "execution_chunk_size": "medium",
+      "checkpoint_frequency": "medium",
+      "context_budget_bytes": 24000,
+      "tool_call_budget": 40,
+      "wall_time_budget_seconds": 3600,
+      "strong_model_escalations": 1
+    },
+    "reason_codes": [
+      "broad_goal",
+      "unverified_root_cause"
+    ],
+    "inputs_digest": "sha256:example",
+    "override": null
+  },
+  "created_at": "2026-07-09T12:00:00Z",
+  "created_by": "human:example"
+}

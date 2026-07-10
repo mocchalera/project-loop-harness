@@ -1,0 +1,323 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop-harness.dev/schemas/completion-packet-v1.schema.json",
+  "title": "PLH Completion Packet v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "packet_id",
+    "producer",
+    "generated_at",
+    "outcome",
+    "target",
+    "repository",
+    "changes",
+    "checks",
+    "claims",
+    "unverified_claims",
+    "risks",
+    "human_decisions",
+    "next_action"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "completion-packet/v1"
+    },
+    "packet_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "name",
+        "version"
+      ],
+      "properties": {
+        "name": {
+          "const": "project-loop-harness"
+        },
+        "version": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "outcome": {
+      "enum": [
+        "COMPLETED_VERIFIED",
+        "COMPLETED_WITH_RISK",
+        "INCOMPLETE_VALIDATION",
+        "INCOMPLETE_BUDGET_EXHAUSTED",
+        "INCOMPLETE_HUMAN_DECISION_REQUIRED",
+        "NO_CHANGES"
+      ]
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "id",
+        "intent"
+      ],
+      "properties": {
+        "type": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "intent": {
+          "type": "string"
+        },
+        "work_brief_ref": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base_revision",
+        "head_revision",
+        "diff_sha256"
+      ],
+      "properties": {
+        "base_revision": {
+          "type": "string"
+        },
+        "head_revision": {
+          "type": "string"
+        },
+        "diff_sha256": {
+          "type": "string"
+        },
+        "dirty": {
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
+    "changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "path",
+          "change_type"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "change_type": {
+            "enum": [
+              "added",
+              "modified",
+              "deleted",
+              "renamed",
+              "untracked"
+            ]
+          },
+          "previous_path": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "command",
+          "status",
+          "artifact_ref",
+          "reproducible"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "passed",
+              "failed",
+              "skipped",
+              "not_run",
+              "timed_out"
+            ]
+          },
+          "exit_code": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "artifact_ref": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reproducible": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "text",
+          "critical",
+          "proof_level",
+          "evidence_refs"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "critical": {
+            "type": "boolean"
+          },
+          "proof_level": {
+            "enum": [
+              "L0",
+              "L1",
+              "L2",
+              "L3",
+              "L4"
+            ]
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "unverified_claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "text",
+          "reason"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "critical": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      }
+    },
+    "risks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "severity",
+          "text"
+        ],
+        "properties": {
+          "severity": {
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "text": {
+            "type": "string"
+          },
+          "mitigation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "human_decisions": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "next_action": {
+      "type": [
+        "object",
+        "null"
+      ],
+      "additionalProperties": false,
+      "required": [
+        "text",
+        "command"
+      ],
+      "properties": {
+        "text": {
+          "type": "string"
+        },
+        "command": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "verifier_provenance": {
+      "type": [
+        "object",
+        "null"
+      ]
+    }
+  }
+}

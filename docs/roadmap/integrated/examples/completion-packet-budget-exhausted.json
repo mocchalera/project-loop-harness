@@ -1,0 +1,80 @@
+{
+  "contract_version": "completion-packet/v1",
+  "packet_id": "CP-0002",
+  "producer": {
+    "name": "project-loop-harness",
+    "version": "0.6.0"
+  },
+  "generated_at": "2026-07-09T13:30:00Z",
+  "outcome": "INCOMPLETE_BUDGET_EXHAUSTED",
+  "target": {
+    "type": "task",
+    "id": "T-0002",
+    "intent": "Refactor the public API",
+    "work_brief_ref": "evidence:WB-0002"
+  },
+  "repository": {
+    "base_revision": "abc123",
+    "head_revision": "abc789",
+    "diff_sha256": "sha256:diff2",
+    "dirty": true
+  },
+  "changes": [
+    {
+      "path": "src/api/public.py",
+      "change_type": "modified",
+      "previous_path": null
+    }
+  ],
+  "checks": [
+    {
+      "id": "CHK-2",
+      "command": "pytest tests/unit",
+      "status": "passed",
+      "exit_code": 0,
+      "artifact_ref": "evidence:E-0020",
+      "reproducible": true,
+      "reason": null
+    },
+    {
+      "id": "CHK-3",
+      "command": "pytest tests/integration",
+      "status": "not_run",
+      "exit_code": null,
+      "artifact_ref": null,
+      "reproducible": true,
+      "reason": "Wall-time budget exhausted"
+    }
+  ],
+  "claims": [
+    {
+      "id": "CL-2",
+      "text": "Unit tests pass for the refactored API",
+      "critical": false,
+      "proof_level": "L2",
+      "evidence_refs": [
+        "evidence:E-0020"
+      ]
+    }
+  ],
+  "unverified_claims": [
+    {
+      "text": "The public API remains integration-compatible",
+      "reason": "Integration tests were not run",
+      "critical": true
+    }
+  ],
+  "risks": [
+    {
+      "severity": "high",
+      "text": "Integration compatibility is unverified",
+      "mitigation": "Run pytest tests/integration"
+    }
+  ],
+  "human_decisions": [],
+  "next_action": {
+    "text": "Run the integration test suite",
+    "command": "pytest tests/integration"
+  },
+  "verifier_provenance": null
+}

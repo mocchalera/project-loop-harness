@@ -1,0 +1,64 @@
+{
+  "contract_version": "handoff-packet/v1",
+  "packet_id": "HP-0001",
+  "producer": {
+    "name": "project-loop-harness",
+    "version": "0.4.0"
+  },
+  "generated_at": "2026-07-09T14:00:00Z",
+  "target": {
+    "type": "task",
+    "id": "T-0002",
+    "work_brief_ref": "evidence:WB-0002",
+    "repository_revision": "abc789"
+  },
+  "current_state": "ACTIVE",
+  "summary": "The public API refactor is implemented, unit-tested, and awaiting integration verification.",
+  "verified": [
+    {
+      "text": "Unit tests pass",
+      "proof_level": "L2",
+      "evidence_refs": [
+        "evidence:E-0020"
+      ]
+    }
+  ],
+  "unverified": [
+    {
+      "text": "Integration compatibility",
+      "reason": "Integration tests were not run before budget exhaustion"
+    }
+  ],
+  "decisions": [
+    {
+      "id": "D-0004",
+      "summary": "Keep backward-compatible method names",
+      "evidence_refs": [
+        "evidence:E-0018"
+      ]
+    }
+  ],
+  "blockers": [
+    "Integration suite has not run"
+  ],
+  "risks": [
+    "Public API compatibility may be broken"
+  ],
+  "next_safe_action": {
+    "text": "Run the integration suite before further edits",
+    "command": "pytest tests/integration"
+  },
+  "context_refs": [
+    {
+      "ref": "evidence:CTX-0003",
+      "kind": "context-pack",
+      "freshness": "current",
+      "sha256": "sha256:ctx"
+    }
+  ],
+  "intent_index_ref": null,
+  "budget_remaining": {
+    "tool_calls": 10,
+    "wall_time_seconds": 900
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "contract_version": "decision-proposal/v0",
+  "id": "DP-0001",
+  "work_brief_ref": "evidence:WB-0001",
+  "question": "Which onboarding intervention should be implemented first?",
+  "candidates": [
+    {
+      "id": "O-1",
+      "title": "Activation checklist",
+      "hypothesis": "A visible checklist helps users reach the first successful action",
+      "tradeoffs": [
+        "Low backend risk",
+        "Requires UI work"
+      ],
+      "uncertainty": "medium",
+      "reversibility": "easy",
+      "evidence_refs": [
+        "evidence:E-0005"
+      ],
+      "ordinal_ratings": {
+        "impact": "high",
+        "effort": "medium"
+      }
+    },
+    {
+      "id": "O-2",
+      "title": "Lifecycle email",
+      "hypothesis": "A reminder email brings inactive users back",
+      "tradeoffs": [
+        "No auth changes",
+        "Delayed feedback"
+      ],
+      "uncertainty": "high",
+      "reversibility": "easy",
+      "evidence_refs": [
+        "evidence:E-0006"
+      ],
+      "ordinal_ratings": {
+        "impact": "medium",
+        "effort": "low"
+      }
+    }
+  ],
+  "recommended_candidate_id": "O-1",
+  "recommendation_rationale": "It addresses the in-product moment while avoiding authentication and billing changes.",
+  "generated_at": "2026-07-09T12:30:00Z",
+  "producer": {
+    "kind": "profile",
+    "profile_id": "discovery",
+    "version": "1.0.0"
+  }
+}

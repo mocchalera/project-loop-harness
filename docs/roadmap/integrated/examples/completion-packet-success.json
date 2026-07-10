@@ -1,0 +1,56 @@
+{
+  "contract_version": "completion-packet/v1",
+  "packet_id": "CP-0001",
+  "producer": {
+    "name": "project-loop-harness",
+    "version": "0.4.0"
+  },
+  "generated_at": "2026-07-09T13:00:00Z",
+  "outcome": "COMPLETED_VERIFIED",
+  "target": {
+    "type": "task",
+    "id": "T-0001",
+    "intent": "Fix login timeout",
+    "work_brief_ref": "evidence:WB-0001"
+  },
+  "repository": {
+    "base_revision": "abc123",
+    "head_revision": "def456",
+    "diff_sha256": "sha256:diff",
+    "dirty": false
+  },
+  "changes": [
+    {
+      "path": "src/auth/session.py",
+      "change_type": "modified",
+      "previous_path": null
+    }
+  ],
+  "checks": [
+    {
+      "id": "CHK-1",
+      "command": "pytest tests/auth",
+      "status": "passed",
+      "exit_code": 0,
+      "artifact_ref": "evidence:E-0010",
+      "reproducible": true,
+      "reason": null
+    }
+  ],
+  "claims": [
+    {
+      "id": "CL-1",
+      "text": "The login timeout regression is covered by the auth test suite",
+      "critical": true,
+      "proof_level": "L2",
+      "evidence_refs": [
+        "evidence:E-0010"
+      ]
+    }
+  ],
+  "unverified_claims": [],
+  "risks": [],
+  "human_decisions": [],
+  "next_action": null,
+  "verifier_provenance": null
+}

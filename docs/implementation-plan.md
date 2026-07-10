@@ -241,6 +241,19 @@ for the full contract shapes, refinements, and approval record.
   Japanese that compresses meaning rather than translating labels, and
   copy-ready `pcl` commands.
 
+## Milestone 14: Upstream intent control (v0.3.2+)
+
+- Formalize `master-trace/v0` and `intent-index/v0` as evidence-backed,
+  claims-not-facts handoff contracts before adding first-class planning
+  entities.
+- Keep `pcl` core local and deterministic: no LLM call in the runtime, no slash
+  command state, and no Markdown source-of-truth.
+- Use v0.4 dogfood evidence to decide whether `pcl intent` / `pcl collect`
+  deserve a schema-backed lifecycle.
+- If promoted, connect `pcl option` to the existing `pcl decision` lifecycle
+  instead of creating a parallel decision model, then add `pcl replan` only once
+  there is a clear audited state to return to.
+
 ## Semantic promotion gate
 
 Embeddings, Tree-sitter, call graphs, and semantic retrieval stay out

@@ -24,13 +24,22 @@ implement from the spec file, not from prompt summaries.
 | 0108 | Target-bound code context receipts (sits on 0113) | v0.3.0 Target-Bound Context | P1 | done (shipped v0.3.0) |
 | 0114 | Source hash drift detection (default-on) | v0.3.0 Target-Bound Context | P2 | done (shipped v0.3.0) |
 | 0115 | Context pack target-bound contract fixtures | v0.3.0 Target-Bound Context | P2 | done (shipped v0.3.0) |
-| 0116 | Target-bound receipt / link agreement validation | v0.3.1 Handoff Integrity | P1 | merged to main (v0.3.1, unreleased) |
-| 0117 | Target-specific refresh command in code-context Markdown | v0.3.1 Handoff Integrity | P1 | merged to main (v0.3.1, unreleased) |
-| 0118 | Canonical target-bound handoff docs (README + adoption) | v0.3.1 Operator Experience | P1 | done (main, v0.3.1 unreleased) |
-| 0119 | `pcl context check` read-only preflight | v0.3.1 Operator Experience | P1 | merged to main (v0.3.1, unreleased) |
-| 0120 | `pcl finish` terminal close-out planner (F7) | v0.3.1 Operator Experience | P1 | merged to main (v0.3.1, unreleased) |
-| 0121 | Japanese human-gate guidance in `pcl next` (F5) | v0.3.1 Operator Experience | P1 | done (main, v0.3.1 unreleased) |
-| 0122 | feature_coverage no-op when all covered (F4) | v0.3.1 Operator Experience | P1 | merged to main (v0.3.1, unreleased) |
+| 0116 | Target-bound receipt / link agreement validation | v0.3.1 Handoff Integrity | P1 | done (shipped v0.3.1) |
+| 0117 | Target-specific refresh command in code-context Markdown | v0.3.1 Handoff Integrity | P1 | done (shipped v0.3.1) |
+| 0118 | Canonical target-bound handoff docs (README + adoption) | v0.3.1 Operator Experience | P1 | done (shipped v0.3.1) |
+| 0119 | `pcl context check` read-only preflight | v0.3.1 Operator Experience | P1 | done (shipped v0.3.1) |
+| 0120 | `pcl finish` terminal close-out planner (F7) | v0.3.1 Operator Experience | P1 | done (shipped v0.3.1) |
+| 0121 | Japanese human-gate guidance in `pcl next` (F5) | v0.3.1 Operator Experience | P1 | done (shipped v0.3.1) |
+| 0122 | feature_coverage no-op when all covered (F4) | v0.3.1 Operator Experience | P1 | done (shipped v0.3.1) |
+| 0123 | Master trace / intent-index v0 contract formalization | v0.3.2 Master Trace / Intent Index | P1 | dispatched (T-0007) |
+| 0124 | Freeze v0.3.1 baseline (snapshot fixtures + baseline doc) | v0.3.3 Trust Foundation (Wave A) | P0 | dispatched (T-0008) |
+| 0125 | MCP stdio framing + version negotiation spec compliance | v0.3.3 Trust Foundation (Wave A) | P0 | ready (after 0124) |
+| 0126 | MCP external conformance fixtures + compatibility matrix | v0.3.3 Trust Foundation (Wave A) | P0 | ready (after 0125) |
+| 0127 | Transactional audit outbox ADR + failure model | v0.3.3 Trust Foundation (Wave A) | P0 | ready (after 0124; ADR acceptance is a human gate) |
+| 0128 | Event outbox + idempotent JSONL projector | v0.3.3 Trust Foundation (Wave A) | P0 | blocked (needs 0127 ADR accepted) |
+| 0129 | Audit check / repair / rebuild (extends validate --strict integrity check) | v0.3.3 Trust Foundation (Wave A) | P0 | blocked (needs 0128) |
+| 0130 | Crash injection + concurrent writer suite | v0.3.3 Trust Foundation (Wave A) | P0 | blocked (needs 0128, 0129) |
+| 0131 | Guarded executor hardening (terminology, caps, redaction) | v0.3.3 Trust Foundation (Wave A) | P1 | ready (after 0124, parallel-safe) |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
@@ -42,14 +51,24 @@ target-bound docs → 0119 `pcl context check` (imports the 0116 agreement
 predicate) → 0120 `pcl finish` → 0121 human-gate ja → 0122 feature_coverage
 no-op.
 
+v0.3.2 + v0.3.3 dispatch order: **0123 + 0124 in parallel** (docs-only contract
+vs fixtures/tests; independent surfaces) → **0125** MCP framing (needs 0124
+baseline) → 0126 conformance → **0127** outbox ADR (human gate: ADR-002
+acceptance) → 0128 outbox implementation → 0129 audit commands → 0130
+crash/concurrency suite. 0131 executor hardening is parallel-safe after 0124.
+Wave A specs originate from `docs/roadmap/integrated/` (adopted 2026-07-10,
+Accept with modifications — see `docs/roadmap/integrated/ADOPTION.md` for the
+renumbering map and D-08).
+
 ## Planned next (see growth plan for scope)
 
 | Milestone | Theme |
 |---|---|
-| v0.3.1 | Operator experience: `pcl finish` (F7), human-gate ja copy (F5), feature_coverage no-op (F4), `pcl context check` preflight |
-| v0.3.2 | Master trace / intent-index v0 contract formalization |
-| v0.4.0 | Dogfood operations + cost KPI measurement |
-| v0.5.0 | Adoption: README split, contract stability policy |
+| v0.3.2 | 0123 contract docs first; optional `master_trace_context` section only after contract acceptance |
+| v0.3.3 | Trust Foundation (integrated roadmap Wave A): MCP conformance + transactional outbox + recovery |
+| v0.4.0 | Dogfood operations + cost KPI measurement + first-class Intent/Collection decision |
+| v0.4.x | Possible `pcl intent` / `pcl collect` design if dogfood shows repeated need; integrated Wave B (3-command wedge) decision |
+| v0.5.0 | Adoption: README split, contract stability policy, upstream-layer adoption decision |
 
 Everything with an ID below 0102 is completed design history; see `TASKS.md`
 for the one-line summary of each.
