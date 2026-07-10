@@ -10,7 +10,8 @@ import pcl.lifecycle_repair as lifecycle_repair
 from pcl.cli import main
 from pcl.contracts.completion_packet import with_computed_packet_id
 from pcl.db import connect
-from pcl.lifecycle_repair import LifecycleRepairAction
+from pcl.lifecycle_repair import LifecycleRepairAction, LifecycleRepairPlanError
+from pcl.relationship_repair import RelationshipRepairError, apply_structural_actions
 from pcl.validators import _done_feature_lifecycle_findings
 
 
@@ -451,6 +452,50 @@ def test_valid_same_goal_packet_with_only_missing_link_is_structural(
     assert plan["actions"][0]["requires_human"] is False
     assert before == after
 
+    assert main([
+        "--root", str(tmp_path), "repair", "lifecycle", "--apply-structural", "--json"
+    ]) == 0
+    applied = _json(capsys)
+    assert applied["changed"] is True
+    assert applied["relationships"] == [{
+        "after": True, "before": False, "evidence_id": "E-0001",
+        "role": "completion_packet", "target_id": "G-0001", "target_type": "goal",
+    }]
+
+
+def test_completion_packet_link_rejects_valid_packet_for_different_target(
+    tmp_path: Path, capsys
+) -> None:
+    _init(tmp_path, capsys)
+    for title in ("Packet goal", "Other goal"):
+        assert main(["--root", str(tmp_path), "goal", "create", "--title", title]) == 0
+        capsys.readouterr()
+    packet = json.loads(Path("tests/fixtures/completion_packet/full.json").read_text(encoding="utf-8"))
+    packet["target"] = {
+        "type": "goal", "id": "G-0001", "intent": "Bound elsewhere",
+        "work_brief_ref": "evidence:E-0001",
+    }
+    (tmp_path / "packet.json").write_text(
+        json.dumps(with_computed_packet_id(packet)), encoding="utf-8"
+    )
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        conn.execute(
+            "INSERT INTO evidence(id, type, path, summary, created_at) VALUES "
+            "('E-0001', 'completion_packet', 'packet.json', 'packet', '2026-01-01T00:00:00Z')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    before = _state_snapshot(tmp_path)
+    assert main([
+        "--root", str(tmp_path), "evidence", "link", "E-0001",
+        "--target", "goal:G-0002", "--role", "completion_packet",
+        "--summary", "Must reject mismatch", "--json",
+    ]) == 2
+    assert _json(capsys)["error"]["code"] == "evidence_link_packet_target_mismatch"
+    assert _state_snapshot(tmp_path) == before
+
 
 def test_invalid_goal_verification_reference_is_unsupported(tmp_path: Path, capsys) -> None:
     _init(tmp_path, capsys)
@@ -483,7 +528,320 @@ def test_invalid_goal_verification_reference_is_unsupported(tmp_path: Path, caps
     assert action["command"] == "pcl verification read V-9999 --json"
 
 
-def test_repair_lifecycle_parser_has_no_apply_mode() -> None:
-    with pytest.raises(SystemExit) as error:
-        main(["repair", "lifecycle", "--apply"])
-    assert error.value.code == 2
+def test_repair_lifecycle_rejects_legacy_apply_mode() -> None:
+    assert main(["repair", "lifecycle", "--apply", "--json"]) == 2
+
+
+def test_test_link_repairs_story_and_evidence_once_in_one_event(tmp_path: Path, capsys) -> None:
+    _existing_project_fixture(tmp_path, capsys)
+    before = _state_snapshot(tmp_path)
+
+    assert main([
+        "--root", str(tmp_path), "test", "link", "TC-0001",
+        "--story", "US-0001", "--evidence-id", "E-0001",
+        "--summary", "Restore reviewed terminal relationships", "--json",
+    ]) == 0
+    repaired = _json(capsys)
+    assert repaired["changed"] is True
+    assert repaired["before"] == {"story_id": None, "evidence_id": "E-0001"}
+    assert repaired["after"] == {"story_id": "US-0001", "evidence_id": "E-0001"}
+    assert repaired["event_id"].startswith("EV-")
+
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        test = dict(conn.execute(
+            "SELECT story_id, evidence_id, status, created_at FROM test_cases WHERE id = 'TC-0001'"
+        ).fetchone())
+        event = dict(conn.execute(
+            "SELECT event_type, payload_json FROM events WHERE id = ?", (repaired["event_id"],)
+        ).fetchone())
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM evidence_links WHERE evidence_id = 'E-0001' "
+            "AND target_type = 'test_case' AND target_id = 'TC-0001' AND link_role = 'acceptance'"
+        ).fetchone()["n"] == 1
+    finally:
+        conn.close()
+    assert test["status"] == "passing"
+    assert event["event_type"] == "test_links_repaired"
+    assert json.loads(event["payload_json"])["summary"] == "Restore reviewed terminal relationships"
+    assert _state_snapshot(tmp_path)["counts"]["events"] == before["counts"]["events"] + 1
+    assert _state_snapshot(tmp_path)["counts"]["outbox_records"] == before["counts"]["outbox_records"] + 1
+
+    stable = _state_snapshot(tmp_path)
+    assert main([
+        "--root", str(tmp_path), "test", "link", "TC-0001",
+        "--story", "US-0001", "--evidence-id", "E-0001",
+        "--summary", "Exact retry", "--json",
+    ]) == 0
+    assert _json(capsys)["changed"] is False
+    assert _state_snapshot(tmp_path) == stable
+
+
+def test_test_link_combined_failure_is_zero_mutation(tmp_path: Path, capsys) -> None:
+    _existing_project_fixture(tmp_path, capsys)
+    before = _state_snapshot(tmp_path)
+    assert main([
+        "--root", str(tmp_path), "test", "link", "TC-0001",
+        "--story", "US-0001", "--evidence-id", "E-9999",
+        "--summary", "Must remain atomic", "--json",
+    ]) == 2
+    error = _json(capsys)
+    assert error["error"]["code"] == "test_link_invalid_evidence"
+    assert _state_snapshot(tmp_path) == before
+
+
+def test_structural_apply_repairs_current_safe_actions_atomically(tmp_path: Path, capsys) -> None:
+    _existing_project_fixture(tmp_path, capsys)
+    before = _state_snapshot(tmp_path)
+    assert main([
+        "--root", str(tmp_path), "repair", "lifecycle", "--apply-structural", "--json"
+    ]) == 0
+    result = _json(capsys)
+    assert result["mode"] == "apply_structural"
+    assert result["changed"] is True
+    assert result["applied_action_ids"] == ["LR-0001"]
+    assert result["relationships"] == [{
+        "after": True, "before": False, "evidence_id": "E-0001", "role": "acceptance",
+        "target_id": "TC-0001", "target_type": "test_case",
+    }]
+    after = _state_snapshot(tmp_path)
+    assert after["counts"]["evidence_links"] == before["counts"]["evidence_links"] + 1
+    assert after["counts"]["events"] == before["counts"]["events"] + 1
+    assert after["counts"]["outbox_records"] == before["counts"]["outbox_records"] + 1
+
+    assert main([
+        "--root", str(tmp_path), "repair", "lifecycle", "--apply-structural", "--json"
+    ]) == 0
+    rerun = _json(capsys)
+    assert rerun["changed"] is False
+    assert _state_snapshot(tmp_path) == after
+
+
+def test_evidence_link_repairs_only_matching_terminal_test_pointer(tmp_path: Path, capsys) -> None:
+    _existing_project_fixture(tmp_path, capsys)
+    before = _state_snapshot(tmp_path)
+    assert main([
+        "--root", str(tmp_path), "evidence", "link", "E-0001",
+        "--target", "test_case:TC-0001", "--role", "acceptance",
+        "--summary", "Restore missing routing row", "--json",
+    ]) == 0
+    linked = _json(capsys)
+    assert linked["changed"] is True
+    assert linked["event_id"].startswith("EV-")
+    after = _state_snapshot(tmp_path)
+    assert after["counts"]["evidence_links"] == before["counts"]["evidence_links"] + 1
+    assert after["counts"]["events"] == before["counts"]["events"] + 1
+
+    assert main([
+        "--root", str(tmp_path), "evidence", "link", "E-0001",
+        "--target", "test_case:TC-0001", "--role", "acceptance",
+        "--summary", "Exact retry", "--json",
+    ]) == 0
+    assert _json(capsys)["changed"] is False
+    assert _state_snapshot(tmp_path) == after
+
+    rejected_before = _state_snapshot(tmp_path)
+    assert main([
+        "--root", str(tmp_path), "evidence", "link", "E-0001",
+        "--target", "test_case:TC-0002", "--role", "acceptance",
+        "--summary", "Must direct to test link", "--json",
+    ]) == 2
+    assert _json(capsys)["error"]["code"] == "evidence_link_test_pointer_mismatch"
+    assert _state_snapshot(tmp_path) == rejected_before
+
+
+def test_test_link_story_change_with_existing_acceptance_link_does_not_reinsert(
+    tmp_path: Path, capsys
+) -> None:
+    _init(tmp_path, capsys)
+    feature, _, test_id = _add_feature_story_test(tmp_path, capsys, name="Existing link")
+    evidence_id = _add_evidence(tmp_path, capsys, filename="existing.txt")
+    assert main([
+        "--root", str(tmp_path), "test", "pass", test_id,
+        "--summary", "passed", "--evidence-id", evidence_id,
+    ]) == 0
+    capsys.readouterr()
+    assert main([
+        "--root", str(tmp_path), "story", "draft", "--feature", feature,
+        "--actor", "operator", "--goal", "choose replacement",
+        "--expected-behavior", "existing Evidence link remains unique",
+    ]) == 0
+    replacement_story = capsys.readouterr().out.strip()
+    assert main([
+        "--root", str(tmp_path), "story", "approve", replacement_story,
+        "--summary", "reviewed",
+    ]) == 0
+    capsys.readouterr()
+    assert main([
+        "--root", str(tmp_path), "test", "link", test_id,
+        "--story", replacement_story, "--evidence-id", evidence_id,
+        "--summary", "Change Story only", "--json",
+    ]) == 0
+    assert _json(capsys)["changed"] is True
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM evidence_links WHERE evidence_id = ? "
+            "AND target_type = 'test_case' AND target_id = ? AND link_role = 'acceptance'",
+            (evidence_id, test_id),
+        ).fetchone()["n"] == 1
+    finally:
+        conn.close()
+
+
+def test_test_link_pointer_replacement_preserves_old_evidence_and_link(
+    tmp_path: Path, capsys
+) -> None:
+    _init(tmp_path, capsys)
+    _, _, test_id = _add_feature_story_test(tmp_path, capsys, name="History")
+    old_id = _add_evidence(tmp_path, capsys, filename="old.txt")
+    new_id = _add_evidence(tmp_path, capsys, filename="new.txt")
+    assert main([
+        "--root", str(tmp_path), "test", "pass", test_id,
+        "--summary", "old proof", "--evidence-id", old_id,
+    ]) == 0
+    capsys.readouterr()
+    assert main([
+        "--root", str(tmp_path), "test", "link", test_id,
+        "--evidence-id", new_id, "--summary", "Reviewed replacement", "--json",
+    ]) == 0
+    assert _json(capsys)["after"]["evidence_id"] == new_id
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        assert conn.execute("SELECT COUNT(*) AS n FROM evidence WHERE id IN (?, ?)", (old_id, new_id)).fetchone()["n"] == 2
+        assert conn.execute(
+            "SELECT COUNT(*) AS n FROM evidence_links WHERE evidence_id = ? AND "
+            "target_type = 'test_case' AND target_id = ? AND link_role = 'acceptance'",
+            (old_id, test_id),
+        ).fetchone()["n"] == 1
+    finally:
+        conn.close()
+
+
+def test_structural_apply_unknown_and_stale_batches_are_zero_mutation(
+    tmp_path: Path, capsys
+) -> None:
+    _existing_project_fixture(tmp_path, capsys)
+    base = {
+        "action_id": "LR-0001", "classification": "structural", "safe_to_apply": True,
+        "action_kind": "add_missing_evidence_link",
+        "entity": {"type": "test_case", "id": "TC-0001"},
+        "related": [{"type": "evidence", "id": "E-0001"}],
+    }
+    before = _state_snapshot(tmp_path)
+    with pytest.raises(LifecycleRepairPlanError) as unknown:
+        apply_structural_actions(tmp_path_paths(tmp_path), [{**base, "action_kind": "future_action"}])
+    assert unknown.value.code == "repair_unknown_action_kind"
+    assert _state_snapshot(tmp_path) == before
+
+    duplicate = {**base, "action_id": "LR-0002"}
+    with pytest.raises(RelationshipRepairError) as stale:
+        apply_structural_actions(tmp_path_paths(tmp_path), [base, duplicate])
+    assert stale.value.code == "repair_stale_precondition"
+    assert _state_snapshot(tmp_path) == before
+
+
+@pytest.mark.parametrize(
+    ("patch", "code"),
+    [
+        ({"classification": "future"}, "repair_unknown_classification"),
+        ({"classification": "semantic"}, "repair_action_classification_mismatch"),
+        (
+            {
+                "classification": "semantic",
+                "action_kind": "inspect_story_candidate",
+                "safe_to_apply": True,
+            },
+            "repair_non_structural_safe_action",
+        ),
+    ],
+)
+def test_structural_apply_rejects_malformed_plan_actions_without_mutation(
+    tmp_path: Path, capsys, patch: dict, code: str
+) -> None:
+    _existing_project_fixture(tmp_path, capsys)
+    action = {
+        "action_id": "LR-0001",
+        "classification": "structural",
+        "safe_to_apply": True,
+        "action_kind": "add_missing_evidence_link",
+        "entity": {"type": "test_case", "id": "TC-0001"},
+        "related": [{"type": "evidence", "id": "E-0001"}],
+        **patch,
+    }
+    before = _state_snapshot(tmp_path)
+    with pytest.raises(LifecycleRepairPlanError) as error:
+        apply_structural_actions(tmp_path_paths(tmp_path), [action])
+    assert error.value.code == code
+    assert _state_snapshot(tmp_path) == before
+
+
+def test_structural_apply_accepts_known_non_structural_safe_false_action(
+    tmp_path: Path, capsys
+) -> None:
+    _existing_project_fixture(tmp_path, capsys)
+    before = _state_snapshot(tmp_path)
+    result = apply_structural_actions(
+        tmp_path_paths(tmp_path),
+        [{
+            "action_id": "LR-0001",
+            "classification": "semantic",
+            "safe_to_apply": False,
+            "action_kind": "inspect_story_candidate",
+            "entity": {"type": "test_case", "id": "TC-0001"},
+            "related": [{"type": "user_story", "id": "US-0001"}],
+        }],
+    )
+    assert result["changed"] is False
+    assert _state_snapshot(tmp_path) == before
+
+
+def test_evidence_link_role_contracts_are_public_and_zero_mutation(
+    tmp_path: Path, capsys
+) -> None:
+    _init(tmp_path, capsys)
+    feature, _, _ = _add_feature_story_test(tmp_path, capsys, name="Role contract")
+    healthy = _add_evidence(tmp_path, capsys, filename="feature.txt")
+    assert main([
+        "--root", str(tmp_path), "evidence", "link", healthy,
+        "--target", f"feature:{feature}", "--role", "acceptance",
+        "--summary", "Healthy Feature acceptance", "--json",
+    ]) == 0
+    assert _json(capsys)["changed"] is True
+
+    assert main([
+        "--root", str(tmp_path), "task", "create", "--title", "Receipt target",
+    ]) == 0
+    capsys.readouterr()
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        conn.execute(
+            "INSERT INTO evidence(id, type, path, summary, created_at) VALUES "
+            "('E-9999', 'manual_note', 'inline:note', 'wrong type', "
+            "'2026-01-01T00:00:00Z')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    cases = [
+        ("E-9999", f"feature:{feature}", "acceptance", "evidence_link_invalid_acceptance"),
+        (healthy, "task:T-0001", "code_context", "evidence_link_reserved_role"),
+        (healthy, "task:T-0001", "verification_check", "evidence_link_reserved_role"),
+        (healthy, "task:T-0001", "completion_check", "evidence_link_incompatible_role"),
+    ]
+    for evidence_id, target, role, code in cases:
+        before = _state_snapshot(tmp_path)
+        assert main([
+            "--root", str(tmp_path), "evidence", "link", evidence_id,
+            "--target", target, "--role", role, "--summary", "Reject unsafe generic link",
+            "--json",
+        ]) == 2
+        assert _json(capsys)["error"]["code"] == code
+        assert _state_snapshot(tmp_path) == before
+
+
+def tmp_path_paths(root: Path):
+    from pcl.paths import resolve_paths
+
+    return resolve_paths(root)

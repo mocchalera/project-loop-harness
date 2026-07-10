@@ -72,8 +72,18 @@ executes a command from the plan.
 Each action has a stable `action_kind`, concrete entity IDs, related IDs, and a
 canonical sort key. Structural means only that all IDs already exist and the
 relationship is unambiguous from stored data—for example, a healthy Evidence
-ID already stored by a passing Test whose acceptance link is missing. Task 0142
-still does not apply that link. There is no lifecycle repair `--apply` mode.
+ID already stored by a passing Test whose acceptance link is missing. Apply
+only those recognized, safe structural actions with:
+
+```bash
+pcl repair lifecycle --apply-structural --json
+```
+
+The command rebuilds the current plan, rechecks every selected relationship
+inside one transaction, and emits one audited batch event. It never executes
+the plan's command strings. A stale precondition, unknown action kind, or
+invalid relationship rolls the whole batch back.
+There is no lifecycle repair `--apply` mode.
 
 Story review or waiver, Test-to-Story selection, Evidence selection or
 replacement, status changes, Verification, and closing or reopening entities
@@ -82,6 +92,19 @@ automatic relationship. Missing, drifted, cross-target, wrong-role, or
 conflicting Evidence is reported and never normalized. Inspect the suggested
 read-only commands, choose semantics explicitly, and use only the appropriate
 existing lifecycle command after human review.
+
+Use dedicated link repair when the operator has already made the semantic
+choice and only the stored relationship is wrong:
+
+```bash
+pcl test link TC-0001 --story US-0001 --evidence-id E-0007 --summary "Reviewed repair"
+pcl evidence link E-0007 --target test_case:TC-0001 --role acceptance --summary "Restore missing routing row"
+```
+
+`pcl test link` can repair the Test pointer and routing link together. `pcl
+evidence link` only inserts a routing link and refuses a terminal Test whose
+stored Evidence pointer differs. Exact reruns are no-ops; neither command
+replays status transitions or deletes historical Evidence.
 
 Text output contains the same ordered classes and concrete IDs as JSON. Use
 JSON for automation, but do not infer behavior from `reason` prose; consume the

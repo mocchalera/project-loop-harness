@@ -6,7 +6,7 @@ import sqlite3
 from urllib.parse import quote
 
 from .db import SQLITE_BUSY_TIMEOUT_MS
-from .errors import DataStoreError
+from .errors import DataStoreError, EXIT_USAGE, PclError
 from .paths import ProjectPaths
 from .validators import (
     LifecycleFinding,
@@ -18,6 +18,65 @@ from .validators import (
 CONTRACT_VERSION = "lifecycle-repair-plan/v1"
 CLASSIFICATIONS = ("structural", "semantic", "human_review", "unsupported")
 CLASSIFICATION_RANKS = {name: rank for rank, name in enumerate(CLASSIFICATIONS)}
+ACTION_CLASSIFICATIONS = {
+    "add_missing_evidence_link": "structural",
+    "add_missing_completion_packet_link": "structural",
+    "inspect_story_candidate": "semantic",
+    "choose_story_relationship": "semantic",
+    "inspect_feature_stories": "semantic",
+    "inspect_feature_tests": "semantic",
+    "inspect_feature_evidence": "semantic",
+    "review_story_status": "human_review",
+    "record_goal_verification": "human_review",
+    "review_open_feature_defects": "human_review",
+    "report_invalid_goal_verification": "unsupported",
+    "report_invalid_goal_proof": "unsupported",
+    "report_unsupported_lifecycle_finding": "unsupported",
+    "report_conflicting_evidence_link": "unsupported",
+    "report_invalid_test_evidence": "unsupported",
+}
+
+
+class LifecycleRepairPlanError(PclError):
+    def __init__(self, message: str, *, code: str, details: dict[str, object]) -> None:
+        super().__init__(message=message, code=code, exit_code=EXIT_USAGE, details=details)
+
+
+def validate_lifecycle_repair_actions(actions: list[dict[str, object]]) -> None:
+    for action in actions:
+        action_id = str(action.get("action_id", ""))
+        classification = action.get("classification")
+        action_kind = action.get("action_kind")
+        if classification not in CLASSIFICATIONS:
+            raise LifecycleRepairPlanError(
+                "Lifecycle repair plan contains an unknown classification.",
+                code="repair_unknown_classification",
+                details={"action_id": action_id, "classification": classification},
+            )
+        expected = ACTION_CLASSIFICATIONS.get(str(action_kind))
+        if expected is None:
+            raise LifecycleRepairPlanError(
+                "Lifecycle repair plan contains an unknown action kind.",
+                code="repair_unknown_action_kind",
+                details={"action_id": action_id, "action_kind": action_kind},
+            )
+        if classification != expected:
+            raise LifecycleRepairPlanError(
+                "Lifecycle repair action classification does not match its action kind.",
+                code="repair_action_classification_mismatch",
+                details={
+                    "action_id": action_id,
+                    "action_kind": action_kind,
+                    "classification": classification,
+                    "expected_classification": expected,
+                },
+            )
+        if action.get("safe_to_apply") is True and classification != "structural":
+            raise LifecycleRepairPlanError(
+                "Only structural lifecycle repair actions may be safe to apply.",
+                code="repair_non_structural_safe_action",
+                details={"action_id": action_id, "action_kind": action_kind},
+            )
 
 
 @dataclass(frozen=True)
@@ -88,6 +147,16 @@ def build_lifecycle_repair_plan(paths: ProjectPaths) -> dict[str, object]:
         "summary": summary,
         "actions": serialized,
     }
+
+
+def apply_structural_lifecycle_repair(paths: ProjectPaths) -> dict[str, object]:
+    from .relationship_repair import apply_structural_actions
+
+    plan = build_lifecycle_repair_plan(paths)
+    actions = plan["actions"]
+    assert isinstance(actions, list)
+    result = apply_structural_actions(paths, actions)
+    return {**result, "contract_version": CONTRACT_VERSION, "mode": "apply_structural"}
 
 
 def render_lifecycle_repair_plan(plan: dict[str, object]) -> str:

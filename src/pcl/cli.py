@@ -102,7 +102,12 @@ from .lifecycle import (
     verify_defect,
     waive_defect,
 )
-from .lifecycle_repair import build_lifecycle_repair_plan, render_lifecycle_repair_plan
+from .lifecycle_repair import (
+    apply_structural_lifecycle_repair,
+    build_lifecycle_repair_plan,
+    render_lifecycle_repair_plan,
+)
+from .relationship_repair import add_evidence_link, repair_test_links
 from .migrations import apply_migrations, migration_status
 from .outbox import project_pending_events
 from .paths import resolve_paths
@@ -252,6 +257,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Explicitly select the default read-only planning mode",
     )
+    p_repair_lifecycle.add_argument(
+        "--apply-structural",
+        action="store_true",
+        help="Atomically apply only recognized safe structural actions from the current plan",
+    )
+    p_repair_lifecycle.add_argument("--apply", action="store_true", help=argparse.SUPPRESS)
 
     p_render = sub.add_parser("render", help="Render dashboard from state")
     p_render.add_argument("--locale", default=None, help="Dashboard HTML locale: en, ja")
@@ -355,6 +366,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_test_plan.add_argument("--scenario", required=True)
     p_test_plan.add_argument("--expected", required=True)
+    p_test_link = test_sub.add_parser("link", help="Repair Story and Evidence relationships without replaying Test status")
+    p_test_link.add_argument("test_case_id")
+    p_test_link.add_argument("--story", default=None)
+    p_test_link.add_argument("--evidence-id", default=None)
+    p_test_link.add_argument("--summary", required=True)
     p_test_pass = test_sub.add_parser("pass")
     p_test_pass.add_argument("test_case_id")
     p_test_pass.add_argument("--summary", required=True)
@@ -732,6 +748,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Resolve read-only Evidence metadata without inlining artifact bodies",
     )
     p_evidence_show.add_argument("evidence_id")
+    p_evidence_link = evidence_sub.add_parser("link", help="Add one validated Evidence relationship")
+    p_evidence_link.add_argument("evidence_id")
+    p_evidence_link.add_argument("--target", required=True, dest="target_ref", help="Target reference as <target-type>:<target-id>")
+    p_evidence_link.add_argument("--role", required=True)
+    p_evidence_link.add_argument("--summary", required=True)
 
     p_contract = sub.add_parser("contract", help="Validate versioned artifact contracts")
     contract_sub = p_contract.add_subparsers(dest="contract_command", required=True)
@@ -1573,6 +1594,18 @@ def main(argv: list[str] | None = None) -> int:
             return audit_rebuild_exit_code(result)
 
         if args.command == "repair" and args.repair_command == "lifecycle":
+            if args.apply:
+                raise InvalidInputError(
+                    "--apply is not supported; use --apply-structural.",
+                    details={"flag": "--apply", "supported_flag": "--apply-structural"},
+                )
+            if args.apply_structural:
+                result = apply_structural_lifecycle_repair(paths)
+                if json_output:
+                    _print_json(result)
+                else:
+                    print(to_pretty_json(result))
+                return 0
             plan = build_lifecycle_repair_plan(paths)
             if json_output:
                 _print_json(plan)
@@ -1771,6 +1804,17 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json(result)
             else:
                 print(result["id"])
+            return 0
+
+        if args.command == "test" and args.test_command == "link":
+            result = repair_test_links(
+                paths, test_case_id=args.test_case_id, story_id=args.story,
+                evidence_id=args.evidence_id, summary=args.summary,
+            )
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result))
             return 0
 
         if args.command == "test" and args.test_command == "pass":
@@ -2443,6 +2487,23 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json(result)
             else:
                 print(render_evidence_metadata(result), end="")
+            return 0
+
+        if args.command == "evidence" and args.evidence_command == "link":
+            target_type, separator, target_id = args.target_ref.partition(":")
+            if not separator or not target_type or not target_id:
+                raise InvalidInputError(
+                    "--target must be formatted as <target-type>:<target-id>.",
+                    details={"target": args.target_ref},
+                )
+            result = add_evidence_link(
+                paths, evidence_id=args.evidence_id, target_type=target_type,
+                target_id=target_id, role=args.role, summary=args.summary,
+            )
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result))
             return 0
 
         if args.command == "context" and args.context_command == "pack":
