@@ -14,6 +14,25 @@
   "stdout": {
     "context_check": {
       "canonical_context_pack_command": "pcl context pack --task T-0001 --include-code-context --require-bound-receipt --json",
+      "master_trace_context": {
+        "ambiguous": [],
+        "candidates": {
+          "intent_index": [],
+          "master_trace": []
+        },
+        "contract_version": "master-trace-context/v0",
+        "missing": [
+          "master_trace",
+          "intent_index"
+        ],
+        "raw_transcript_inlined": false,
+        "status": "absent",
+        "target": {
+          "id": "T-0001",
+          "type": "task"
+        },
+        "unresolved_stored_paths": []
+      },
       "recommended_refresh_command": "pcl impact --diff --for-task T-0001 --json",
       "supporting_evidence_count": 0,
       "target": {

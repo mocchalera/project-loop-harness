@@ -172,7 +172,7 @@ path is:
 
 ```bash
 pcl workflow verify --root /tmp/pcl-demo --template executor_smoke
-pcl workflow sandbox --root /tmp/pcl-demo --template executor_smoke --json
+pcl workflow guard --root /tmp/pcl-demo --template executor_smoke --json
 pcl loop execute --root /tmp/pcl-demo executor_smoke --json
 ```
 
@@ -448,7 +448,7 @@ The current local runtime supports:
 - complete CSV export for reviewable loop state;
 - optional local stdio MCP server;
 - Codex plugin packaging scaffold with package inventory and reusable GitHub Action for local validation;
-- workflow proposal mode, guarded human approval, static verifier checks, limited sandbox planning/execution, guarded automatic workflow execution with explicit retry/resume, and a bundled `executor_smoke` workflow for dogfooding the executor.
+- workflow proposal mode, guarded human approval, static verifier checks, guarded host-process planning/execution, guarded automatic workflow execution with explicit retry/resume, and a bundled `executor_smoke` workflow for dogfooding the executor.
 
 ## Implementation Task Order
 

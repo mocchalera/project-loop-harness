@@ -36,6 +36,9 @@ from .workflows import list_jobs, read_job
 
 
 CONTEXT_PACK_CONTRACT_VERSION = "context-pack/v1"
+MASTER_TRACE_CONTEXT_CONTRACT_VERSION = "master-trace-context/v0"
+MASTER_TRACE_CONTRACT_VERSION = "master-trace/v0"
+INTENT_INDEX_CONTRACT_VERSION = "intent-index/v0"
 DEFAULT_MAX_TOKENS = 12000
 LEGACY_APPROX_CHARS_PER_TOKEN = 4
 MACHINE_CONTEXT_RULES_SECTION_ID = "machine_context_rules"
@@ -170,6 +173,7 @@ TASK_SECTION_PRIORITY_PROFILES = {
         CODE_CONTEXT_DETAIL_SECTION_ID: 825,
         CODE_CONTEXT_VERIFICATION_SECTION_ID: 775,
         "linked_evidence": 830,
+        "master_trace_context": 840,
     }
 }
 
@@ -355,6 +359,7 @@ def pack_context_for_task(
     max_tokens: int = DEFAULT_MAX_TOKENS,
     include_code_context: bool = False,
     require_bound_receipt: bool = False,
+    include_master_trace_context: bool = False,
 ) -> dict[str, Any]:
     require_initialized(paths)
     _validate_identifier(task_id, "task_id")
@@ -394,6 +399,20 @@ def pack_context_for_task(
         defect = _defect_for_task(conn, task)
         siblings = _sibling_tasks(conn, task) if task.get("related_goal_id") else []
         linked_evidence = _linked_task_evidence(paths, conn, task_id)
+        master_trace_linked_evidence = (
+            _linked_master_trace_evidence(paths, conn, task_id)
+            if include_master_trace_context
+            else []
+        )
+        master_trace_preflight = (
+            _master_trace_context_preflight(
+                paths,
+                target={"type": "task", "id": task_id},
+                linked_evidence=master_trace_linked_evidence,
+            )
+            if include_master_trace_context
+            else None
+        )
         event_entities = [("task", task_id)]
         if task.get("related_goal_id"):
             event_entities.append(("goal", str(task["related_goal_id"])))
@@ -408,6 +427,11 @@ def pack_context_for_task(
         defect=defect,
         siblings=siblings,
         linked_evidence=linked_evidence,
+        master_trace_context=(
+            _master_trace_context_payload(master_trace_preflight)
+            if master_trace_preflight is not None
+            else None
+        ),
         events=events,
         code_context=code_context,
     )
@@ -455,6 +479,10 @@ def pack_context_for_task(
     }
     if linked_evidence:
         pack["linked_evidence"] = linked_evidence
+    if master_trace_preflight is not None:
+        pack["master_trace_context"] = _master_trace_context_payload(
+            master_trace_preflight
+        )
     if code_context:
         pack["code_context"] = code_context
     if include_code_context:
@@ -487,6 +515,15 @@ def check_context(
             target_type=target_type,
             target_id=target_id,
         )
+        master_trace_context = (
+            _master_trace_context_preflight(
+                paths,
+                target={"type": "task", "id": target_id},
+                linked_evidence=_linked_master_trace_evidence(paths, conn, target_id),
+            )
+            if target_type == "task"
+            else None
+        )
     finally:
         conn.close()
 
@@ -515,6 +552,8 @@ def check_context(
     }
     if status != "present":
         payload["recommended_refresh_command"] = _target_refresh_command(target_type, target_id)
+    if master_trace_context is not None:
+        payload["master_trace_context"] = master_trace_context
     return payload
 
 
@@ -657,6 +696,7 @@ def _build_task_sections(
     defect: dict[str, Any] | None,
     siblings: list[dict[str, Any]],
     linked_evidence: list[dict[str, Any]],
+    master_trace_context: dict[str, Any] | None,
     events: list[dict[str, Any]],
     code_context: dict[str, Any] | None,
 ) -> list[tuple[str, str]]:
@@ -678,6 +718,13 @@ def _build_task_sections(
     ]
     if code_context is not None:
         sections.extend(_code_context_sections(code_context))
+    if master_trace_context is not None:
+        sections.append(
+            (
+                "master_trace_context",
+                _render_master_trace_context_section(master_trace_context),
+            )
+        )
     sections.extend(
         [
         (
@@ -1603,6 +1650,207 @@ def _sibling_tasks(conn, task: dict[str, Any]) -> list[dict[str, Any]]:
     )
 
 
+def _master_trace_context_preflight(
+    paths: ProjectPaths,
+    *,
+    target: dict[str, str],
+    linked_evidence: list[dict[str, Any]],
+) -> dict[str, Any]:
+    candidates = {
+        "master_trace": _master_trace_candidates(
+            paths,
+            linked_evidence,
+            contract_version=MASTER_TRACE_CONTRACT_VERSION,
+        ),
+        "intent_index": _master_trace_candidates(
+            paths,
+            linked_evidence,
+            contract_version=INTENT_INDEX_CONTRACT_VERSION,
+        ),
+    }
+    missing = [name for name, values in candidates.items() if not values]
+    ambiguous = [name for name, values in candidates.items() if len(values) > 1]
+    unresolved = [
+        {
+            "kind": name,
+            "evidence_id": candidate["evidence_id"],
+            "member_paths": candidate["unresolved_member_paths"],
+        }
+        for name, values in candidates.items()
+        for candidate in values
+        if candidate["unresolved_member_paths"]
+    ]
+
+    if ambiguous:
+        status = "selection_required"
+    elif missing:
+        status = "absent"
+    elif unresolved:
+        status = "unavailable"
+    else:
+        status = "present"
+
+    return {
+        "contract_version": MASTER_TRACE_CONTEXT_CONTRACT_VERSION,
+        "target": target,
+        "status": status,
+        "candidates": {
+            name: [_public_master_trace_candidate(item) for item in values]
+            for name, values in candidates.items()
+        },
+        "missing": missing,
+        "ambiguous": ambiguous,
+        "unresolved_stored_paths": unresolved,
+        "raw_transcript_inlined": False,
+    }
+
+
+def _master_trace_context_payload(preflight: dict[str, Any]) -> dict[str, Any]:
+    if preflight["status"] != "present":
+        return preflight
+    candidates = preflight["candidates"]
+    return {
+        "contract_version": MASTER_TRACE_CONTEXT_CONTRACT_VERSION,
+        "target": preflight["target"],
+        "master_trace": candidates["master_trace"][0],
+        "intent_index": candidates["intent_index"][0],
+        "trust_model": "claims-not-facts",
+        "source_ref_discipline": {
+            "line_numbering": "one-based-inclusive",
+            "read_target": "copied-master-trace-stored-path",
+            "worker_must_compare_claim_to_trace_lines": True,
+        },
+        "raw_transcript_inlined": False,
+    }
+
+
+def _master_trace_candidates(
+    paths: ProjectPaths,
+    linked_evidence: list[dict[str, Any]],
+    *,
+    contract_version: str,
+) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for evidence in linked_evidence:
+        manifest_path = str(evidence.get("manifest_path") or "")
+        members = _adhoc_manifest_members(paths, manifest_path)
+        matched_members = [
+            member
+            for member in members
+            if _evidence_member_contract_version(paths, member) == contract_version
+        ]
+        if not matched_members:
+            continue
+        candidates.append(
+            {
+                "evidence_id": str(evidence.get("id") or ""),
+                "manifest_path": manifest_path,
+                "member_paths": [
+                    str(member.get("path") or "")
+                    for member in matched_members
+                    if member.get("path")
+                ],
+                "stored_paths": [
+                    str(member.get("stored_path") or "")
+                    for member in matched_members
+                    if member.get("stored_path")
+                ],
+                "unresolved_member_paths": [
+                    str(member.get("path") or "")
+                    for member in matched_members
+                    if not _stored_member_path_resolves(paths, member)
+                ],
+            }
+        )
+    return candidates
+
+
+def _public_master_trace_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "evidence_id": candidate["evidence_id"],
+        "manifest_path": candidate["manifest_path"],
+        "member_paths": candidate["member_paths"],
+        "stored_paths": candidate["stored_paths"],
+    }
+
+
+def _evidence_member_contract_version(
+    paths: ProjectPaths,
+    member: dict[str, Any],
+) -> str | None:
+    stored_path = _local_path(paths, str(member.get("stored_path") or ""))
+    member_path = _local_path(paths, str(member.get("path") or ""))
+    artifact_path = next(
+        (path for path in (stored_path, member_path) if path is not None and path.is_file()),
+        None,
+    )
+    if artifact_path is None:
+        return None
+    try:
+        with artifact_path.open(encoding="utf-8") as artifact:
+            first_line = artifact.readline()
+            if first_line.rstrip("\r\n") == "---":
+                for line in artifact:
+                    if line.rstrip("\r\n") == "---":
+                        break
+                    key, separator, value = line.partition(":")
+                    if separator and key.strip() == "contract_version":
+                        return value.strip().strip("\"'")
+                return None
+            payload = json.loads(first_line + artifact.read())
+    except (OSError, UnicodeError, JSONDecodeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("contract_version")
+    return str(value) if isinstance(value, str) else None
+
+
+def _stored_member_path_resolves(paths: ProjectPaths, member: dict[str, Any]) -> bool:
+    stored_path_value = str(member.get("stored_path") or "")
+    if not stored_path_value:
+        return False
+    stored_path = _local_path(paths, stored_path_value)
+    return stored_path is not None and stored_path.is_file()
+
+
+def _render_master_trace_context_section(payload: dict[str, Any]) -> str:
+    lines = ["## Master Trace Context", ""]
+    status = payload.get("status")
+    if status:
+        lines.append(f"Status: {_stringify(status)}")
+        for name in ("missing", "ambiguous"):
+            values = payload.get(name)
+            if values:
+                lines.append(f"{name.replace('_', ' ').title()}: {_stringify(values)}")
+        candidates = payload.get("candidates")
+        if isinstance(candidates, dict):
+            lines.extend(["", "Candidate evidence references:"])
+            for name in ("master_trace", "intent_index"):
+                for candidate in candidates.get(name, []):
+                    lines.append(
+                        f"- {name}: {_stringify(candidate.get('evidence_id'))}; "
+                        f"manifest={_stringify(candidate.get('manifest_path'))}; "
+                        f"stored_paths={_stringify(candidate.get('stored_paths'))}"
+                    )
+    else:
+        for name in ("master_trace", "intent_index"):
+            item = payload[name]
+            lines.append(
+                f"- {name}: {_stringify(item['evidence_id'])}; "
+                f"manifest={_stringify(item['manifest_path'])}; "
+                f"stored_paths={_stringify(item['stored_paths'])}"
+            )
+        lines.extend(
+            [
+                "",
+                f"Trust model: {_stringify(payload['trust_model'])}",
+                "Raw transcript inlined: false",
+            ]
+        )
+    return "\n".join(lines)
+
+
 def _linked_task_evidence(paths: ProjectPaths, conn, task_id: str) -> list[dict[str, Any]]:
     if table_exists(conn, "evidence_links"):
         rows = _rows(
@@ -1654,6 +1902,16 @@ def _linked_task_evidence(paths: ProjectPaths, conn, task_id: str) -> list[dict[
             }
         )
     return evidence
+
+
+def _linked_master_trace_evidence(
+    paths: ProjectPaths,
+    conn,
+    task_id: str,
+) -> list[dict[str, Any]]:
+    if not table_exists(conn, "evidence_links"):
+        return []
+    return _linked_task_evidence(paths, conn, task_id)
 
 
 def _table_has_column(conn, table_name: str, column_name: str) -> bool:

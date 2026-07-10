@@ -195,7 +195,12 @@ def test_workflow_sandbox_execute_runs_safe_commands_and_records_evidence(
             "SELECT id, type, path FROM evidence WHERE type = 'workflow_sandbox_run'"
         ).fetchone()
         event = conn.execute(
-            "SELECT payload_json FROM events WHERE event_type = 'workflow_sandbox_executed'"
+            """
+            SELECT events.payload_json, outbox_records.status AS outbox_status
+            FROM events
+            JOIN outbox_records ON outbox_records.event_id = events.id
+            WHERE events.event_type = 'workflow_sandbox_executed'
+            """
         ).fetchone()
     finally:
         conn.close()
@@ -209,6 +214,7 @@ def test_workflow_sandbox_execute_runs_safe_commands_and_records_evidence(
     assert event_payload["executed_count"] == 2
     assert event_payload["skipped_count"] == 1
     assert event_payload["ok"] is True
+    assert event["outbox_status"] == "delivered"
 
 
 def test_workflow_sandbox_execute_refuses_proposal_target(
@@ -370,3 +376,96 @@ def test_workflow_sandbox_blocks_pcl_root_override(
     command = payload["sandbox"]["commands"][0]
     assert command["safe_to_run"] is False
     assert command["blocked_reason"] == "pcl command flag is controlled by the sandbox: --root"
+
+
+def test_workflow_guard_is_primary_and_sandbox_is_deprecated_compatible_alias(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "workflow", "guard", "--template", "feature_coverage", "--json"]) == 0
+    guarded_capture = capsys.readouterr()
+    guarded = json.loads(guarded_capture.out)["guarded_executor"]
+    assert guarded_capture.err == ""
+    assert guarded["contract_version"] == "guarded-executor/v1"
+    assert guarded["surface"] == "guarded_executor"
+    assert guarded["permission_contract"]["os_isolation"] is False
+    assert guarded["permission_contract"]["network_isolation"] is False
+    assert guarded["permission_contract"]["filesystem_isolation"] is False
+
+    assert main(["--root", str(tmp_path), "workflow", "sandbox", "--template", "feature_coverage", "--json"]) == 0
+    legacy_capture = capsys.readouterr()
+    legacy = json.loads(legacy_capture.out)
+    assert legacy["sandbox"]["contract_version"] == "workflow-sandbox/v1"
+    assert legacy["deprecation"]
+    assert "deprecated" in legacy_capture.err
+    assert "workflow guard" in legacy_capture.err
+    assert "does not provide OS isolation" in legacy_capture.err
+
+
+def test_workflow_guard_records_truncation_and_redaction_metadata_before_evidence_write(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    output_test = tmp_path / "executor_output_test.py"
+    secret = "sk-abcdefghijklmnopqrstuvwxyz123456"
+    output_test.write_text(
+        "import os\n\n"
+        "def test_output():\n"
+        f"    os.write(1, {secret!r}.encode() + b'\\n' + b'x' * 4096)\n"
+        "    os.write(2, b'token=very-secret-fixture-value\\n' + b'y' * 4096)\n",
+        encoding="utf-8",
+    )
+    pcl_yaml = tmp_path / "pcl.yaml"
+    pcl_yaml.write_text(
+        pcl_yaml.read_text(encoding="utf-8").replace(
+            'lint: ""',
+            'lint: "python -m pytest -s -q executor_output_test.py"',
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "workflow.yaml").write_text(PROJECT_COMMAND_WORKFLOW, encoding="utf-8")
+    assert main(["--root", str(tmp_path), "workflow", "propose", "--file", "workflow.yaml"]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "workflow",
+        "proposals",
+        "approve",
+        "WP-0001",
+        "--summary",
+        "Approve guarded output fixture",
+    ]) == 0
+    capsys.readouterr()
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "workflow",
+        "guard",
+        "--template",
+        "lint_review",
+        "--execute",
+        "--max-output-bytes",
+        "256",
+        "--json",
+    ]) == 0
+    guarded = _json_output(capsys)["guarded_executor"]
+    command = guarded["commands"][0]
+    evidence_path = tmp_path / guarded["evidence_path"]
+    evidence_bytes = b"".join(path.read_bytes() for path in evidence_path.parent.iterdir())
+
+    assert guarded["output_truncated"] is True
+    assert guarded["redacted"] is True
+    assert guarded["evidence_path"] == ".project-loop/evidence/guarded-executor/E-0001/result.json"
+    assert command["stdout"]["original_byte_count"] > 256
+    assert command["stderr"]["original_byte_count"] > 256
+    assert command["stdout"]["truncation_reason"] == "max_output_bytes_exceeded"
+    assert command["stderr"]["truncation_reason"] == "max_output_bytes_exceeded"
+    assert command["stdout"]["raw_output_persisted"] is False
+    assert secret.encode() not in evidence_bytes
+    assert b"very-secret-fixture-value" not in evidence_bytes
+    assert b"[REDACTED_SECRET]" in evidence_bytes

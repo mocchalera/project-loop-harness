@@ -108,7 +108,7 @@ guarded executor:
 
 ```bash
 pcl workflow verify --root /tmp/pcl-demo --template executor_smoke
-pcl workflow sandbox --root /tmp/pcl-demo --template executor_smoke --json
+pcl workflow guard --root /tmp/pcl-demo --template executor_smoke --json
 pcl loop execute --root /tmp/pcl-demo executor_smoke --json
 pcl validate --root /tmp/pcl-demo --strict
 ```
@@ -116,7 +116,7 @@ pcl validate --root /tmp/pcl-demo --strict
 Expected checkpoint:
 
 - `pcl workflow verify` reports no errors;
-- sandbox output has `blocked_command_count: 0`;
+- guarded executor output has `blocked_command_count: 0`;
 - `pcl loop execute` returns `workflow-executor/v1`;
 - the executor records workflow execution evidence, an approved verification,
   and a passed workflow run;

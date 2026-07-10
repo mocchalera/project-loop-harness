@@ -11,7 +11,7 @@ failures that actually happened in past releases — do not skip them.
       worker worktree: `pip show project-loop-harness | grep Location` must
       resolve under `~/Dev/project-loop-harness`. If not:
       `pip install -e '.[dev]'` from the canonical repo. Symptom otherwise:
-      previously-green `main` suddenly fails ~6 executor/sandbox subprocess
+      previously-green `main` suddenly fails ~6 guarded-executor subprocess
       tests with exit 1.
 - [ ] `SECURITY.md` supported-versions table matches the release line being
       published.

@@ -1,1 +1,9 @@
 {"type":"skill","name":"cockpit","digest":"{\"skill\":\"cockpit\",\"args\":\"Task entity v1 と Verification Rubric v1 を codex に並行分配した","timestamp":"2026-07-02T13:56:19Z"}
+{"type":"skill","name":"cockpit","digest":"{\"skill\":\"cockpit\",\"args\":\"codex への実装タスク作成（worktree 分離、0068 と 0070 を\ufffd\ufffd","timestamp":"2026-07-04T14:29:55Z"}
+{"type":"skill","name":"cockpit","digest":"{\"skill\":\"cockpit\",\"args\":\"create a codex worker task for agent-tasks/0072 in a worktree\"}","timestamp":"2026-07-05T08:02:22Z"}
+{"type":"skill","name":"cockpit","digest":"{\"skill\":\"cockpit\",\"args\":\"check status of any remaining 0076/0077 worktree tasks before cleanup, th","timestamp":"2026-07-05T12:56:52Z"}
+{"type":"skill","name":"cockpit","digest":"{\"skill\":\"cockpit\",\"args\":\"create codex task for agent-tasks/0083 with worktree\"}","timestamp":"2026-07-06T04:15:33Z"}
+{"type":"skill","name":"cockpit","digest":"{\"skill\":\"cockpit\",\"args\":\"codex\"}","timestamp":"2026-07-06T12:56:41Z"}
+{"type":"skill","name":"cockpit","digest":"{\"skill\":\"cockpit\"}","timestamp":"2026-07-07T15:38:14Z"}
+{"type":"skill","name":"cockpit","digest":"{\"skill\":\"cockpit\"}","timestamp":"2026-07-08T07:00:53Z"}
+{"type":"skill","name":"cockpit","digest":"{\"skill\":\"cockpit\",\"args\":\"Codex に project-loop-harness の実装タスクを worktree 分離で\ufffd\ufffd","timestamp":"2026-07-10T00:33:09Z"}

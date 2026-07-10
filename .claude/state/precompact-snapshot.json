@@ -13,10 +13,10 @@
       }
     },
     "recommended": true,
-    "summary": "Context reset recommended (auto): 20 recent edit count exceed threshold 8; 564 session age (minutes) exceed threshold 120",
+    "summary": "Context reset recommended (auto): 20 recent edit count exceed threshold 8; 701 session age (minutes) exceed threshold 120",
     "reasons": [
       "20 recent edit count exceed threshold 8",
-      "564 session age (minutes) exceed threshold 120"
+      "701 session age (minutes) exceed threshold 120"
     ],
     "candidates": [
       {
@@ -50,7 +50,7 @@
       {
         "key": "session_age_minutes",
         "label": "session age (minutes)",
-        "actual": 564,
+        "actual": 701,
         "threshold": 120,
         "triggered": true
       }
@@ -60,7 +60,7 @@
       "blockedTasks": 0,
       "recentEdits": 20,
       "failedChecks": 0,
-      "sessionAgeMinutes": 564
+      "sessionAgeMinutes": 701
     }
   },
   "continuity": {
@@ -76,25 +76,25 @@
     ".claude/sessions/.last_inbox_check",
     ".claude/sessions/active.json",
     ".claude/sessions/broadcast.md",
-    ".claude/sessions/leases/b335630551682c19a781afebcf4d07bf978fb1f8ac04c6bf87428ed5106870f5.lock",
-    ".claude/sessions/leases/ebd22577507f708c9dc685a831b5d2471b632d2d4b0229999c537965ba480f6b.lock",
     ".claude/state/changed-files.jsonl",
     ".claude/state/instructions-loaded.jsonl",
     ".claude/state/session-events.jsonl",
-    ".claude/state/session-events.jsonl.lock",
     ".claude/state/session-skills-used.json",
     ".claude/state/session.events.jsonl",
     ".claude/state/session.json",
-    ".claude/state/sessions/session-1782999263483208000.events.jsonl",
-    ".claude/state/sessions/session-1782999263483208000.json",
-    ".claude/state/sessions/session-1782999402743642000.events.jsonl",
-    ".claude/state/sessions/session-1782999402743642000.json",
-    ".claude/state/sessions/session-1783001123069605000.events.jsonl",
-    ".claude/state/sessions/session-1783001123069605000.json",
-    ".claude/state/sessions/session-1783010022968186000.events.jsonl"
+    ".claude/state/test-recommendation.json",
+    ".claude/state/usage-stats.jsonl",
+    ".claude/sessions/.last_inbox_read_166153c7-9561-409d-bd19-6ceb87427d47",
+    ".claude/sessions/.last_inbox_read_57781d0d-d656-4063-b76a-85993fae8ccd",
+    ".claude/sessions/.last_inbox_read_697b2340-b50d-42a8-be25-2c6e35ef2f5e",
+    ".claude/sessions/.last_inbox_read_8adacd8a-45bf-44c4-bde9-e21b750c2fcd",
+    ".claude/sessions/.last_inbox_read_9a4fd7ae-505c-4c94-a093-2934970d0867",
+    ".claude/sessions/.last_inbox_read_a0216f64-8aed-46d0-aa86-4e1e4e71b19b",
+    ".claude/sessions/.last_inbox_read_c8f3f91e-831a-4bca-aeaf-d7543c16ff81",
+    ".claude/sessions/.last_inbox_read_ef15adcf-1257-46b7-9a03-891024ceb372"
   ],
   "sessionId": "",
-  "timestamp": "2026-07-03T01:58:41Z",
+  "timestamp": "2026-07-09T02:12:06Z",
   "version": "1.0.0",
   "wipTasks": null
 }

@@ -105,6 +105,11 @@ that do not support the returned version should disconnect. The v0.3.1
 Rollback for clients that still require it is to run the previous package
 version.
 
+See the [tested compatibility matrix](mcp-compatibility.md) for exact client
+versions and known limitations. Use the
+[manual client smoke runbook](mcp-manual-smoke-runbook.md) before adding a new
+Claude Code, Codex, or other real-client claim to that matrix.
+
 `render_dashboard` is available only when local writes are explicitly approved:
 
 ```bash

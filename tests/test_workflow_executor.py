@@ -180,6 +180,15 @@ def test_loop_execute_command_only_workflow_completes_and_records_evidence(
                 "SELECT event_type FROM events WHERE entity_id = 'WR-0001' ORDER BY rowid"
             ).fetchall()
         ]
+        evidence_event_outbox = conn.execute(
+            """
+            SELECT outbox_records.status
+            FROM events
+            JOIN outbox_records ON outbox_records.event_id = events.id
+            WHERE events.event_type = 'workflow_execution_evidence_recorded'
+              AND events.entity_id = 'WR-0001'
+            """
+        ).fetchone()
     finally:
         conn.close()
     assert run["status"] == "passed"
@@ -188,8 +197,10 @@ def test_loop_execute_command_only_workflow_completes_and_records_evidence(
         "path": ".project-loop/evidence/workflow-executions/WR-0001/result.json",
     }
     assert "workflow_execution_started" in events
+    assert "workflow_execution_evidence_recorded" in events
     assert "workflow_execution_finished" in events
     assert "workflow_run_completed" in events
+    assert evidence_event_outbox["status"] == "delivered"
 
 
 def test_loop_execute_bundled_executor_smoke_runs_in_fresh_project(
@@ -357,7 +368,7 @@ def test_loop_execute_rejects_blocked_command_before_creating_run(
     assert main(["--root", str(tmp_path), "loop", "execute", "feature_coverage", "--json"]) == 2
     payload = _json_output(capsys)
     assert payload["error"]["code"] == "invalid_input"
-    assert "blocked by the sandbox" in payload["error"]["message"]
+    assert "blocked by the guarded executor" in payload["error"]["message"]
     assert payload["error"]["details"]["blocked_commands"][0]["raw_command"] == "pcl feature add"
 
     conn = connect(tmp_path / ".project-loop" / "project.db")

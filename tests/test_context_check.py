@@ -154,6 +154,46 @@ def _add_supporting_evidence(root: Path, capsys) -> None:
     _json_output(capsys)
 
 
+def _add_master_trace_pair(root: Path, capsys) -> list[dict[str, Any]]:
+    trace_path = root / "master-trace.md"
+    trace_path.write_text(
+        "---\n"
+        "contract_version: master-trace/v0\n"
+        "trace_id: mt-check-fixture\n"
+        "source_kind: operator_notes\n"
+        "captured_at: 2026-07-10T00:00:00Z\n"
+        "---\n"
+        "Preflight source line.\n",
+        encoding="utf-8",
+    )
+    index_path = root / "intent-index.json"
+    index_path.write_text(
+        json.dumps({"contract_version": "intent-index/v0", "items": []}) + "\n",
+        encoding="utf-8",
+    )
+    evidence = []
+    for path, summary in (
+        (trace_path, "Master trace"),
+        (index_path, "Intent index"),
+    ):
+        assert main([
+            "--root",
+            str(root),
+            "evidence",
+            "add",
+            "--file",
+            path.name,
+            "--summary",
+            summary,
+            "--copy",
+            "--task",
+            "T-0001",
+            "--json",
+        ]) == 0
+        evidence.append(_json_output(capsys)["evidence"])
+    return evidence
+
+
 def _state_counts(root: Path) -> dict[str, int]:
     conn = connect(root / ".project-loop" / "project.db")
     try:
@@ -228,6 +268,7 @@ def test_context_check_task_present_reports_receipt_and_supporting_count(
         "target_bound_code_context",
         "canonical_context_pack_command",
         "warnings",
+        "master_trace_context",
     }
     assert check["target"] == {"type": "task", "id": "T-0001"}
     assert check["supporting_evidence_count"] == 1
@@ -243,6 +284,67 @@ def test_context_check_task_present_reports_receipt_and_supporting_count(
         == "pcl context pack --task T-0001 --include-code-context --require-bound-receipt --json"
     )
     assert check["warnings"] == []
+    assert check["master_trace_context"]["status"] == "absent"
+    assert check["master_trace_context"]["missing"] == ["master_trace", "intent_index"]
+
+
+def test_context_check_reports_master_trace_preflight_and_remains_read_only(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_task_code_project(tmp_path, capsys)
+    evidence = _add_master_trace_pair(tmp_path, capsys)
+    before = _state_counts(tmp_path)
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "check",
+        "--task",
+        "T-0001",
+        "--json",
+    ]) == 0
+    check = _json_output(capsys)["context_check"]
+
+    preflight = check["master_trace_context"]
+    assert preflight["status"] == "present"
+    assert preflight["missing"] == []
+    assert preflight["ambiguous"] == []
+    assert preflight["unresolved_stored_paths"] == []
+    assert preflight["raw_transcript_inlined"] is False
+    assert preflight["candidates"]["master_trace"] == [
+        {
+            "evidence_id": evidence[0]["id"],
+            "manifest_path": evidence[0]["manifest_path"],
+            "member_paths": ["master-trace.md"],
+            "stored_paths": [evidence[0]["members"][0]["stored_path"]],
+        }
+    ]
+    assert preflight["candidates"]["intent_index"][0]["evidence_id"] == evidence[1]["id"]
+    assert _state_counts(tmp_path) == before
+
+    (tmp_path / evidence[0]["members"][0]["stored_path"]).unlink()
+    before_unavailable = _state_counts(tmp_path)
+    assert main([
+        "--root",
+        str(tmp_path),
+        "context",
+        "check",
+        "--task",
+        "T-0001",
+        "--json",
+    ]) == 0
+    unavailable = _json_output(capsys)["context_check"]["master_trace_context"]
+    assert unavailable["status"] == "unavailable"
+    assert unavailable["unresolved_stored_paths"] == [
+        {
+            "kind": "master_trace",
+            "evidence_id": evidence[0]["id"],
+            "member_paths": ["master-trace.md"],
+        }
+    ]
+    assert _state_counts(tmp_path) == before_unavailable
 
 
 def test_context_check_missing_receipt_reports_refresh_and_required_error(
