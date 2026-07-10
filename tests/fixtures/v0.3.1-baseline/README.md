@@ -25,6 +25,9 @@ personal information, or real-project content. It was generated from the
 
 ## Intended changes since v0.3.1 freeze
 
+- 2026-07-11 — `snapshots/pcl-help.json` regenerated for task 0142 to include
+  the additive read-only `repair` command and its `lifecycle` planner. No
+  existing command was removed or renamed, and no apply mode was added.
 - 2026-07-11 — `snapshots/empty-next-json.json` intentionally changed for task
   0141: a project with no active work now returns a neutral `idle` action with
   `command: null` and no fabricated human gate. Explicit user intent enters

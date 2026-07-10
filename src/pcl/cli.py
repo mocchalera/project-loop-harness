@@ -102,6 +102,7 @@ from .lifecycle import (
     verify_defect,
     waive_defect,
 )
+from .lifecycle_repair import build_lifecycle_repair_plan, render_lifecycle_repair_plan
 from .migrations import apply_migrations, migration_status
 from .outbox import project_pending_events
 from .paths import resolve_paths
@@ -232,11 +233,24 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="Use authoritative SQLite events as the rebuild source",
     )
+
     p_audit_rebuild.add_argument("--output", default=None, help="Preview output path")
     p_audit_rebuild.add_argument(
         "--apply",
         action="store_true",
         help="Backup and atomically replace events.jsonl, then record an audit event",
+    )
+
+    p_repair = sub.add_parser("repair", help="Plan repairs for existing project state")
+    repair_sub = p_repair.add_subparsers(dest="repair_command", required=True)
+    p_repair_lifecycle = repair_sub.add_parser(
+        "lifecycle",
+        help="Build a deterministic read-only lifecycle repair plan",
+    )
+    p_repair_lifecycle.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Explicitly select the default read-only planning mode",
     )
 
     p_render = sub.add_parser("render", help="Render dashboard from state")
@@ -1557,6 +1571,14 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 print(to_pretty_json(result))
             return audit_rebuild_exit_code(result)
+
+        if args.command == "repair" and args.repair_command == "lifecycle":
+            plan = build_lifecycle_repair_plan(paths)
+            if json_output:
+                _print_json(plan)
+            else:
+                print(render_lifecycle_repair_plan(plan))
+            return 0
 
         if args.command == "render":
             result = validate_project(paths)

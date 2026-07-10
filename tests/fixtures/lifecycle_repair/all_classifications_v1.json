@@ -1,0 +1,65 @@
+{
+  "contract_version": "lifecycle-repair-plan/v1",
+  "mode": "plan",
+  "mutated": false,
+  "summary": {
+    "structural": 1,
+    "semantic": 1,
+    "human_review": 1,
+    "unsupported": 1
+  },
+  "actions": [
+    {
+      "action_id": "LR-0001",
+      "finding_code": "test_acceptance_evidence_required",
+      "classification": "structural",
+      "action_kind": "add_missing_evidence_link",
+      "sort_key": [0, "test_case", "TC-0001", "add_missing_evidence_link", "test_acceptance_evidence_required"],
+      "entity": {"type": "test_case", "id": "TC-0001"},
+      "related": [{"type": "evidence", "id": "E-0001"}],
+      "safe_to_apply": true,
+      "requires_human": false,
+      "command": "pcl evidence show E-0001 --json",
+      "reason": "The Test already stores this healthy Evidence ID and only its unambiguous acceptance link is missing."
+    },
+    {
+      "action_id": "LR-0002",
+      "finding_code": "test_story_required",
+      "classification": "semantic",
+      "action_kind": "inspect_story_candidate",
+      "sort_key": [1, "test_case", "TC-0001", "inspect_story_candidate", "test_story_required"],
+      "entity": {"type": "test_case", "id": "TC-0001"},
+      "related": [{"type": "user_story", "id": "US-0001"}],
+      "safe_to_apply": false,
+      "requires_human": true,
+      "command": "pcl story read US-0001 --json",
+      "reason": "A Story link requires an explicit operator choice."
+    },
+    {
+      "action_id": "LR-0003",
+      "finding_code": "goal_close_verification_required",
+      "classification": "human_review",
+      "action_kind": "record_goal_verification",
+      "sort_key": [2, "goal", "G-0001", "record_goal_verification", "goal_close_verification_required"],
+      "entity": {"type": "goal", "id": "G-0001"},
+      "related": [],
+      "safe_to_apply": false,
+      "requires_human": true,
+      "command": "pcl verification list --json",
+      "reason": "Goal closure requires a human-reviewed Verification or a valid same-goal completion packet."
+    },
+    {
+      "action_id": "LR-0004",
+      "finding_code": "test_acceptance_evidence_required",
+      "classification": "unsupported",
+      "action_kind": "report_conflicting_evidence_link",
+      "sort_key": [3, "test_case", "TC-0002", "report_conflicting_evidence_link", "test_acceptance_evidence_required"],
+      "entity": {"type": "test_case", "id": "TC-0002"},
+      "related": [{"type": "evidence", "id": "E-0002"}, {"type": "test_case", "id": "TC-0001"}],
+      "safe_to_apply": false,
+      "requires_human": true,
+      "command": "pcl evidence show E-0002 --json",
+      "reason": "The stored Evidence has a conflicting acceptance target or role; the planner cannot reinterpret or normalize it."
+    }
+  ]
+}

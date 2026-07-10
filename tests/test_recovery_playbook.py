@@ -24,6 +24,9 @@ def test_recovery_playbook_documents_guardrails() -> None:
         "Do not edit `.project-loop/project.db` directly.",
         "Do not edit `.project-loop/events.jsonl` directly.",
         "pcl escalation open",
+        "pcl repair lifecycle --dry-run --json",
+        "lifecycle-repair-plan/v1",
+        "There is no lifecycle repair `--apply` mode.",
     ]:
         assert required in playbook
 

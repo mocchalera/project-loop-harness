@@ -52,6 +52,41 @@ The next safe action is to read `.project-loop/reports/validation-strict.md` and
 
 ## Safe Repairs
 
+### Plan lifecycle repair for existing projects
+
+For terminal rows created before the lifecycle integrity gate, inspect a
+deterministic read-only plan before choosing any repair:
+
+```bash
+pcl repair lifecycle --json
+pcl repair lifecycle --dry-run --json
+```
+
+Bare and explicit `--dry-run` are equivalent. Both return
+`lifecycle-repair-plan/v1` with `mode: "plan"`, `mutated: false`, a zero-filled
+summary for `structural`, `semantic`, `human_review`, and `unsupported`, and
+canonically sorted actions. The planner writes no database row, event, outbox
+record, JSONL line, report, dashboard, copied Evidence, or other file. It never
+executes a command from the plan.
+
+Each action has a stable `action_kind`, concrete entity IDs, related IDs, and a
+canonical sort key. Structural means only that all IDs already exist and the
+relationship is unambiguous from stored data—for example, a healthy Evidence
+ID already stored by a passing Test whose acceptance link is missing. Task 0142
+still does not apply that link. There is no lifecycle repair `--apply` mode.
+
+Story review or waiver, Test-to-Story selection, Evidence selection or
+replacement, status changes, Verification, and closing or reopening entities
+remain semantic or human decisions. An exactly-one Story candidate is not an
+automatic relationship. Missing, drifted, cross-target, wrong-role, or
+conflicting Evidence is reported and never normalized. Inspect the suggested
+read-only commands, choose semantics explicitly, and use only the appropriate
+existing lifecycle command after human review.
+
+Text output contains the same ordered classes and concrete IDs as JSON. Use
+JSON for automation, but do not infer behavior from `reason` prose; consume the
+versioned `classification`, `action_kind`, `sort_key`, and entity fields.
+
 Use `pcl` commands for state changes:
 
 ```bash
