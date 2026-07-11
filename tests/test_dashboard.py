@@ -95,7 +95,7 @@ def test_dashboard_renders_control_panels_and_workflow_state(tmp_path: Path) -> 
 
     data = _read_dashboard_data(tmp_path)
     assert data["source_db"] == str(tmp_path / ".project-loop" / "project.db")
-    assert data["validation"] == {"errors": [], "ok": True, "warnings": []}
+    assert data["validation"] == {"errors": [], "ok": True, "warnings": [], "findings": []}
     assert data["active_workflow"]["id"] == "WR-0001"
     assert data["active_workflow"]["budget"]["max_iterations"] == 2
     assert data["active_agent_jobs"][0]["id"] == "J-0001"

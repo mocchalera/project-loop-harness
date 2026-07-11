@@ -47,6 +47,9 @@ def test_recovery_playbook_validation_commands_stay_current(tmp_path: Path, caps
     assert next_action["command"] == "pcl report validation --strict"
     assert next_action["blocking"] is True
     assert next_action["requires_human"] is True
+    assert next_action["target"]["finding_count"] == len(next_action["target"]["findings"])
+    assert next_action["target"]["finding_codes"] == [item["code"] for item in next_action["target"]["findings"]]
+    assert next_action["target"]["validation_report"] == ".project-loop/reports/validation-strict.md"
 
     assert main(["--root", str(tmp_path), "report", "validation", "--strict", "--json"]) == 0
     payload = _json_output(capsys)
@@ -56,6 +59,9 @@ def test_recovery_playbook_validation_commands_stay_current(tmp_path: Path, caps
     assert payload["kind"] == "validation"
     assert payload["report"]["strict"] is True
     assert payload["report"]["ok"] is False
+    assert payload["report"]["findings"]
     assert report_path == tmp_path / ".project-loop" / "reports" / "validation-strict.md"
     assert "Duplicate active workflow runs for goal G-0001: WR-0001, WR-0002." in report
     assert "manual review" in report
+    assert "## Structured Findings" in report
+    assert "duplicate_active_workflow_runs" in report

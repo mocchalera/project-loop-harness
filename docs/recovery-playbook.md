@@ -37,6 +37,28 @@ Expected strict failure shape:
 
 The next safe action is to read `.project-loop/reports/validation-strict.md` and decide whether the issue can be resolved through existing lifecycle commands.
 
+Route from each structured `findings[]` item by `code` and `repair_class`; do
+not parse `message` to infer an entity or command. The legacy `errors` and
+`warnings` arrays remain for v0.4.x compatibility. A finding's
+`suggested_commands` are shell-quoted guidance only: validation, reports,
+`pcl next`, MCP, and dashboard rendering display them but never execute them.
+
+| Repair class | Operator route |
+|---|---|
+| `inspect` | Run only the listed read-only inspection command, such as `pcl --json audit check` or an entity `read`/`show` command. |
+| `structural` | Inspect first. Run a listed mutating command only when all IDs and non-semantic arguments are concrete and the command matches the reviewed finding. |
+| `semantic` | Inspect the entity and lifecycle repair plan. A human chooses Story status, Evidence, Verification, Goal closure, summaries, and reasons. |
+| `human_review` | Preserve the report and obtain the named human decision; do not translate the finding into an approval or waiver. |
+| `unsupported` | Preserve state and escalate. An empty command list is intentional when no safe parser-valid guidance exists. |
+
+Common code routes are deterministic: `audit_*` goes to `pcl --json audit
+check`; `artifact_missing` inspects the owning Evidence or job;
+`provenance_target_binding_mismatch` inspects Evidence plus audit state;
+`feature_done_*`, `test_story_*`, `test_acceptance_evidence_required`, and
+`goal_close_verification_required` go through `pcl --json repair lifecycle
+--dry-run`; and `duplicate_active_workflow_runs` requires review of loop status
+before any cancellation.
+
 ## Recovery Classes
 
 | Class | Typical signal | Safe response |

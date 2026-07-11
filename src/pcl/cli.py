@@ -17,7 +17,12 @@ from .audit import (
     audit_repair_exit_code,
     rebuild_jsonl_from_sqlite,
 )
-from .agents import generate_agent_command, ingest_agent_run, read_job_prompt, read_job_prompt_handoff
+from .agents import (
+    generate_agent_command,
+    ingest_agent_run,
+    read_job_prompt,
+    read_job_prompt_handoff,
+)
 from .checkpoints import checkpoint_status, record_checkpoint
 from .code_index import (
     GIT_DIFF_SENTINEL,
@@ -113,7 +118,14 @@ from .outbox import project_pending_events
 from .paths import resolve_paths
 from .renderer import render_dashboard
 from .receipt_show import receipt_summary_for_ref
-from .registry import AGENT_STATUSES, list_agents, read_agent, register_agent, retire_agent, update_agent
+from .registry import (
+    AGENT_STATUSES,
+    list_agents,
+    read_agent,
+    register_agent,
+    retire_agent,
+    update_agent,
+)
 from .reports import report_defect, report_feature, report_goal, report_run, report_validation
 from .resume import build_handoff_packet, render_handoff_markdown, serialized_handoff_packet
 from .stories import (
@@ -168,7 +180,11 @@ from .workflow_sandbox import (
     sandbox_workflow_proposal,
     sandbox_workflow_template,
 )
-from .workflow_verifier import verify_workflow_file, verify_workflow_proposal, verify_workflow_template
+from .workflow_verifier import (
+    verify_workflow_file,
+    verify_workflow_proposal,
+    verify_workflow_template,
+)
 from .workflow_executor import execute_workflow
 from .workflows import list_jobs, read_job, run_workflow
 
@@ -188,14 +204,35 @@ def build_parser() -> argparse.ArgumentParser:
     p_init.add_argument("--target", default=None, help="Target project root. Overrides --root.")
     p_init.add_argument("--force", action="store_true", help="Overwrite template files where safe")
     p_init.add_argument("--no-claude", action="store_true", help="Do not create/update CLAUDE.md")
-    p_init.add_argument("--dry-run", action="store_true", help="Inspect the init plan without writing files")
+    p_init.add_argument(
+        "--dry-run", action="store_true", help="Inspect the init plan without writing files"
+    )
 
     p_start = sub.add_parser("start", help="Start one intent as minimal active project work")
-    p_start.add_argument("intent", help="Natural-language intent; preserved literally and never executed")
-    p_start.add_argument("--dry-run", action="store_true", help="Preview initialization and state changes without mutation")
-    p_start.add_argument("--no-init", action="store_true", help="Stop instead of initializing an uninitialized project")
-    p_start.add_argument("--new", action="store_true", help="Start separate work even when active work already exists")
-    p_start.add_argument("--skill", action="append", default=[], help="Readable Skill file to hash before mutation; repeatable")
+    p_start.add_argument(
+        "intent", help="Natural-language intent; preserved literally and never executed"
+    )
+    p_start.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview initialization and state changes without mutation",
+    )
+    p_start.add_argument(
+        "--no-init",
+        action="store_true",
+        help="Stop instead of initializing an uninitialized project",
+    )
+    p_start.add_argument(
+        "--new",
+        action="store_true",
+        help="Start separate work even when active work already exists",
+    )
+    p_start.add_argument(
+        "--skill",
+        action="append",
+        default=[],
+        help="Readable Skill file to hash before mutation; repeatable",
+    )
 
     p_doctor = sub.add_parser("doctor", help="Check project-loop installation health")
     p_doctor.add_argument("--strict", action="store_true")
@@ -216,7 +253,12 @@ def build_parser() -> argparse.ArgumentParser:
         default="apply",
         help="Use `status` to inspect migrations without applying them.",
     )
-    p_migrate.add_argument("--status", action="store_true", dest="migrate_status", help="Inspect migrations without applying them.")
+    p_migrate.add_argument(
+        "--status",
+        action="store_true",
+        dest="migrate_status",
+        help="Inspect migrations without applying them.",
+    )
 
     p_audit = sub.add_parser("audit", help="Manage the SQLite-backed audit projection")
     audit_sub = p_audit.add_subparsers(dest="audit_command", required=True)
@@ -271,7 +313,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_update = sub.add_parser("update", help="Check for newer pcl releases")
     update_sub = p_update.add_subparsers(dest="update_command", required=True)
     p_update_check = update_sub.add_parser("check", help="Check PyPI for a newer release")
-    p_update_check.add_argument("--no-cache", action="store_true", help="Bypass the local 24h cache")
+    p_update_check.add_argument(
+        "--no-cache", action="store_true", help="Bypass the local 24h cache"
+    )
     p_update_check.add_argument(
         "--timeout",
         type=float,
@@ -367,7 +411,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_test_plan.add_argument("--scenario", required=True)
     p_test_plan.add_argument("--expected", required=True)
-    p_test_link = test_sub.add_parser("link", help="Repair Story and Evidence relationships without replaying Test status")
+    p_test_link = test_sub.add_parser(
+        "link", help="Repair Story and Evidence relationships without replaying Test status"
+    )
     p_test_link.add_argument("test_case_id")
     p_test_link.add_argument("--story", default=None)
     p_test_link.add_argument("--evidence-id", default=None)
@@ -422,7 +468,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_task_create.add_argument("--description", default="")
     p_task_create.add_argument("--priority", type=int, default=100)
     p_task_create.add_argument("--owner", default="")
-    p_task_create.add_argument("--risk", default=None, help=f"Task risk: {_choices_help(TASK_RISKS)}")
+    p_task_create.add_argument(
+        "--risk", default=None, help=f"Task risk: {_choices_help(TASK_RISKS)}"
+    )
     p_task_create.add_argument("--effort", default="")
     p_task_create.add_argument("--goal", default=None)
     p_task_create.add_argument("--feature", default=None)
@@ -439,7 +487,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_task_read.add_argument("task_id")
     p_task_status = task_sub.add_parser("status")
     p_task_status.add_argument("task_id")
-    p_task_status.add_argument("new_status", help=f"Target task status: {_choices_help(TASK_STATUSES)}")
+    p_task_status.add_argument(
+        "new_status", help=f"Target task status: {_choices_help(TASK_STATUSES)}"
+    )
     p_task_status.add_argument("--reason", required=True)
     p_task_depend = task_sub.add_parser("depend")
     p_task_depend.add_argument("task_id")
@@ -452,7 +502,9 @@ def build_parser() -> argparse.ArgumentParser:
     defect_sub = p_defect.add_subparsers(dest="defect_command", required=True)
     p_defect_open = defect_sub.add_parser("open")
     p_defect_open.add_argument("--feature", required=True)
-    p_defect_open.add_argument("--severity", required=True, choices=["critical", "high", "medium", "low"])
+    p_defect_open.add_argument(
+        "--severity", required=True, choices=["critical", "high", "medium", "low"]
+    )
     p_defect_open.add_argument("--expected", required=True)
     p_defect_open.add_argument("--actual", required=True)
     p_defect_open.add_argument("--test", default=None)
@@ -535,23 +587,37 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_workflow = sub.add_parser("workflow", help="Manage workflow proposals")
     workflow_sub = p_workflow.add_subparsers(dest="workflow_command", required=True)
-    p_workflow_propose = workflow_sub.add_parser("propose", help="Store a workflow proposal for review")
+    p_workflow_propose = workflow_sub.add_parser(
+        "propose", help="Store a workflow proposal for review"
+    )
     p_workflow_propose.add_argument("--file", required=True, help="Workflow YAML file to propose")
     p_workflow_propose.add_argument("--summary", default="")
-    p_workflow_verify = workflow_sub.add_parser("verify", help="Verify a workflow file, proposal, or template")
+    p_workflow_verify = workflow_sub.add_parser(
+        "verify", help="Verify a workflow file, proposal, or template"
+    )
     workflow_verify_target = p_workflow_verify.add_mutually_exclusive_group(required=True)
     workflow_verify_target.add_argument("--file", default=None, help="Workflow YAML file to verify")
-    workflow_verify_target.add_argument("--proposal", default=None, help="Workflow proposal id to verify")
-    workflow_verify_target.add_argument("--template", default=None, help="Approved workflow template id to verify")
+    workflow_verify_target.add_argument(
+        "--proposal", default=None, help="Workflow proposal id to verify"
+    )
+    workflow_verify_target.add_argument(
+        "--template", default=None, help="Approved workflow template id to verify"
+    )
     p_workflow_guard = workflow_sub.add_parser(
         "guard",
         help="Plan or run allowlisted commands on the host (no OS/network/filesystem isolation)",
     )
     workflow_guard_target = p_workflow_guard.add_mutually_exclusive_group(required=True)
     workflow_guard_target.add_argument("--file", default=None, help="Workflow YAML file to inspect")
-    workflow_guard_target.add_argument("--proposal", default=None, help="Workflow proposal id to inspect")
-    workflow_guard_target.add_argument("--template", default=None, help="Approved workflow template id")
-    p_workflow_guard.add_argument("--execute", action="store_true", help="Run guarded allowlisted commands")
+    workflow_guard_target.add_argument(
+        "--proposal", default=None, help="Workflow proposal id to inspect"
+    )
+    workflow_guard_target.add_argument(
+        "--template", default=None, help="Approved workflow template id"
+    )
+    p_workflow_guard.add_argument(
+        "--execute", action="store_true", help="Run guarded allowlisted commands"
+    )
     p_workflow_guard.add_argument("--timeout-seconds", type=int, default=120)
     p_workflow_guard.add_argument("--max-output-bytes", type=int, default=1_048_576)
     p_workflow_guard.add_argument(
@@ -572,23 +638,39 @@ def build_parser() -> argparse.ArgumentParser:
         help="Deprecated alias for `workflow guard`; retained through the 0.3.x release line",
     )
     workflow_sandbox_target = p_workflow_sandbox.add_mutually_exclusive_group(required=True)
-    workflow_sandbox_target.add_argument("--file", default=None, help="Workflow YAML file to inspect")
-    workflow_sandbox_target.add_argument("--proposal", default=None, help="Workflow proposal id to inspect")
-    workflow_sandbox_target.add_argument("--template", default=None, help="Approved workflow template id")
-    p_workflow_sandbox.add_argument("--execute", action="store_true", help="Run guarded allowlisted commands")
+    workflow_sandbox_target.add_argument(
+        "--file", default=None, help="Workflow YAML file to inspect"
+    )
+    workflow_sandbox_target.add_argument(
+        "--proposal", default=None, help="Workflow proposal id to inspect"
+    )
+    workflow_sandbox_target.add_argument(
+        "--template", default=None, help="Approved workflow template id"
+    )
+    p_workflow_sandbox.add_argument(
+        "--execute", action="store_true", help="Run guarded allowlisted commands"
+    )
     p_workflow_sandbox.add_argument("--timeout-seconds", type=int, default=120)
     p_workflow_sandbox.add_argument("--max-output-bytes", type=int, default=1_048_576)
     p_workflow_sandbox.add_argument("--allow-env", action="append", default=[], metavar="NAME")
     p_workflow_proposals = workflow_sub.add_parser("proposals", help="Inspect workflow proposals")
-    proposals_sub = p_workflow_proposals.add_subparsers(dest="workflow_proposals_command", required=True)
+    proposals_sub = p_workflow_proposals.add_subparsers(
+        dest="workflow_proposals_command", required=True
+    )
     p_workflow_proposals_list = proposals_sub.add_parser("list", help="List workflow proposals")
-    p_workflow_proposals_list.add_argument("--status", choices=sorted(PROPOSAL_STATUSES), default=None)
+    p_workflow_proposals_list.add_argument(
+        "--status", choices=sorted(PROPOSAL_STATUSES), default=None
+    )
     p_workflow_proposals_read = proposals_sub.add_parser("read", help="Read a workflow proposal")
     p_workflow_proposals_read.add_argument("proposal_id")
-    p_workflow_proposals_approve = proposals_sub.add_parser("approve", help="Approve a workflow proposal")
+    p_workflow_proposals_approve = proposals_sub.add_parser(
+        "approve", help="Approve a workflow proposal"
+    )
     p_workflow_proposals_approve.add_argument("proposal_id")
     p_workflow_proposals_approve.add_argument("--summary", required=True)
-    p_workflow_proposals_cancel = proposals_sub.add_parser("cancel", help="Cancel a workflow proposal")
+    p_workflow_proposals_cancel = proposals_sub.add_parser(
+        "cancel", help="Cancel a workflow proposal"
+    )
     p_workflow_proposals_cancel.add_argument("proposal_id")
     p_workflow_proposals_cancel.add_argument("--summary", required=True)
 
@@ -608,7 +690,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_jobs_complete.add_argument("job_id")
     p_jobs_complete.add_argument("--summary", required=True)
     p_jobs_complete.add_argument("--output", default=None)
-    p_jobs_complete.add_argument("--evidence", default=None, help="Existing evidence ID to link to this completion")
+    p_jobs_complete.add_argument(
+        "--evidence", default=None, help="Existing evidence ID to link to this completion"
+    )
     p_jobs_complete.add_argument("--token-input", type=int, default=None)
     p_jobs_complete.add_argument("--token-output", type=int, default=None)
     p_jobs_fail = jobs_sub.add_parser("fail", help="Mark an agent job failed")
@@ -637,7 +721,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Lease TTL in seconds. Defaults to loop.lease_ttl_seconds or 1800.",
     )
-    p_jobs_release = jobs_sub.add_parser("release", help="Release a running job lease back to queued")
+    p_jobs_release = jobs_sub.add_parser(
+        "release", help="Release a running job lease back to queued"
+    )
     p_jobs_release.add_argument("job_id")
     p_jobs_release.add_argument("--reason", required=True)
     jobs_sub.add_parser("reap", help="Requeue or block expired job leases")
@@ -749,9 +835,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Resolve read-only Evidence metadata without inlining artifact bodies",
     )
     p_evidence_show.add_argument("evidence_id")
-    p_evidence_link = evidence_sub.add_parser("link", help="Add one validated Evidence relationship")
+    p_evidence_link = evidence_sub.add_parser(
+        "link", help="Add one validated Evidence relationship"
+    )
     p_evidence_link.add_argument("evidence_id")
-    p_evidence_link.add_argument("--target", required=True, dest="target_ref", help="Target reference as <target-type>:<target-id>")
+    p_evidence_link.add_argument(
+        "--target",
+        required=True,
+        dest="target_ref",
+        help="Target reference as <target-type>:<target-id>",
+    )
     p_evidence_link.add_argument("--role", required=True)
     p_evidence_link.add_argument("--summary", required=True)
 
@@ -771,10 +864,16 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_context = sub.add_parser("context", help="Build focused machine context packages")
     context_sub = p_context.add_subparsers(dest="context_command", required=True)
-    p_context_pack = context_sub.add_parser("pack", help="Build a focused context pack for an agent job or task")
+    p_context_pack = context_sub.add_parser(
+        "pack", help="Build a focused context pack for an agent job or task"
+    )
     context_pack_target = p_context_pack.add_mutually_exclusive_group(required=True)
-    context_pack_target.add_argument("--job", dest="job_id", default=None, help="Agent job id to package")
-    context_pack_target.add_argument("--task", dest="task_id", default=None, help="Task id to package")
+    context_pack_target.add_argument(
+        "--job", dest="job_id", default=None, help="Agent job id to package"
+    )
+    context_pack_target.add_argument(
+        "--task", dest="task_id", default=None, help="Task id to package"
+    )
     p_context_pack.add_argument("--role", default=None, help="Reader role for this handoff")
     p_context_pack.add_argument(
         "--max-tokens",
@@ -807,8 +906,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_context_check = context_sub.add_parser("check", help="Check target-bound context facts")
     context_check_target = p_context_check.add_mutually_exclusive_group(required=True)
-    context_check_target.add_argument("--job", dest="job_id", default=None, help="Agent job id to check")
-    context_check_target.add_argument("--task", dest="task_id", default=None, help="Task id to check")
+    context_check_target.add_argument(
+        "--job", dest="job_id", default=None, help="Agent job id to check"
+    )
+    context_check_target.add_argument(
+        "--task", dest="task_id", default=None, help="Task id to check"
+    )
     p_context_check.add_argument(
         "--require-bound-receipt",
         action="store_true",
@@ -818,7 +921,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_receipt = sub.add_parser("receipt", help="Inspect code context receipts")
     receipt_sub = p_receipt.add_subparsers(dest="receipt_command", required=True)
     p_receipt_show = receipt_sub.add_parser("show", help="Render a context receipt summary")
-    p_receipt_show.add_argument("ref", nargs="?", help="Context receipt evidence id or receipt path")
+    p_receipt_show.add_argument(
+        "ref", nargs="?", help="Context receipt evidence id or receipt path"
+    )
     p_receipt_show.add_argument(
         "--latest",
         action="store_true",
@@ -827,7 +932,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_index = sub.add_parser("index", help="Build and inspect the code context index")
     index_sub = p_index.add_subparsers(dest="index_command", required=True)
-    p_index_build = index_sub.add_parser("build", help="Build a gitignore-aware code index snapshot")
+    p_index_build = index_sub.add_parser(
+        "build", help="Build a gitignore-aware code index snapshot"
+    )
     p_index_build.add_argument(
         "--include-files",
         action="store_true",
@@ -943,7 +1050,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_verification_record.add_argument("--verifier-role", default="human")
     rubric_source = p_verification_record.add_mutually_exclusive_group()
     rubric_source.add_argument("--rubric-json", default=None)
-    rubric_source.add_argument("--rubric-file", default=None, help="Read verification rubric JSON from a file")
+    rubric_source.add_argument(
+        "--rubric-file", default=None, help="Read verification rubric JSON from a file"
+    )
     p_verification_record.add_argument("--reason", action="append", required=True)
     p_verification_list = verification_sub.add_parser("list")
     p_verification_list.add_argument("--run", default=None, help="Filter by workflow run id")
@@ -1008,7 +1117,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_escalation = sub.add_parser("escalation", help="Manage human escalations")
     escalation_sub = p_escalation.add_subparsers(dest="escalation_command", required=True)
     p_escalation_open = escalation_sub.add_parser("open")
-    p_escalation_open.add_argument("--severity", required=True, choices=["critical", "high", "medium", "low"])
+    p_escalation_open.add_argument(
+        "--severity", required=True, choices=["critical", "high", "medium", "low"]
+    )
     p_escalation_open.add_argument("--question", required=True)
     p_escalation_open.add_argument("--recommendation", default="")
     p_escalation_open.add_argument("--run", default=None)
@@ -1020,24 +1131,40 @@ def build_parser() -> argparse.ArgumentParser:
     p_escalation_cancel.add_argument("escalation_id")
     p_escalation_cancel.add_argument("--summary", required=True)
     p_escalation_list = escalation_sub.add_parser("list")
-    p_escalation_list.add_argument("--status", choices=["open", "resolved", "cancelled"], default=None)
+    p_escalation_list.add_argument(
+        "--status", choices=["open", "resolved", "cancelled"], default=None
+    )
     p_escalation_read = escalation_sub.add_parser("read")
     p_escalation_read.add_argument("escalation_id")
 
     p_checkpoint = sub.add_parser("checkpoint", help="Record and inspect integration checkpoints")
     checkpoint_sub = p_checkpoint.add_subparsers(dest="checkpoint_command", required=True)
     checkpoint_sub.add_parser("status", help="Inspect checkpoint recommendation state")
-    p_checkpoint_record = checkpoint_sub.add_parser("record", help="Record a human integration checkpoint")
+    p_checkpoint_record = checkpoint_sub.add_parser(
+        "record", help="Record a human integration checkpoint"
+    )
     p_checkpoint_record.add_argument("--summary", required=True)
     p_checkpoint_record.add_argument("--evidence", required=True)
     p_checkpoint_record.add_argument("--review-type", default="integration")
 
     p_next = sub.add_parser("next", help="Suggest the next harness action")
-    p_next.add_argument("--strict", action="store_true", help="Route strict validation failures before normal next actions")
-    p_next.add_argument("--explain", action="store_true", help="Print a human-readable explanation of the next action")
+    p_next.add_argument(
+        "--strict",
+        action="store_true",
+        help="Route strict validation failures before normal next actions",
+    )
+    p_next.add_argument(
+        "--explain",
+        action="store_true",
+        help="Print a human-readable explanation of the next action",
+    )
 
     p_finish = sub.add_parser("finish", help="Plan terminal loop close-out steps")
-    p_finish.add_argument("--execute", action="store_true", help="Run validate/render only when no finish steps remain")
+    p_finish.add_argument(
+        "--execute",
+        action="store_true",
+        help="Run validate/render only when no finish steps remain",
+    )
     p_finish.add_argument(
         "--emit-packet",
         action="store_true",
@@ -1050,8 +1177,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_finish.add_argument("--run", default=None, help="Target a workflow run explicitly")
     p_finish.add_argument("--goal", default=None, help="Target a goal explicitly")
-    p_finish.add_argument("--task", default=None, help="Target a task for completion packet emission")
-    p_finish.add_argument("--base", default=None, help="Git base revision for the completion packet diff")
+    p_finish.add_argument(
+        "--task", default=None, help="Target a task for completion packet emission"
+    )
+    p_finish.add_argument(
+        "--base", default=None, help="Git base revision for the completion packet diff"
+    )
     p_finish.add_argument("--timeout", type=int, default=120, help="Per-check timeout in seconds")
     p_finish.add_argument(
         "--max-output-bytes",
@@ -1073,7 +1204,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Output format (default: markdown; --json selects JSON)",
     )
-    p_resume.add_argument("--output", default=None, help="Also write the rendered packet to this path")
+    p_resume.add_argument(
+        "--output", default=None, help="Also write the rendered packet to this path"
+    )
 
     p_export = sub.add_parser("export", help="Export state")
     export_sub = p_export.add_subparsers(dest="export_command", required=True)
@@ -1092,7 +1225,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_report_validation = report_sub.add_parser("validation")
     p_report_validation.add_argument("--strict", action="store_true")
     p_report_kpi = report_sub.add_parser("kpi", help="Read local dogfood KPI measurements")
-    p_report_kpi.add_argument("--since", default=None, help="Include records on or after YYYY-MM-DD")
+    p_report_kpi.add_argument(
+        "--since", default=None, help="Include records on or after YYYY-MM-DD"
+    )
 
     return parser
 
@@ -1104,7 +1239,9 @@ def _print_json(payload: object) -> None:
 def _print_legacy_evidence_warning(result: dict, *, json_output: bool) -> None:
     if json_output:
         return
-    if any(warning.get("code") == "legacy_inline_evidence" for warning in result.get("warnings", [])):
+    if any(
+        warning.get("code") == "legacy_inline_evidence" for warning in result.get("warnings", [])
+    ):
         print(
             "WARNING: --evidence is deprecated for terminal proof; use --evidence-id with hash-pinned Evidence.",
             file=sys.stderr,
@@ -1178,7 +1315,9 @@ def _print_context_check_summary(payload: dict) -> None:
     print(f"Target-bound code context: {bound['status']}")
     receipt_ref = bound.get("receipt_ref")
     if isinstance(receipt_ref, dict):
-        print(f"Receipt: {receipt_ref.get('evidence_id', '')} ({receipt_ref.get('created_at', '')})")
+        print(
+            f"Receipt: {receipt_ref.get('evidence_id', '')} ({receipt_ref.get('created_at', '')})"
+        )
     print(f"Supporting evidence: {payload['supporting_evidence_count']}")
     master_trace_context = payload.get("master_trace_context")
     if isinstance(master_trace_context, dict):
@@ -1306,10 +1445,19 @@ def _print_doctor(result, *, update_result=None, json_output: bool = False) -> i
         if update_result.update_available and update_result.latest_version:
             result.add_warning(
                 f"pcl {update_result.latest_version} is available; "
-                f"run `{update_result.install.command}`."
+                f"run `{update_result.install.command}`.",
+                code="update_available",
+                entity={"type": "package", "id": "project-loop-harness"},
+                repair_class="human_review",
+                requires_human=True,
             )
         elif not update_result.ok and not update_result.disabled:
-            result.add_warning(f"Could not check for pcl updates: {update_result.error}")
+            result.add_warning(
+                f"Could not check for pcl updates: {update_result.error}",
+                code="update_check_failed",
+                entity={"type": "package", "id": "project-loop-harness"},
+                repair_class="unsupported",
+            )
 
     if json_output:
         payload = result.to_dict()
@@ -1458,7 +1606,10 @@ def main(argv: list[str] | None = None) -> int:
                 ):
                     raise InvalidInputError(
                         "--output cannot overwrite Project Loop state; use .project-loop/exports or a path outside .project-loop.",
-                        details={"path": args.output, "allowed_project_loop_dir": str(paths.exports_dir)},
+                        details={
+                            "path": args.output,
+                            "allowed_project_loop_dir": str(paths.exports_dir),
+                        },
                     )
             packet = build_handoff_packet(paths, target_id=args.resume_target)
             rendered = (
@@ -1487,7 +1638,9 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "init":
             if args.dry_run:
-                plan = plan_init_project(paths, overwrite=args.force, with_claude=not args.no_claude)
+                plan = plan_init_project(
+                    paths, overwrite=args.force, with_claude=not args.no_claude
+                )
                 return _print_init_plan(plan, json_output=json_output)
             result = init_project(paths, overwrite=args.force, with_claude=not args.no_claude)
             if json_output:
@@ -1704,7 +1857,9 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json({"features": features, "ok": True})
             elif features:
                 for feature in features:
-                    print(f"{feature['id']} {feature['status']} surface={feature['surface']} name={feature['name']}")
+                    print(
+                        f"{feature['id']} {feature['status']} surface={feature['surface']} name={feature['name']}"
+                    )
             else:
                 print("No features")
             return 0
@@ -1730,7 +1885,9 @@ def main(argv: list[str] | None = None) -> int:
             if json_output:
                 _print_json(result)
             elif result.get("changed") is False:
-                print(f"Feature {result['feature_id']} already {result['status']}; no change recorded.")
+                print(
+                    f"Feature {result['feature_id']} already {result['status']}; no change recorded."
+                )
             else:
                 print(f"Updated feature {result['feature_id']} to {result['status']}")
             return 0
@@ -1780,7 +1937,9 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json({"ok": True, "stories": stories})
             elif stories:
                 for story in stories:
-                    print(f"{story['id']} {story['status']} feature={story['feature_id']} goal={story['goal']}")
+                    print(
+                        f"{story['id']} {story['status']} feature={story['feature_id']} goal={story['goal']}"
+                    )
             else:
                 print("No stories")
             return 0
@@ -1810,8 +1969,11 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "test" and args.test_command == "link":
             result = repair_test_links(
-                paths, test_case_id=args.test_case_id, story_id=args.story,
-                evidence_id=args.evidence_id, summary=args.summary,
+                paths,
+                test_case_id=args.test_case_id,
+                story_id=args.story,
+                evidence_id=args.evidence_id,
+                summary=args.summary,
             )
             if json_output:
                 _print_json(result)
@@ -1959,13 +2121,17 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "task" and args.task_command == "status":
-            result = set_task_status(paths, args.task_id, status=args.new_status, reason=args.reason)
+            result = set_task_status(
+                paths, args.task_id, status=args.new_status, reason=args.reason
+            )
             if json_output:
                 _print_json(result)
             elif result.get("changed") is False:
                 print(f"Task {result['id']} already {result['status']}; no change recorded.")
             else:
-                print(f"Updated task {result['id']} from {result['from_status']} to {result['to_status']}")
+                print(
+                    f"Updated task {result['id']} from {result['from_status']} to {result['to_status']}"
+                )
             return 0
 
         if args.command == "task" and args.task_command == "depend":
@@ -1973,15 +2139,21 @@ def main(argv: list[str] | None = None) -> int:
             if json_output:
                 _print_json(result)
             else:
-                print(f"Added task dependency {result['task_id']} -> {result['depends_on_task_id']}")
+                print(
+                    f"Added task dependency {result['task_id']} -> {result['depends_on_task_id']}"
+                )
             return 0
 
         if args.command == "task" and args.task_command == "undepend":
-            result = remove_dependency(paths, args.task_id, depends_on_task_id=args.depends_on_task_id)
+            result = remove_dependency(
+                paths, args.task_id, depends_on_task_id=args.depends_on_task_id
+            )
             if json_output:
                 _print_json(result)
             else:
-                print(f"Removed task dependency {result['task_id']} -> {result['depends_on_task_id']}")
+                print(
+                    f"Removed task dependency {result['task_id']} -> {result['depends_on_task_id']}"
+                )
             return 0
 
         if args.command == "defect" and args.defect_command == "open":
@@ -2119,7 +2291,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0 if result["ok"] else 1
 
         if args.command == "loop" and args.loop_command == "complete":
-            result = complete_workflow_run(paths, workflow_run_id=args.workflow_run_id, summary=args.summary)
+            result = complete_workflow_run(
+                paths, workflow_run_id=args.workflow_run_id, summary=args.summary
+            )
             if json_output:
                 _print_json(result)
             else:
@@ -2127,7 +2301,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "loop" and args.loop_command == "fail":
-            result = fail_workflow_run(paths, workflow_run_id=args.workflow_run_id, summary=args.summary)
+            result = fail_workflow_run(
+                paths, workflow_run_id=args.workflow_run_id, summary=args.summary
+            )
             if json_output:
                 _print_json(result)
             else:
@@ -2135,7 +2311,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "loop" and args.loop_command == "cancel":
-            result = cancel_workflow_run(paths, workflow_run_id=args.workflow_run_id, summary=args.summary)
+            result = cancel_workflow_run(
+                paths, workflow_run_id=args.workflow_run_id, summary=args.summary
+            )
             if json_output:
                 _print_json(result)
             else:
@@ -2169,8 +2347,12 @@ def main(argv: list[str] | None = None) -> int:
             if legacy_alias:
                 print(f"WARNING: {LEGACY_DEPRECATION}", file=sys.stderr)
             file_handler = sandbox_workflow_file if legacy_alias else guard_workflow_file
-            proposal_handler = sandbox_workflow_proposal if legacy_alias else guard_workflow_proposal
-            template_handler = sandbox_workflow_template if legacy_alias else guard_workflow_template
+            proposal_handler = (
+                sandbox_workflow_proposal if legacy_alias else guard_workflow_proposal
+            )
+            template_handler = (
+                sandbox_workflow_template if legacy_alias else guard_workflow_template
+            )
             redaction_patterns = [] if legacy_alias else args.redact_pattern
             if args.file:
                 result = file_handler(
@@ -2345,7 +2527,9 @@ def main(argv: list[str] | None = None) -> int:
             if json_output:
                 _print_json(result)
             else:
-                print(f"Heartbeat recorded for job {result['job_id']} until {result['lease_expires_at']}")
+                print(
+                    f"Heartbeat recorded for job {result['job_id']} until {result['lease_expires_at']}"
+                )
             return 0
 
         if args.command == "jobs" and args.jobs_command == "release":
@@ -2499,8 +2683,12 @@ def main(argv: list[str] | None = None) -> int:
                     details={"target": args.target_ref},
                 )
             result = add_evidence_link(
-                paths, evidence_id=args.evidence_id, target_type=target_type,
-                target_id=target_id, role=args.role, summary=args.summary,
+                paths,
+                evidence_id=args.evidence_id,
+                target_type=target_type,
+                target_id=target_id,
+                role=args.role,
+                summary=args.summary,
             )
             if json_output:
                 _print_json(result)
@@ -2815,7 +3003,9 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "escalation" and args.escalation_command == "cancel":
-            result = cancel_escalation(paths, escalation_id=args.escalation_id, summary=args.summary)
+            result = cancel_escalation(
+                paths, escalation_id=args.escalation_id, summary=args.summary
+            )
             if json_output:
                 _print_json(result)
             else:
@@ -2878,6 +3068,10 @@ def main(argv: list[str] | None = None) -> int:
                             "ok": validation.ok,
                             "errors": validation.errors,
                             "warnings": validation.warnings,
+                            "findings": [finding.to_dict() for finding in validation.findings],
+                            "finding_count": len(validation.findings),
+                            "finding_codes": [finding.code for finding in validation.findings],
+                            "validation_report": ".project-loop/reports/validation-strict.md",
                         },
                         priority=1,
                         blocking=True,
@@ -2899,10 +3093,18 @@ def main(argv: list[str] | None = None) -> int:
 
         if args.command == "finish":
             packet_only_flags = any(
-                [args.dry_run, args.task, args.base, args.timeout != 120, args.max_output_bytes != 1_048_576]
+                [
+                    args.dry_run,
+                    args.task,
+                    args.base,
+                    args.timeout != 120,
+                    args.max_output_bytes != 1_048_576,
+                ]
             )
             if args.execute and args.emit_packet:
-                raise InvalidInputError("--execute and --emit-packet are separate modes and cannot be combined.")
+                raise InvalidInputError(
+                    "--execute and --emit-packet are separate modes and cannot be combined."
+                )
             if packet_only_flags and not args.emit_packet:
                 raise InvalidInputError(
                     "--dry-run, --task, --base, --timeout, and --max-output-bytes require --emit-packet."

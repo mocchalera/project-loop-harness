@@ -250,6 +250,7 @@ def report_validation(paths: ProjectPaths, *, strict: bool = False) -> dict[str,
         "ok": result.ok,
         "errors": result.errors,
         "warnings": result.warnings,
+        "findings": [finding.to_dict() for finding in result.findings],
         "next_actions": _validation_next_actions(strict=strict, ok=result.ok),
     }
     path = paths.reports_dir / ("validation-strict.md" if strict else "validation.md")
@@ -447,6 +448,7 @@ def _render_validation_report(data: dict[str, Any]) -> str:
         "ok": data["ok"],
         "error_count": len(data["errors"]),
         "warning_count": len(data["warnings"]),
+        "finding_count": len(data["findings"]),
     }
     error_rows = [{"message": message} for message in data["errors"]]
     warning_rows = [{"message": message} for message in data["warnings"]]
@@ -454,7 +456,7 @@ def _render_validation_report(data: dict[str, Any]) -> str:
         "# Validation Report",
         "",
         "## Summary",
-        _kv_table(summary, ["strict", "ok", "error_count", "warning_count"]),
+        _kv_table(summary, ["strict", "ok", "error_count", "warning_count", "finding_count"]),
         "",
         "## Errors",
         _table(error_rows, ["message"]),
@@ -462,11 +464,37 @@ def _render_validation_report(data: dict[str, Any]) -> str:
         "## Warnings",
         _table(warning_rows, ["message"]),
         "",
+        "## Structured Findings",
+        _table(
+            [
+                {
+                    "code": finding["code"],
+                    "severity": finding["severity"],
+                    "entity": _finding_entity_label(finding.get("entity")),
+                    "related": ", ".join(_finding_entity_label(item) for item in finding["related"]),
+                    "repair_class": finding["repair_class"],
+                    "requires_human": finding["requires_human"],
+                    "next_commands": "<br>".join(finding["suggested_commands"]),
+                }
+                for finding in data["findings"]
+            ],
+            ["code", "severity", "entity", "related", "repair_class", "requires_human", "next_commands"],
+        ),
+        "",
         "## Suggested Next Actions",
         _table(data["next_actions"], ["priority", "command", "reason"]),
         "",
     ]
     return "\n".join(parts)
+
+
+def _finding_entity_label(entity: Any) -> str:
+    if not isinstance(entity, dict):
+        return ""
+    label = f"{entity.get('type', '')}:{entity.get('id', '')}"
+    if entity.get("status"):
+        label += f" ({entity['status']})"
+    return label
 
 
 def _verification_rubric_section(verifications: list[dict[str, Any]]) -> list[str]:

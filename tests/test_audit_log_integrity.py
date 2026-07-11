@@ -16,7 +16,9 @@ def _events_path(root: Path) -> Path:
 
 
 def _read_events(root: Path) -> list[dict]:
-    return [json.loads(line) for line in _events_path(root).read_text(encoding="utf-8").splitlines()]
+    return [
+        json.loads(line) for line in _events_path(root).read_text(encoding="utf-8").splitlines()
+    ]
 
 
 def _write_events(root: Path, records: list[dict]) -> None:
@@ -34,30 +36,60 @@ def _init_with_goal(root: Path, capsys) -> list[dict]:
 def test_strict_validate_accepts_normal_audit_log_flow(tmp_path: Path, capsys) -> None:
     assert main(["init", "--target", str(tmp_path)]) == 0
     assert main(["--root", str(tmp_path), "goal", "create", "--title", "Coverage"]) == 0
-    assert main(["--root", str(tmp_path), "loop", "run", "feature_coverage", "--goal", "G-0001"]) == 0
-    assert main(["--root", str(tmp_path), "loop", "cancel", "WR-0001", "--summary", "Stop run"]) == 0
-    assert main(["--root", str(tmp_path), "goal", "cancel", "G-0001", "--summary", "No longer needed"]) == 0
-    assert main(["--root", str(tmp_path), "feature", "add", "--name", "Login", "--surface", "ui:/login"]) == 0
-    assert main([
-        "--root",
-        str(tmp_path),
-        "defect",
-        "open",
-        "--feature",
-        "F-0001",
-        "--severity",
-        "high",
-        "--expected",
-        "Error message",
-        "--actual",
-        "Blank page",
-    ]) == 0
-    assert main(["--root", str(tmp_path), "defect", "waive", "D-0001", "--reason", "Accepted limitation"]) == 0
+    assert (
+        main(["--root", str(tmp_path), "loop", "run", "feature_coverage", "--goal", "G-0001"]) == 0
+    )
+    assert (
+        main(["--root", str(tmp_path), "loop", "cancel", "WR-0001", "--summary", "Stop run"]) == 0
+    )
+    assert (
+        main(["--root", str(tmp_path), "goal", "cancel", "G-0001", "--summary", "No longer needed"])
+        == 0
+    )
+    assert (
+        main(
+            ["--root", str(tmp_path), "feature", "add", "--name", "Login", "--surface", "ui:/login"]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "--root",
+                str(tmp_path),
+                "defect",
+                "open",
+                "--feature",
+                "F-0001",
+                "--severity",
+                "high",
+                "--expected",
+                "Error message",
+                "--actual",
+                "Blank page",
+            ]
+        )
+        == 0
+    )
+    assert (
+        main(
+            [
+                "--root",
+                str(tmp_path),
+                "defect",
+                "waive",
+                "D-0001",
+                "--reason",
+                "Accepted limitation",
+            ]
+        )
+        == 0
+    )
     assert main(["--root", str(tmp_path), "report", "defect", "D-0001"]) == 0
     capsys.readouterr()
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
-    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": []}
+    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": [], "findings": []}
 
 
 def test_strict_validate_rejects_missing_events_jsonl(tmp_path: Path, capsys) -> None:
@@ -80,7 +112,10 @@ def test_strict_validate_rejects_invalid_jsonl(tmp_path: Path, capsys) -> None:
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 1
     payload = _json_output(capsys)
-    assert "Invalid events.jsonl line 1: Expecting property name enclosed in double quotes." in payload["errors"]
+    assert (
+        "Invalid events.jsonl line 1: Expecting property name enclosed in double quotes."
+        in payload["errors"]
+    )
 
 
 def test_strict_validate_rejects_duplicate_jsonl_event_id(tmp_path: Path, capsys) -> None:
@@ -89,7 +124,9 @@ def test_strict_validate_rejects_duplicate_jsonl_event_id(tmp_path: Path, capsys
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 1
     payload = _json_output(capsys)
-    expected = f"Duplicate events.jsonl event id {records[0]['id']} at lines 1 and {len(records) + 1}."
+    expected = (
+        f"Duplicate events.jsonl event id {records[0]['id']} at lines 1 and {len(records) + 1}."
+    )
     assert expected in payload["errors"]
 
 
@@ -100,6 +137,15 @@ def test_strict_validate_rejects_db_event_missing_from_jsonl(tmp_path: Path, cap
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 1
     payload = _json_output(capsys)
     assert f"DB event {records[0]['id']} is missing from events.jsonl." in payload["errors"]
+    finding = next(
+        item for item in payload["findings"] if item["code"] == "audit_projection_event_missing"
+    )
+    assert finding["entity"] == {"type": "event", "id": records[0]["id"]}
+    assert finding["repair_class"] == "inspect"
+    assert finding["suggested_commands"] == ["pcl --json audit check"]
+    assert [
+        item["message"] for item in payload["findings"] if item["severity"] == "error"
+    ] == payload["errors"]
 
 
 def test_strict_validate_rejects_jsonl_event_missing_from_db(tmp_path: Path, capsys) -> None:
@@ -126,7 +172,10 @@ def test_strict_validate_rejects_payload_mismatch(tmp_path: Path, capsys) -> Non
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 1
     payload = _json_output(capsys)
-    assert f"Event {records[-1]['id']} payload differs between DB and events.jsonl." in payload["errors"]
+    assert (
+        f"Event {records[-1]['id']} payload differs between DB and events.jsonl."
+        in payload["errors"]
+    )
 
 
 def test_strict_validate_rejects_order_mismatch(tmp_path: Path, capsys) -> None:

@@ -11,6 +11,7 @@
   "stderr": "",
   "stdout": {
     "errors": [],
+    "findings": [],
     "ok": true,
     "warnings": []
   }

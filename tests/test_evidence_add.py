@@ -26,6 +26,13 @@ def _json_output(capsys) -> dict[str, Any]:
     return json.loads(captured.out)
 
 
+def _assert_legacy_validation(payload: dict[str, Any], expected: dict[str, Any]) -> None:
+    findings = payload.pop("findings")
+    assert payload == expected
+    assert [item["message"] for item in findings if item["severity"] == "error"] == expected["errors"]
+    assert [item["message"] for item in findings if item["severity"] == "warning"] == expected["warnings"]
+
+
 def _init(root: Path, capsys) -> None:
     assert main(["init", "--target", str(root), "--json"]) == 0
     _json_output(capsys)
@@ -1382,7 +1389,7 @@ def test_strict_validate_checks_adhoc_manifest_and_warns_on_member_drift(
     evidence = _json_output(capsys)["evidence"]
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
-    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": []}
+    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": [], "findings": []}
 
     artifact.unlink()
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
@@ -1435,7 +1442,7 @@ def test_strict_validate_checks_copied_member_health_from_copy(
     stored_path = evidence["members"][0]["stored_path"]
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
-    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": []}
+    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": [], "findings": []}
     assert _assess_adhoc_evidence(tmp_path, evidence) == {
         "health": "ok",
         "findings": [],
@@ -1448,24 +1455,24 @@ def test_strict_validate_checks_copied_member_health_from_copy(
     }
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
     source_hash_mismatch = _json_output(capsys)
-    assert source_hash_mismatch == {
+    _assert_legacy_validation(source_hash_mismatch, {
         "errors": [],
         "ok": True,
         "warnings": ["Adhoc evidence E-0001 source member artifact.txt drifted: hash mismatch."],
-    }
+    })
     assert (tmp_path / stored_path).read_text(encoding="utf-8") == "original\n"
 
     (tmp_path / stored_path).write_text("damaged!\n", encoding="utf-8")
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
     copy_and_source_mismatch = _json_output(capsys)
-    assert copy_and_source_mismatch == {
+    _assert_legacy_validation(copy_and_source_mismatch, {
         "errors": [],
         "ok": True,
         "warnings": [
             f"Adhoc evidence E-0001 copied member {stored_path} drifted: hash mismatch.",
             "Adhoc evidence E-0001 source member artifact.txt drifted: hash mismatch.",
         ],
-    }
+    })
     assert _assess_adhoc_evidence(tmp_path, evidence) == {
         "health": "warning",
         "findings": [
@@ -1555,11 +1562,11 @@ def test_copied_adhoc_source_size_mismatch_warns_without_touching_copy(
     }
     assert (tmp_path / stored_path).read_text(encoding="utf-8") == "original\n"
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
-    assert _json_output(capsys) == {
+    _assert_legacy_validation(_json_output(capsys), {
         "errors": [],
         "ok": True,
         "warnings": ["Adhoc evidence E-0001 source member artifact.txt drifted: size mismatch."],
-    }
+    })
 
 
 def test_strict_validate_accepts_pre_0096_manifest_without_path_guard_fields(
@@ -1589,7 +1596,7 @@ def test_strict_validate_accepts_pre_0096_manifest_without_path_guard_fields(
     manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
-    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": []}
+    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": [], "findings": []}
 
 
 def test_strict_validate_warns_on_outside_project_member_path(
@@ -1615,11 +1622,11 @@ def test_strict_validate_warns_on_outside_project_member_path(
     member_path = _json_output(capsys)["evidence"]["members"][0]["path"]
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
-    assert _json_output(capsys) == {
+    _assert_legacy_validation(_json_output(capsys), {
         "errors": [],
         "ok": True,
         "warnings": [f"Adhoc evidence E-0001 member {member_path} is outside the project root."],
-    }
+    })
 
 
 def test_strict_validate_rejects_invalid_path_guard_fields(
@@ -1726,7 +1733,7 @@ def test_evidence_add_preserves_strict_audit_log_integrity(tmp_path: Path, capsy
     evidence = _json_output(capsys)["evidence"]
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
-    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": []}
+    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": [], "findings": []}
 
     db_events = _db_rows(
         tmp_path,
