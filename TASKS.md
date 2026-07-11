@@ -146,6 +146,8 @@ Give these tasks to coding agents in this order:
 142. `agent-tasks/0143-terminal-link-repair.md` (v0.4.1 Integrity Migration, consumes 0142 to add one internal link mutation service, dedicated link commands, and explicit structural apply)
 143. `agent-tasks/0144-skill-runtime-provenance.md` (v0.4.1 Integrity Migration, schema-8 canonical `execution-provenance/v1` artifact anchored by its event SHA-256)
 144. `agent-tasks/0145-structured-validation-diagnostics.md` (v0.4.1 Integrity Migration, additive structured validation findings with concrete safe inspection/repair guidance)
+145. `agent-tasks/0145a-integrity-migration-dogfood.md` (v0.4.1 Integrity Migration release gate, released-v0.3.0 advisory project to explicit repair and enforced validation)
+146. `agent-tasks/0145b-v0.4.1-release-preparation.md` (v0.4.1 local release preparation, package verification only; no push/tag/publication)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and

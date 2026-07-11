@@ -57,6 +57,8 @@ implement from the spec file, not from prompt summaries.
 | 0143 | Terminal link mutation and structural repair apply | v0.4.1 Integrity Migration | P1 | approved |
 | 0144 | Schema-8 artifact/event-anchored Skill provenance | v0.4.1 Integrity Migration | P1 | approved |
 | 0145 | Structured validation diagnostics and repair guidance | v0.4.1 Integrity Migration | P1 | approved |
+| 0145a | Released-v0.3.0 integrity migration dogfood | v0.4.1 Integrity Migration | P1 | done (main 1063d62) |
+| 0145b | v0.4.1 local release preparation | v0.4.1 Integrity Migration | P0 | approved |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
