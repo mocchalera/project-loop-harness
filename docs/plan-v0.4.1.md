@@ -1,6 +1,6 @@
 # v0.4.1 Plan — Integrity Migration
 
-- **Status:** Active
+- **Status:** Complete
 - **Date:** 2026-07-11
 - **Basis:** `docs/growth-plan-v0.2.4-v0.5.md` v0.4.1,
   `docs/roadmap/integrated/00-executive-roadmap.md` M2.1, and the real-task
@@ -29,8 +29,9 @@ semantic decisions on the operator's behalf.
 5. **0145 structured diagnostics:** add machine-readable validation findings
    and concrete safe inspection/repair commands while retaining legacy string
    errors and warnings.
-6. Dogfood the complete migration path before changing existing projects from
-   advisory to enforced lifecycle validation.
+6. **Complete:** dogfood the complete migration path before changing existing
+   projects from advisory to enforced lifecycle validation. See
+   `docs/dogfood-report-v0.4.1-integrity-migration.md`.
 
 0142–0145 are dispatched serially. The dependency is one-way: 0142 publishes a
 read-only repair-plan action model and 0143 consumes it to implement every link
