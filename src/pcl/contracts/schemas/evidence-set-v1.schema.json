@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop-harness.dev/schemas/evidence-set-v1.schema.json",
+  "title": "Project Loop Harness Evidence Set v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "target",
+    "work_root",
+    "report_manifest",
+    "required_report_kinds",
+    "included_reports",
+    "excluded_reports",
+    "completeness"
+  ],
+  "properties": {
+    "contract_version": {"const": "evidence-set/v1"},
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": {"enum": ["goal", "task", "feature", "story", "test_case", "defect", "workflow_run"]},
+        "id": {"type": "string", "minLength": 1}
+      }
+    },
+    "work_root": {"type": "string", "minLength": 1},
+    "report_manifest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+      }
+    },
+    "required_report_kinds": {
+      "type": "array",
+      "items": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$"},
+      "uniqueItems": true
+    },
+    "included_reports": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/includedReport"}
+    },
+    "excluded_reports": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/excludedReport"}
+    },
+    "completeness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "findings"],
+      "properties": {
+        "status": {"enum": ["complete", "incomplete"]},
+        "findings": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/finding"}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "reportBase": {
+      "type": "object",
+      "properties": {
+        "kind": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$"},
+        "path": {"type": "string", "minLength": 1},
+        "status": {"enum": ["pass", "fail", "warning", "unknown"]},
+        "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "size_bytes": {"type": "integer", "minimum": 0}
+      }
+    },
+    "includedReport": {
+      "allOf": [
+        {"$ref": "#/$defs/reportBase"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path", "status", "sha256", "size_bytes", "evidence_id", "role"],
+          "properties": {
+            "kind": {"type": "string"},
+            "path": {"type": "string"},
+            "status": {"type": "string"},
+            "sha256": {"type": "string"},
+            "size_bytes": {"type": "integer"},
+            "evidence_id": {"type": "string", "pattern": "^E-[0-9]{4,}$"},
+            "role": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$"}
+          }
+        }
+      ]
+    },
+    "excludedReport": {
+      "allOf": [
+        {"$ref": "#/$defs/reportBase"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "path", "status", "sha256", "size_bytes", "required", "reason"],
+          "properties": {
+            "kind": {"type": "string"},
+            "path": {"type": "string"},
+            "status": {"type": "string"},
+            "sha256": {"type": "string"},
+            "size_bytes": {"type": "integer"},
+            "required": {"type": "boolean"},
+            "reason": {"const": "not_selected"}
+          }
+        }
+      ]
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "kind", "path", "severity"],
+      "properties": {
+        "code": {"enum": ["required_report_excluded", "required_report_missing", "required_report_not_passing"]},
+        "kind": {"type": "string"},
+        "path": {"type": ["string", "null"]},
+        "severity": {"const": "error"}
+      }
+    }
+  }
+}

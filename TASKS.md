@@ -148,6 +148,17 @@ Give these tasks to coding agents in this order:
 144. `agent-tasks/0145-structured-validation-diagnostics.md` (v0.4.1 Integrity Migration, additive structured validation findings with concrete safe inspection/repair guidance)
 145. `agent-tasks/0145a-integrity-migration-dogfood.md` (v0.4.1 Integrity Migration release gate, released-v0.3.0 advisory project to explicit repair and enforced validation)
 146. `agent-tasks/0145b-v0.4.1-release-preparation.md` (v0.4.1 local release preparation, package verification only; no push/tag/publication)
+147. `agent-tasks/0146-work-brief-evidence-contract.md` (v0.4.2 Adaptive Entry, immutable work-brief/v1 Evidence plus hash-bound approval; no embedded route cycle)
+148. `agent-tasks/0147-deterministic-route-recommendation.md` (v0.4.2 Adaptive Entry, read-only route-recommendation/v1 with explicit record mode)
+149. `agent-tasks/0148-adaptive-policy-resolve-explain.md` (v0.4.2 Adaptive Entry, standard-library JSON adaptive-policy/v1 resolution and field-level explanation)
+150. `agent-tasks/0149-route-policy-override-integration.md` (v0.4.2 Adaptive Entry, explicit audited override plus optional packet/context references)
+151. `agent-tasks/0149a-adaptive-entry-dogfood.md` (v0.4.2 release gate, two-repository clear/ambiguous/high-risk dogfood and human review)
+152. `agent-tasks/0149b-v0.4.2-release-preparation.md` (v0.4.2 local package/release preparation; publication remains separate)
+153. `agent-tasks/0150-evidence-set-completeness-contract.md` (v0.4.3 Evidence Completeness, target-bound included/required/excluded report manifest)
+154. `agent-tasks/0151-completion-policy-terminal-preflight.md` (v0.4.3 Evidence Completeness, domain-neutral external verdict adapter and Story-linked terminal preflight)
+155. `agent-tasks/0152-next-action-approval-provenance.md` (v0.4.3 Evidence Completeness, non-idle unfinished Feature routing and factual approval authority)
+156. `agent-tasks/0153-cross-skill-integrity-dogfood.md` (v0.4.3 release gate, incomplete/complete cross-skill fixtures, Skill parity, and human review)
+157. `agent-tasks/0153b-v0.4.3-release-preparation.md` (v0.4.3 local package/release preparation; publication remains separate)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and
@@ -155,8 +166,10 @@ modifications: `docs/roadmap/integrated/` holds the planning proposal, and
 (bundle 0123–0130 -> repo 0124–0131), and D-08 (master-trace stays at v0.3.2 and
 runs parallel to Wave A; Trust Foundation becomes v0.3.3). Wave B (bundle M2
 Three-command Wedge) was activated 2026-07-10 (DEC-0003, `docs/plan-v0.4.0.md`):
-bundle 0131–0134 -> repo 0134–0137. Wave C+ proposals in
-`docs/roadmap/integrated/agent-tasks-proposed/` remain unnumbered.
+bundle 0131–0134 -> repo 0134–0137. Wave C was activated on 2026-07-11
+through `docs/plan-v0.4.2.md`: proposal 0135–0137 became repo 0146–0149 after
+splitting read-only policy explanation from mutating override. Wave D+
+proposals remain unnumbered.
 Real-task dogfood then exposed false-completion and fail-open check paths in the
 local v0.4.0 RC. RC2 therefore inserts repo tasks 0140a–0140c before
 publication; the proposal's Wave C task numbers remain planning-only and do not
@@ -169,5 +182,7 @@ v0.3.2 = master-trace / intent-index formalization, starting with 0123 contract 
 v0.3.3 = Trust Foundation (integrated Wave A), dispatch order: 0123 + 0124 in parallel -> 0125 -> 0126, with 0127 ADR (human gate) -> 0128 -> 0129 -> 0130; 0131 parallel-safe after 0124. Shipped 2026-07-10 (includes v0.3.2 scope; tag v0.3.3).
 v0.4.0 = Dogfood Operations + Three-command Wedge (Wave B) + RC2 Integrity Gate, see `docs/plan-v0.4.0.md`. Dispatch: 0134 + 0138 in parallel -> 0135 + 0136 after 0134 -> 0137 after 0135 -> 0139 + 0140 exit repairs -> 0140a + 0140b + 0140c in parallel -> integrated RC2 verification.
 v0.4.1 = Integrity Migration, see `docs/plan-v0.4.1.md`. Dispatch is 0141 idle routing → 0142 plan-only lifecycle repair action model → 0143 one-way consumer implementing link mutation and explicit structural apply → 0144 schema-8 artifact/event-anchored Skill provenance → 0145 structured diagnostics → enforced-policy dogfood. 0142 has no mutation dependency back on 0143. The implementation slices are serialized because adjacent tasks share CLI, validator, Evidence, and report surfaces. Adaptive Entry moves to v0.4.2.
+v0.4.2 = Adaptive Entry, see `docs/plan-v0.4.2.md`. Dispatch is canonical baseline → 0146 Work Brief Evidence → 0147 route recommendation → 0148 policy resolve/explain → 0149 override integration → 0149a dogfood/human review → 0149b release preparation. Schema remains 8 and recommendation/explanation are read-only by default.
+v0.4.3 = Evidence Completeness, see `docs/plan-v0.4.3.md`. Dispatch is 0150 target-bound evidence-set completeness → 0151 domain-neutral completion-policy and terminal preflight → 0152 unfinished-work routing and approval provenance → 0153 cross-skill dogfood/Skill parity/human review → 0153b local release preparation. The plan comes from Cockpit task cb004add LP dogfood; it does not hard-code web-design semantics into core and keeps schema 8 unless a separately approved migration is required.
 
 Do not start with MCP as the runtime. Do not start with a hosted UI. The CLI/runtime must become reliable first. (Fixing the existing optional MCP server to match its declared spec — 0125/0126 — is reliability work, not a runtime pivot.)

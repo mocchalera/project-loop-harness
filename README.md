@@ -211,6 +211,85 @@ Markdown.
 See [docs/context-pack.md](docs/context-pack.md) for the contract shape and
 boundaries.
 
+## Work Briefs
+
+An optional `work-brief/v1` artifact can capture a target's reviewed intent,
+acceptance criteria, constraints, non-goals, and assumptions without changing
+the default `pcl start` path:
+
+```bash
+pcl contract validate --type work-brief/v1 work-brief.json --json
+pcl brief add work-brief.json --summary "Reviewed execution input" --dry-run --json
+pcl brief add work-brief.json --summary "Reviewed execution input" --json
+pcl brief review E-0001 --actor "agent:codex" --actor-kind agent \
+  --reason "Self-review completed; human gate remains open" --json
+# Normally run by the agent after the human says "approve" in conversation:
+pcl brief approve E-0001 --actor "human:owner" --actor-kind human \
+  --recorded-by "agent:codex" --recorder-kind agent \
+  --source-kind conversation --source-ref "conversation:<approval-reference>" \
+  --reason "Human explicitly approved the presented review packet" --json
+pcl brief show --target task:T-0001 --json
+pcl route recommend --target task:T-0001 --json
+pcl policy explain --target task:T-0001
+pcl route override --target task:T-0001 --profile assure \
+  --actor "human:owner" --reason "Require independent review" --dry-run --json
+pcl route override --target task:T-0001 --profile assure \
+  --actor "human:owner" --reason "Require independent review" --json
+pcl route current --target task:T-0001 --json
+```
+
+Brief content is immutable Evidence. Review and approval are separate
+hash-bound events: agent/system review cannot satisfy the human approval gate.
+Task context, resume, and dashboard data expose the factual actor kind, actor,
+recorder, source reference, timestamp, target, and bound hash without treating
+assumptions as facts. Humans normally approve in conversation or Cockpit; the
+agent records that decision through PCL. Direct human CLI use remains a
+compatibility path, not the expected routine UX. See
+[docs/work-brief-v1.md](docs/work-brief-v1.md).
+Deterministic Direct/Discover/Assure recommendation is documented in
+[docs/route-recommendation-v1.md](docs/route-recommendation-v1.md).
+Multi-axis resolution and field-level source rules are documented in
+[docs/adaptive-policy-v1.md](docs/adaptive-policy-v1.md).
+An applied override preserves its original recommendation and policy
+resolution as separate hash-bound Evidence. Task context, completion packets,
+and resume handoffs expose additive references without rewriting historical
+artifacts.
+
+## Evidence Sets
+
+Use `evidence-set/v1` when one passing artifact is not enough and the target
+must retain which declared reports were included or excluded:
+
+```bash
+pcl evidence-set plan --target task:T-0001 --work-root work/lp \
+  --manifest work/lp/reports/report-manifest.json \
+  --required-kind visual_check \
+  --include visual_check=E-0001:acceptance --json
+pcl evidence-set record --target task:T-0001 --work-root work/lp \
+  --manifest work/lp/reports/report-manifest.json \
+  --required-kind visual_check \
+  --include visual_check=E-0001:acceptance \
+  --summary "LP verification evidence set" --json
+```
+
+Planning is read-only. Recording creates immutable, target-linked Evidence and
+keeps known exclusions visible. See
+[docs/evidence-set-v1.md](docs/evidence-set-v1.md).
+
+Use a domain-neutral completion policy when a Test must require an external
+JSON verdict rather than merely retain the report set:
+
+```bash
+pcl completion evaluate --policy completion-policy.json \
+  --evidence-set E-0003 --test TC-0001 --json
+pcl test pass TC-0001 --summary "Completion contract passed" \
+  --evidence-id E-0003 --completion-policy completion-policy.json --json
+```
+
+Only allowlisted JSON predicates are evaluated. The Evidence Set must target
+the exact Test, remain complete, and retain matching report hashes. See
+[docs/completion-policy-v1.md](docs/completion-policy-v1.md).
+
 ## Explainable Code Context
 
 Build a local code context snapshot when an agent handoff needs auditable code

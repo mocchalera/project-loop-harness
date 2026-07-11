@@ -273,6 +273,26 @@ pcl loop execute workflow_id
 pcl loop execute workflow_id --agent-adapter generic_shell --allow-agent-exec
 ```
 
+## Autonomous continuation and progress orientation
+
+After every completed slice or meaningful state change, run `pcl next --json`.
+If the action is inside the approved goal and `run_policy=agent_safe`, execute
+it and keep looping instead of returning a terminal status update. A
+`safe_to_run=false` action without `requires_human=true` is not automatically a
+human gate: review the command and continue when it is a normal in-scope state
+transition. Stop only for a real human decision, an external blocker, an
+explicit user boundary, or an operation that separately requires approval.
+
+Every progress handoff must make orientation immediate with four facts:
+
+- **Now:** current milestone and active task;
+- **Done:** the slice just completed and its evidence;
+- **Next:** the concrete next action already being taken;
+- **Human needed:** `none`, or the exact decision required.
+
+Do not make the human ask what is happening or run routine CLI commands to
+advance a known agent-safe loop.
+
 ## Human gates
 
 Escalate to the human only when ambiguity changes one of:
@@ -290,6 +310,10 @@ Do not ask questions whose answer can be found in code, tests, docs, `AGENTS.md`
 
 When `pcl next` returns an action that requires a human decision, report the
 pending action and stop; never satisfy a human gate on the human's behalf.
+The human normally responds in the conversation or Cockpit; do not require
+them to run `pcl`. On a later turn, an agent may record that explicit decision
+only when the receipt names the human approver, the agent/system recorder, and
+the conversation or Cockpit source reference separately.
 
 ## Done criteria
 

@@ -275,6 +275,56 @@ over Adaptive Entry.
 - Adaptive Entry moves to v0.4.2. Schema-backed generic Verification targets
   remain deferred until completion-packet dogfood proves they are needed.
 
+## Milestone 16: v0.4.2 Adaptive Entry
+
+Wave C local release preparation is complete through `docs/plan-v0.4.2.md`
+and repo tasks 0146–0149b. Publication remains a separate explicit action.
+
+- 0146 stores immutable `work-brief/v1` content as generic Evidence and records
+  approval as a separate hash-bound event. It does not embed a required route
+  or add a table.
+- 0147 introduces a read-only deterministic `route-recommendation/v1`; explicit
+  recording is a separate opt-in mutation.
+- 0148 resolves multi-axis `adaptive-policy/v1` from strict JSON and explains
+  every field's source rule. Invalid policy fails closed.
+- 0149 records explicit override without deleting the original recommendation
+  and adds optional packet/context references.
+- 0149a dogfoods clear, ambiguous, and high-risk work in two repositories and
+  requires human review; 0149b prepares the local release artifacts.
+
+The slices are serialized because they overlap CLI, contract packaging,
+Evidence links, context/resume output, and compatibility fixtures. Schema
+remains 8. Replan/Assurance stays in the next milestone.
+
+## Milestone 17: v0.4.3 Evidence Completeness
+
+LP-production dogfood in Cockpit task `cb004add` exposed a cross-skill false
+completion risk: PCL could accept selected passing Evidence while the external
+mockup verdict remained `prototype` with only 6/17 strict coordinate checks.
+The canonical observation and plan are
+`docs/dogfood/lp-production-cross-skill-review.md` and
+`docs/plan-v0.4.3.md`.
+
+- 0150 defines a target-bound evidence-set manifest with required, included,
+  and known-excluded reports. Discovery is constrained to an explicit work
+  root and report manifest.
+- 0151 adds a domain-neutral JSON completion-policy adapter and terminal
+  preflight. Enforced projects reject Story-less Test planning before mutation.
+- 0152 keeps passing-but-not-done Features actionable and records factual
+  human/agent/system approval provenance without weakening human gates.
+- 0153 proves the behavior with incomplete and complete cross-skill fixtures,
+  aligns bundled Skill examples with Evidence-ID-first CLI truth, and requires
+  independent human review before release preparation.
+- 0153b prepares the local v0.4.3 release candidate, final package checks, and
+  artifact hashes. Publication remains a separate operator action.
+
+Local release preparation completed on 2026-07-11 after the independent
+cross-skill dogfood approval. Schema remains 8.
+
+The core does not implement mockup motion, crop generation, typography
+inventory, or visual line detection. Those remain external-tool dependencies.
+The plan remains schema 8; any migration requires a separate human decision.
+
 ## Semantic promotion gate
 
 Embeddings, Tree-sitter, call graphs, and semantic retrieval stay out

@@ -59,6 +59,17 @@ implement from the spec file, not from prompt summaries.
 | 0145 | Structured validation diagnostics and repair guidance | v0.4.1 Integrity Migration | P1 | done (main f447f8a) |
 | 0145a | Released-v0.3.0 integrity migration dogfood | v0.4.1 Integrity Migration | P1 | done (main 1063d62) |
 | 0145b | v0.4.1 local release preparation | v0.4.1 Integrity Migration | P0 | done (local release commit) |
+| 0146 | Immutable Work Brief Evidence contract | v0.4.2 Adaptive Entry | P0 | done (human-approved) |
+| 0147 | Deterministic route recommendation | v0.4.2 Adaptive Entry | P0 | done (human-approved) |
+| 0148 | Adaptive policy resolve and explain | v0.4.2 Adaptive Entry | P0 | done (human-approved) |
+| 0149 | Audited override and packet integration | v0.4.2 Adaptive Entry | P0 | done (human-approved) |
+| 0149a | Two-repository Adaptive Entry dogfood | v0.4.2 Adaptive Entry | P0 | done (human-reviewed) |
+| 0149b | v0.4.2 local release preparation | v0.4.2 Adaptive Entry | P0 | done (local RC; not published) |
+| 0150 | Evidence-set completeness contract | v0.4.3 Evidence Completeness | P0 | done (local RC) |
+| 0151 | Completion-policy adapter and terminal preflight | v0.4.3 Evidence Completeness | P0 | done (local RC) |
+| 0152 | Next-action and approval-provenance integrity | v0.4.3 Evidence Completeness | P0 | done (local RC) |
+| 0153 | Cross-skill integrity dogfood and release gate | v0.4.3 Evidence Completeness | P0 | done (human-approved local RC) |
+| 0153b | v0.4.3 local release preparation | v0.4.3 Evidence Completeness | P0 | done (local RC; not published) |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
@@ -88,6 +99,21 @@ dogfood. 0142 never imports or depends back on 0143 mutation code. Do not run
 0142–0145 as parallel workers: adjacent slices intentionally overlap `cli.py`,
 validators, Evidence services, reports, and their fixtures.
 
+v0.4.2 dispatch order: canonical-state baseline and plan activation → **0146**
+immutable Work Brief Evidence → **0147** read-only deterministic route →
+**0148** JSON policy resolve/explain → **0149** explicit audited override and
+optional packet refs → **0149a** two-repository dogfood/human review → **0149b**
+release preparation. The proposal's embedded brief route and mutable approval
+status are not adopted; see `docs/plan-v0.4.2.md`.
+
+v0.4.3 dispatch order: **0150** target-bound evidence-set completeness →
+**0151** domain-neutral completion-policy adapter and Story-linked terminal
+preflight → **0152** non-idle unfinished-work routing and factual approval
+provenance → **0153** incomplete/complete cross-skill dogfood, bundled Skill
+parity, and human review → **0153b** local release preparation. The slices are serialized because they overlap
+terminal guards, validators, routing, Evidence contracts, and fixtures. See
+`docs/plan-v0.4.3.md`.
+
 ## Planned next (see growth plan for scope)
 
 | Milestone | Theme |
@@ -96,7 +122,8 @@ validators, Evidence services, reports, and their fixtures.
 | v0.3.3 | Trust Foundation (integrated roadmap Wave A): MCP conformance + transactional outbox + recovery |
 | v0.4.0 | Dogfood operations + Three-command Wedge + RC2 lifecycle Integrity Gate |
 | v0.4.1 | Integrity migration: idle routing, lifecycle repair/link commands, diagnostics, Skill provenance |
-| v0.4.2 | Adaptive Entry: work brief, deterministic route recommendation, multi-axis explain/override |
+| v0.4.2 | Adaptive Entry: local RC prepared; immutable brief, deterministic route, multi-axis explain/override |
+| v0.4.3 | Evidence Completeness: local RC prepared; complete evidence sets, external verdict policy, approval provenance, cross-skill dogfood |
 | v0.5.0 | Adoption: README split, contract stability policy, upstream-layer adoption decision |
 
 Everything with an ID below 0102 is completed design history; see `TASKS.md`

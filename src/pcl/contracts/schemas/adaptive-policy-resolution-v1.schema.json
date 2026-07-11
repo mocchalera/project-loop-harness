@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop-harness.dev/schemas/adaptive-policy-resolution-v1.schema.json",
+  "title": "Project Loop Harness Adaptive Policy Resolution v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "policy_version",
+    "policy_sha256",
+    "target",
+    "recommendation_digest",
+    "profile",
+    "risk_level",
+    "axes",
+    "sources",
+    "matched_rule_ids",
+    "reason_codes"
+  ],
+  "properties": {
+    "contract_version": {"const": "adaptive-policy-resolution/v1"},
+    "policy_version": {"type": "string", "minLength": 1},
+    "policy_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "target": {"type": "object"},
+    "recommendation_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "profile": {"enum": ["direct", "discover", "assure"]},
+    "risk_level": {"enum": ["R0", "R1", "R2", "R3", "R4"]},
+    "axes": {"type": "object"},
+    "sources": {"type": "object"},
+    "matched_rule_ids": {"type": "array", "items": {"type": "string"}},
+    "reason_codes": {"type": "array", "items": {"type": "string"}}
+  }
+}

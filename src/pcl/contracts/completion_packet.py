@@ -32,8 +32,9 @@ _TOP_LEVEL_FIELDS = {
     "human_decisions",
     "next_action",
     "verifier_provenance",
+    "adaptive_route",
 }
-_REQUIRED_TOP_LEVEL_FIELDS = _TOP_LEVEL_FIELDS - {"verifier_provenance"}
+_REQUIRED_TOP_LEVEL_FIELDS = _TOP_LEVEL_FIELDS - {"verifier_provenance", "adaptive_route"}
 _OUTCOMES = {
     "COMPLETED_VERIFIED",
     "COMPLETED_WITH_RISK",
@@ -166,6 +167,7 @@ def validate_completion_packet(packet: Any) -> CompletionPacketValidationResult:
     _validate_string_array(packet.get("human_decisions"), "$.human_decisions", errors)
     _validate_next_action(packet.get("next_action"), errors)
     _validate_verifier_provenance(packet.get("verifier_provenance"), errors)
+    _validate_adaptive_route(packet.get("adaptive_route"), errors)
 
     packet_id = packet.get("packet_id")
     if (
@@ -179,6 +181,53 @@ def validate_completion_packet(packet: Any) -> CompletionPacketValidationResult:
 
     _validate_semantics(packet, errors)
     return CompletionPacketValidationResult(tuple(errors))
+
+
+def _validate_adaptive_route(value: Any, errors: list[str]) -> None:
+    if value is None:
+        return
+    path = "$.adaptive_route"
+    if not isinstance(value, dict):
+        errors.append(f"{path}: must be an object")
+        return
+    fields = {
+        "contract_version",
+        "override_ref",
+        "override_sha256",
+        "original_recommendation_ref",
+        "original_recommendation_sha256",
+        "original_resolution_ref",
+        "original_resolution_sha256",
+        "effective_profile",
+        "risk_level",
+    }
+    _check_object_fields(value, path=path, required=fields, allowed=fields, errors=errors)
+    _expect_equal(
+        value.get("contract_version"),
+        "adaptive-route-context/v1",
+        f"{path}.contract_version",
+        errors,
+    )
+    for field in ("override_ref", "original_recommendation_ref", "original_resolution_ref"):
+        _validate_string(value.get(field), f"{path}.{field}", errors, pattern=_EVIDENCE_REF)
+    for field in (
+        "override_sha256",
+        "original_recommendation_sha256",
+        "original_resolution_sha256",
+    ):
+        _validate_string(value.get(field), f"{path}.{field}", errors, pattern=_DIFF_HASH)
+    _expect_enum(
+        value.get("effective_profile"),
+        {"direct", "discover", "assure"},
+        f"{path}.effective_profile",
+        errors,
+    )
+    _expect_enum(
+        value.get("risk_level"),
+        {"R0", "R1", "R2", "R3", "R4"},
+        f"{path}.risk_level",
+        errors,
+    )
 
 
 def _validate_producer(value: Any, errors: list[str]) -> None:

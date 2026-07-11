@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .db import connect, connect_mutation
+from .completion_policies import require_completion_policy
 from .errors import InvalidInputError
 from .events import append_event
 from .evidence import (
@@ -14,6 +15,7 @@ from .evidence import (
     require_healthy_terminal_evidence,
 )
 from .guards import require_initialized
+from .evidence_sets import EVIDENCE_SET_EVIDENCE_TYPE
 from .ids import next_prefixed_id
 from .paths import ProjectPaths
 from .timeutil import utc_now_iso
@@ -196,6 +198,19 @@ def plan_test_case(
     _require_test_case_type(test_type)
     _require_text(scenario, "--scenario is required to plan a test case.")
     _require_text(expected, "--expected is required to plan a test case.")
+    advisory_warning: dict[str, Any] | None = None
+    if not story_id:
+        policy = _lifecycle_integrity_policy(paths)
+        if policy == "enforced":
+            raise EvidenceAddError(
+                "Test planning requires --story when lifecycle integrity is enforced.",
+                code="test_story_required",
+                details={"feature_id": feature_id, "policy": policy},
+            )
+        advisory_warning = {
+            "code": "test_story_required",
+            "message": "Planned Test has no Story under advisory lifecycle policy.",
+        }
     now = utc_now_iso()
 
     conn = connect_mutation(paths)
@@ -271,7 +286,18 @@ def plan_test_case(
             },
         )
         conn.commit()
-        return {"ok": True, "feature_status": feature_status, **row}
+        result = {"ok": True, "feature_status": feature_status, **row}
+        if advisory_warning is not None:
+            result["warnings"] = [
+                {
+                    **advisory_warning,
+                    "suggested_command": (
+                        f"pcl test link {test_case_id} --story US-XXXX "
+                        "--summary 'Link planned acceptance contract'"
+                    ),
+                }
+            ]
+        return result
     finally:
         conn.close()
 
@@ -284,6 +310,7 @@ def pass_test_case(
     evidence: str = "",
     evidence_id: str | None = None,
     workflow_run_id: str | None = None,
+    completion_policy_file: str | None = None,
 ) -> dict[str, Any]:
     return _transition_test_case(
         paths,
@@ -297,6 +324,7 @@ def pass_test_case(
         evidence_type="test_case_pass",
         require_evidence=True,
         command_name="pcl test pass",
+        completion_policy_file=completion_policy_file,
     )
 
 
@@ -508,6 +536,7 @@ def _transition_test_case(
     require_evidence: bool = False,
     text_field: str = "summary",
     command_name: str = "pcl test",
+    completion_policy_file: str | None = None,
 ) -> dict[str, Any]:
     require_initialized(paths)
     _validate_identifier(test_case_id, "test_case_id")
@@ -571,13 +600,52 @@ def _transition_test_case(
             _get_workflow_run(conn, workflow_run_id)
         selected_evidence_id = str(evidence_id or "").strip() or None
         evidence_mode = "id" if selected_evidence_id else None
+        completion_evaluation: dict[str, Any] | None = None
         if selected_evidence_id:
-            require_healthy_terminal_evidence(
-                paths,
-                conn,
-                evidence_id=selected_evidence_id,
-                error_code="test_acceptance_evidence_required",
-                allowed_types=ADHOC_EVIDENCE_TYPES,
+            evidence_row = conn.execute(
+                "SELECT type FROM evidence WHERE id = ?",
+                (selected_evidence_id,),
+            ).fetchone()
+            evidence_type_value = "" if evidence_row is None else str(evidence_row["type"])
+            if evidence_type_value == EVIDENCE_SET_EVIDENCE_TYPE:
+                if status != "passing":
+                    raise EvidenceAddError(
+                        "Evidence set terminal policy is supported only for passing Tests.",
+                        code="completion_policy_unsupported_transition",
+                        details={"test_case_id": test_case_id, "status": status},
+                    )
+                if not completion_policy_file:
+                    raise EvidenceAddError(
+                        "Passing with evidence_set Evidence requires --completion-policy.",
+                        code="completion_policy_required",
+                        details={"test_case_id": test_case_id, "evidence_id": selected_evidence_id},
+                    )
+                completion_evaluation = require_completion_policy(
+                    paths,
+                    conn,
+                    policy_file=completion_policy_file,
+                    evidence_set_id=selected_evidence_id,
+                    test_case_id=test_case_id,
+                )
+            else:
+                if completion_policy_file:
+                    raise EvidenceAddError(
+                        "--completion-policy requires evidence_set Evidence via --evidence-id.",
+                        code="completion_policy_evidence_set_required",
+                        details={"test_case_id": test_case_id, "evidence_id": selected_evidence_id},
+                    )
+                require_healthy_terminal_evidence(
+                    paths,
+                    conn,
+                    evidence_id=selected_evidence_id,
+                    error_code="test_acceptance_evidence_required",
+                    allowed_types=ADHOC_EVIDENCE_TYPES,
+                )
+        elif completion_policy_file:
+            raise EvidenceAddError(
+                "--completion-policy requires evidence_set Evidence via --evidence-id.",
+                code="completion_policy_evidence_set_required",
+                details={"test_case_id": test_case_id},
             )
         elif status == "passing" and not workflow_run_id:
             raise EvidenceAddError(
@@ -626,6 +694,8 @@ def _transition_test_case(
         }
         if evidence_mode is not None:
             event_payload["evidence_mode"] = evidence_mode
+        if completion_evaluation is not None:
+            event_payload["completion_evaluation"] = completion_evaluation
         append_event(
             conn=conn,
             events_path=paths.events_path,
@@ -649,11 +719,32 @@ def _transition_test_case(
         }
         if evidence_mode is not None:
             result["evidence_mode"] = evidence_mode
+        if completion_evaluation is not None:
+            result["completion_evaluation"] = completion_evaluation
         if evidence_mode == "legacy_inline":
             result["warnings"] = [dict(LEGACY_INLINE_EVIDENCE_WARNING)]
         return result
     finally:
         conn.close()
+
+
+def _lifecycle_integrity_policy(paths: ProjectPaths) -> str:
+    config_path = paths.root / "pcl.yaml"
+    if not config_path.is_file():
+        return "advisory"
+    in_validation = False
+    for raw_line in config_path.read_text(encoding="utf-8").splitlines():
+        if raw_line.startswith("validation:"):
+            in_validation = True
+            continue
+        if in_validation and raw_line and not raw_line.startswith(" "):
+            break
+        if not in_validation or not raw_line.startswith("  ") or ":" not in raw_line:
+            continue
+        key, value = raw_line.strip().split(":", 1)
+        if key == "lifecycle_integrity":
+            return value.strip().strip("\"'") or "advisory"
+    return "advisory"
 
 
 def _get_feature(conn, feature_id: str):

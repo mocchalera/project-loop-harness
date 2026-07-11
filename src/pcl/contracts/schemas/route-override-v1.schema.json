@@ -1,0 +1,39 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop-harness.dev/schemas/route-override-v1.schema.json",
+  "title": "Project Loop Harness Route Override v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "override_digest",
+    "target",
+    "actor",
+    "reason",
+    "requested_profile",
+    "original_recommendation_ref",
+    "original_recommendation_sha256",
+    "original_resolution_ref",
+    "original_resolution_sha256",
+    "effective_recommendation",
+    "effective_recommendation_sha256",
+    "effective_resolution",
+    "effective_resolution_sha256"
+  ],
+  "properties": {
+    "contract_version": {"const": "route-override/v1"},
+    "override_digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "target": {"type": "object"},
+    "actor": {"type": "string", "minLength": 1},
+    "reason": {"type": "string", "minLength": 1},
+    "requested_profile": {"enum": ["direct", "discover", "assure"]},
+    "original_recommendation_ref": {"type": "string", "pattern": "^evidence:E-[0-9]{4,}$"},
+    "original_recommendation_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "original_resolution_ref": {"type": "string", "pattern": "^evidence:E-[0-9]{4,}$"},
+    "original_resolution_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "effective_recommendation": {"type": "object"},
+    "effective_recommendation_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "effective_resolution": {"type": "object"},
+    "effective_resolution_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+  }
+}

@@ -61,6 +61,28 @@ is a regression, not an automatic regeneration result.
 
 ## Intended changes since v0.3.1 freeze
 
+- 2026-07-11 — `snapshots/pcl-version.json` regenerated for the v0.4.3 release
+  candidate bump (`0.4.2` → `0.4.3`).
+- 2026-07-11 — snapshots regenerated for task 0151. Top-level help includes
+  additive read-only `completion evaluate`; the representative fixture links
+  its Test to the existing approved Story because fresh projects enforce
+  Story-linked Test planning.
+- 2026-07-11 — `snapshots/pcl-help.json` regenerated for task 0150 to include
+  the additive `evidence-set` command. `plan` and `show` are read-only;
+  `record` is the only explicit mutation.
+- 2026-07-11 — `snapshots/pcl-version.json` regenerated for the v0.4.2 release
+  candidate bump (`0.4.1` → `0.4.2`).
+- 2026-07-11 — `snapshots/pcl-help.json` regenerated for task 0149 to include
+  `route override` and `route current`. Override is an explicit audited
+  mutation; current is read-only.
+- 2026-07-11 — `snapshots/pcl-help.json` regenerated for task 0148 to include
+  the read-only `policy resolve` / `policy explain` command group.
+- 2026-07-11 — `snapshots/pcl-help.json` regenerated for task 0147 to include
+  the additive `route` command. Recommendation is read-only unless the caller
+  explicitly supplies `--record`.
+- 2026-07-11 — `snapshots/pcl-help.json` regenerated for task 0146 to include
+  the additive `brief` command. `brief show` and contract validation are
+  read-only; `brief add` / `brief approve` are explicit audited mutations.
 - 2026-07-11 — `snapshots/pcl-help.json` regenerated for task 0142 to include
   the additive read-only `repair` command and its `lifecycle` planner. No
   existing command was removed or renamed, and no apply mode was added.

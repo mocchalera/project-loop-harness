@@ -111,6 +111,45 @@
             {"type": "null"}
           ]
         },
+        "approval_provenance": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["event_id", "actor_kind", "actor", "source", "timestamp", "target", "bound_evidence"],
+              "properties": {
+                "event_id": {"type": "string", "minLength": 1},
+                "actor_kind": {"enum": ["human", "agent", "system"]},
+                "actor": {"type": "string", "minLength": 1},
+                "recorder_kind": {"enum": ["human", "agent", "system"]},
+                "recorder": {"type": "string", "minLength": 1},
+                "source": {"type": "string", "minLength": 1},
+                "source_kind": {"enum": ["cli", "conversation", "cockpit", "api"]},
+                "source_ref": {"type": "string"},
+                "timestamp": {"type": "string", "minLength": 1},
+                "target": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["type", "id"],
+                  "properties": {
+                    "type": {"type": "string", "minLength": 1},
+                    "id": {"type": "string", "minLength": 1}
+                  }
+                },
+                "bound_evidence": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["id", "artifact_sha256"],
+                  "properties": {
+                    "id": {"type": "string", "pattern": "^E-[0-9]{4,}$"},
+                    "artifact_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"}
+                  }
+                }
+              }
+            }
+          ]
+        },
         "target_review_command": {"type": "string", "minLength": 1},
         "verification_commands": {
           "type": "array",

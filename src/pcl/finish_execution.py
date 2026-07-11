@@ -25,6 +25,7 @@ from .guarded_process import DEFAULT_MAX_OUTPUT_BYTES
 from .guards import require_initialized
 from .ids import next_prefixed_id
 from .paths import ProjectPaths
+from .route_overrides import recorded_route_context
 from .timeutil import utc_now_iso
 from .validators import validate_project
 from .workflow_sandbox import execute_planned_guarded_command, plan_guarded_project_checks
@@ -398,10 +399,17 @@ def _commit_completion_packet(
             insert_evidence_link(conn, evidence_id=evidence_id, target_type=target["type"], target_id=target["id"], link_role=COMPLETION_CHECK_LINK_ROLE, created_at=now)
             check_rows.append(check_payload)
 
+        adaptive_route = recorded_route_context(
+            paths,
+            conn,
+            target_type=target["type"],
+            target_id=target["id"],
+        )
         packet = _build_packet(
             target=target, repository=repository, check_rows=check_rows, outcome=outcome,
             strict_errors=strict_errors, strict_warnings=strict_warnings,
             race_detected=race_detected, blockers=blockers, generated_at=now,
+            adaptive_route=adaptive_route,
         )
         validation = validate_completion_packet(packet)
         if not validation.ok:
@@ -448,6 +456,7 @@ def _build_packet(
     *, target: dict[str, Any], repository: dict[str, Any], check_rows: list[dict[str, Any]],
     outcome: str, strict_errors: list[str], strict_warnings: list[str], race_detected: bool,
     blockers: dict[str, Any], generated_at: str,
+    adaptive_route: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     checks = [
         {
@@ -490,6 +499,21 @@ def _build_packet(
     }
     if strict_warnings and outcome == "COMPLETED_WITH_RISK":
         packet["risks"] = [{"severity": "low", "text": warning, "mitigation": "Review strict validation warning."} for warning in strict_warnings]
+    if adaptive_route is not None:
+        packet["adaptive_route"] = {
+            key: adaptive_route[key]
+            for key in (
+                "contract_version",
+                "override_ref",
+                "override_sha256",
+                "original_recommendation_ref",
+                "original_recommendation_sha256",
+                "original_resolution_ref",
+                "original_resolution_sha256",
+                "effective_profile",
+                "risk_level",
+            )
+        }
     return with_computed_packet_id(packet)
 
 

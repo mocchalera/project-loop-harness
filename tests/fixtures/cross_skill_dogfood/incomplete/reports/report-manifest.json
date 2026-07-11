@@ -1,0 +1,8 @@
+{
+  "contract_version": "evidence-report-manifest/v1",
+  "reports": [
+    {"kind": "completion_verdict", "path": "reports/completion_verdict.json", "status": "pass"},
+    {"kind": "coordinate_report", "path": "reports/coordinate_report.json", "status": "fail"},
+    {"kind": "responsive_report", "path": "reports/responsive_report.json", "status": "pass"}
+  ]
+}

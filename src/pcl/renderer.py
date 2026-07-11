@@ -4,6 +4,7 @@ import html
 import json
 from typing import Any
 
+from .approval_provenance import provenance_from_event_payload
 from .commands import decision_options, escalation_options, generic_human_options, next_action, verification_options
 from .db import connect, count_rows
 from .guards import require_initialized
@@ -46,6 +47,35 @@ def _state_timestamp(conn) -> str:
 def _one(conn, sql: str, params: tuple = ()) -> dict[str, Any] | None:
     row = conn.execute(sql, params).fetchone()
     return None if row is None else dict(row)
+
+
+def _approval_provenance_rows(conn) -> list[dict[str, Any]]:
+    rows = conn.execute(
+        """
+        SELECT id, event_type, payload_json, created_at
+        FROM events
+        WHERE event_type IN ('work_brief_approved', 'work_brief_reviewed')
+        ORDER BY sequence DESC, id DESC
+        LIMIT 20
+        """
+    ).fetchall()
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            payload = json.loads(str(row["payload_json"] or "{}"))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        receipt = provenance_from_event_payload(
+            event_id=str(row["id"]),
+            created_at=str(row["created_at"]),
+            payload=payload,
+            default_action=("approval" if row["event_type"] == "work_brief_approved" else "review"),
+        )
+        if receipt is not None:
+            result.append(receipt)
+    return result
 
 
 def _goal_rows(conn) -> list[dict[str, Any]]:
@@ -257,6 +287,7 @@ def render_dashboard(paths: ProjectPaths, *, locale: str | None = None) -> None:
                 LIMIT 20
                 """,
             ),
+            "approval_provenance": _approval_provenance_rows(conn),
             "reports": _report_rows(paths),
             "workflow_proposals": list_workflow_proposals(paths, validate=False),
         }

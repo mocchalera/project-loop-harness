@@ -248,29 +248,28 @@ def _create_terminal_test_case(root: Path, capsys, transition: str) -> None:
         )
         == 0
     )
-    if transition == "pass":
-        assert (
-            main(
-                [
-                    "--root",
-                    str(root),
-                    "story",
-                    "draft",
-                    "--feature",
-                    "F-0001",
-                    "--actor",
-                    "operator",
-                    "--goal",
-                    "trace a passing test",
-                    "--expected-behavior",
-                    "passing evidence is reviewable",
-                ]
-            )
-            == 0
+    assert (
+        main(
+            [
+                "--root",
+                str(root),
+                "story",
+                "draft",
+                "--feature",
+                "F-0001",
+                "--actor",
+                "operator",
+                "--goal",
+                f"trace a {transition} test",
+                "--expected-behavior",
+                f"{transition} evidence is reviewable",
+            ]
         )
-        assert (
-            main(["--root", str(root), "story", "approve", "US-0001", "--summary", "reviewed"]) == 0
-        )
+        == 0
+    )
+    assert (
+        main(["--root", str(root), "story", "approve", "US-0001", "--summary", "reviewed"]) == 0
+    )
     assert (
         main(
             [
@@ -280,7 +279,8 @@ def _create_terminal_test_case(root: Path, capsys, transition: str) -> None:
                 "plan",
                 "--feature",
                 "F-0001",
-                *(["--story", "US-0001"] if transition == "pass" else []),
+                "--story",
+                "US-0001",
                 "--type",
                 "unit",
                 "--scenario",

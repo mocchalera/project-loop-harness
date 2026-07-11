@@ -74,8 +74,34 @@ repo `0138`（`pcl report kpi` 集計 surface）は bundle 由来ではなく gr
 plan v0.4.0 Dogfood Operations 由来のタスクとして併せて起票する。
 `schemas/completion-packet-v1.schema.json` / `handoff-packet-v1.schema.json`
 と `examples/` は planning proposal のまま参照素材とし、実装契約は repo spec
-（0134 / 0137）側で確定する。Wave C 以降（0135–0152 bundle 相当）は引き続き
-未採番。
+（0134 / 0137）側で確定する。Wave Cは下記の2026-07-11 activationで再採番し、
+Wave D以降は引き続き未採番とする。
+
+## Wave C activation（2026-07-11追記）
+
+v0.4.1 Integrity Migrationの公開後、坂本指示「整理してくれた手順で進めて
+ください」を受け、Wave C / M3 Adaptive Entryをv0.4.2として活性化した。
+`docs/plan-v0.4.2.md`とrepo task specを実装の正とする。
+
+| bundle ID | repo ID | 内容 |
+|---|---|---|
+| 0135 | **0146** | immutable `work-brief/v1` Evidence + hash-bound approval |
+| 0136 | **0147** | read-only deterministic `route-recommendation/v1` |
+| 0137 policy/explain | **0148** | JSON multi-axis policy resolve/explain |
+| 0137 override/integration | **0149** | explicit audited override + optional packet refs |
+
+repo 0149a/0149bはdogfood/release gateでありbundle由来ではない。Wave D以降は
+未採番のまま維持する。
+
+2026-07-11に0146–0149bを完了し、二repository dogfoodの人間承認後にv0.4.2
+local RCとartifact hashを準備した。publicationはこのadoption決定に含めない。
+
+Activation reviewで次を修正した。
+
+1. Work Briefの必須embedded routeを削除し、routeを別artifactへ分離する。
+2. immutable briefの承認をin-place status変更ではなくhash-bound eventにする。
+3. route preset contractとmulti-axis policy resolution contractを分離する。
+4. nested policyは新依存を要するYAMLではなくstandard-library JSONにする。
 
 ## 実装開始前の最小合意（bundle README の 4 点）の判断
 

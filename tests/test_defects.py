@@ -185,7 +185,16 @@ def test_defect_lifecycle_closes_with_evidence_and_updates_feature(tmp_path: Pat
     ]
 
     assert main(["--root", str(tmp_path), "next", "--json"]) == 0
-    assert _json_output(capsys)["type"] == "idle"
+    action = _json_output(capsys)
+    assert action["type"] == "review_passing_feature_completion"
+    assert action["target"]["id"] == "F-0001"
+    assert action["target"]["completion_blockers"] == [
+        {
+            "code": "completion_tests_missing",
+            "test_case_id": None,
+            "required_artifacts": ["evidence-set/v1", "completion-policy/v1"],
+        }
+    ]
 
     events = (tmp_path / ".project-loop" / "events.jsonl").read_text(encoding="utf-8")
     assert "defect_triaged" in events

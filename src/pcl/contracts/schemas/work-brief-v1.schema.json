@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop-harness.dev/schemas/work-brief-v1.schema.json",
+  "title": "Project Loop Harness Work Brief v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "brief_id",
+    "revision",
+    "target",
+    "intent",
+    "acceptance_criteria",
+    "constraints",
+    "non_goals",
+    "assumptions",
+    "created_at",
+    "created_by"
+  ],
+  "properties": {
+    "contract_version": {"const": "work-brief/v1"},
+    "brief_id": {"type": "string", "pattern": "^WB-[0-9]{4,}$"},
+    "revision": {"type": "integer", "minimum": 1},
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": {"enum": ["goal", "task", "feature", "story", "defect", "workflow_run"]},
+        "id": {"type": "string", "minLength": 1}
+      }
+    },
+    "intent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["problem", "desired_outcome"],
+      "properties": {
+        "problem": {"type": "string", "minLength": 1},
+        "desired_outcome": {"type": "string", "minLength": 1},
+        "target_user": {"type": ["string", "null"]}
+      }
+    },
+    "acceptance_criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "text", "critical", "evidence_refs"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "text": {"type": "string", "minLength": 1},
+          "critical": {"type": "boolean"},
+          "evidence_refs": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "text", "strength", "source_evidence_refs"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "text": {"type": "string", "minLength": 1},
+          "strength": {"enum": ["invariant", "inherited_default", "local"]},
+          "source_evidence_refs": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "non_goals": {"type": "array", "items": {"type": "string"}},
+    "assumptions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "text", "status", "evidence_refs"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "text": {"type": "string", "minLength": 1},
+          "status": {"enum": ["unverified", "supported", "contradicted", "retired"]},
+          "evidence_refs": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    },
+    "route_recommendation_evidence_id": {
+      "type": ["string", "null"],
+      "pattern": "^E-[0-9]{4,}$"
+    },
+    "created_at": {"type": "string", "format": "date-time"},
+    "created_by": {"type": "string", "minLength": 1}
+  }
+}

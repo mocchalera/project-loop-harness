@@ -275,7 +275,7 @@ def _restart_context(value: Any, errors: list[str]) -> None:
     path = "$.restart_context"
     if not _object(value, path, errors):
         return
-    allowed = {
+    required = {
         "target_intent",
         "acceptance_status",
         "acceptance_ref",
@@ -285,7 +285,8 @@ def _restart_context(value: Any, errors: list[str]) -> None:
         "changed_paths",
         "documentation_candidates",
     }
-    _fields(value, path, allowed, allowed, errors)
+    allowed = required | {"approval_provenance"}
+    _fields(value, path, required, allowed, errors)
     _string(value.get("target_intent"), f"{path}.target_intent", errors)
     if value.get("acceptance_status") not in {"intent_only", "work_brief_linked", "missing"}:
         errors.append(
@@ -296,6 +297,9 @@ def _restart_context(value: Any, errors: list[str]) -> None:
         errors.append(f"{path}.acceptance_ref: is required when work_brief_linked")
     if value.get("acceptance_status") != "work_brief_linked" and value.get("acceptance_ref") is not None:
         errors.append(f"{path}.acceptance_ref: requires work_brief_linked")
+    provenance = value.get("approval_provenance")
+    if provenance is not None:
+        _approval_provenance(provenance, f"{path}.approval_provenance", errors)
     _string(value.get("target_review_command"), f"{path}.target_review_command", errors)
     commands = value.get("verification_commands")
     if _array(commands, f"{path}.verification_commands", errors):
@@ -337,6 +341,42 @@ def _restart_context(value: Any, errors: list[str]) -> None:
         f"{path}.documentation_candidates",
         errors,
     )
+
+
+def _approval_provenance(value: Any, path: str, errors: list[str]) -> None:
+    if not _object(value, path, errors):
+        return
+    required = {"event_id", "actor_kind", "actor", "source", "timestamp", "target", "bound_evidence"}
+    allowed = required | {"recorder_kind", "recorder", "source_kind", "source_ref"}
+    _fields(value, path, required, allowed, errors)
+    _string(value.get("event_id"), f"{path}.event_id", errors)
+    if value.get("actor_kind") not in {"human", "agent", "system"}:
+        errors.append(f"{path}.actor_kind: must be one of human, agent, system")
+    if value.get("recorder_kind") is not None and value.get("recorder_kind") not in {"human", "agent", "system"}:
+        errors.append(f"{path}.recorder_kind: must be one of human, agent, system")
+    for name in ("actor", "source", "timestamp"):
+        _string(value.get(name), f"{path}.{name}", errors)
+    for name in ("recorder", "source_kind"):
+        if value.get(name) is not None:
+            _string(value.get(name), f"{path}.{name}", errors)
+    if value.get("source_ref") is not None and not isinstance(value.get("source_ref"), str):
+        errors.append(f"{path}.source_ref: must be a string")
+    target = value.get("target")
+    if _object(target, f"{path}.target", errors):
+        _fields(target, f"{path}.target", {"type", "id"}, {"type", "id"}, errors)
+        _string(target.get("type"), f"{path}.target.type", errors)
+        _string(target.get("id"), f"{path}.target.id", errors)
+    bound = value.get("bound_evidence")
+    if _object(bound, f"{path}.bound_evidence", errors):
+        _fields(
+            bound,
+            f"{path}.bound_evidence",
+            {"id", "artifact_sha256"},
+            {"id", "artifact_sha256"},
+            errors,
+        )
+        _string(bound.get("id"), f"{path}.bound_evidence.id", errors)
+        _string(bound.get("artifact_sha256"), f"{path}.bound_evidence.artifact_sha256", errors)
 
 
 def _optional_ref(value: Any, path: str, errors: list[str]) -> None:

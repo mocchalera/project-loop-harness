@@ -11,6 +11,7 @@ from typing import Any
 
 from .context_binding import _receipt_target_binding_agrees
 from .contracts.completion_packet import load_completion_packet, validate_completion_packet
+from .contracts.evidence_set import load_evidence_set, validate_evidence_set
 from .db import connect, table_exists
 from .evidence import ADHOC_EVIDENCE_TYPES, assess_adhoc_evidence
 from .errors import DataStoreError, InvalidInputError
@@ -501,6 +502,7 @@ def _validate_strict_invariants(
     _validate_duplicate_active_runs(conn, result)
     _validate_terminal_parent_children(conn, result)
     _validate_decision_block_links(conn, result)
+    _validate_evidence_set_artifacts(paths, conn, result)
     _validate_adhoc_evidence_manifests(paths, conn, result)
     _validate_local_artifact_paths(paths, conn, result)
 
@@ -1522,7 +1524,8 @@ def _validate_terminal_test_cases(conn: sqlite3.Connection, result: ValidationRe
                     suggested_commands=[_pcl_json_command("test", "read", test_case_id)],
                 )
             elif evidence_type != expected_evidence_type and not (
-                status == "passing" and evidence_type in ADHOC_EVIDENCE_TYPES
+                status == "passing"
+                and evidence_type in (ADHOC_EVIDENCE_TYPES | {"evidence_set"})
             ):
                 result.add_error(
                     f"Test case {test_case_id} has current evidence {evidence_id} with type "
@@ -1541,7 +1544,9 @@ def _validate_terminal_test_cases(conn: sqlite3.Connection, result: ValidationRe
             status=status,
             event_type=event_type,
             evidence_type=expected_evidence_type,
-            alternative_types=ADHOC_EVIDENCE_TYPES if status == "passing" else set(),
+            alternative_types=(ADHOC_EVIDENCE_TYPES | {"evidence_set"})
+            if status == "passing"
+            else set(),
         )
 
 
@@ -1813,6 +1818,14 @@ def _direct_test_evidence_findings(
                 manifest_path_value=str(evidence["path"]),
                 validate_optional_fields=True,
             )["health"]
+        elif evidence is not None and evidence["type"] == "evidence_set":
+            evidence_health = _terminal_evidence_set_health(
+                paths,
+                conn,
+                test_case_id=str(row["id"]),
+                evidence_id=evidence_id,
+                artifact_path_value=str(evidence["path"]),
+            )
         healthy = evidence_health == "ok" and link is not None
         if not healthy:
             acceptance_links = [
@@ -1845,6 +1858,51 @@ def _direct_test_evidence_findings(
                 )
             )
     return findings
+
+
+def _terminal_evidence_set_health(
+    paths: ProjectPaths,
+    conn: sqlite3.Connection,
+    *,
+    test_case_id: str,
+    evidence_id: str,
+    artifact_path_value: str,
+) -> str:
+    try:
+        artifact = load_evidence_set(paths.root / artifact_path_value)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return "error"
+    validation = validate_evidence_set(artifact)
+    if not validation.ok or not isinstance(artifact, dict):
+        return "error"
+    if artifact["target"] != {"type": "test_case", "id": test_case_id}:
+        return "error"
+    if artifact["completeness"]["status"] != "complete":
+        return "error"
+    row = conn.execute(
+        """
+        SELECT payload_json
+        FROM events
+        WHERE event_type = 'test_case_passed'
+          AND entity_type = 'test_case'
+          AND entity_id = ?
+        ORDER BY sequence DESC, id DESC
+        LIMIT 1
+        """,
+        (test_case_id,),
+    ).fetchone()
+    if row is None:
+        return "error"
+    try:
+        payload = json.loads(str(row["payload_json"]))
+    except json.JSONDecodeError:
+        return "error"
+    evaluation = payload.get("completion_evaluation") if isinstance(payload, dict) else None
+    if not isinstance(evaluation, dict):
+        return "error"
+    if evaluation.get("status") != "passed" or evaluation.get("evidence_set_id") != evidence_id:
+        return "error"
+    return "ok"
 
 
 def collect_lifecycle_findings(
@@ -2081,6 +2139,64 @@ def _validate_decision_block_links(conn: sqlite3.Connection, result: ValidationR
                     repair_class="human_review",
                     requires_human=True,
                 )
+
+
+def _validate_evidence_set_artifacts(
+    paths: ProjectPaths,
+    conn: sqlite3.Connection,
+    result: ValidationResult,
+) -> None:
+    rows = conn.execute(
+        "SELECT id, path FROM evidence WHERE type = 'evidence_set' ORDER BY id",
+    ).fetchall()
+    for row in rows:
+        evidence_id = str(row["id"])
+        findings: list[dict[str, Any]] = []
+        artifact_path = paths.root / str(row["path"])
+        artifact: dict[str, Any] | None = None
+        try:
+            value = load_evidence_set(artifact_path)
+        except (OSError, ValueError, json.JSONDecodeError) as exc:
+            findings.append({"code": "artifact_unreadable", "reason": str(exc)})
+        else:
+            validation = validate_evidence_set(value)
+            if not validation.ok:
+                findings.append({"code": "contract_invalid", "errors": list(validation.errors)})
+            elif isinstance(value, dict):
+                artifact = value
+        links = conn.execute(
+            """
+            SELECT target_type, target_id
+            FROM evidence_links
+            WHERE evidence_id = ? AND link_role = 'evidence_set'
+            ORDER BY target_type, target_id
+            """,
+            (evidence_id,),
+        ).fetchall()
+        if len(links) != 1:
+            findings.append({"code": "target_link_count", "actual": len(links), "expected": 1})
+        elif artifact is not None:
+            linked_target = {"type": str(links[0]["target_type"]), "id": str(links[0]["target_id"])}
+            if artifact["target"] != linked_target:
+                findings.append({"code": "target_mismatch"})
+        for finding in findings:
+            code = str(finding.get("code") or "unknown")
+            if code == "contract_invalid":
+                message = (
+                    f"Evidence set {evidence_id} contract is invalid: "
+                    + "; ".join(str(item) for item in finding.get("errors", []))
+                )
+            else:
+                message = f"Evidence set {evidence_id} failed integrity check: {code}."
+            result.add_error(
+                message,
+                code=f"evidence_set_{code}",
+                entity={"type": "evidence", "id": evidence_id},
+                repair_class="inspect",
+                suggested_commands=[
+                    _pcl_json_command("evidence-set", "show", "--evidence", evidence_id)
+                ],
+            )
 
 
 def _validate_adhoc_evidence_manifests(

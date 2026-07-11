@@ -10,6 +10,12 @@ from pcl.cli import build_parser
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_PATH = ROOT / "skills" / "project-control-loop" / "SKILL.md"
+SKILL_COPIES = [
+    ROOT / ".agents" / "skills" / "project-control-loop" / "SKILL.md",
+    ROOT / "skills" / "project-control-loop" / "SKILL.md",
+    ROOT / "plugins" / "codex-project-loop" / "skills" / "project-control-loop" / "SKILL.md",
+    ROOT / "src" / "pcl" / "templates" / "skills" / "project-control-loop" / "SKILL.md",
+]
 
 
 SKILL_PARSER_CONTRACT_EXAMPLES = [
@@ -94,3 +100,27 @@ def test_direct_route_preserves_handoff_order() -> None:
 
     positions = [skill.index(command) for command in ordered_commands]
     assert positions == sorted(positions)
+
+
+def test_skill_copies_require_autonomous_safe_continuation_and_oriented_progress() -> None:
+    required = [
+        "After every completed slice or meaningful state change, run `pcl next --json`.",
+        "`run_policy=agent_safe`, execute",
+        "is not automatically a\nhuman gate",
+        "**Now:** current milestone and active task",
+        "**Done:** the slice just completed and its evidence",
+        "**Next:** the concrete next action already being taken",
+        "**Human needed:** `none`, or the exact decision required",
+        "Do not make the human ask what is happening",
+    ]
+    for path in SKILL_COPIES:
+        skill = path.read_text(encoding="utf-8")
+        for text in required:
+            assert text in skill, f"{path} is missing: {text}"
+
+
+def test_all_loaded_and_distributed_skill_copies_are_byte_identical() -> None:
+    canonical = SKILL_PATH.read_bytes()
+
+    for path in SKILL_COPIES:
+        assert path.read_bytes() == canonical, f"Skill copy drifted: {path}"

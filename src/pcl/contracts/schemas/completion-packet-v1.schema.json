@@ -47,6 +47,32 @@
         "NO_CHANGES"
       ]
     },
+    "adaptive_route": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version",
+        "override_ref",
+        "override_sha256",
+        "original_recommendation_ref",
+        "original_recommendation_sha256",
+        "original_resolution_ref",
+        "original_resolution_sha256",
+        "effective_profile",
+        "risk_level"
+      ],
+      "properties": {
+        "contract_version": {"const": "adaptive-route-context/v1"},
+        "override_ref": {"type": "string", "pattern": "^evidence:E-[0-9]{4,}$"},
+        "override_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "original_recommendation_ref": {"type": "string", "pattern": "^evidence:E-[0-9]{4,}$"},
+        "original_recommendation_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "original_resolution_ref": {"type": "string", "pattern": "^evidence:E-[0-9]{4,}$"},
+        "original_resolution_sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "effective_profile": {"enum": ["direct", "discover", "assure"]},
+        "risk_level": {"enum": ["R0", "R1", "R2", "R3", "R4"]}
+      }
+    },
     "target": {
       "type": "object",
       "additionalProperties": false,

@@ -1,0 +1,41 @@
+{
+  "completeness": {
+    "findings": [],
+    "status": "complete"
+  },
+  "contract_version": "evidence-set/v1",
+  "excluded_reports": [
+    {
+      "kind": "optional_notes",
+      "path": "reports/optional-notes.json",
+      "reason": "not_selected",
+      "required": false,
+      "sha256": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+      "size_bytes": 12,
+      "status": "warning"
+    }
+  ],
+  "included_reports": [
+    {
+      "evidence_id": "E-0001",
+      "kind": "visual_check",
+      "path": "reports/visual-check.json",
+      "role": "acceptance",
+      "sha256": "sha256:1111111111111111111111111111111111111111111111111111111111111111",
+      "size_bytes": 24,
+      "status": "pass"
+    }
+  ],
+  "report_manifest": {
+    "path": "reports/report-manifest.json",
+    "sha256": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "required_report_kinds": [
+    "visual_check"
+  ],
+  "target": {
+    "id": "T-0001",
+    "type": "task"
+  },
+  "work_root": "work/lp"
+}

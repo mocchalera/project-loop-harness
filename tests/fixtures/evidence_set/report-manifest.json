@@ -1,0 +1,10 @@
+{
+  "contract_version": "evidence-report-manifest/v1",
+  "reports": [
+    {
+      "kind": "visual_check",
+      "path": "reports/visual-check.json",
+      "status": "pass"
+    }
+  ]
+}

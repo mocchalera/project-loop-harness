@@ -32,6 +32,7 @@ TOP_LEVEL_KEYS = {
     "escalations",
     "evidence",
     "recent_events",
+    "approval_provenance",
     "reports",
 }
 COUNT_KEYS = {

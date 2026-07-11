@@ -1,0 +1,74 @@
+{
+  "acceptance_criteria": [
+    {
+      "critical": true,
+      "evidence_refs": ["E-0155"],
+      "id": "AC-01",
+      "text": "The incomplete prototype is rejected without terminal mutation traces."
+    },
+    {
+      "critical": true,
+      "evidence_refs": ["E-0156"],
+      "id": "AC-02",
+      "text": "The complete fixture passes through a reviewable Evidence and provenance chain."
+    },
+    {
+      "critical": true,
+      "evidence_refs": ["E-0158"],
+      "id": "AC-03",
+      "text": "Every loaded and distributed Project Loop Skill copy is parser-valid and byte-identical."
+    },
+    {
+      "critical": true,
+      "evidence_refs": ["E-0159"],
+      "id": "AC-04",
+      "text": "Strict validation, full regression, package contracts, and clean-wheel smoke pass."
+    }
+  ],
+  "assumptions": [
+    {
+      "evidence_refs": [],
+      "id": "AS-01",
+      "status": "unverified",
+      "text": "External skills declare every report required by their own domain contract."
+    },
+    {
+      "evidence_refs": [],
+      "id": "AS-02",
+      "status": "unverified",
+      "text": "Conversation source references are factual caller claims rather than authenticated identities."
+    }
+  ],
+  "brief_id": "WB-0153",
+  "constraints": [
+    {
+      "id": "C-01",
+      "source_evidence_refs": [],
+      "strength": "invariant",
+      "text": "Prototype and complete outcomes must remain distinct."
+    },
+    {
+      "id": "C-02",
+      "source_evidence_refs": [],
+      "strength": "invariant",
+      "text": "No release preparation begins before independent human review."
+    }
+  ],
+  "contract_version": "work-brief/v1",
+  "created_at": "2026-07-11T13:38:00Z",
+  "created_by": "agent:codex",
+  "intent": {
+    "desired_outcome": "A human can approve or reject the v0.4.3 dogfood gate from a concise, hash-bound review packet.",
+    "problem": "Automated success alone must not self-approve the final cross-skill release gate.",
+    "target_user": "Project Loop Harness operator"
+  },
+  "non_goals": [
+    "Do not publish, tag, push, or prepare final release artifacts in this review step.",
+    "Do not claim identity authentication or external report completeness beyond the declared manifest."
+  ],
+  "revision": 1,
+  "target": {
+    "id": "T-0039",
+    "type": "task"
+  }
+}

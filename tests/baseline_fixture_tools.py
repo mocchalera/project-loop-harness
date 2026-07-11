@@ -117,6 +117,8 @@ def _initialize_representative_project(root: Path) -> None:
             "plan",
             "--feature",
             "F-0001",
+            "--story",
+            "US-0001",
             "--type",
             "acceptance",
             "--scenario",

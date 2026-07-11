@@ -23,6 +23,7 @@ from .agents import (
     read_job_prompt,
     read_job_prompt_handoff,
 )
+from .adaptive_policy import render_policy_explanation, resolve_policy_for_target
 from .checkpoints import checkpoint_status, record_checkpoint
 from .code_index import (
     GIT_DIFF_SENTINEL,
@@ -67,6 +68,31 @@ from .contracts.handoff_packet import (
     load_handoff_packet,
     validate_handoff_packet,
 )
+from .contracts.work_brief import (
+    WORK_BRIEF_CONTRACT_VERSION,
+    load_work_brief,
+    validate_work_brief,
+)
+from .contracts.route_recommendation import (
+    ROUTE_RECOMMENDATION_CONTRACT_VERSION,
+    load_route_recommendation,
+    validate_route_recommendation,
+)
+from .contracts.route_override import (
+    ROUTE_OVERRIDE_CONTRACT_VERSION,
+    load_route_override,
+    validate_route_override,
+)
+from .contracts.evidence_set import (
+    EVIDENCE_SET_CONTRACT_VERSION,
+    load_evidence_set,
+    validate_evidence_set,
+)
+from .contracts.completion_policy import (
+    COMPLETION_POLICY_CONTRACT_VERSION,
+    load_completion_policy,
+    validate_completion_policy,
+)
 from .code_context.summary import render_receipt_summary
 from .decisions import (
     list_decisions,
@@ -77,6 +103,8 @@ from .decisions import (
 )
 from .dispatch import assign_job, heartbeat_job, lease_job, reap_expired_leases, release_job
 from .evidence import record_adhoc_evidence
+from .evidence_sets import plan_evidence_set, record_evidence_set, show_evidence_set
+from .completion_policies import evaluate_completion_policy
 from .evidence_show import render_evidence_metadata, show_evidence
 from .errors import DataStoreError, InvalidInputError, PclError
 from .exporters import export_csv
@@ -127,6 +155,8 @@ from .registry import (
     update_agent,
 )
 from .reports import report_defect, report_feature, report_goal, report_run, report_validation
+from .routing import recommend_route
+from .route_overrides import current_route, override_route
 from .resume import build_handoff_packet, render_handoff_markdown, serialized_handoff_packet
 from .stories import (
     STORY_STATUSES,
@@ -171,6 +201,7 @@ from .workflow_proposals import (
     propose_workflow,
     read_workflow_proposal,
 )
+from .work_briefs import add_work_brief, approve_work_brief, review_work_brief, show_work_brief
 from .workflow_sandbox import (
     LEGACY_DEPRECATION,
     guard_workflow_file,
@@ -429,6 +460,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     test_pass_evidence.add_argument("--evidence-id", default=None)
     p_test_pass.add_argument("--run", default=None)
+    p_test_pass.add_argument(
+        "--completion-policy",
+        default=None,
+        dest="completion_policy_file",
+        help="completion-policy/v1 JSON required when --evidence-id is an evidence_set receipt.",
+    )
     p_test_fail = test_sub.add_parser("fail")
     p_test_fail.add_argument("test_case_id")
     p_test_fail.add_argument("--summary", required=True)
@@ -857,10 +894,227 @@ def build_parser() -> argparse.ArgumentParser:
     p_contract_validate.add_argument(
         "--type",
         required=True,
-        choices=[COMPLETION_PACKET_CONTRACT_VERSION, HANDOFF_PACKET_CONTRACT_VERSION],
+        choices=[
+            COMPLETION_PACKET_CONTRACT_VERSION,
+            HANDOFF_PACKET_CONTRACT_VERSION,
+            ROUTE_RECOMMENDATION_CONTRACT_VERSION,
+            ROUTE_OVERRIDE_CONTRACT_VERSION,
+            WORK_BRIEF_CONTRACT_VERSION,
+            EVIDENCE_SET_CONTRACT_VERSION,
+            COMPLETION_POLICY_CONTRACT_VERSION,
+        ],
         dest="contract_type",
     )
     p_contract_validate.add_argument("file", help="Path to the JSON contract artifact")
+
+    p_evidence_set = sub.add_parser(
+        "evidence-set",
+        help="Plan, record, and inspect target-bound Evidence completeness receipts",
+    )
+    evidence_set_sub = p_evidence_set.add_subparsers(
+        dest="evidence_set_command",
+        required=True,
+    )
+    for command_name in ("plan", "record"):
+        parser_item = evidence_set_sub.add_parser(
+            command_name,
+            help=(
+                "Build a read-only evidence-set/v1 plan"
+                if command_name == "plan"
+                else "Record an immutable evidence-set/v1 Evidence artifact"
+            ),
+        )
+        parser_item.add_argument(
+            "--target",
+            required=True,
+            dest="target_ref",
+            help="Target reference as <target-type>:<target-id>",
+        )
+        parser_item.add_argument(
+            "--work-root",
+            required=True,
+            help="Explicit project-contained work root used for report discovery",
+        )
+        parser_item.add_argument(
+            "--manifest",
+            required=True,
+            dest="manifest_file",
+            help="evidence-report-manifest/v1 JSON inside the work root",
+        )
+        parser_item.add_argument(
+            "--required-kind",
+            action="append",
+            default=[],
+            dest="required_kinds",
+            help="Required report kind. Repeat for multiple kinds.",
+        )
+        parser_item.add_argument(
+            "--include",
+            action="append",
+            default=[],
+            dest="included_refs",
+            help="Included report mapping as KIND=E-XXXX:ROLE. Repeat as needed.",
+        )
+        if command_name == "record":
+            parser_item.add_argument("--summary", required=True)
+    p_evidence_set_show = evidence_set_sub.add_parser(
+        "show",
+        help="Inspect recorded Evidence set metadata and artifact health",
+    )
+    p_evidence_set_show.add_argument("--evidence", required=True, dest="evidence_id")
+
+    p_completion = sub.add_parser(
+        "completion",
+        help="Evaluate domain-neutral completion policies against Evidence sets",
+    )
+    completion_sub = p_completion.add_subparsers(dest="completion_command", required=True)
+    p_completion_evaluate = completion_sub.add_parser(
+        "evaluate",
+        help="Read-only completion-policy/v1 evaluation",
+    )
+    p_completion_evaluate.add_argument("--policy", required=True, dest="policy_file")
+    p_completion_evaluate.add_argument(
+        "--evidence-set",
+        required=True,
+        dest="evidence_set_id",
+    )
+    p_completion_evaluate.add_argument("--test", default=None, dest="test_case_id")
+
+    p_brief = sub.add_parser("brief", help="Manage immutable Work Brief Evidence")
+    brief_sub = p_brief.add_subparsers(dest="brief_command", required=True)
+    p_brief_add = brief_sub.add_parser("add", help="Validate and record a Work Brief")
+    p_brief_add.add_argument("file", help="Path to work-brief/v1 JSON")
+    p_brief_add.add_argument("--summary", required=True)
+    p_brief_add.add_argument("--dry-run", action="store_true")
+    p_brief_show = brief_sub.add_parser("show", help="Inspect Work Brief Evidence")
+    brief_show_target = p_brief_show.add_mutually_exclusive_group(required=True)
+    brief_show_target.add_argument("--evidence", dest="evidence_id")
+    brief_show_target.add_argument(
+        "--target",
+        dest="target_ref",
+        help="Target reference as <target-type>:<target-id>",
+    )
+    p_brief_approve = brief_sub.add_parser(
+        "approve",
+        help="Approve immutable Work Brief Evidence against its current hash",
+    )
+    p_brief_approve.add_argument("evidence_id")
+    p_brief_approve.add_argument("--actor", required=True)
+    p_brief_approve.add_argument("--actor-kind", choices=["human", "agent", "system"])
+    p_brief_approve.add_argument(
+        "--recorded-by",
+        help="Identity that writes the approval to PCL; defaults to --actor for direct CLI approval",
+    )
+    p_brief_approve.add_argument(
+        "--recorder-kind",
+        choices=["human", "agent", "system"],
+    )
+    p_brief_approve.add_argument(
+        "--source-kind",
+        choices=["cli", "conversation", "cockpit", "api"],
+        help="Origin of the human decision; mediated approval requires conversation or cockpit",
+    )
+    p_brief_approve.add_argument(
+        "--source-ref",
+        help="Factual reference to the conversation, Cockpit task, or API decision source",
+    )
+    p_brief_approve.add_argument("--reason", required=True)
+    p_brief_approve.add_argument("--dry-run", action="store_true")
+    p_brief_review = brief_sub.add_parser(
+        "review",
+        help="Record a hash-bound human, agent, or system review without approving",
+    )
+    p_brief_review.add_argument("evidence_id")
+    p_brief_review.add_argument("--actor", required=True)
+    p_brief_review.add_argument("--actor-kind", choices=["human", "agent", "system"])
+    p_brief_review.add_argument("--reason", required=True)
+    p_brief_review.add_argument("--dry-run", action="store_true")
+
+    p_route = sub.add_parser("route", help="Recommend deterministic work routes")
+    route_sub = p_route.add_subparsers(dest="route_command", required=True)
+    p_route_recommend = route_sub.add_parser(
+        "recommend",
+        help="Resolve a Direct, Discover, or Assure recommendation",
+    )
+    p_route_recommend.add_argument(
+        "--target",
+        required=True,
+        dest="target_ref",
+        help="Target reference as <target-type>:<target-id>",
+    )
+    p_route_recommend.add_argument(
+        "--brief",
+        dest="brief_file",
+        help="Optional prospective work-brief/v1 JSON; approved target brief is used by default",
+    )
+    p_route_recommend.add_argument(
+        "--changed-path",
+        action="append",
+        default=[],
+        dest="changed_paths",
+    )
+    p_route_recommend.add_argument(
+        "--record",
+        action="store_true",
+        help="Explicitly persist the recommendation as target-linked Evidence",
+    )
+    p_route_override = route_sub.add_parser(
+        "override",
+        help="Preview or record an explicit audited route override",
+    )
+    p_route_override.add_argument("--target", required=True, dest="target_ref")
+    p_route_override.add_argument(
+        "--profile",
+        required=True,
+        choices=["direct", "discover", "assure"],
+        dest="requested_profile",
+    )
+    p_route_override.add_argument("--actor", required=True)
+    p_route_override.add_argument("--reason", required=True)
+    p_route_override.add_argument("--brief", dest="brief_file")
+    p_route_override.add_argument("--policy", dest="policy_file")
+    p_route_override.add_argument(
+        "--changed-path",
+        action="append",
+        default=[],
+        dest="changed_paths",
+    )
+    p_route_override.add_argument("--dry-run", action="store_true")
+    p_route_current = route_sub.add_parser(
+        "current",
+        help="Inspect the original and effective current route",
+    )
+    p_route_current.add_argument("--target", required=True, dest="target_ref")
+    p_route_current.add_argument("--brief", dest="brief_file")
+    p_route_current.add_argument("--policy", dest="policy_file")
+    p_route_current.add_argument(
+        "--changed-path",
+        action="append",
+        default=[],
+        dest="changed_paths",
+    )
+
+    p_policy = sub.add_parser("policy", help="Resolve and explain adaptive policy")
+    policy_sub = p_policy.add_subparsers(dest="policy_command", required=True)
+    for policy_command, policy_help in (
+        ("resolve", "Resolve deterministic multi-axis policy"),
+        ("explain", "Explain each resolved policy axis"),
+    ):
+        p_policy_action = policy_sub.add_parser(policy_command, help=policy_help)
+        p_policy_action.add_argument(
+            "--target",
+            required=True,
+            dest="target_ref",
+            help="Target reference as <target-type>:<target-id>",
+        )
+        p_policy_action.add_argument("--brief", dest="brief_file")
+        p_policy_action.add_argument("--policy", dest="policy_file")
+        p_policy_action.add_argument(
+            "--changed-path",
+            action="append",
+            default=[],
+            dest="changed_paths",
+        )
 
     p_context = sub.add_parser("context", help="Build focused machine context packages")
     context_sub = p_context.add_subparsers(dest="context_command", required=True)
@@ -1248,22 +1502,49 @@ def _print_legacy_evidence_warning(result: dict, *, json_output: bool) -> None:
         )
 
 
+def _print_evidence_set_warnings(result: dict) -> None:
+    for warning in result.get("warnings", []):
+        print(
+            "WARNING: Evidence set excluded "
+            f"{warning['kind']} ({warning['status']}) at {warning['path']}; "
+            f"required={str(warning['required']).lower()}.",
+            file=sys.stderr,
+        )
+
+
+def _print_test_plan_warnings(result: dict) -> None:
+    for warning in result.get("warnings", []):
+        print(
+            f"WARNING: {warning['message']} Suggested: {warning['suggested_command']}",
+            file=sys.stderr,
+        )
+
+
 def _validate_contract_file(
     path_value: str,
     *,
     contract_type: str,
     json_output: bool,
 ) -> int:
-    load_packet = (
-        load_completion_packet
-        if contract_type == COMPLETION_PACKET_CONTRACT_VERSION
-        else load_handoff_packet
-    )
-    validate_packet = (
-        validate_completion_packet
-        if contract_type == COMPLETION_PACKET_CONTRACT_VERSION
-        else validate_handoff_packet
-    )
+    contract_handlers = {
+        COMPLETION_PACKET_CONTRACT_VERSION: (
+            load_completion_packet,
+            validate_completion_packet,
+        ),
+        HANDOFF_PACKET_CONTRACT_VERSION: (load_handoff_packet, validate_handoff_packet),
+        ROUTE_RECOMMENDATION_CONTRACT_VERSION: (
+            load_route_recommendation,
+            validate_route_recommendation,
+        ),
+        ROUTE_OVERRIDE_CONTRACT_VERSION: (load_route_override, validate_route_override),
+        WORK_BRIEF_CONTRACT_VERSION: (load_work_brief, validate_work_brief),
+        EVIDENCE_SET_CONTRACT_VERSION: (load_evidence_set, validate_evidence_set),
+        COMPLETION_POLICY_CONTRACT_VERSION: (
+            load_completion_policy,
+            validate_completion_policy,
+        ),
+    }
+    load_packet, validate_packet = contract_handlers[contract_type]
     try:
         packet = load_packet(path_value)
     except OSError as exc:
@@ -1591,6 +1872,204 @@ def main(argv: list[str] | None = None) -> int:
                 contract_type=args.contract_type,
                 json_output=json_output,
             )
+
+        if args.command == "evidence-set" and args.evidence_set_command == "plan":
+            result = plan_evidence_set(
+                paths,
+                target_ref=args.target_ref,
+                work_root=args.work_root,
+                manifest_file=args.manifest_file,
+                required_kinds=args.required_kinds,
+                included_refs=args.included_refs,
+            )
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result["plan"]))
+                _print_evidence_set_warnings(result)
+            return 0
+
+        if args.command == "evidence-set" and args.evidence_set_command == "record":
+            result = record_evidence_set(
+                paths,
+                target_ref=args.target_ref,
+                work_root=args.work_root,
+                manifest_file=args.manifest_file,
+                required_kinds=args.required_kinds,
+                included_refs=args.included_refs,
+                summary=args.summary,
+            )
+            if json_output:
+                _print_json(result)
+            else:
+                evidence = result["evidence"]
+                print(f"{evidence['id']} completeness={evidence['completeness_status']}")
+                _print_evidence_set_warnings(result)
+            return 0
+
+        if args.command == "evidence-set" and args.evidence_set_command == "show":
+            result = show_evidence_set(paths, evidence_id=args.evidence_id)
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result["evidence_set"]))
+            return 0
+
+        if args.command == "completion" and args.completion_command == "evaluate":
+            result = evaluate_completion_policy(
+                paths,
+                policy_file=args.policy_file,
+                evidence_set_id=args.evidence_set_id,
+                test_case_id=args.test_case_id,
+            )
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result["evaluation"]))
+            return 0 if result["ok"] else 1
+
+        if args.command == "brief" and args.brief_command == "add":
+            result = add_work_brief(
+                paths,
+                file=args.file,
+                summary=args.summary,
+                dry_run=args.dry_run,
+            )
+            if json_output:
+                _print_json(result)
+            elif args.dry_run:
+                print(to_pretty_json(result["planned"]))
+            else:
+                evidence = result["evidence"]
+                print(f"{evidence['id']} {evidence['brief_id']} revision={evidence['revision']}")
+            return 0
+
+        if args.command == "brief" and args.brief_command == "show":
+            result = show_work_brief(
+                paths,
+                evidence_id=args.evidence_id,
+                target_ref=args.target_ref,
+            )
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result))
+            return 0
+
+        if args.command == "brief" and args.brief_command == "approve":
+            result = approve_work_brief(
+                paths,
+                evidence_id=args.evidence_id,
+                actor=args.actor,
+                actor_kind=args.actor_kind,
+                recorded_by=args.recorded_by,
+                recorder_kind=args.recorder_kind,
+                source_kind=args.source_kind,
+                source_ref=args.source_ref,
+                reason=args.reason,
+                dry_run=args.dry_run,
+            )
+            if json_output:
+                _print_json(result)
+            elif args.dry_run:
+                print(to_pretty_json(result["planned"]))
+            elif result["changed"]:
+                print(f"Approved Work Brief Evidence {args.evidence_id}")
+            else:
+                print(f"Work Brief Evidence {args.evidence_id} is already approved")
+            return 0
+
+        if args.command == "brief" and args.brief_command == "review":
+            result = review_work_brief(
+                paths,
+                evidence_id=args.evidence_id,
+                actor=args.actor,
+                actor_kind=args.actor_kind,
+                reason=args.reason,
+                dry_run=args.dry_run,
+            )
+            if json_output:
+                _print_json(result)
+            elif args.dry_run:
+                print(to_pretty_json(result["planned"]))
+            else:
+                print(f"Recorded Work Brief review {result['event_id']}")
+            return 0
+
+        if args.command == "route" and args.route_command == "recommend":
+            result = recommend_route(
+                paths,
+                target_ref=args.target_ref,
+                brief_file=args.brief_file,
+                changed_paths=args.changed_paths,
+                record=args.record,
+            )
+            if json_output:
+                _print_json(result)
+            elif args.record and result["changed"]:
+                print(
+                    f"{result['evidence']['id']} "
+                    f"{result['recommendation']['profile']} "
+                    f"risk={result['recommendation']['risk_level']}"
+                )
+            else:
+                print(to_pretty_json(result["recommendation"]))
+            return 0
+
+        if args.command == "route" and args.route_command == "override":
+            result = override_route(
+                paths,
+                target_ref=args.target_ref,
+                requested_profile=args.requested_profile,
+                actor=args.actor,
+                reason=args.reason,
+                brief_file=args.brief_file,
+                changed_paths=args.changed_paths,
+                policy_file=args.policy_file,
+                dry_run=args.dry_run,
+            )
+            if json_output:
+                _print_json(result)
+            elif args.dry_run:
+                print(to_pretty_json(result["planned"]))
+            elif result["changed"]:
+                print(
+                    f"{result['evidence']['override']['id']} "
+                    f"profile={result['override']['requested_profile']}"
+                )
+            else:
+                print(f"Route override already recorded: {result['evidence']['override']['id']}")
+            return 0
+
+        if args.command == "route" and args.route_command == "current":
+            result = current_route(
+                paths,
+                target_ref=args.target_ref,
+                brief_file=args.brief_file,
+                changed_paths=args.changed_paths,
+                policy_file=args.policy_file,
+            )
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result))
+            return 0
+
+        if args.command == "policy" and args.policy_command in {"resolve", "explain"}:
+            result = resolve_policy_for_target(
+                paths,
+                target_ref=args.target_ref,
+                brief_file=args.brief_file,
+                changed_paths=args.changed_paths,
+                policy_file=args.policy_file,
+            )
+            if json_output:
+                _print_json(result)
+            elif args.policy_command == "explain":
+                print(render_policy_explanation(result["resolution"]), end="")
+            else:
+                print(to_pretty_json(result["resolution"]))
+            return 0
 
         if args.command == "resume":
             if json_output and args.format == "markdown":
@@ -1965,6 +2444,7 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json(result)
             else:
                 print(result["id"])
+                _print_test_plan_warnings(result)
             return 0
 
         if args.command == "test" and args.test_command == "link":
@@ -1989,6 +2469,7 @@ def main(argv: list[str] | None = None) -> int:
                 evidence=args.evidence,
                 evidence_id=args.evidence_id,
                 workflow_run_id=args.run,
+                completion_policy_file=args.completion_policy_file,
             )
             _print_legacy_evidence_warning(result, json_output=json_output)
             if json_output:

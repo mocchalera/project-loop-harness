@@ -1,0 +1,48 @@
+{
+  "contract_version": "adaptive-policy/v1",
+  "defaults": {
+    "checkpoint_frequency": "low",
+    "context_budget_bytes": 24000,
+    "escalation_budget": 1,
+    "execution_chunk_size": "medium",
+    "planning_depth": "light",
+    "tool_call_budget": 40,
+    "verification_depth": "standard",
+    "wall_time_budget_seconds": 3600
+  },
+  "policy_version": "adaptive-policy/v1-default",
+  "profile_rules": {
+    "assure": {
+      "checkpoint_frequency": "high",
+      "execution_chunk_size": "small",
+      "planning_depth": "full",
+      "verification_depth": "independent"
+    },
+    "direct": {
+      "planning_depth": "light"
+    },
+    "discover": {
+      "checkpoint_frequency": "medium",
+      "execution_chunk_size": "small",
+      "planning_depth": "full"
+    }
+  },
+  "risk_floors": {
+    "R0": {},
+    "R1": {},
+    "R2": {
+      "verification_depth": "independent"
+    },
+    "R3": {
+      "checkpoint_frequency": "high",
+      "execution_chunk_size": "small",
+      "verification_depth": "independent"
+    },
+    "R4": {
+      "checkpoint_frequency": "high",
+      "execution_chunk_size": "small",
+      "verification_depth": "human"
+    }
+  },
+  "rules": []
+}

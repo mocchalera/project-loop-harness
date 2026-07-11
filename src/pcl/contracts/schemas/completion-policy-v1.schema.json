@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop-harness.dev/schemas/completion-policy-v1.schema.json",
+  "title": "Project Loop Harness Completion Policy v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "policy_id", "required_evidence_set_status", "predicates"],
+  "properties": {
+    "contract_version": {"const": "completion-policy/v1"},
+    "policy_id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$"},
+    "required_evidence_set_status": {"const": "complete"},
+    "predicates": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "report_kind", "json_path", "operator"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$"},
+          "report_kind": {"type": "string", "pattern": "^[a-z0-9][a-z0-9_.-]*$"},
+          "json_path": {"type": "string", "pattern": "^\\$(?:\\.[A-Za-z0-9_-]+)*$"},
+          "operator": {"enum": ["empty", "equals", "exists", "gte", "in", "lte"]},
+          "expected": {}
+        }
+      }
+    }
+  }
+}

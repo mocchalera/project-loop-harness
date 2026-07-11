@@ -22,6 +22,7 @@ from .errors import EXIT_USAGE, DataStoreError, InvalidInputError, PclError
 from .guards import require_initialized
 from .paths import ProjectPaths
 from .timeutil import utc_now_iso
+from .work_briefs import current_approved_work_brief
 
 
 COMPLETION_PACKET_EVIDENCE_TYPE = "completion_packet"
@@ -60,6 +61,12 @@ def build_handoff_packet(
     conn = connect(paths.db_path)
     try:
         target = _resolve_target(conn, target_id=target_id)
+        work_brief = current_approved_work_brief(
+            paths,
+            conn,
+            target_type=target["type"],
+            target_id=target["id"],
+        )
         completion = _latest_completion_packet(paths, conn, target=target)
         decisions = _target_decisions(conn, target=target)
         context_refs, omitted = _context_refs(
@@ -67,11 +74,13 @@ def build_handoff_packet(
             conn,
             target=target,
             completion=completion,
+            work_brief=work_brief,
         )
         packet = _packet_body(
             paths,
             target=target,
             completion=completion,
+            work_brief=work_brief,
             decisions=decisions,
             context_refs=context_refs,
             omitted_sections=omitted,
@@ -409,6 +418,7 @@ def _context_refs(
     *,
     target: dict[str, Any],
     completion: dict[str, Any] | None,
+    work_brief: dict[str, Any] | None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     refs: list[dict[str, Any]] = []
     omitted = ["full_transcript", "evidence_bodies"]
@@ -427,6 +437,19 @@ def _context_refs(
         )
         if completion["superseded_count"]:
             omitted.append("superseded_completion_packets")
+    if work_brief is not None:
+        evidence_id = str(work_brief["evidence_id"])
+        selected_ids.add(evidence_id)
+        refs.append(
+            _context_ref(
+                paths,
+                evidence_id=evidence_id,
+                path=str(work_brief["path"]),
+                kind="work-brief/v1",
+                freshness="current",
+                sha256=str(work_brief["artifact_sha256"]),
+            )
+        )
 
     rows = conn.execute(
         """
@@ -483,6 +506,7 @@ def _packet_body(
     *,
     target: dict[str, Any],
     completion: dict[str, Any] | None,
+    work_brief: dict[str, Any] | None,
     decisions: list[dict[str, Any]],
     context_refs: list[dict[str, Any]],
     omitted_sections: list[str],
@@ -538,6 +562,7 @@ def _packet_body(
     restart_context = _restart_context(
         target=target,
         completion=completion,
+        work_brief=work_brief,
         context_refs=context_refs,
     )
     packet: dict[str, Any] = {
@@ -623,14 +648,39 @@ def _restart_context(
     target: dict[str, Any],
     completion: dict[str, Any] | None,
     context_refs: list[dict[str, Any]],
+    work_brief: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     completion_packet = completion["packet"] if completion else None
     packet_target = completion_packet.get("target", {}) if completion_packet else {}
     target_intent = str(packet_target.get("intent") or target["intent"])
     acceptance_ref = packet_target.get("work_brief_ref")
     if not isinstance(acceptance_ref, str):
-        acceptance_ref = None
+        acceptance_ref = (
+            f"evidence:{work_brief['evidence_id']}"
+            if work_brief is not None
+            else None
+        )
     acceptance_status = "work_brief_linked" if acceptance_ref else "intent_only"
+    approval = (
+        work_brief.get("approval")
+        if work_brief is not None and isinstance(work_brief.get("approval"), dict)
+        else None
+    )
+    approval_provenance = None
+    if approval is not None:
+        approval_provenance = {
+            "event_id": approval.get("event_id"),
+            "actor_kind": approval.get("actor_kind"),
+            "actor": approval.get("actor"),
+            "recorder_kind": approval.get("recorder_kind"),
+            "recorder": approval.get("recorder"),
+            "source": approval.get("source"),
+            "source_kind": approval.get("source_kind"),
+            "source_ref": approval.get("source_ref"),
+            "timestamp": approval.get("timestamp") or approval.get("created_at"),
+            "target": approval.get("target"),
+            "bound_evidence": approval.get("bound_evidence"),
+        }
     verification_commands = _verification_commands(completion_packet)
     referenced_values: list[Any] = [context_refs]
     if completion_packet is not None:
@@ -655,7 +705,7 @@ def _restart_context(
         if target["type"] == "task"
         else f"pcl report goal {target['id']} --json"
     )
-    return {
+    result = {
         "target_intent": target_intent,
         "acceptance_status": acceptance_status,
         "acceptance_ref": acceptance_ref,
@@ -667,6 +717,9 @@ def _restart_context(
         "changed_paths": changed_paths,
         "documentation_candidates": documentation_candidates,
     }
+    if approval_provenance is not None:
+        result["approval_provenance"] = approval_provenance
+    return result
 
 
 def _verification_commands(completion_packet: dict[str, Any] | None) -> list[dict[str, Any]]:

@@ -10,6 +10,8 @@ from pcl.cli import main
 from pcl.contracts.completion_packet import load_completion_packet, validate_completion_packet
 from pcl.db import connect
 from pcl.outbox import ProjectionResult
+from pcl.paths import resolve_paths
+from pcl.route_overrides import override_route
 
 
 COUNT_TABLES = [
@@ -533,3 +535,26 @@ def test_finish_projector_failure_reports_committed_packet_without_duplicate(
     rerun = _finish_payload(capsys)
     assert rerun["idempotent"] is True
     assert _evidence_count(tmp_path, "completion_packet") == 1
+
+
+def test_finish_packet_includes_recorded_adaptive_route(tmp_path: Path, capsys) -> None:
+    _create_packet_project(tmp_path, capsys)
+    applied = override_route(
+        resolve_paths(tmp_path),
+        target_ref="task:T-0001",
+        requested_profile="assure",
+        actor="human:test-owner",
+        reason="Completion packet integration fixture",
+    )
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001", "--json",
+    ]) == 0
+    finish = _finish_payload(capsys)
+    packet = load_completion_packet(tmp_path / finish["packet"]["path"])
+
+    assert packet["adaptive_route"]["override_ref"] == (
+        f"evidence:{applied['evidence']['override']['id']}"
+    )
+    assert packet["adaptive_route"]["effective_profile"] == "assure"
+    assert validate_completion_packet(packet).ok is True

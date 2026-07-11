@@ -33,6 +33,8 @@ from .rubric import claims_rubric_v1
 from .tasks import COMPLETED_DEPENDENCY_STATUSES, read_task
 from .token_estimation import TOKEN_ESTIMATOR, estimate_token_count
 from .workflows import list_jobs, read_job
+from .work_briefs import current_approved_work_brief
+from .route_overrides import recorded_route_context
 
 
 CONTEXT_PACK_CONTRACT_VERSION = "context-pack/v1"
@@ -105,6 +107,8 @@ JOB_SECTION_ORDER = [
 TASK_SECTION_ORDER = [
     "machine_context_rules",
     "target_task",
+    "work_brief",
+    "adaptive_route",
     "dependencies",
     "dependents",
     "goal",
@@ -174,6 +178,8 @@ TASK_SECTION_PRIORITY_PROFILES = {
         CODE_CONTEXT_VERIFICATION_SECTION_ID: 775,
         "linked_evidence": 830,
         "master_trace_context": 840,
+        "work_brief": 850,
+        "adaptive_route": 845,
     }
 }
 
@@ -399,6 +405,18 @@ def pack_context_for_task(
         defect = _defect_for_task(conn, task)
         siblings = _sibling_tasks(conn, task) if task.get("related_goal_id") else []
         linked_evidence = _linked_task_evidence(paths, conn, task_id)
+        work_brief = current_approved_work_brief(
+            paths,
+            conn,
+            target_type="task",
+            target_id=task_id,
+        )
+        adaptive_route = recorded_route_context(
+            paths,
+            conn,
+            target_type="task",
+            target_id=task_id,
+        )
         master_trace_linked_evidence = (
             _linked_master_trace_evidence(paths, conn, task_id)
             if include_master_trace_context
@@ -427,6 +445,8 @@ def pack_context_for_task(
         defect=defect,
         siblings=siblings,
         linked_evidence=linked_evidence,
+        work_brief=work_brief,
+        adaptive_route=adaptive_route,
         master_trace_context=(
             _master_trace_context_payload(master_trace_preflight)
             if master_trace_preflight is not None
@@ -445,6 +465,10 @@ def pack_context_for_task(
 
     source_paths = []
     source_paths.extend(_linked_task_evidence_source_paths(linked_evidence))
+    if work_brief is not None:
+        source_paths.append(str(work_brief["path"]))
+    if adaptive_route is not None:
+        source_paths.append(str(adaptive_route["path"]))
     if code_context:
         receipt_path = _code_context_receipt_path(code_context)
         if receipt_path:
@@ -479,6 +503,10 @@ def pack_context_for_task(
     }
     if linked_evidence:
         pack["linked_evidence"] = linked_evidence
+    if work_brief is not None:
+        pack["work_brief"] = _work_brief_context_payload(work_brief)
+    if adaptive_route is not None:
+        pack["adaptive_route"] = adaptive_route
     if master_trace_preflight is not None:
         pack["master_trace_context"] = _master_trace_context_payload(
             master_trace_preflight
@@ -696,6 +724,8 @@ def _build_task_sections(
     defect: dict[str, Any] | None,
     siblings: list[dict[str, Any]],
     linked_evidence: list[dict[str, Any]],
+    work_brief: dict[str, Any] | None,
+    adaptive_route: dict[str, Any] | None,
     master_trace_context: dict[str, Any] | None,
     events: list[dict[str, Any]],
     code_context: dict[str, Any] | None,
@@ -723,6 +753,20 @@ def _build_task_sections(
             (
                 "master_trace_context",
                 _render_master_trace_context_section(master_trace_context),
+            )
+        )
+    if work_brief is not None:
+        sections.append(
+            (
+                "work_brief",
+                _render_work_brief_section(work_brief),
+            )
+        )
+    if adaptive_route is not None:
+        sections.append(
+            (
+                "adaptive_route",
+                _render_adaptive_route_section(adaptive_route),
             )
         )
     sections.extend(
@@ -1375,6 +1419,90 @@ def _render_code_context_safety_section(summary: dict[str, Any]) -> str:
     if untracked_warning:
         lines.extend(["", f"Untracked omission warning: {_stringify(untracked_warning)}"])
     return "\n".join(lines)
+
+
+def _work_brief_context_payload(work_brief: dict[str, Any]) -> dict[str, Any]:
+    approval = work_brief.get("approval") if isinstance(work_brief.get("approval"), dict) else {}
+    return {
+        "contract_version": "work-brief-context/v1",
+        "evidence_id": work_brief["evidence_id"],
+        "evidence_ref": f"evidence:{work_brief['evidence_id']}",
+        "brief_id": work_brief["brief_id"],
+        "revision": work_brief["revision"],
+        "target": work_brief["target"],
+        "artifact_sha256": work_brief["artifact_sha256"],
+        "path": work_brief["path"],
+        "summary": work_brief["summary"],
+        "approval_event_id": approval.get("event_id"),
+        "approved_by": approval.get("actor"),
+        "approval_actor_kind": approval.get("actor_kind"),
+        "approval_recorder_kind": approval.get("recorder_kind"),
+        "approval_recorded_by": approval.get("recorder"),
+        "approval_source": approval.get("source"),
+        "approval_source_kind": approval.get("source_kind"),
+        "approval_source_ref": approval.get("source_ref"),
+        "approval_bound_sha256": (
+            approval.get("bound_evidence", {}).get("artifact_sha256")
+            if isinstance(approval.get("bound_evidence"), dict)
+            else None
+        ),
+        "approved_at": approval.get("created_at"),
+        "claims_are_facts": False,
+    }
+
+
+def _render_work_brief_section(work_brief: dict[str, Any]) -> str:
+    payload = _work_brief_context_payload(work_brief)
+    return (
+        "## Approved Work Brief\n\n"
+        "The brief is an approved execution input; its assumptions remain claims, not facts.\n\n"
+        + _kv_table(
+            payload,
+            [
+                "evidence_id",
+                "brief_id",
+                "revision",
+                "artifact_sha256",
+                "path",
+                "summary",
+                "approval_event_id",
+                "approved_by",
+                "approval_actor_kind",
+                "approval_recorder_kind",
+                "approval_recorded_by",
+                "approval_source",
+                "approval_source_kind",
+                "approval_source_ref",
+                "approval_bound_sha256",
+                "approved_at",
+                "claims_are_facts",
+            ],
+        )
+    )
+
+
+def _render_adaptive_route_section(adaptive_route: dict[str, Any]) -> str:
+    return (
+        "## Adaptive Route\n\n"
+        "This is an audited operator override. The original recommendation and policy "
+        "resolution remain immutable Evidence.\n\n"
+        + _kv_table(
+            adaptive_route,
+            [
+                "override_ref",
+                "override_sha256",
+                "original_recommendation_ref",
+                "original_recommendation_sha256",
+                "original_resolution_ref",
+                "original_resolution_sha256",
+                "effective_profile",
+                "risk_level",
+                "path",
+                "summary",
+                "created_at",
+            ],
+        )
+    )
 
 
 def _render_code_context_next_action_line(summary: dict[str, Any]) -> str:

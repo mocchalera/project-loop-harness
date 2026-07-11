@@ -1,0 +1,20 @@
+{
+  "contract_version": "completion-policy/v1",
+  "policy_id": "cross-skill-deliverable-complete",
+  "predicates": [
+    {
+      "id": "findings-empty",
+      "json_path": "$.findings",
+      "operator": "empty",
+      "report_kind": "completion_verdict"
+    },
+    {
+      "expected": "complete",
+      "id": "verdict-complete",
+      "json_path": "$.status",
+      "operator": "equals",
+      "report_kind": "completion_verdict"
+    }
+  ],
+  "required_evidence_set_status": "complete"
+}

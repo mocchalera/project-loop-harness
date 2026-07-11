@@ -213,6 +213,61 @@ def test_next_routes_uncovered_feature_before_generic_goal(tmp_path: Path, capsy
     assert "tracked feature still needs coverage" in action["reason"]
 
 
+def test_next_routes_passing_unfinished_feature_with_completion_blocker(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main([
+        "--root", str(tmp_path), "feature", "add", "--name", "LP",
+        "--surface", "page:/lp",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "story", "draft", "--feature", "F-0001",
+        "--actor", "operator", "--goal", "finish LP",
+        "--expected-behavior", "completion is evidence bound",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "story", "approve", "US-0001",
+        "--summary", "Approved",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "test", "plan", "--feature", "F-0001",
+        "--story", "US-0001", "--type", "acceptance",
+        "--scenario", "LP looks complete", "--expected", "complete",
+    ]) == 0
+    capsys.readouterr()
+    report = tmp_path / "legacy-visual-report.txt"
+    report.write_text("visual report passed\n", encoding="utf-8")
+    assert main([
+        "--root", str(tmp_path), "evidence", "add", "--file", str(report),
+        "--summary", "Legacy positive-only visual report", "--json",
+    ]) == 0
+    evidence_id = _json_output(capsys)["evidence"]["id"]
+    assert main([
+        "--root", str(tmp_path), "test", "pass", "TC-0001",
+        "--summary", "Legacy positive-only pass", "--evidence-id", evidence_id,
+    ]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    action = _json_output(capsys)
+    assert action["type"] == "review_passing_feature_completion"
+    assert action["command"] == "pcl evidence show E-0001 --json"
+    assert action["safe_to_run"] is True
+    assert action["target"]["status"] == "passing"
+    assert action["target"]["completion_status"] == "blocked"
+    assert action["target"]["completion_blockers"] == [
+        {
+            "code": "completion_policy_receipt_missing",
+            "test_case_id": "TC-0001",
+            "evidence_id": "E-0001",
+            "required_artifacts": ["evidence-set/v1", "completion-policy/v1"],
+        }
+    ]
+    assert "Evidence Set completion-policy receipt" in action["reason"]
+
+
 def test_next_routes_checkpoint_review_before_more_goal_continuation(tmp_path: Path, capsys) -> None:
     assert main(["init", "--target", str(tmp_path)]) == 0
     assert main(["--root", str(tmp_path), "goal", "create", "--title", "Improve UX"]) == 0

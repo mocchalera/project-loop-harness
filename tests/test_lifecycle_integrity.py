@@ -205,6 +205,14 @@ def test_test_pass_guards_are_typed_and_zero_mutation(tmp_path: Path, capsys) ->
 
 def test_test_pass_without_story_rejects_with_zero_mutation(tmp_path: Path, capsys) -> None:
     _init(tmp_path, capsys)
+    config = tmp_path / "pcl.yaml"
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(
+            "lifecycle_integrity: enforced",
+            "lifecycle_integrity: advisory",
+        ),
+        encoding="utf-8",
+    )
     assert (
         main(
             [

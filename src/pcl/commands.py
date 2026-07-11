@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from json import JSONDecodeError
+from typing import Any
 
 from .checkpoints import checkpoint_status
 from .db import connect, connect_mutation
@@ -800,6 +801,9 @@ def next_action(paths: ProjectPaths) -> dict:
     task = _task_next_action(paths)
     if task is not None:
         return task
+    passing_feature = _passing_feature_next_action(paths)
+    if passing_feature is not None:
+        return passing_feature
     if status["open_goals"]:
         goal = status["open_goals"][0]
         return _continue_goal_next_action(goal)
@@ -1019,6 +1023,120 @@ def _continue_goal_next_action(goal: dict) -> dict:
         safe_to_run=False,
         expected_after="A workflow run exists for the open goal.",
     )
+
+
+def _passing_feature_next_action(paths: ProjectPaths) -> dict | None:
+    conn = connect(paths.db_path)
+    try:
+        row = conn.execute(
+            """
+            SELECT id, name, surface, description, status, confidence, created_at, updated_at
+            FROM features
+            WHERE status = 'passing'
+            ORDER BY created_at, id
+            LIMIT 1
+            """
+        ).fetchone()
+        if row is None:
+            return None
+        feature = dict(row)
+        tests = conn.execute(
+            """
+            SELECT id, status, evidence_id
+            FROM test_cases
+            WHERE feature_id = ? AND status != 'waived'
+            ORDER BY id
+            """,
+            (feature["id"],),
+        ).fetchall()
+        blockers: list[dict[str, Any]] = []
+        for test in tests:
+            if test["status"] != "passing":
+                blockers.append(
+                    {
+                        "code": "test_not_passing",
+                        "test_case_id": str(test["id"]),
+                        "status": str(test["status"]),
+                    }
+                )
+                continue
+            event = conn.execute(
+                """
+                SELECT payload_json
+                FROM events
+                WHERE event_type = 'test_case_passed'
+                  AND entity_type = 'test_case'
+                  AND entity_id = ?
+                ORDER BY sequence DESC, id DESC
+                LIMIT 1
+                """,
+                (test["id"],),
+            ).fetchone()
+            payload = _parse_event_payload(str(event["payload_json"] or "{}")) if event else {}
+            evaluation = payload.get("completion_evaluation")
+            if not isinstance(evaluation, dict):
+                blockers.append(
+                    {
+                        "code": "completion_policy_receipt_missing",
+                        "test_case_id": str(test["id"]),
+                        "evidence_id": str(test["evidence_id"] or ""),
+                        "required_artifacts": ["evidence-set/v1", "completion-policy/v1"],
+                    }
+                )
+            elif evaluation.get("status") != "passed":
+                blockers.append(
+                    {
+                        "code": "completion_policy_not_passed",
+                        "test_case_id": str(test["id"]),
+                        "evidence_id": str(test["evidence_id"] or ""),
+                        "status": str(evaluation.get("status") or "unknown"),
+                        "findings": evaluation.get("findings", []),
+                    }
+                )
+        if not tests:
+            blockers.append(
+                {
+                    "code": "completion_tests_missing",
+                    "test_case_id": None,
+                    "required_artifacts": ["evidence-set/v1", "completion-policy/v1"],
+                }
+            )
+        feature["completion_status"] = "blocked" if blockers else "ready_for_explicit_done_review"
+        feature["completion_blockers"] = blockers
+        blocker_evidence_id = next(
+            (
+                str(item["evidence_id"])
+                for item in blockers
+                if isinstance(item.get("evidence_id"), str) and item["evidence_id"]
+            ),
+            "",
+        )
+        command = (
+            f"pcl evidence show {blocker_evidence_id} --json"
+            if blocker_evidence_id
+            else f"pcl feature read {feature['id']} --json"
+        )
+        reason = (
+            "The Feature is passing but not done, and one or more Tests lack a passing "
+            "hash-bound Evidence Set completion-policy receipt."
+            if blockers
+            else "The Feature is passing but not done; explicit completion Evidence and a terminal decision remain."
+        )
+        return build_next_action(
+            action_type="review_passing_feature_completion",
+            command=command,
+            reason=reason,
+            target=feature,
+            priority=60,
+            blocking=False,
+            requires_human=False,
+            safe_to_run=True,
+            expected_after=(
+                "The Feature completion blockers and bound Evidence are reviewed before an explicit done transition."
+            ),
+        )
+    finally:
+        conn.close()
 
 
 def _uncovered_feature_next_action(paths: ProjectPaths) -> dict | None:
