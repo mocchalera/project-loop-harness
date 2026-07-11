@@ -52,13 +52,13 @@ implement from the spec file, not from prompt summaries.
 | 0140a | Skill / CLI contract parity | v0.4.0 RC2 Integrity Gate | P0 | done (main 8bd6aa3) |
 | 0140b | Evidence-backed lifecycle integrity gate | v0.4.0 RC2 Integrity Gate | P0 | done (main ad082d7 + d5d2602) |
 | 0140c | Fail-open finish check guard | v0.4.0 RC2 Integrity Gate | P0 | done (main 131d9d4) |
-| 0141 | Idle routing without a redundant human gate | v0.4.1 Integrity Migration | P0 | done |
-| 0142 | Plan-only lifecycle repair action model | v0.4.1 Integrity Migration | P1 | approved |
-| 0143 | Terminal link mutation and structural repair apply | v0.4.1 Integrity Migration | P1 | approved |
-| 0144 | Schema-8 artifact/event-anchored Skill provenance | v0.4.1 Integrity Migration | P1 | approved |
-| 0145 | Structured validation diagnostics and repair guidance | v0.4.1 Integrity Migration | P1 | approved |
+| 0141 | Idle routing without a redundant human gate | v0.4.1 Integrity Migration | P0 | done (main ce3dcd0) |
+| 0142 | Plan-only lifecycle repair action model | v0.4.1 Integrity Migration | P1 | done (main 3338d5f) |
+| 0143 | Terminal link mutation and structural repair apply | v0.4.1 Integrity Migration | P1 | done (main 11f8e03) |
+| 0144 | Schema-8 artifact/event-anchored Skill provenance | v0.4.1 Integrity Migration | P1 | done (main 20f117b) |
+| 0145 | Structured validation diagnostics and repair guidance | v0.4.1 Integrity Migration | P1 | done (main f447f8a) |
 | 0145a | Released-v0.3.0 integrity migration dogfood | v0.4.1 Integrity Migration | P1 | done (main 1063d62) |
-| 0145b | v0.4.1 local release preparation | v0.4.1 Integrity Migration | P0 | approved |
+| 0145b | v0.4.1 local release preparation | v0.4.1 Integrity Migration | P0 | done (local release commit) |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the

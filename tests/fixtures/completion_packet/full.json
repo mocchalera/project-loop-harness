@@ -1,9 +1,9 @@
 {
   "contract_version": "completion-packet/v1",
-  "packet_id": "cp-sha256:2fab3268bc994d3aefd4b4cd754c1944b49ada953da21fd7b0720f84f0152294",
+  "packet_id": "cp-sha256:dc6f6811a630ddac2dafe8c35a5710772383417428bba0c729e0288a03980306",
   "producer": {
     "name": "project-loop-harness",
-    "version": "0.4.0"
+    "version": "0.4.1"
   },
   "generated_at": "2026-07-10T12:30:00Z",
   "outcome": "COMPLETED_WITH_RISK",

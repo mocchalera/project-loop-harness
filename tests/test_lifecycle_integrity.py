@@ -712,7 +712,7 @@ def _completion_packet(root: Path, *, goal_id: str, outcome: str) -> dict:
 
     packet = {
         "contract_version": "completion-packet/v1",
-        "producer": {"name": "project-loop-harness", "version": "0.4.0"},
+        "producer": {"name": "project-loop-harness", "version": "0.4.1"},
         "generated_at": "2026-07-10T00:00:00Z",
         "outcome": outcome,
         "target": {

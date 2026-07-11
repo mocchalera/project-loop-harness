@@ -1,7 +1,7 @@
 {
   "contract_version": "completion-packet/v1",
-  "packet_id": "cp-sha256:1d027ba96de35710280fae3824ea0d9d7b38447f93898f0600d9617ae1cb9e33",
-  "producer": {"name": "project-loop-harness", "version": "0.4.0"},
+  "packet_id": "cp-sha256:6d75d575db0061ea532f47fbf2c3835eae18ebc8bf8824544c222cc32aa1cdef",
+  "producer": {"name": "project-loop-harness", "version": "0.4.1"},
   "generated_at": "2026-07-10T13:00:00Z",
   "outcome": "COMPLETED_VERIFIED",
   "target": {"type": "task", "id": "T-0134", "intent": "Validate proof consistency", "work_brief_ref": null},

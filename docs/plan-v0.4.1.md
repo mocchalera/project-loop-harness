@@ -32,6 +32,9 @@ semantic decisions on the operator's behalf.
 6. **Complete:** dogfood the complete migration path before changing existing
    projects from advisory to enforced lifecycle validation. See
    `docs/dogfood-report-v0.4.1-integrity-migration.md`.
+7. **Release gate:** prepare and independently review a local v0.4.1 release
+   commit and artifacts. Tagging, pushing, GitHub/PyPI publication, and local
+   `pipx` replacement remain separate human-authorized operations.
 
 0142–0145 are dispatched serially. The dependency is one-way: 0142 publishes a
 read-only repair-plan action model and 0143 consumes it to implement every link
@@ -59,3 +62,6 @@ fixture files.
   already explicit user intent.
 - Skill/runtime provenance and structured findings are visible through
   machine-readable report surfaces.
+- The package metadata, release notes, source/sdist/wheel contracts, and clean
+  wheel installation pass the local release checklist without changing schema,
+  dependencies, packet contracts, or lifecycle policy defaults.

@@ -1,7 +1,7 @@
 {
   "contract_version": "completion-packet/v1",
-  "packet_id": "cp-sha256:e19a485d154334b56f64667c41b48bdb51942026e74a02466bcef0e0a45646db",
-  "producer": {"name": "project-loop-harness", "version": "0.4.0"},
+  "packet_id": "cp-sha256:073569728a37e1bba7bac8f7da5f936ee7e9cf819c3c25bcd975452aa474fd78",
+  "producer": {"name": "project-loop-harness", "version": "0.4.1"},
   "generated_at": "2026-07-10T13:10:00Z",
   "outcome": "INCOMPLETE_BUDGET_EXHAUSTED",
   "target": {"type": "task", "id": "T-0134", "intent": "Validate budget outcome", "work_brief_ref": null},
