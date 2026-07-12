@@ -1,8 +1,9 @@
 # ADR-005: External Council Profile Boundary
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date proposed:** 2026-07-11
 - **Contract freeze prepared:** 2026-07-12
+- **Accepted:** 2026-07-12
 - **Decision owner:** PLH maintainer / human owner
 - **Related:** Adaptive Loop Architecture, Work Brief, Route Recommendation, Agent Adapter Contract
 
@@ -31,9 +32,14 @@ PLHはモデル非依存・ローカルファーストのcontrol planeであり�
 
 ## Human outcome
 
-Pending. The maintainer must record exactly one of Accept, Modify, or Reject
-before task 0155 starts. Preparing and reviewing the proposal contracts does
-not imply acceptance.
+**Accept.** On 2026-07-12 the human owner explicitly replied
+`承認します` in AGI Cockpit task `e92b41d9`. Codex recorded that human
+outcome; the recorder did not infer or self-approve it.
+
+The acceptance covers Decision items 1–12 and the reviewed contract freeze in
+`contract-freeze.md`. It does not authorize an external runner repository,
+provider/network execution, paid-service use, a database migration, default
+enablement, or publication. Those remain separate human gates.
 
 
 ## Consequences

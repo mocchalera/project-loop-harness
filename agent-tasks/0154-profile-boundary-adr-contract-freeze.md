@@ -1,6 +1,6 @@
 # 0154: Profile boundary ADR and proposal contract freeze
 
-- **Status:** Planned; starts at human ADR gate
+- **Status:** Done; ADR accepted by human owner on 2026-07-12
 - **Milestone:** v0.5.0 Council Profile
 - **Priority:** P0
 - **Size:** M

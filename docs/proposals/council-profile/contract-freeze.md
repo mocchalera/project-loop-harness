@@ -1,6 +1,6 @@
 # Council Profile contract freeze v0.5.0
 
-**State:** Proposed, pending the ADR-005 human outcome  
+**State:** Frozen after human acceptance of ADR-005 on 2026-07-12  
 **Runtime dependency delta:** none  
 **SQLite schema:** 8, unchanged
 
