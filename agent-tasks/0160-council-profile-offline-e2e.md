@@ -1,6 +1,6 @@
 # 0160: Council Discovery built-in Profile and offline E2E
 
-- **Status:** Planned
+- **Status:** Done
 - **Milestone:** v0.5.0 Council Profile
 - **Priority:** P1
 - **Size:** M
@@ -39,3 +39,19 @@ network access.
 3. budget/partial/failed never become execution-ready.
 4. All package environments contain required schemas/manifest/fixtures.
 5. Full compatibility and distribution suites pass.
+
+## Implementation evidence
+
+- `pcl profile fixture-run` produces deterministic provider-free output for
+  completed, needs-human, partial, budget-exhausted, failed, skipped, and
+  malformed scenarios without reading or mutating PLH state.
+- The packaged fixture descriptor and runtime contain no provider/API code.
+- One reusable E2E script proves prepare → two byte-identical fixture runs →
+  dry-run → ingest, and for needs-human: next → legacy bypass rejection →
+  proposal show/select → separate Brief revision/review/approval.
+- A 30-second Decision projection fixture defines the minimum factual fields
+  and safe command surface.
+- The same E2E script passes from source, an installed wheel, and an extracted
+  sdist.
+- Verification: targeted E2E/distribution/Profile suite 65 passed; full suite
+  935 passed, 1 skipped.

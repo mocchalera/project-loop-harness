@@ -1,0 +1,15 @@
+{
+  "contract_version": "profile-decision-projection-fixture/v1",
+  "headline": "Human decision required",
+  "required_fields": [
+    "decision.id",
+    "decision.status",
+    "proposal.question",
+    "proposal.candidates",
+    "proposal.recommended_candidate_id",
+    "proposal.recommendation_reason",
+    "proposal.unresolved_assumptions",
+    "artifact_sha256"
+  ],
+  "safe_command_prefix": "pcl decision proposal select"
+}

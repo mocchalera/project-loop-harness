@@ -1,0 +1,13 @@
+{
+  "contract_version": "profile-fixture-scenarios/v1",
+  "runner_profile_id": "council.discovery",
+  "scenarios": [
+    {"name": "completed", "bundle_status": "completed", "next_action": "none"},
+    {"name": "needs_human", "bundle_status": "needs_human", "next_action": "human_decision"},
+    {"name": "partial", "bundle_status": "partial", "next_action": "revise_work_brief"},
+    {"name": "budget_exhausted", "bundle_status": "budget_exhausted", "next_action": "revise_work_brief"},
+    {"name": "failed", "bundle_status": "failed", "next_action": "inspect_failure"},
+    {"name": "skipped", "bundle_status": "skipped", "next_action": "none"},
+    {"name": "malformed", "bundle_status": "completed", "next_action": "none", "malformed": true}
+  ]
+}

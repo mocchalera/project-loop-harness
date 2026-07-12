@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 import os
 from pathlib import Path
 import subprocess
@@ -76,6 +77,7 @@ def test_wheel_install_smoke_runs_cli_mcp_and_bundled_templates(tmp_path: Path) 
         assert "pcl/profile_bundle_store.py" in names
         assert "pcl/profile_authorization.py" in names
         assert "pcl/profile_decisions.py" in names
+        assert "pcl/profiles/fixtures/council.discovery/scenarios.json" in names
 
     venv_dir = tmp_path / "venv"
     venv.EnvBuilder(with_pip=True).create(venv_dir)
@@ -146,6 +148,23 @@ def test_wheel_install_smoke_runs_cli_mcp_and_bundled_templates(tmp_path: Path) 
     assert next_action["type"] == "idle"
     assert next_action["command"] is None
     assert next_action["requires_human"] is False
+    e2e_script = ROOT / "tests" / "fixtures" / "profile_e2e" / "run_offline_e2e.py"
+    wheel_e2e = _json_output(
+        _run(
+            [
+                python,
+                e2e_script,
+                "--root",
+                tmp_path / "wheel-profile-e2e",
+                "--status",
+                "needs_human",
+            ],
+            env=wheel_env,
+            cwd=tmp_path,
+        )
+    )
+    assert wheel_e2e["selection"]["selected_option"] == "OPT-A"
+    assert wheel_e2e["brief_revision_review_approval_separate"] is True
 
 
 def test_reusable_github_action_contract_is_documented_and_wired() -> None:
@@ -221,3 +240,31 @@ def test_sdist_contains_profile_contracts_and_builtin_manifest(tmp_path: Path) -
     assert any(name.endswith("/src/pcl/profile_authorization.py") for name in names)
     assert any(name.endswith("/src/pcl/profile_decisions.py") for name in names)
     assert any(name.endswith("/tests/test_profile_ingest_dry_run.py") for name in names)
+    assert any(
+        name.endswith("/src/pcl/profiles/fixtures/council.discovery/scenarios.json")
+        for name in names
+    )
+    extract_dir = tmp_path / "extracted"
+    with tarfile.open(sdists[0], "r:gz") as archive:
+        if "filter" in inspect.signature(archive.extractall).parameters:
+            archive.extractall(extract_dir, filter="data")
+        else:
+            archive.extractall(extract_dir)
+    extracted_root = next(path for path in extract_dir.iterdir() if path.is_dir())
+    extracted_env = {**os.environ, "PYTHONPATH": str(extracted_root / "src")}
+    extracted_e2e = _json_output(
+        _run(
+            [
+                sys.executable,
+                extracted_root / "tests" / "fixtures" / "profile_e2e" / "run_offline_e2e.py",
+                "--root",
+                tmp_path / "sdist-profile-e2e",
+                "--status",
+                "completed",
+            ],
+            env=extracted_env,
+            cwd=tmp_path,
+        )
+    )
+    assert extracted_e2e["bundle_status"] == "completed"
+    assert extracted_e2e["deterministic"] is True

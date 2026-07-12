@@ -184,6 +184,7 @@ from .profile_ingest import plan_profile_ingest
 from .profile_bundle_store import ingest_profile_bundle
 from .profile_decisions import select_profile_proposal, show_profile_proposal
 from .profile_authorization import authorize_profile_request
+from .profile_fixture_runner import run_profile_fixture
 from .profile_prepare import prepare_profile_request
 from .renderer import render_dashboard
 from .receipt_show import receipt_summary_for_ref
@@ -1060,6 +1061,25 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["metadata", "selected_snippets", "full_repository"],
     )
     p_profile_authorize.add_argument("--expires-at", default=None)
+    p_profile_fixture = profile_sub.add_parser(
+        "fixture-run",
+        help="Generate deterministic offline Council output without a provider or PLH mutation",
+    )
+    p_profile_fixture.add_argument("--request", required=True, dest="request_file")
+    p_profile_fixture.add_argument(
+        "--status",
+        required=True,
+        choices=[
+            "completed",
+            "needs_human",
+            "partial",
+            "budget_exhausted",
+            "failed",
+            "skipped",
+            "malformed",
+        ],
+    )
+    p_profile_fixture.add_argument("--output-dir", required=True)
 
     p_contract = sub.add_parser("contract", help="Validate versioned artifact contracts")
     contract_sub = p_contract.add_subparsers(dest="contract_command", required=True)
@@ -2205,6 +2225,18 @@ def main(argv: list[str] | None = None) -> int:
                 allowed_providers=args.provider,
                 data_classes=args.data_class,
                 expires_at=args.expires_at,
+            )
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result))
+            return 0
+
+        if args.command == "profile" and args.profile_command == "fixture-run":
+            result = run_profile_fixture(
+                request_file=args.request_file,
+                status=args.status,
+                output_dir=args.output_dir,
             )
             if json_output:
                 _print_json(result)
