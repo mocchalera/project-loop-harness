@@ -182,6 +182,8 @@ from .paths import resolve_paths
 from .profiles import list_profiles, show_profile, validate_profile
 from .profile_ingest import plan_profile_ingest
 from .profile_bundle_store import ingest_profile_bundle
+from .profile_decisions import select_profile_proposal, show_profile_proposal
+from .profile_authorization import authorize_profile_request
 from .profile_prepare import prepare_profile_request
 from .renderer import render_dashboard
 from .receipt_show import receipt_summary_for_ref
@@ -984,6 +986,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Write only the generated request JSON to this explicit path",
     )
+    p_profile_prepare.add_argument(
+        "--network-access",
+        choices=["forbidden", "requested"],
+        default="forbidden",
+    )
+    p_profile_prepare.add_argument("--provider", action="append", default=[])
+    p_profile_prepare.add_argument("--paid-service", action="store_true")
+    p_profile_prepare.add_argument("--monetary-budget", type=float, default=None)
+    p_profile_prepare.add_argument("--currency", default=None)
+    p_profile_prepare.add_argument(
+        "--repository-content-policy",
+        choices=["none", "selected_snippets", "full_allowed"],
+        default="selected_snippets",
+    )
     p_profile_ingest = profile_sub.add_parser(
         "ingest",
         help=(
@@ -1017,6 +1033,33 @@ def build_parser() -> argparse.ArgumentParser:
         "--summary",
         help="Human summary required with --accept-failed",
     )
+    p_profile_authorize = profile_sub.add_parser(
+        "authorize",
+        help="Record bounded human authorization for one candidate request; never run a provider",
+    )
+    p_profile_authorize.add_argument("--request", required=True, dest="request_file")
+    p_profile_authorize.add_argument("--output", required=True)
+    p_profile_authorize.add_argument("--actor", required=True)
+    p_profile_authorize.add_argument("--actor-kind", default=None)
+    p_profile_authorize.add_argument("--recorded-by", default=None)
+    p_profile_authorize.add_argument("--recorder-kind", default=None)
+    p_profile_authorize.add_argument(
+        "--source-kind",
+        required=True,
+        choices=["cli", "conversation", "cockpit", "api"],
+    )
+    p_profile_authorize.add_argument("--source-ref", required=True)
+    p_profile_authorize.add_argument("--reason", required=True)
+    p_profile_authorize.add_argument("--max-cost", type=float, default=None)
+    p_profile_authorize.add_argument("--currency", default=None)
+    p_profile_authorize.add_argument("--provider", action="append", default=[])
+    p_profile_authorize.add_argument(
+        "--data-class",
+        action="append",
+        default=[],
+        choices=["metadata", "selected_snippets", "full_repository"],
+    )
+    p_profile_authorize.add_argument("--expires-at", default=None)
 
     p_contract = sub.add_parser("contract", help="Validate versioned artifact contracts")
     contract_sub = p_contract.add_subparsers(dest="contract_command", required=True)
@@ -1507,6 +1550,33 @@ def build_parser() -> argparse.ArgumentParser:
     p_decision_list.add_argument("--status", choices=["open", "resolved", "waived"], default=None)
     p_decision_read = decision_sub.add_parser("read")
     p_decision_read.add_argument("decision_id")
+    p_decision_proposal = decision_sub.add_parser(
+        "proposal",
+        help="Inspect or human-select an immutable Profile Decision proposal",
+    )
+    decision_proposal_sub = p_decision_proposal.add_subparsers(
+        dest="decision_proposal_command",
+        required=True,
+    )
+    p_decision_proposal_show = decision_proposal_sub.add_parser("show")
+    p_decision_proposal_show.add_argument("decision_id")
+    p_decision_proposal_select = decision_proposal_sub.add_parser("select")
+    p_decision_proposal_select.add_argument("decision_id")
+    selection = p_decision_proposal_select.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--candidate", dest="candidate_id")
+    selection.add_argument("--decline", action="store_true")
+    p_decision_proposal_select.add_argument("--actor", required=True)
+    p_decision_proposal_select.add_argument("--actor-kind", default=None)
+    p_decision_proposal_select.add_argument("--recorded-by", default=None)
+    p_decision_proposal_select.add_argument("--recorder-kind", default=None)
+    p_decision_proposal_select.add_argument(
+        "--source-kind",
+        required=True,
+        choices=["cli", "conversation", "cockpit", "api"],
+    )
+    p_decision_proposal_select.add_argument("--source-ref", required=True)
+    p_decision_proposal_select.add_argument("--reason", required=True)
+    p_decision_proposal_select.add_argument("--override-reason", default=None)
 
     p_escalation = sub.add_parser("escalation", help="Manage human escalations")
     escalation_sub = p_escalation.add_subparsers(dest="escalation_command", required=True)
@@ -2085,6 +2155,12 @@ def main(argv: list[str] | None = None) -> int:
                 target_ref=args.target_ref,
                 brief_id=args.brief_id,
                 output=args.output,
+                network_access=args.network_access,
+                paid_service_requested=args.paid_service,
+                allowed_providers=args.provider,
+                repository_content_policy=args.repository_content_policy,
+                monetary_budget=args.monetary_budget,
+                currency=args.currency,
             )
             if json_output:
                 _print_json(result)
@@ -2105,6 +2181,30 @@ def main(argv: list[str] | None = None) -> int:
                 bundle_file=args.bundle_file,
                 accept_failed=args.accept_failed,
                 summary=args.summary,
+            )
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result))
+            return 0
+
+        if args.command == "profile" and args.profile_command == "authorize":
+            result = authorize_profile_request(
+                paths,
+                request_file=args.request_file,
+                output=args.output,
+                actor=args.actor,
+                actor_kind=args.actor_kind,
+                recorded_by=args.recorded_by,
+                recorder_kind=args.recorder_kind,
+                source_kind=args.source_kind,
+                source_ref=args.source_ref,
+                reason=args.reason,
+                max_cost=args.max_cost,
+                currency=args.currency,
+                allowed_providers=args.provider,
+                data_classes=args.data_class,
+                expires_at=args.expires_at,
             )
             if json_output:
                 _print_json(result)
@@ -3700,6 +3800,30 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json({"ok": True, "decision": decision})
             else:
                 print(to_pretty_json(decision))
+            return 0
+
+        if args.command == "decision" and args.decision_command == "proposal":
+            if args.decision_proposal_command == "show":
+                result = show_profile_proposal(paths, args.decision_id)
+            else:
+                result = select_profile_proposal(
+                    paths,
+                    decision_id=args.decision_id,
+                    candidate_id=args.candidate_id,
+                    decline=args.decline,
+                    actor=args.actor,
+                    actor_kind=args.actor_kind,
+                    recorded_by=args.recorded_by,
+                    recorder_kind=args.recorder_kind,
+                    source_kind=args.source_kind,
+                    source_ref=args.source_ref,
+                    reason=args.reason,
+                    override_reason=args.override_reason,
+                )
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result))
             return 0
 
         if args.command == "escalation" and args.escalation_command == "open":

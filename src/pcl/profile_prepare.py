@@ -54,8 +54,23 @@ def prepare_profile_request(
     brief_id: str | None = None,
     output: str | None = None,
     now: str | None = None,
+    network_access: str = "forbidden",
+    paid_service_requested: bool = False,
+    allowed_providers: list[str] | None = None,
+    repository_content_policy: str = "selected_snippets",
+    monetary_budget: float | None = None,
+    currency: str | None = None,
 ) -> dict[str, Any]:
     require_initialized(paths)
+    providers = sorted(set(allowed_providers or []))
+    _validate_requested_data_policy(
+        network_access=network_access,
+        paid_service_requested=paid_service_requested,
+        allowed_providers=providers,
+        repository_content_policy=repository_content_policy,
+        monetary_budget=monetary_budget,
+        currency=currency,
+    )
     target = parse_target_ref(target_ref)
     if target["type"] != "task":
         raise _error(
@@ -172,14 +187,14 @@ def prepare_profile_request(
                 "max_human_decisions"
             ],
             "max_output_bytes": 2_000_000,
-            "monetary_budget": None,
-            "currency": None,
+            "monetary_budget": monetary_budget,
+            "currency": currency,
         },
         "data_policy": {
-            "network_access": "forbidden",
-            "paid_service_requested": False,
-            "allowed_providers": [],
-            "repository_content_policy": "selected_snippets",
+            "network_access": network_access,
+            "paid_service_requested": paid_service_requested,
+            "allowed_providers": providers,
+            "repository_content_policy": repository_content_policy,
             "secrets_policy": "never_send",
             "sensitive_paths": [".env", ".env.*", "secrets/"],
         },
@@ -217,7 +232,11 @@ def prepare_profile_request(
         "changed": False,
         "read_only": True,
         "runner_executed": False,
-        "authorization_status": "not_required_offline",
+        "authorization_status": (
+            "candidate_requires_human"
+            if network_access == "requested" or paid_service_requested
+            else "not_required_offline"
+        ),
         "output_path": output_path,
         "request": request,
     }
@@ -544,6 +563,49 @@ def _linked_evidence(
             }
         )
     return result
+
+
+def _validate_requested_data_policy(
+    *,
+    network_access: str,
+    paid_service_requested: bool,
+    allowed_providers: list[str],
+    repository_content_policy: str,
+    monetary_budget: float | None,
+    currency: str | None,
+) -> None:
+    if network_access not in {"forbidden", "requested"}:
+        raise _error(
+            "profile_data_policy_invalid",
+            "network_access must be forbidden or requested.",
+        )
+    if repository_content_policy not in {"none", "selected_snippets", "full_allowed"}:
+        raise _error(
+            "profile_data_policy_invalid",
+            "repository_content_policy is invalid.",
+        )
+    if network_access == "forbidden" and (allowed_providers or paid_service_requested):
+        raise _error(
+            "profile_data_policy_invalid",
+            "Providers or paid service require requested network access.",
+        )
+    if network_access == "requested" and not allowed_providers:
+        raise _error(
+            "profile_data_policy_invalid",
+            "Requested network access requires at least one allowed provider.",
+        )
+    if paid_service_requested and (
+        monetary_budget is None or not currency or len(currency) != 3
+    ):
+        raise _error(
+            "profile_data_policy_invalid",
+            "Paid service requests require monetary budget and three-letter currency.",
+        )
+    if not paid_service_requested and (monetary_budget is not None or currency is not None):
+        raise _error(
+            "profile_data_policy_invalid",
+            "Monetary budget/currency require --paid-service.",
+        )
 
 
 def _project_identity(paths: ProjectPaths) -> dict[str, str]:

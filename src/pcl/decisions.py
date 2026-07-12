@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from .db import connect, connect_mutation
-from .errors import InvalidInputError
+from .errors import EXIT_USAGE, InvalidInputError, PclError
 from .events import append_event
 from .guards import require_initialized
 from .ids import next_prefixed_id
@@ -13,6 +13,10 @@ from .timeutil import utc_now_iso
 
 
 DECISION_STATUSES = {"open", "resolved", "waived"}
+
+
+class DecisionProposalCommandRequired(PclError):
+    pass
 
 
 def open_decision(
@@ -90,6 +94,7 @@ def resolve_decision(
     conn = connect_mutation(paths)
     try:
         decision = _get_decision(conn, decision_id)
+        _guard_profile_proposal_decision(conn, decision_id)
         if decision["status"] != "open":
             raise InvalidInputError(
                 f"Decision {decision_id} is {decision['status']} and cannot transition to resolved.",
@@ -143,6 +148,7 @@ def waive_decision(paths: ProjectPaths, *, decision_id: str, reason: str) -> dic
     conn = connect_mutation(paths)
     try:
         decision = _get_decision(conn, decision_id)
+        _guard_profile_proposal_decision(conn, decision_id)
         if decision["status"] != "open":
             raise InvalidInputError(
                 f"Decision {decision_id} is {decision['status']} and cannot transition to waived.",
@@ -238,6 +244,31 @@ def _get_decision(conn, decision_id: str):
             details={"decision_id": decision_id},
         )
     return row
+
+
+def _guard_profile_proposal_decision(conn, decision_id: str) -> None:
+    linked = conn.execute(
+        """
+        SELECT 1 FROM events
+        WHERE event_type = 'profile_decision_proposed'
+          AND entity_type = 'decision' AND entity_id = ?
+        LIMIT 1
+        """,
+        (decision_id,),
+    ).fetchone()
+    if linked is not None:
+        raise DecisionProposalCommandRequired(
+            message=(
+                f"Decision {decision_id} is bound to an immutable Profile proposal; "
+                "use pcl decision proposal select."
+            ),
+            code="decision_proposal_command_required",
+            exit_code=EXIT_USAGE,
+            details={
+                "decision_id": decision_id,
+                "suggested_command": f"pcl decision proposal show {decision_id} --json",
+            },
+        )
 
 
 def _require_open_escalation(conn, escalation_id: str) -> None:

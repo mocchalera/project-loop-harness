@@ -50,7 +50,7 @@ def audit_check(paths: ProjectPaths) -> dict[str, Any]:
     _check_db_sequences(db_events, anomalies)
     _check_outbox(db_events, outbox_rows, anomalies)
     _check_jsonl(db_events, outbox_rows, jsonl, anomalies)
-    evidence_counts = _check_evidence(paths, evidence_rows, anomalies)
+    evidence_counts = _check_evidence(paths, evidence_rows, db_events, anomalies)
 
     classification_counts = {key: len(value) for key, value in anomalies.items()}
     issue_count = sum(classification_counts.values())
@@ -603,6 +603,7 @@ def _check_jsonl(
 def _check_evidence(
     paths: ProjectPaths,
     evidence_rows: list[dict[str, Any]],
+    db_events: list[dict[str, Any]],
     anomalies: dict[str, list[dict[str, Any]]],
 ) -> dict[str, int]:
     referenced: set[Path] = set()
@@ -671,6 +672,35 @@ def _check_evidence(
                     "report_only",
                     evidence_id=row["id"],
                     finding=finding,
+                )
+        elif row["type"] == "profile_run_candidate":
+            event = next(
+                (
+                    item
+                    for item in db_events
+                    if item["event_type"] == "profile_run_authorized"
+                    and item["entity_type"] == "evidence"
+                    and item["entity_id"] == row["id"]
+                ),
+                None,
+            )
+            expected_hash = (
+                event["payload"].get("candidate_sha256")
+                if event is not None and isinstance(event.get("payload"), dict)
+                else None
+            )
+            actual_hash = _sha256_file(artifact)
+            if event is None or expected_hash != actual_hash:
+                mismatch_count += 1
+                _add_anomaly(
+                    anomalies,
+                    "human_review",
+                    "evidence_metadata_file_mismatch",
+                    f"Profile candidate Evidence {row['id']} differs from its authorization event.",
+                    "report_only",
+                    evidence_id=row["id"],
+                    expected_sha256=expected_hash,
+                    actual_sha256=actual_hash,
                 )
 
     orphan_temp_count = 0

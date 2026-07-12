@@ -75,7 +75,7 @@ implement from the spec file, not from prompt summaries.
 | 0156 | Deterministic read-only Profile request preparation | v0.5.0 Council Profile | P0 | done |
 | 0157 | Profile bundle validation and dry-run planner | v0.5.0 Council Profile | P0 | done |
 | 0158 | Atomic Profile bundle Evidence ingest | v0.5.0 Council Profile | P0 | done |
-| 0159 | Decision proposal selection and paid/network authorization | v0.5.0 Council Profile | P0 | planned |
+| 0159 | Decision proposal selection and paid/network authorization | v0.5.0 Council Profile | P0 | done |
 | 0160 | Council Discovery offline fixture E2E | v0.5.0 Council Profile | P1 | planned |
 | 0161 | Council dogfood, Skill parity, and operator docs | v0.5.0 Council Profile | P1 | planned |
 | 0162 | Council evaluation baseline and adoption gate | v0.5.0 Council Profile | P1 | planned |

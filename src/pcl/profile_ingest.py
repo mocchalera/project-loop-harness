@@ -24,6 +24,7 @@ from .errors import PclError
 from .guards import require_initialized
 from .paths import ProjectPaths
 from .profile_prepare import _project_identity
+from .profile_authorization import authorization_findings
 from .profiles import show_profile
 
 
@@ -288,6 +289,14 @@ def _validate_request_binding(
             "$.authorization",
             "Network or paid output cannot be accepted without human authorization.",
             "Authorize the exact request basis before running a provider.",
+        )
+    for authorization_finding in authorization_findings(paths, request):
+        _finding(
+            findings,
+            authorization_finding["code"],
+            "$.authorization",
+            authorization_finding["message"],
+            "Re-authorize the current candidate request with valid human provenance.",
         )
 
     work_brief = request.get("work_brief")

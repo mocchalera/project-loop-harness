@@ -17,8 +17,9 @@ def append_event(
     entity_type: str,
     entity_id: str | None,
     payload: dict[str, Any],
+    event_id: str | None = None,
 ) -> str:
-    event_id = f"EV-{uuid.uuid4().hex[:12].upper()}"
+    event_id = event_id or f"EV-{uuid.uuid4().hex[:12].upper()}"
     created_at = utc_now_iso()
     del events_path  # retained in the public signature for caller compatibility
     sequence = int(conn.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM events").fetchone()[0])

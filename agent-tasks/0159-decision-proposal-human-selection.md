@@ -1,6 +1,6 @@
 # 0159: Decision proposal selection and paid/network authorization
 
-- **Status:** Planned
+- **Status:** Done
 - **Milestone:** v0.5.0 Council Profile
 - **Priority:** P0
 - **Size:** L
@@ -52,3 +52,21 @@ human selection to immutable proposal bytes and factual provenance.
 6. Legacy resolve/waive cannot close a proposal-linked Decision and produces
    zero mutation; ordinary Decision tests remain unchanged.
 7. Dashboard/report changes, if any, are additive and factual.
+
+## Implementation evidence
+
+- `needs_human` ingest creates 1..3 existing Decisions, dedicated Evidence
+  links, immutable proposal-binding events, and exact dry-run-matching counts
+  in the same transaction as bundle Evidence.
+- `pcl decision proposal show/select` revalidates stored bytes, requires human
+  provenance, supports explicit decline, requires override reasons, and is
+  replay-idempotent. Legacy resolve/waive fail closed only for linked proposal
+  Decisions.
+- `pcl profile prepare` can emit a network/paid candidate without authorization;
+  `pcl profile authorize` copies that exact candidate as Evidence, embeds a
+  human `approval-provenance/v1`, and reuses request ID/basis.
+- Authorization validates provider/data/cost/currency/expiry scope, current
+  semantic basis, immutable Evidence, event receipt, and revocation state.
+- No provider is invoked; schema remains 8 and dependencies remain unchanged.
+- Verification: targeted Profile/Decision/outbox/distribution suite 81 passed;
+  full suite 928 passed, 1 skipped.

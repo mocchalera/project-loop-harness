@@ -1236,7 +1236,15 @@ def _open_decision_next_action(paths: ProjectPaths) -> dict | None:
     try:
         row = conn.execute(
             """
-            SELECT id, status, question, recommendation, blocks_json, created_at
+            SELECT decisions.id, decisions.status, decisions.question,
+                   decisions.recommendation, decisions.blocks_json,
+                   decisions.created_at,
+                   EXISTS(
+                     SELECT 1 FROM events
+                     WHERE events.event_type = 'profile_decision_proposed'
+                       AND events.entity_type = 'decision'
+                       AND events.entity_id = decisions.id
+                   ) AS profile_proposal
             FROM decisions
             WHERE status = 'open'
             ORDER BY created_at DESC, id DESC
@@ -1246,11 +1254,17 @@ def _open_decision_next_action(paths: ProjectPaths) -> dict | None:
         if row is None:
             return None
         decision = dict(row)
+        profile_proposal = bool(decision.pop("profile_proposal"))
         return build_next_action(
             action_type="resolve_decision",
             command=(
-                f"pcl decision resolve {decision['id']} "
-                "--selected-option 'Record the selected option' --reason 'Explain the human decision'"
+                f"pcl decision proposal show {decision['id']} --json"
+                if profile_proposal
+                else (
+                    f"pcl decision resolve {decision['id']} "
+                    "--selected-option 'Record the selected option' "
+                    "--reason 'Explain the human decision'"
+                )
             ),
             reason="A human decision is open and blocks safe continuation.",
             target=decision,
@@ -1258,7 +1272,11 @@ def _open_decision_next_action(paths: ProjectPaths) -> dict | None:
             blocking=True,
             requires_human=True,
             safe_to_run=False,
-            expected_after="The decision is resolved or waived.",
+            expected_after=(
+                "The immutable proposal is shown before a human selects or declines it."
+                if profile_proposal
+                else "The decision is resolved or waived."
+            ),
         )
     finally:
         conn.close()

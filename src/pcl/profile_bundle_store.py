@@ -48,16 +48,6 @@ def ingest_profile_bundle(
         summary=cleaned_summary,
     )
     status = str(plan["bundle"]["status"])
-    if status == "needs_human":
-        raise ProfileIngestError(
-            message="needs_human bundle ingest requires task 0159 Decision support.",
-            code="profile_decision_ingest_not_available",
-            exit_code=EXIT_USAGE,
-            details={
-                "status": status,
-                "repair": "Use dry-run until Decision proposal ingest is available.",
-            },
-        )
     if status == "failed" and plan["requires_accept_failed"]:
         raise ProfileIngestError(
             message="Failed bundles require --accept-failed and a non-empty --summary.",
@@ -146,6 +136,7 @@ def ingest_profile_bundle(
                 exit_code=EXIT_USAGE,
                 details={"bundle_id": bundle["bundle_id"]},
             )
+        proposals = _staged_proposals(bundle, payload_dir)
         crash_if_requested("profile_ingest_before_rename")
 
         conn = connect_mutation(paths)
@@ -163,6 +154,33 @@ def ingest_profile_bundle(
             )
         evidence_id = next_prefixed_id(conn, "evidence", "E")
         now = utc_now_iso()
+        decision_bindings: list[dict[str, Any]] = []
+        for item in proposals:
+            proposal = item["proposal"]
+            decision_id = next_prefixed_id(conn, "decisions", "DEC")
+            recommendation = (
+                f"{proposal['recommended_candidate_id']}: "
+                f"{proposal['recommendation_reason']}"
+            )
+            blocks_json = json.dumps(
+                [request["target"], {"type": "evidence", "id": evidence_id}],
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            conn.execute(
+                """
+                INSERT INTO decisions(id, status, question, recommendation, blocks_json, created_at)
+                VALUES (?, 'open', ?, ?, ?, ?)
+                """,
+                (decision_id, proposal["question"], recommendation, blocks_json, now),
+            )
+            decision_bindings.append(
+                {
+                    "decision_id": decision_id,
+                    "artifact_id": item["artifact"]["artifact_id"],
+                    "proposal_id": proposal["proposal_id"],
+                }
+            )
         evidence_manifest = {
             "contract_version": PROFILE_OUTPUT_EVIDENCE_CONTRACT_VERSION,
             "evidence_id": evidence_id,
@@ -186,6 +204,7 @@ def ingest_profile_bundle(
                 "stored_manifest_size_bytes": bundle_copy.stat().st_size,
             },
             "members": members,
+            "decisions": decision_bindings,
             "failed_acceptance": (
                 {"accepted": True, "summary": cleaned_summary}
                 if status == "failed"
@@ -225,6 +244,48 @@ def ingest_profile_bundle(
             link_role="supporting",
             created_at=now,
         )
+        created_decisions: list[dict[str, Any]] = []
+        for item, binding in zip(proposals, decision_bindings, strict=True):
+            proposal = item["proposal"]
+            artifact = item["artifact"]
+            decision_id = str(binding["decision_id"])
+            insert_evidence_link(
+                conn,
+                evidence_id=evidence_id,
+                target_type="decision",
+                target_id=decision_id,
+                link_role="decision_proposal_source",
+                created_at=now,
+            )
+            proposal_payload = {
+                "contract_version": "profile-decision-proposed/v1",
+                "decision_id": decision_id,
+                "target": request["target"],
+                "bundle_evidence_id": evidence_id,
+                "bundle_id": bundle["bundle_id"],
+                "bundle_digest": bundle["bundle_digest"]["value"],
+                "artifact_id": artifact["artifact_id"],
+                "artifact_path": artifact["path"],
+                "artifact_sha256": artifact["sha256"],
+                "proposal_id": proposal["proposal_id"],
+                "candidate_ids": [candidate["candidate_id"] for candidate in proposal["candidates"]],
+                "recommended_candidate_id": proposal["recommended_candidate_id"],
+            }
+            proposal_event_id = append_event(
+                conn=conn,
+                events_path=paths.events_path,
+                event_type="profile_decision_proposed",
+                entity_type="decision",
+                entity_id=decision_id,
+                payload=proposal_payload,
+            )
+            created_decisions.append(
+                {
+                    **binding,
+                    "event_id": proposal_event_id,
+                    "status": "open",
+                }
+            )
         event_payload = {
             "contract_version": PROFILE_OUTPUT_EVIDENCE_CONTRACT_VERSION,
             "evidence_id": evidence_id,
@@ -238,6 +299,7 @@ def ingest_profile_bundle(
             "bundle_status": status,
             "artifact_count": len(members),
             "failed_acceptance_summary": cleaned_summary if status == "failed" else None,
+            "decision_ids": [item["decision_id"] for item in created_decisions],
         }
         event_id = append_event(
             conn=conn,
@@ -262,6 +324,7 @@ def ingest_profile_bundle(
             "request": plan["request"],
             "bundle": plan["bundle"],
             "mutation": plan["mutation"],
+            "decisions": created_decisions,
         }
     except BaseException as exc:
         committed = bool(
@@ -341,8 +404,31 @@ def _find_replay_with_conn(
             },
             "event_id": None if event is None else event["id"],
             "bundle": stored,
+            "decisions": manifest.get("decisions", []),
         }
     return None
+
+
+def _staged_proposals(
+    bundle: dict[str, Any],
+    payload_dir: Path,
+) -> list[dict[str, Any]]:
+    if bundle.get("status") != "needs_human":
+        return []
+    by_id = {str(item["artifact_id"]): item for item in bundle["artifacts"]}
+    result: list[dict[str, Any]] = []
+    for artifact_id in bundle["decision_proposal_artifact_ids"]:
+        artifact = by_id[str(artifact_id)]
+        proposal = load_strict_json(payload_dir / str(artifact["path"]))
+        if not isinstance(proposal, dict):
+            raise ProfileIngestError(
+                message="Decision proposal artifact is not an object.",
+                code="profile_decision_proposal_invalid",
+                exit_code=EXIT_USAGE,
+                details={"artifact_id": artifact_id},
+            )
+        result.append({"artifact": artifact, "proposal": proposal})
+    return result
 
 
 def _copy_regular(source: Path, destination: Path) -> None:

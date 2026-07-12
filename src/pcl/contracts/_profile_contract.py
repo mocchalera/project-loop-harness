@@ -38,12 +38,17 @@ def schema_resource(resource: str) -> dict[str, Any]:
 
 
 def load_strict_json(path: str | Path) -> Any:
-    with Path(path).open(encoding="utf-8") as handle:
-        return json.load(
-            handle,
-            object_pairs_hook=_reject_duplicate_keys,
-            parse_constant=_reject_non_finite,
-        )
+    return loads_strict_json(Path(path).read_bytes())
+
+
+def loads_strict_json(value: str | bytes) -> Any:
+    if isinstance(value, bytes):
+        value = value.decode("utf-8")
+    return json.loads(
+        value,
+        object_pairs_hook=_reject_duplicate_keys,
+        parse_constant=_reject_non_finite,
+    )
 
 
 def canonical_json(value: Mapping[str, Any]) -> str:
