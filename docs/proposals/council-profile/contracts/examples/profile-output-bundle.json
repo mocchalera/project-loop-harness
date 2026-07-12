@@ -1,0 +1,68 @@
+{
+  "contract_version": "profile-output-bundle/v1",
+  "bundle_id": "POB-20260711T031130Z-acde1234",
+  "generated_at": "2026-07-11T03:11:30Z",
+  "request_ref": {
+    "request_id": "PRR-20260711T030000Z-1a2b3c4d",
+    "request_digest": "a91916258b8bcd29ae5e0a2ddef3b9afdc6b94e0e9c4a90c744abc673e8da029"
+  },
+  "profile": {
+    "runner_profile_id": "council.discovery",
+    "profile_version": "0.1.0",
+    "manifest_sha256": "7d0adc3c93decd08114737ba99a39d9209cc111a792bd9a82e1ccb3a06e7b9ba"
+  },
+  "status": "needs_human",
+  "summary": "認証境界の主要リスクを整理し、バックフィル不能セッションの扱いについて1件の人間判断を要求する。",
+  "artifacts": [
+    {
+      "artifact_id": "A-001",
+      "role": "run_manifest",
+      "contract_version": "council-run/v0",
+      "path": "council-run.json",
+      "media_type": "application/json",
+      "sha256": "c4c48939e4349a4cbf7a7a915b85b9ec1faad26d2c98ea1c94e75c0fe4a9f427",
+      "size_bytes": 3806
+    },
+    {
+      "artifact_id": "A-002",
+      "role": "claims",
+      "contract_version": "claim-set/v0",
+      "path": "claim-set.json",
+      "media_type": "application/json",
+      "sha256": "68a844338c71e281e359dd559d64bbbc8a55d58999c2371bfa46adf602f6df8f",
+      "size_bytes": 1872
+    },
+    {
+      "artifact_id": "A-003",
+      "role": "verification_plan",
+      "contract_version": "verification-plan/v0",
+      "path": "verification-plan.json",
+      "media_type": "application/json",
+      "sha256": "1b65c9b3669aa25e1c13232e701cd17274861e3969fa38e90446c19a178c5477",
+      "size_bytes": 2116
+    },
+    {
+      "artifact_id": "A-004",
+      "role": "decision_proposal",
+      "contract_version": "decision-proposal/v0",
+      "path": "decision-proposal.json",
+      "media_type": "application/json",
+      "sha256": "c588fe55bc63785a0eb0e978d957ed0a8c62e03be1c9fdc08938108d4c9cb0bb",
+      "size_bytes": 3024
+    }
+  ],
+  "decision_proposal_artifact_ids": [
+    "A-004"
+  ],
+  "next_action": {
+    "kind": "human_decision",
+    "requires_human": true,
+    "safe_to_run": false,
+    "summary": "DP-0001の候補を人間が選択するまで実装契約へ進めない。"
+  },
+  "bundle_digest": {
+    "algorithm": "sha256",
+    "canonicalization": "pcl-canonical-json/v1-excluding-bundle_digest",
+    "value": "7c70fac3fe4b3d3bdb63ee535753778a8a64b0920dc3c3517d1ad2c6691a082d"
+  }
+}

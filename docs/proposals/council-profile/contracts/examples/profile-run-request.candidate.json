@@ -1,0 +1,128 @@
+{
+  "contract_version": "profile-run-request/v1",
+  "request_id": "PRR-20260711T030000Z-1a2b3c4d",
+  "generated_at": "2026-07-11T03:00:00Z",
+  "generator": {
+    "name": "pcl",
+    "version": "0.4.3"
+  },
+  "project": {
+    "root_basename": "example-app",
+    "root_fingerprint": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "profile": {
+    "runner_profile_id": "council.discovery",
+    "profile_version": "0.1.0",
+    "manifest_sha256": "7d0adc3c93decd08114737ba99a39d9209cc111a792bd9a82e1ccb3a06e7b9ba"
+  },
+  "target": {
+    "type": "task",
+    "id": "T-0001"
+  },
+  "work_brief": {
+    "evidence_id": "E-0007",
+    "artifact_sha256": "2222222222222222222222222222222222222222222222222222222222222222",
+    "review_state": "reviewed",
+    "approval_state": "unapproved",
+    "content": {
+      "contract_version": "work-brief/v1",
+      "brief_id": "WB-0007",
+      "target": {
+        "type": "task",
+        "id": "T-0001"
+      },
+      "intent": "認証セッション更新処理をマルチテナント対応にする",
+      "acceptance_criteria": [
+        "テナント境界を越えたセッション参照が起きない",
+        "既存の単一テナント利用者に後方互換性がある"
+      ],
+      "constraints": [
+        "PLH Coreには外部モデルSDKを追加しない"
+      ],
+      "non_goals": [
+        "本番デプロイの自動化"
+      ],
+      "assumptions": [
+        "現在のセッションテーブルにtenant_idを追加できる"
+      ]
+    }
+  },
+  "route": {
+    "route_profile": "discover",
+    "recommendation_evidence_id": "E-0008",
+    "recommendation_sha256": "3333333333333333333333333333333333333333333333333333333333333333",
+    "override": null
+  },
+  "resolved_policy": {
+    "planning_depth": "full",
+    "verification_depth": "independent",
+    "execution_chunk_size": "small",
+    "checkpoint_frequency": "high",
+    "context_budget_bytes": 64000,
+    "tool_call_budget": 80,
+    "wall_time_budget_seconds": 1800,
+    "strong_model_escalations": 2
+  },
+  "context": {
+    "contract_version": "context-pack/v1",
+    "estimated_token_count": 12500,
+    "included_sections": [
+      "target",
+      "work_brief",
+      "linked_evidence",
+      "recent_events",
+      "code_context"
+    ],
+    "omitted_sections": [
+      {
+        "section": "full_event_history",
+        "reason": "context budget"
+      }
+    ],
+    "markdown": "# Context Pack\n\nTarget: T-0001\n",
+    "receipt_age": 120,
+    "age_warning": null,
+    "role_profile": "default"
+  },
+  "linked_evidence": [
+    {
+      "evidence_id": "E-0004",
+      "kind": "context_receipt",
+      "artifact_sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+      "summary": "対象差分のコードコンテキスト"
+    }
+  ],
+  "limits": {
+    "max_participants": 4,
+    "max_human_decisions": 3,
+    "max_output_bytes": 2000000,
+    "monetary_budget": 25.0,
+    "currency": "USD"
+  },
+  "data_policy": {
+    "network_access": "requested",
+    "paid_service_requested": true,
+    "allowed_providers": [
+      "provider-a",
+      "provider-b"
+    ],
+    "repository_content_policy": "selected_snippets",
+    "secrets_policy": "never_send",
+    "sensitive_paths": [
+      ".env",
+      "secrets/",
+      "fixtures/customer-data/"
+    ]
+  },
+  "request_basis_digest": {
+    "algorithm": "sha256",
+    "canonicalization": "pcl-canonical-json/v1-request-basis",
+    "value": "86eb37ac95aa0af080db7040d6fc1f32c8ad7d23d32e8951a3b14f8b1a99a24e"
+  },
+  "authorization": null,
+  "request_digest": {
+    "algorithm": "sha256",
+    "canonicalization": "pcl-canonical-json/v1-excluding-request_digest",
+    "value": "0b6075a7fe31b85d6f9bf278e2ec545aec1a48fa28c9253d568f96cffb0d7c22"
+  }
+}

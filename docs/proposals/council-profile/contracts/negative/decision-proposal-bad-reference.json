@@ -64,7 +64,7 @@
       ]
     }
   ],
-  "recommended_candidate_id": "OPT-A",
+  "recommended_candidate_id": "OPT-Z",
   "recommendation_reason": "認証境界では可用性よりデータ分離を優先し、複雑な暫定経路を残さない方が残存リスクを説明しやすい。",
   "unanswered_behavior": "block",
   "unresolved_assumptions": [

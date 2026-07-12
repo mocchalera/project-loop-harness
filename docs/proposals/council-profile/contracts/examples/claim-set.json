@@ -1,0 +1,57 @@
+{
+  "contract_version": "claim-set/v0",
+  "claim_set_id": "CS-0001",
+  "run_ref": "CR-20260711T030100Z-9f8e7d6c",
+  "claims": [
+    {
+      "claim_id": "C-001",
+      "kind": "fact",
+      "statement": "現在のセッション更新経路はtenant_idを明示的に要求しない。",
+      "severity": "high",
+      "confidence_band": "high",
+      "status": "supported",
+      "source_participant_ids": [
+        "P-03"
+      ],
+      "evidence_refs": [
+        {
+          "kind": "pcl_evidence",
+          "evidence_id": "E-0004",
+          "sha256": "4444444444444444444444444444444444444444444444444444444444444444",
+          "evidence_class": "observational_artifact"
+        }
+      ],
+      "conditions": [
+        "E-0004のコードコンテキストが現行HEADに対してfreshである"
+      ],
+      "impact": "テナント境界を追加する際、呼び出し側の更新漏れが情報分離違反になる。",
+      "reversibility": "hard",
+      "verification_item_refs": [
+        "VP-001"
+      ],
+      "challenge_summary": null
+    },
+    {
+      "claim_id": "C-002",
+      "kind": "assumption",
+      "statement": "既存データへtenant_idを決定的にバックフィルできる。",
+      "severity": "critical",
+      "confidence_band": "medium",
+      "status": "requires_human",
+      "source_participant_ids": [
+        "P-01",
+        "P-02"
+      ],
+      "evidence_refs": [],
+      "conditions": [
+        "全既存セッションが一意のテナント所有者へ関連付けられる"
+      ],
+      "impact": "成立しない場合は移行方式とロールバック設計が変わる。",
+      "reversibility": "hard",
+      "verification_item_refs": [
+        "VP-002"
+      ],
+      "challenge_summary": "反証役は孤児セッションと共有アカウントの存在を未確認と指摘した。"
+    }
+  ]
+}

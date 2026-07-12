@@ -1,0 +1,56 @@
+{
+  "contract_version": "verification-plan/v0",
+  "verification_plan_id": "VPL-0001",
+  "run_ref": "CR-20260711T030100Z-9f8e7d6c",
+  "execution_policy": "proposal_only_never_auto_execute",
+  "items": [
+    {
+      "verification_item_id": "VP-001",
+      "claim_refs": [
+        "C-001"
+      ],
+      "method": "repository_inspection",
+      "description": "セッション更新関数と全呼び出し元を静的に列挙し、tenant境界の現在地を確認する。",
+      "proposed_commands": [
+        "pcl code search \"refresh_session\" --json"
+      ],
+      "preconditions": [
+        "コードインデックスが現行HEADに対してfreshである"
+      ],
+      "requires_human_approval": false,
+      "safety_class": "read_only",
+      "expected_artifacts": [
+        "検索結果JSON",
+        "対象関数一覧"
+      ],
+      "pass_condition": "全呼び出し経路とtenant情報の伝播有無が列挙される。",
+      "failure_meaning": "コードコンテキスト不足のため設計を確定できない。",
+      "estimated_effort": "small",
+      "status": "proposed"
+    },
+    {
+      "verification_item_id": "VP-002",
+      "claim_refs": [
+        "C-002"
+      ],
+      "method": "benchmark",
+      "description": "本番データへ触れず、匿名化スナップショットまたは統計値でバックフィル不能行を数える。",
+      "proposed_commands": [
+        "python scripts/check_session_tenant_backfill.py --input <approved-fixture> --json"
+      ],
+      "preconditions": [
+        "承認済み匿名化fixtureがある",
+        "スクリプトはread-onlyである"
+      ],
+      "requires_human_approval": true,
+      "safety_class": "read_only",
+      "expected_artifacts": [
+        "バックフィル可能件数と不能理由のJSON"
+      ],
+      "pass_condition": "不能行が0件、または全不能行に明示的な移行方針がある。",
+      "failure_meaning": "一括移行案を採用せず、段階移行または人間判断が必要。",
+      "estimated_effort": "medium",
+      "status": "proposed"
+    }
+  ]
+}

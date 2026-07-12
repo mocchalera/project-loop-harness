@@ -22,6 +22,11 @@ registry for the built-in `council.discovery` manifest.
   public JSON/help/errors; snapshot help text that explains the distinction.
 - Reject unknown keys/versions, duplicate IDs, invalid capabilities, missing
   package data, and executable hooks.
+- Enforce mediated approval recording: an agent/system recorder of a human
+  action requires conversation/Cockpit source provenance and a non-empty
+  source ref.
+- Enforce the frozen authorization data-class mapping and provider/cost scope;
+  JSON Schema shape conformance alone is insufficient.
 
 ## Invariants
 

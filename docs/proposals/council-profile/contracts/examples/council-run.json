@@ -1,0 +1,124 @@
+{
+  "contract_version": "council-run/v0",
+  "run_id": "CR-20260711T030100Z-9f8e7d6c",
+  "request_ref": {
+    "request_id": "PRR-20260711T030000Z-1a2b3c4d",
+    "request_digest": "a91916258b8bcd29ae5e0a2ddef3b9afdc6b94e0e9c4a90c744abc673e8da029"
+  },
+  "orchestrator": {
+    "name": "plh-council",
+    "version": "0.1.0",
+    "policy_id": "adaptive-risk",
+    "policy_version": "0.1.0"
+  },
+  "topology": "propose_critique_revise",
+  "selection_rationale": "高リスクな認証・データ境界変更であり、設計者と異系列の反証役、リポジトリ実装可能性の確認役が必要。予算内で3名編成とした。",
+  "participants": [
+    {
+      "participant_id": "P-01",
+      "role": "architect",
+      "provider": "provider-a",
+      "model_id_requested": "frontier-architect-2026-07",
+      "model_id_reported": "frontier-architect-2026-07",
+      "model_revision": "2026-07-01",
+      "pinning_status": "exact",
+      "settings": {
+        "reasoning_effort": "high",
+        "temperature": null,
+        "max_output_tokens": 24000
+      },
+      "context_isolation": "independent_first_pass",
+      "prompt_sha256": "6666666666666666666666666666666666666666666666666666666666666666"
+    },
+    {
+      "participant_id": "P-02",
+      "role": "adversarial_reviewer",
+      "provider": "provider-b",
+      "model_id_requested": "frontier-reviewer-latest",
+      "model_id_reported": "frontier-reviewer-latest",
+      "model_revision": null,
+      "pinning_status": "provider_alias",
+      "settings": {
+        "reasoning_effort": "max",
+        "temperature": 0.2,
+        "max_output_tokens": 20000
+      },
+      "context_isolation": "independent_first_pass",
+      "prompt_sha256": "7777777777777777777777777777777777777777777777777777777777777777"
+    },
+    {
+      "participant_id": "P-03",
+      "role": "repository_analyst",
+      "provider": "provider-a",
+      "model_id_requested": "coding-agent-2026-07",
+      "model_id_reported": "coding-agent-2026-07",
+      "model_revision": "2026-07-05",
+      "pinning_status": "exact",
+      "settings": {
+        "reasoning_effort": "high",
+        "temperature": null,
+        "max_output_tokens": 18000
+      },
+      "context_isolation": "shared_after_round_one",
+      "prompt_sha256": "8888888888888888888888888888888888888888888888888888888888888888"
+    }
+  ],
+  "rounds": [
+    {
+      "round": 1,
+      "purpose": "independent_proposal",
+      "participant_ids": [
+        "P-01",
+        "P-02",
+        "P-03"
+      ],
+      "output_sha256": "9999999999999999999999999999999999999999999999999999999999999999"
+    },
+    {
+      "round": 2,
+      "purpose": "critique",
+      "participant_ids": [
+        "P-01",
+        "P-02"
+      ],
+      "output_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "round": 3,
+      "purpose": "synthesis",
+      "participant_ids": [
+        "P-01",
+        "P-03"
+      ],
+      "output_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  ],
+  "budget": {
+    "token_limit": 180000,
+    "actual_input_tokens": 84200,
+    "actual_output_tokens": 27400,
+    "monetary_limit": 25.0,
+    "actual_cost": 11.84,
+    "currency": "USD",
+    "cost_is_estimated": true
+  },
+  "privacy": {
+    "external_network_used": true,
+    "providers_used": [
+      "provider-a",
+      "provider-b"
+    ],
+    "repository_content_sent": "selected_snippets",
+    "sensitive_content_sent": false,
+    "secret_scan_performed": true
+  },
+  "stop": {
+    "reason": "human_decision_required",
+    "criteria_met": false,
+    "unresolved_high_severity_claims": 1,
+    "new_high_severity_findings_last_round": 0
+  },
+  "status": "needs_human",
+  "started_at": "2026-07-11T03:01:00Z",
+  "completed_at": "2026-07-11T03:11:30Z"
+}

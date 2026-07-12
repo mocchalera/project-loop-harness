@@ -1,0 +1,291 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop-harness.local/contracts/profile-output-bundle-v1.schema.json",
+  "title": "PLH Profile Output Bundle v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "bundle_id",
+    "generated_at",
+    "request_ref",
+    "profile",
+    "status",
+    "summary",
+    "artifacts",
+    "decision_proposal_artifact_ids",
+    "next_action",
+    "bundle_digest"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "profile-output-bundle/v1"
+    },
+    "bundle_id": {
+      "type": "string",
+      "pattern": "^POB-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$"
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "request_ref": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "request_id",
+        "request_digest"
+      ],
+      "properties": {
+        "request_id": {
+          "type": "string",
+          "pattern": "^PRR-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}$"
+        },
+        "request_digest": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runner_profile_id",
+        "profile_version",
+        "manifest_sha256"
+      ],
+      "properties": {
+        "runner_profile_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 96
+        },
+        "profile_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "manifest_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "status": {
+      "enum": [
+        "completed",
+        "needs_human",
+        "partial",
+        "budget_exhausted",
+        "failed",
+        "skipped"
+      ]
+    },
+    "summary": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4000
+    },
+    "artifacts": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "artifact_id",
+          "role",
+          "contract_version",
+          "path",
+          "media_type",
+          "sha256",
+          "size_bytes"
+        ],
+        "properties": {
+          "artifact_id": {
+            "type": "string",
+            "pattern": "^A-[0-9]{3}$"
+          },
+          "role": {
+            "enum": [
+              "run_manifest",
+              "claims",
+              "verification_plan",
+              "decision_proposal",
+              "revised_work_brief",
+              "report"
+            ]
+          },
+          "contract_version": {
+            "enum": [
+              "council-run/v0",
+              "claim-set/v0",
+              "verification-plan/v0",
+              "decision-proposal/v0",
+              "work-brief/v1",
+              "agent-output/v1"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^(?!/)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*//)(?!.*\\/$)[A-Za-z0-9._-]+(?:/[A-Za-z0-9._-]+)*$",
+            "maxLength": 500
+          },
+          "media_type": {
+            "enum": [
+              "application/json",
+              "text/markdown"
+            ]
+          },
+          "sha256": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "decision_proposal_artifact_ids": {
+      "type": "array",
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^A-[0-9]{3}$"
+      }
+    },
+    "next_action": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "requires_human",
+        "safe_to_run",
+        "summary"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "human_decision",
+            "revise_work_brief",
+            "run_verification",
+            "direct_execution",
+            "inspect_failure",
+            "none"
+          ]
+        },
+        "requires_human": {
+          "type": "boolean"
+        },
+        "safe_to_run": {
+          "const": false
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        }
+      }
+    },
+    "bundle_digest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "algorithm",
+        "canonicalization",
+        "value"
+      ],
+      "properties": {
+        "algorithm": {
+          "const": "sha256"
+        },
+        "canonicalization": {
+          "const": "pcl-canonical-json/v1-excluding-bundle_digest"
+        },
+        "value": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "needs_human"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "decision_proposal_artifact_ids": {
+            "minItems": 1
+          },
+          "next_action": {
+            "properties": {
+              "kind": {
+                "const": "human_decision"
+              },
+              "requires_human": {
+                "const": true
+              },
+              "safe_to_run": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": "budget_exhausted"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "next_action": {
+            "properties": {
+              "safe_to_run": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": [
+              "failed",
+              "partial"
+            ]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "next_action": {
+            "properties": {
+              "safe_to_run": {
+                "const": false
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

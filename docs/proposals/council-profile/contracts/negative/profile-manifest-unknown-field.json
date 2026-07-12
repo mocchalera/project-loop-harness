@@ -1,0 +1,42 @@
+{
+  "contract_version": "profile-manifest/v1",
+  "runner_profile_id": "council.discovery",
+  "profile_version": "0.1.0",
+  "display_name": "Council Discovery",
+  "description": "外部のモデル非依存Council runnerへ曖昧または高リスクな設計問題を渡し、構造化された主張・検証計画・人間判断候補をPLH Evidenceへ戻す。",
+  "profile_kind": "discovery",
+  "supported_routes": [
+    "discover",
+    "assure"
+  ],
+  "input_contract": "profile-run-request/v1",
+  "output_contract": "profile-output-bundle/v1",
+  "produced_contracts": [
+    "council-run/v0",
+    "claim-set/v0",
+    "verification-plan/v0",
+    "decision-proposal/v0",
+    "work-brief/v1"
+  ],
+  "capabilities": {
+    "requires_external_process": true,
+    "may_use_network": true,
+    "may_use_paid_services": true,
+    "may_read_repository": true,
+    "may_write_repository": false,
+    "supports_fixture_runner": true
+  },
+  "policy_defaults": {
+    "max_participants": 4,
+    "max_human_decisions": 3,
+    "auto_execute": false,
+    "exact_model_recording_required": true
+  },
+  "external_runner": {
+    "required": true,
+    "command_name": "plh-council",
+    "invocation_hint": "plh-council run --request request.json --output-dir council-output",
+    "executed_by_plh": false
+  },
+  "unexpected_field": true
+}

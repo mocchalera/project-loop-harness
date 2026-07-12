@@ -1,0 +1,204 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop-harness.local/contracts/claim-set-v0.schema.json",
+  "title": "Claim Set v0",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "claim_set_id",
+    "run_ref",
+    "claims"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "claim-set/v0"
+    },
+    "claim_set_id": {
+      "type": "string",
+      "pattern": "^CS-[0-9]{4,}$"
+    },
+    "run_ref": {
+      "type": "string",
+      "pattern": "^CR-"
+    },
+    "claims": {
+      "type": "array",
+      "maxItems": 500,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "claim_id",
+          "kind",
+          "statement",
+          "severity",
+          "confidence_band",
+          "status",
+          "source_participant_ids",
+          "evidence_refs",
+          "conditions",
+          "impact",
+          "reversibility",
+          "verification_item_refs",
+          "challenge_summary"
+        ],
+        "properties": {
+          "claim_id": {
+            "type": "string",
+            "pattern": "^C-[0-9]{3,}$"
+          },
+          "kind": {
+            "enum": [
+              "fact",
+              "assumption",
+              "inference",
+              "preference",
+              "risk"
+            ]
+          },
+          "statement": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4000
+          },
+          "severity": {
+            "enum": [
+              "info",
+              "low",
+              "medium",
+              "high",
+              "critical"
+            ]
+          },
+          "confidence_band": {
+            "enum": [
+              "low",
+              "medium",
+              "high",
+              "not_applicable"
+            ]
+          },
+          "status": {
+            "enum": [
+              "open",
+              "supported",
+              "challenged",
+              "refuted",
+              "requires_human",
+              "accepted_risk"
+            ]
+          },
+          "source_participant_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^P-[0-9]{2}$"
+            },
+            "uniqueItems": true
+          },
+          "evidence_refs": {
+            "type": "array",
+            "items": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "kind",
+                    "evidence_id",
+                    "sha256",
+                    "evidence_class"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "pcl_evidence"
+                    },
+                    "evidence_id": {
+                      "type": "string",
+                      "pattern": "^E-[0-9]{4,}$"
+                    },
+                    "sha256": {
+                      "type": "string",
+                      "pattern": "^[0-9a-f]{64}$"
+                    },
+                    "evidence_class": {
+                      "enum": [
+                        "model_judgment",
+                        "deterministic_check",
+                        "observational_artifact",
+                        "human_judgment"
+                      ]
+                    }
+                  }
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "kind",
+                    "artifact_id",
+                    "evidence_class"
+                  ],
+                  "properties": {
+                    "kind": {
+                      "const": "bundle_artifact"
+                    },
+                    "artifact_id": {
+                      "type": "string",
+                      "pattern": "^A-[0-9]{3}$"
+                    },
+                    "evidence_class": {
+                      "enum": [
+                        "model_judgment",
+                        "deterministic_check",
+                        "observational_artifact",
+                        "human_judgment"
+                      ]
+                    }
+                  }
+                }
+              ]
+            }
+          },
+          "conditions": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "uniqueItems": true
+          },
+          "impact": {
+            "type": "string",
+            "maxLength": 2000
+          },
+          "reversibility": {
+            "enum": [
+              "easy",
+              "moderate",
+              "hard",
+              "irreversible",
+              "not_applicable"
+            ]
+          },
+          "verification_item_refs": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^VP-[0-9]{3,}$"
+            },
+            "uniqueItems": true
+          },
+          "challenge_summary": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "maxLength": 3000
+          }
+        }
+      }
+    }
+  }
+}

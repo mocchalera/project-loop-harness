@@ -73,10 +73,17 @@ manual_override
 
 schema: `schemas/decision-proposal-v0.schema.json`
 
+> **Superseded planning shape (2026-07-12):** the unshipped
+> `id/work_brief_ref/hypothesis/tradeoffs/producer` draft was replaced by the
+> Council Profile `proposal_id/run_ref/target/benefits/costs/generated_by`
+> shape. The schema and example in this directory now show the sole documented
+> v0 shape. See `../../proposals/council-profile/contract-freeze.md`.
+
 ### semantics
 
 - Discovery Profileが生成する候補比較artifact。
-- candidateごとにhypothesis、trade-offs、evidence refs、uncertainty、reversibilityを持つ。
+- candidateごとにsummary、benefits、costs、risks、assumptions、evidence
+  refs、uncertainty、reversibilityを持つ。
 - 数値scoreはoptionalな表示補助であり、PLHがfactとして扱わない。
 - 選択は既存Decision lifecycleまたはhuman gateで行う。
 - rejected candidateを削除しない。
