@@ -1,6 +1,6 @@
 # 0155: Profile contract runtime and built-in registry
 
-- **Status:** Planned
+- **Status:** Done
 - **Milestone:** v0.5.0 Council Profile
 - **Priority:** P0
 - **Size:** L

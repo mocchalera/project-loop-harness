@@ -5,11 +5,21 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import tarfile
 import venv
 import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
+PROFILE_SCHEMA_NAMES = {
+    "profile-manifest-v1.schema.json",
+    "profile-run-request-v1.schema.json",
+    "profile-output-bundle-v1.schema.json",
+    "council-run-v0.schema.json",
+    "claim-set-v0.schema.json",
+    "verification-plan-v0.schema.json",
+    "decision-proposal-v0.schema.json",
+}
 
 
 def _run(command: list[str | Path], **kwargs) -> subprocess.CompletedProcess[str]:
@@ -59,6 +69,10 @@ def test_wheel_install_smoke_runs_cli_mcp_and_bundled_templates(tmp_path: Path) 
     assert len(wheels) == 1
     with zipfile.ZipFile(wheels[0]) as wheel:
         assert any(name.endswith("pcl/db/migrations/008_event_outbox.sql") for name in wheel.namelist())
+        names = set(wheel.namelist())
+        for schema_name in PROFILE_SCHEMA_NAMES:
+            assert f"pcl/contracts/schemas/{schema_name}" in names
+        assert "pcl/profiles/builtin/council.discovery.json" in names
 
     venv_dir = tmp_path / "venv"
     venv.EnvBuilder(with_pip=True).create(venv_dir)
@@ -71,6 +85,26 @@ def test_wheel_install_smoke_runs_cli_mcp_and_bundled_templates(tmp_path: Path) 
 
     assert "Project Loop Harness CLI" in _run([pcl, "--help"], env=wheel_env).stdout
     assert "Project Loop Harness MCP server" in _run([pcl_mcp, "--help"], env=wheel_env).stdout
+    profile_list = _json_output(
+        _run([pcl, "--json", "profile", "list"], env=wheel_env, cwd=tmp_path)
+    )
+    assert profile_list["profiles"][0]["runner_profile_id"] == "council.discovery"
+    profile_show = _json_output(
+        _run(
+            [pcl, "--json", "profile", "show", "council.discovery"],
+            env=wheel_env,
+            cwd=tmp_path,
+        )
+    )
+    assert profile_show["executed_by_plh"] is False
+    profile_validation = _json_output(
+        _run(
+            [pcl, "--json", "profile", "validate", "council.discovery"],
+            env=wheel_env,
+            cwd=tmp_path,
+        )
+    )
+    assert profile_validation["ok"] is True
     update_command = _json_output(_run([pcl, "--json", "update", "command"], env=wheel_env))
     assert update_command["ok"] is True
     assert update_command["install"]["command"]
@@ -145,3 +179,32 @@ def test_sdist_manifest_and_ci_include_doc_contract_smoke() -> None:
     assert "tests/test_agent_adapter_contract.py::test_agent_adapter_docs_match_contract" in verifier
     assert "python scripts/verify_sdist_contracts.py --dist-dir release-dist" in ci_workflow
     assert "python scripts/verify_sdist_contracts.py --dist-dir release-dist" in publish_workflow
+
+
+def test_sdist_contains_profile_contracts_and_builtin_manifest(tmp_path: Path) -> None:
+    dist_dir = tmp_path / "dist"
+    _run(
+        [
+            sys.executable,
+            "-m",
+            "build",
+            "--no-isolation",
+            "--sdist",
+            "--outdir",
+            dist_dir,
+        ],
+        cwd=ROOT,
+    )
+    sdists = sorted(dist_dir.glob("project_loop_harness-*.tar.gz"))
+    assert len(sdists) == 1
+    with tarfile.open(sdists[0], "r:gz") as archive:
+        names = set(archive.getnames())
+    for schema_name in PROFILE_SCHEMA_NAMES:
+        assert any(
+            name.endswith(f"/src/pcl/contracts/schemas/{schema_name}")
+            for name in names
+        )
+    assert any(
+        name.endswith("/src/pcl/profiles/builtin/council.discovery.json")
+        for name in names
+    )

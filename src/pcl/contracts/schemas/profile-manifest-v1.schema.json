@@ -1,0 +1,173 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop-harness.local/contracts/profile-manifest-v1.schema.json",
+  "title": "PLH Profile Manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "runner_profile_id",
+    "profile_version",
+    "display_name",
+    "description",
+    "profile_kind",
+    "supported_routes",
+    "input_contract",
+    "output_contract",
+    "produced_contracts",
+    "capabilities",
+    "policy_defaults",
+    "external_runner"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": "profile-manifest/v1"
+    },
+    "runner_profile_id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9]*(?:[._-][a-z0-9]+)*$",
+      "maxLength": 96
+    },
+    "profile_version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?$"
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "description": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "profile_kind": {
+      "enum": [
+        "discovery",
+        "assurance",
+        "domain"
+      ]
+    },
+    "supported_routes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "direct",
+          "discover",
+          "assure"
+        ]
+      }
+    },
+    "input_contract": {
+      "const": "profile-run-request/v1"
+    },
+    "output_contract": {
+      "const": "profile-output-bundle/v1"
+    },
+    "produced_contracts": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "council-run/v0",
+          "claim-set/v0",
+          "verification-plan/v0",
+          "decision-proposal/v0",
+          "work-brief/v1"
+        ]
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requires_external_process",
+        "may_use_network",
+        "may_use_paid_services",
+        "may_read_repository",
+        "may_write_repository",
+        "supports_fixture_runner"
+      ],
+      "properties": {
+        "requires_external_process": {
+          "type": "boolean"
+        },
+        "may_use_network": {
+          "type": "boolean"
+        },
+        "may_use_paid_services": {
+          "type": "boolean"
+        },
+        "may_read_repository": {
+          "type": "boolean"
+        },
+        "may_write_repository": {
+          "type": "boolean"
+        },
+        "supports_fixture_runner": {
+          "type": "boolean"
+        }
+      }
+    },
+    "policy_defaults": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "max_participants",
+        "max_human_decisions",
+        "auto_execute",
+        "exact_model_recording_required"
+      ],
+      "properties": {
+        "max_participants": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4
+        },
+        "max_human_decisions": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 3
+        },
+        "auto_execute": {
+          "const": false
+        },
+        "exact_model_recording_required": {
+          "const": true
+        }
+      }
+    },
+    "external_runner": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required",
+        "command_name",
+        "invocation_hint",
+        "executed_by_plh"
+      ],
+      "properties": {
+        "required": {
+          "const": true
+        },
+        "command_name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "invocation_hint": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "executed_by_plh": {
+          "const": false
+        }
+      }
+    }
+  }
+}

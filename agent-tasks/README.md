@@ -71,7 +71,7 @@ implement from the spec file, not from prompt summaries.
 | 0153 | Cross-skill integrity dogfood and release gate | v0.4.3 Evidence Completeness | P0 | done (human-approved local RC) |
 | 0153b | v0.4.3 local release preparation | v0.4.3 Evidence Completeness | P0 | done (local RC; not published) |
 | 0154 | Profile boundary ADR and proposal contract freeze | v0.5.0 Council Profile | P0 | planned (human ADR gate) |
-| 0155 | Profile contract runtime and built-in registry | v0.5.0 Council Profile | P0 | planned |
+| 0155 | Profile contract runtime and built-in registry | v0.5.0 Council Profile | P0 | done |
 | 0156 | Deterministic read-only Profile request preparation | v0.5.0 Council Profile | P0 | planned |
 | 0157 | Profile bundle validation and dry-run planner | v0.5.0 Council Profile | P0 | planned |
 | 0158 | Atomic Profile bundle Evidence ingest | v0.5.0 Council Profile | P0 | planned |

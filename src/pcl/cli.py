@@ -93,6 +93,41 @@ from .contracts.completion_policy import (
     load_completion_policy,
     validate_completion_policy,
 )
+from .contracts.profile_manifest import (
+    PROFILE_MANIFEST_CONTRACT_VERSION,
+    load_profile_manifest,
+    validate_profile_manifest,
+)
+from .contracts.profile_run_request import (
+    PROFILE_RUN_REQUEST_CONTRACT_VERSION,
+    load_profile_run_request,
+    validate_profile_run_request,
+)
+from .contracts.profile_output_bundle import (
+    PROFILE_OUTPUT_BUNDLE_CONTRACT_VERSION,
+    load_profile_output_bundle,
+    validate_profile_output_bundle,
+)
+from .contracts.council_run import (
+    COUNCIL_RUN_CONTRACT_VERSION,
+    load_council_run,
+    validate_council_run,
+)
+from .contracts.claim_set import (
+    CLAIM_SET_CONTRACT_VERSION,
+    load_claim_set,
+    validate_claim_set,
+)
+from .contracts.verification_plan import (
+    VERIFICATION_PLAN_CONTRACT_VERSION,
+    load_verification_plan,
+    validate_verification_plan,
+)
+from .contracts.decision_proposal import (
+    DECISION_PROPOSAL_CONTRACT_VERSION,
+    load_decision_proposal,
+    validate_decision_proposal,
+)
 from .code_context.summary import render_receipt_summary
 from .decisions import (
     list_decisions,
@@ -144,6 +179,7 @@ from .relationship_repair import add_evidence_link, repair_test_links
 from .migrations import apply_migrations, migration_status
 from .outbox import project_pending_events
 from .paths import resolve_paths
+from .profiles import list_profiles, show_profile, validate_profile
 from .renderer import render_dashboard
 from .receipt_show import receipt_summary_for_ref
 from .registry import (
@@ -885,6 +921,40 @@ def build_parser() -> argparse.ArgumentParser:
     p_evidence_link.add_argument("--role", required=True)
     p_evidence_link.add_argument("--summary", required=True)
 
+    p_profile = sub.add_parser(
+        "profile",
+        help=(
+            "Inspect built-in external runner Profiles; route_profile and role_profile "
+            "are separate concepts"
+        ),
+        description=(
+            "Inspect built-in data-only runner Profiles. runner_profile_id identifies "
+            "the external contract; route_profile selects Direct/Discover/Assure; "
+            "role_profile selects context packing. No command here executes a runner."
+        ),
+    )
+    profile_sub = p_profile.add_subparsers(dest="profile_command", required=True)
+    profile_sub.add_parser(
+        "list",
+        help="List built-in data-only runner Profile IDs without executing a runner",
+    )
+    p_profile_show = profile_sub.add_parser(
+        "show",
+        help="Show one built-in runner Profile manifest without executing it",
+    )
+    p_profile_show.add_argument(
+        "runner_profile_id",
+        help="Runner Profile ID, for example council.discovery (not a route_profile)",
+    )
+    p_profile_validate = profile_sub.add_parser(
+        "validate",
+        help="Validate one built-in runner Profile and contract compatibility",
+    )
+    p_profile_validate.add_argument(
+        "runner_profile_id",
+        help="Runner Profile ID, for example council.discovery (not a role_profile)",
+    )
+
     p_contract = sub.add_parser("contract", help="Validate versioned artifact contracts")
     contract_sub = p_contract.add_subparsers(dest="contract_command", required=True)
     p_contract_validate = contract_sub.add_parser(
@@ -902,6 +972,13 @@ def build_parser() -> argparse.ArgumentParser:
             WORK_BRIEF_CONTRACT_VERSION,
             EVIDENCE_SET_CONTRACT_VERSION,
             COMPLETION_POLICY_CONTRACT_VERSION,
+            PROFILE_MANIFEST_CONTRACT_VERSION,
+            PROFILE_RUN_REQUEST_CONTRACT_VERSION,
+            PROFILE_OUTPUT_BUNDLE_CONTRACT_VERSION,
+            COUNCIL_RUN_CONTRACT_VERSION,
+            CLAIM_SET_CONTRACT_VERSION,
+            VERIFICATION_PLAN_CONTRACT_VERSION,
+            DECISION_PROPOSAL_CONTRACT_VERSION,
         ],
         dest="contract_type",
     )
@@ -1543,6 +1620,28 @@ def _validate_contract_file(
             load_completion_policy,
             validate_completion_policy,
         ),
+        PROFILE_MANIFEST_CONTRACT_VERSION: (
+            load_profile_manifest,
+            validate_profile_manifest,
+        ),
+        PROFILE_RUN_REQUEST_CONTRACT_VERSION: (
+            load_profile_run_request,
+            validate_profile_run_request,
+        ),
+        PROFILE_OUTPUT_BUNDLE_CONTRACT_VERSION: (
+            load_profile_output_bundle,
+            validate_profile_output_bundle,
+        ),
+        COUNCIL_RUN_CONTRACT_VERSION: (load_council_run, validate_council_run),
+        CLAIM_SET_CONTRACT_VERSION: (load_claim_set, validate_claim_set),
+        VERIFICATION_PLAN_CONTRACT_VERSION: (
+            load_verification_plan,
+            validate_verification_plan,
+        ),
+        DECISION_PROPOSAL_CONTRACT_VERSION: (
+            load_decision_proposal,
+            validate_decision_proposal,
+        ),
     }
     load_packet, validate_packet = contract_handlers[contract_type]
     try:
@@ -1866,6 +1965,56 @@ def main(argv: list[str] | None = None) -> int:
     json_output = json_override or args.json
 
     try:
+        if args.command == "profile" and args.profile_command == "list":
+            result = list_profiles()
+            if json_output:
+                _print_json(result)
+            else:
+                for profile in result["profiles"]:
+                    routes = ",".join(profile["supported_routes"])
+                    print(
+                        f"{profile['runner_profile_id']} {profile['profile_version']} "
+                        f"{profile['display_name']} routes={routes} "
+                        f"source={profile['source']} executed_by_plh=false"
+                    )
+            return 0
+
+        if args.command == "profile" and args.profile_command == "show":
+            result = show_profile(args.runner_profile_id)
+            if json_output:
+                _print_json(result)
+            else:
+                manifest = result["manifest"]
+                print(
+                    f"Runner Profile: {result['runner_profile_id']} "
+                    f"version={manifest['profile_version']}"
+                )
+                print(
+                    f"Source: {result['source']} trust={result['trust']} "
+                    f"executed_by_plh=false"
+                )
+                print(f"Manifest SHA-256: {result['manifest_sha256']}")
+                print(f"Routes: {', '.join(manifest['supported_routes'])}")
+                print(
+                    "Terminology: route_profile selects Direct/Discover/Assure; "
+                    "role_profile selects context packing."
+                )
+            return 0
+
+        if args.command == "profile" and args.profile_command == "validate":
+            result = validate_profile(args.runner_profile_id)
+            if json_output:
+                _print_json(result)
+            elif result["ok"]:
+                print(
+                    f"Valid built-in runner Profile: {result['runner_profile_id']} "
+                    f"sha256={result['manifest_sha256']}"
+                )
+            else:
+                for error in result["errors"]:
+                    print(f"ERROR: {error}", file=sys.stderr)
+            return 0 if result["ok"] else 1
+
         if args.command == "contract" and args.contract_command == "validate":
             return _validate_contract_file(
                 args.file,

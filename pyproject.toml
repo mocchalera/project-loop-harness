@@ -56,7 +56,8 @@ pcl = [
   "db/*.sql",
   "db/migrations/*.sql",
   "contracts/schemas/*.json",
-  "contracts/policies/*.json"
+  "contracts/policies/*.json",
+  "profiles/builtin/*.json"
 ]
 
 [tool.pytest.ini_options]

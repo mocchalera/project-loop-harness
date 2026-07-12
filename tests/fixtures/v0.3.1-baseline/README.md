@@ -61,6 +61,9 @@ is a regression, not an automatic regeneration result.
 
 ## Intended changes since v0.3.1 freeze
 
+- 2026-07-12 — `snapshots/pcl-help.json` regenerated for task 0155 to
+  include the additive built-in-only `profile list/show/validate` command.
+  These surfaces are read-only and never execute an external runner.
 - 2026-07-11 — `snapshots/pcl-version.json` regenerated for the v0.4.3 release
   candidate bump (`0.4.2` → `0.4.3`).
 - 2026-07-11 — snapshots regenerated for task 0151. Top-level help includes
