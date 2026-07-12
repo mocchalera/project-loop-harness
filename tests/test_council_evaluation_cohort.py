@@ -6,6 +6,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 COHORT = ROOT / "docs" / "evaluation" / "v0.5.0-council-cohort.json"
+RESULTS = ROOT / "docs" / "evaluation" / "v0.5.0-council-results.json"
 
 
 def test_council_evaluation_cohort_is_frozen_before_results() -> None:
@@ -26,3 +27,21 @@ def test_council_evaluation_cohort_is_frozen_before_results() -> None:
     assert value["success_thresholds"]["invalid_partial_budget_safe_stop_rate"] == 1.0
     assert value["success_thresholds"]["real_provider_paired_sample_required_for_adoption"] == 10
     assert not any(key.startswith("result") for key in value)
+
+
+def test_council_results_preserve_frozen_cohort_and_safe_stop_threshold() -> None:
+    cohort = json.loads(COHORT.read_text(encoding="utf-8"))
+    results = json.loads(RESULTS.read_text(encoding="utf-8"))
+    assert results["cohort_id"] == cohort["cohort_id"]
+    assert results["sample_size"] == cohort["sample_size"]
+    assert [item["id"] for item in results["cases"]] == [
+        item["id"] for item in cohort["cases"]
+    ]
+    assert results["safe_stop"]["rate"] == 1.0
+    assert results["safe_stop"]["eligible_cases"] == results["safe_stop"]["safe_cases"]
+    assert results["failure_modes"]["invalid_bundle_persisted"] == 0
+    assert results["clear_task_insertion"]["unnecessary_council_count"] == 0
+    assert results["quality"]["paired_real_provider_sample_size"] == 0
+    assert results["quality"]["conclusion"] == "unavailable_offline_fixture_is_not_quality_evidence"
+    assert results["recommendation"]["option"] == "continue_experiment"
+    assert results["recommendation"]["default_change"] is False

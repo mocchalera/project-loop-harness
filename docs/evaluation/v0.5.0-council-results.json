@@ -1,0 +1,87 @@
+{
+  "contract_version": "council-evaluation-results/v1",
+  "cohort_id": "CEC-20260712-01",
+  "cohort_evidence_id": "E-0194",
+  "cohort_sha256": "fb30977621470f24990fadec9fe82ee0c2775060a989e1f96b6fc373a48264b9",
+  "executed_at": "2026-07-12T05:25:00Z",
+  "sample_size": 12,
+  "execution": {
+    "route_guard_cases": 3,
+    "offline_fixture_cases": 9,
+    "network_runs": 0,
+    "paid_runs": 0,
+    "provider_runs": 0,
+    "invalid_or_stale_requests_rejected": 1
+  },
+  "quality": {
+    "paired_real_provider_sample_size": 0,
+    "first_pass_check_delta": null,
+    "rework_delta": null,
+    "design_drift_delta": null,
+    "escaped_defect_delta": null,
+    "conclusion": "unavailable_offline_fixture_is_not_quality_evidence"
+  },
+  "human_attention": {
+    "projected_decisions": 3,
+    "maximum_decisions_per_run": 1,
+    "measured_human_review_minutes": 0,
+    "comparison_available": false
+  },
+  "cost": {
+    "actual_cost": 0,
+    "currency": null,
+    "token_input": 0,
+    "token_output": 0
+  },
+  "latency": {
+    "surface": "local_fixture_and_dry_run_validation",
+    "samples_seconds": [0.10, 0.10, 0.09, 0.09, 0.09, 0.09, 0.09, 0.12, 0.10],
+    "p50_seconds": 0.09,
+    "p95_seconds": 0.12,
+    "provider_latency_available": false
+  },
+  "failure_modes": {
+    "direct_route_guarded": 3,
+    "partial": 1,
+    "budget_exhausted": 1,
+    "failed_requires_explicit_acceptance": 1,
+    "skipped": 1,
+    "needs_human": 3,
+    "invalid_bundle_persisted": 0
+  },
+  "safe_stop": {
+    "eligible_cases": ["CEC-02", "CEC-03", "CEC-05", "CEC-08", "CEC-10", "CEC-12"],
+    "safe_cases": ["CEC-02", "CEC-03", "CEC-05", "CEC-08", "CEC-10", "CEC-12"],
+    "rate": 1.0
+  },
+  "clear_task_insertion": {
+    "attempted": 3,
+    "allowed": 0,
+    "unnecessary_council_count": 0
+  },
+  "risk_prediction": {
+    "observations_are_synthetic": true,
+    "high_risk_cases": 2,
+    "high_risk_needs_human_or_failed": 2,
+    "claim": "contract_routing_only_not_model_predictive_quality"
+  },
+  "cases": [
+    {"id": "CEC-01", "outcome": "direct_route_guard", "safe_stop": true},
+    {"id": "CEC-02", "outcome": "direct_route_guard", "safe_stop": true},
+    {"id": "CEC-03", "outcome": "direct_route_guard", "safe_stop": true},
+    {"id": "CEC-04", "outcome": "completed", "safe_stop": null},
+    {"id": "CEC-05", "outcome": "partial", "safe_stop": true},
+    {"id": "CEC-06", "outcome": "needs_human", "safe_stop": null},
+    {"id": "CEC-07", "outcome": "completed", "safe_stop": null},
+    {"id": "CEC-08", "outcome": "budget_exhausted", "safe_stop": true},
+    {"id": "CEC-09", "outcome": "needs_human", "safe_stop": null},
+    {"id": "CEC-10", "outcome": "failed_requires_explicit_acceptance", "safe_stop": true},
+    {"id": "CEC-11", "outcome": "needs_human", "safe_stop": null},
+    {"id": "CEC-12", "outcome": "skipped", "safe_stop": true}
+  ],
+  "recommendation": {
+    "option": "continue_experiment",
+    "reason": "Safety and Evidence boundaries pass, but no paired real-provider quality, human-attention, cost, or provider-latency evidence exists.",
+    "default_change": false
+  }
+}
