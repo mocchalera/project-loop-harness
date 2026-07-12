@@ -207,6 +207,16 @@ def test_valid_status_plans_are_stable_and_read_only(tmp_path: Path, capsys, sta
     assert first["next_action"]["safe_to_run"] is False
     assert first["persistable_without_extra_flag"] is (status != "failed")
     assert first["requires_accept_failed"] is (status == "failed")
+    expected_decisions = 1 if status == "needs_human" else 0
+    expected_evidence = 0 if status == "failed" else 1
+    assert first["mutation"] == {
+        "evidence_rows": expected_evidence,
+        "evidence_links": expected_evidence + expected_decisions,
+        "decision_rows": expected_decisions,
+        "events": expected_evidence + expected_decisions,
+        "outbox_records": expected_evidence + expected_decisions,
+        "filesystem_bundle_directories": expected_evidence,
+    }
     assert not (tmp_path / "verification-command-ran").exists()
     assert _snapshot(root) == before
 
@@ -230,6 +240,10 @@ def _mutate_case(case_id: str, root: Path, task_id: str, request_path: Path, bun
     elif case_id == "authorization_required":
         request["data_policy"]["network_access"] = "requested"
         request["authorization"] = None
+        _write(request_path, request)
+        _refresh_request(request_path)
+    elif case_id == "output_limit_unsupported":
+        request["limits"]["max_output_bytes"] = 2_000_001
         _write(request_path, request)
         _refresh_request(request_path)
     elif case_id == "bundle_request_mismatch":

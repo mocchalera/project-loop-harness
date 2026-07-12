@@ -5,6 +5,7 @@
     {"id": "missing_target", "expected_code": "request_target_missing"},
     {"id": "manifest_mismatch", "expected_code": "request_profile_manifest_mismatch"},
     {"id": "authorization_required", "expected_code": "profile_authorization_required"},
+    {"id": "output_limit_unsupported", "expected_code": "request_output_size_limit_unsupported"},
     {"id": "bundle_request_mismatch", "expected_code": "bundle_request_mismatch"},
     {"id": "bundle_profile_mismatch", "expected_code": "bundle_profile_mismatch"},
     {"id": "path_parent", "expected_code": "bundle_contract_invalid"},

@@ -30,6 +30,7 @@ from .profiles import show_profile
 PROFILE_INGEST_PLAN_CONTRACT_VERSION = "profile-ingest-plan/v1"
 REQUEST_FILE_MAX_BYTES = 2_000_000
 BUNDLE_MANIFEST_MAX_BYTES = 262_144
+MAX_ACCEPTED_OUTPUT_BYTES = 2_000_000
 
 _ARTIFACT_VALIDATORS: dict[str, Callable[[Any], Any]] = {
     "council-run/v0": validate_council_run,
@@ -101,11 +102,7 @@ def plan_profile_ingest(
 
     proposal_count = len(bundle["decision_proposal_artifact_ids"])
     persistable = bundle["status"] != "failed"
-    decision_count = (
-        proposal_count
-        if bundle["status"] in {"needs_human", "partial", "budget_exhausted"}
-        else 0
-    )
+    decision_count = proposal_count if bundle["status"] == "needs_human" else 0
     mutation = {
         "evidence_rows": 1 if persistable else 0,
         "evidence_links": (1 + decision_count) if persistable else 0,
@@ -434,6 +431,18 @@ def _validate_artifact_files(
         return {}
     max_bytes = request.get("limits", {}).get("max_output_bytes")
     max_bytes = max_bytes if isinstance(max_bytes, int) else 0
+    if max_bytes > MAX_ACCEPTED_OUTPUT_BYTES:
+        _finding(
+            findings,
+            "request_output_size_limit_unsupported",
+            "$.limits.max_output_bytes",
+            (
+                f"Requested output limit {max_bytes} exceeds runtime ceiling "
+                f"{MAX_ACCEPTED_OUTPUT_BYTES}."
+            ),
+            "Prepare a request within the local runtime output ceiling.",
+        )
+        return {}
     declared_total = sum(
         int(item.get("size_bytes") or 0)
         for item in artifacts

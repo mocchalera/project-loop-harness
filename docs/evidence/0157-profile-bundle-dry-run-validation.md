@@ -32,10 +32,10 @@ $ ruff check .
 All checks passed!
 
 $ PYTHONPATH=src pytest -q tests/test_profile_ingest_dry_run.py
-31 passed
+32 passed
 
 $ PYTHONPATH=src pytest -q
-911 passed, 1 skipped
+912 passed, 1 skipped
 
 $ PYTHONPATH=src python -m pcl profile ingest --help
 usage: pcl profile ingest [-h] --request REQUEST_FILE --bundle BUNDLE_FILE

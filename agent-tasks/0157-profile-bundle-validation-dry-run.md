@@ -48,4 +48,5 @@ without copying files or touching PLH state.
 - `tests/fixtures/profile_bundle/cases.json` and
   `tests/test_profile_ingest_dry_run.py` cover all six statuses and the invalid
   corpus, with before/after state snapshots.
-- Verification: `ruff check .` and `pytest -q` (911 passed, 1 skipped).
+- Verification after Claude Fable review fixes: `ruff check .` and `pytest -q`
+  (912 passed, 1 skipped).
