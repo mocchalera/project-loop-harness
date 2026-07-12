@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import shlex
 from typing import Any
 
 from .db import initialize_database
@@ -31,6 +32,20 @@ DEFAULT_DIRS = [
 ]
 
 NODE_COMMAND_KEYS = ("lint", "typecheck", "test", "e2e", "build")
+SAFE_NODE_SCRIPT_EXECUTABLES = {
+    "ava",
+    "biome",
+    "cypress",
+    "eslint",
+    "jest",
+    "mocha",
+    "next",
+    "playwright",
+    "prettier",
+    "tsc",
+    "vite",
+    "vitest",
+}
 
 
 @dataclass(frozen=True)
@@ -344,7 +359,8 @@ def _project_config_text(root: Path) -> tuple[str, dict[str, Any] | None]:
     command_keys = [
         key
         for key in NODE_COMMAND_KEYS
-        if isinstance(scripts.get(key), str) and scripts[key].strip()
+        if isinstance(scripts.get(key), str)
+        and _is_supported_node_verification_script(scripts[key])
     ]
     package_runner = _node_package_runner(root, package)
 
@@ -383,6 +399,44 @@ def _node_package_runner(root: Path, package: dict[str, Any]) -> str:
         if (root / lockfile).is_file():
             return runner
     return "npm"
+
+
+def _is_supported_node_verification_script(script: str) -> bool:
+    script = script.strip()
+    if not script or any(fragment in script for fragment in ("||", ";", "|", "<", ">", "$(`", "$(", "`")):
+        return False
+    segments = [segment.strip() for segment in script.split("&&")]
+    if not all(segments):
+        return False
+    for segment in segments:
+        try:
+            argv = shlex.split(segment)
+        except ValueError:
+            return False
+        if not argv:
+            return False
+        executable = Path(argv[0]).name
+        if executable == "node":
+            if not _is_safe_node_verification_argv(argv):
+                return False
+        elif executable not in SAFE_NODE_SCRIPT_EXECUTABLES:
+            return False
+    return True
+
+
+def _is_safe_node_verification_argv(argv: list[str]) -> bool:
+    if len(argv) < 2 or argv[1] not in {"--check", "--test"}:
+        return False
+    operands = argv[2:]
+    if argv[1] == "--check" and len(operands) != 1:
+        return False
+    for operand in operands:
+        path = Path(operand)
+        if operand.startswith("-") or path.is_absolute() or ".." in path.parts:
+            return False
+        if argv[1] == "--check" and path.suffix not in {".js", ".mjs", ".cjs"}:
+            return False
+    return True
 
 
 def _yaml_string(value: str) -> str:

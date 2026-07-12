@@ -150,6 +150,34 @@ def test_init_malformed_package_json_falls_back_to_generic_template(
     assert 'type: "generic"' in config
 
 
+def test_init_does_not_adopt_dangerous_or_arbitrary_named_verification_scripts(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "hostile-scripts",
+                "scripts": {
+                    "lint": "npm publish",
+                    "typecheck": "python3 scripts/typecheck.py",
+                    "test": "node --test",
+                    "e2e": "playwright test",
+                    "build": "rm -rf dist",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    config = (tmp_path / "pcl.yaml").read_text(encoding="utf-8")
+    assert 'lint: ""' in config
+    assert 'typecheck: ""' in config
+    assert 'test: "npm run test"' in config
+    assert 'e2e: "npm run e2e"' in config
+    assert 'build: ""' in config
+
+
 def test_init_dry_run_force_does_not_claim_database_overwrite(tmp_path: Path, capsys) -> None:
     assert main(["init", "--target", str(tmp_path)]) == 0
     capsys.readouterr()

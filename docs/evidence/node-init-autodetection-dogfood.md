@@ -31,8 +31,8 @@ Temporary verification root:
 ## Regression verification
 
 - `PYTHONPATH=src pytest -q tests/test_cli_init.py tests/test_start.py -x`:
-  35 passed.
+  36 passed.
 - `ruff check src/pcl/init_project.py tests/test_cli_init.py tests/test_start.py`:
   passed.
-- `PYTHONPATH=src pytest -q`: exit 0 across 957 collected tests
-  (956 passed, 1 skipped).
+- `PYTHONPATH=src pytest -q`: exit 0 across 958 collected tests
+  (957 passed, 1 skipped).
