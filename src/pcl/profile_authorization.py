@@ -33,6 +33,7 @@ from .timeutil import utc_now_iso
 
 PROFILE_RUN_CANDIDATE_EVIDENCE_TYPE = "profile_run_candidate"
 PROFILE_RUN_AUTHORIZED_EVENT = "profile_run_authorized"
+PROFILE_AUTHORIZATION_REVOKED_EVENT = "profile_authorization_revoked"
 PROFILE_AUTHORIZATION_REQUEST_MAX_BYTES = 2_000_000
 _DATA_CLASS = {
     "none": "metadata",
@@ -43,6 +44,134 @@ _DATA_CLASS = {
 
 class ProfileAuthorizationError(PclError):
     pass
+
+
+def revoke_profile_authorization(
+    paths: ProjectPaths,
+    *,
+    authorized_event_id: str,
+    actor: str,
+    actor_kind: str | None,
+    recorded_by: str | None,
+    recorder_kind: str | None,
+    source_kind: str | None,
+    source_ref: str | None,
+    reason: str,
+    now: str | None = None,
+) -> dict[str, Any]:
+    cleaned_reason = str(reason or "").strip()
+    if not cleaned_reason:
+        raise _error("profile_authorization_reason_required", "--reason is required.")
+    if not str(source_kind or "").strip() or not str(source_ref or "").strip():
+        raise _error(
+            "profile_authorization_source_required",
+            "--source-kind and --source-ref are required.",
+        )
+    resolved_actor_kind = resolve_actor_kind(actor=actor, actor_kind=actor_kind)
+    if resolved_actor_kind != "human":
+        raise _error(
+            "profile_authorization_human_required",
+            "Only a human actor can revoke Profile authorization.",
+        )
+    recording = resolve_recording_provenance(
+        actor=actor,
+        actor_kind=resolved_actor_kind,
+        recorded_by=recorded_by,
+        recorder_kind=recorder_kind,
+        source_kind=source_kind,
+        source_ref=source_ref,
+        command="pcl profile authorize --revoke",
+    )
+    conn = connect_mutation(paths)
+    try:
+        authorized = conn.execute(
+            """
+            SELECT entity_id, payload_json FROM events
+            WHERE id = ? AND event_type = ?
+            """,
+            (authorized_event_id, PROFILE_RUN_AUTHORIZED_EVENT),
+        ).fetchone()
+        if authorized is None:
+            raise _error(
+                "profile_authorization_event_missing",
+                "The authorization event does not exist.",
+                authorized_event_id=authorized_event_id,
+            )
+        existing = conn.execute(
+            """
+            SELECT id, payload_json FROM events
+            WHERE event_type = ?
+              AND json_extract(payload_json, '$.authorized_event_id') = ?
+            ORDER BY sequence LIMIT 1
+            """,
+            (PROFILE_AUTHORIZATION_REVOKED_EVENT, authorized_event_id),
+        ).fetchone()
+        if existing is not None:
+            payload = json.loads(str(existing["payload_json"]))
+            conn.rollback()
+            return {
+                "ok": True,
+                "changed": False,
+                "replayed": True,
+                "authorized_event_id": authorized_event_id,
+                "revoked_event_id": existing["id"],
+                "evidence_id": authorized["entity_id"],
+                "revocation": payload,
+            }
+        payload = json.loads(str(authorized["payload_json"]))
+        receipt = payload.get("authorization")
+        if not isinstance(receipt, dict):
+            raise _error(
+                "profile_authorization_event_invalid",
+                "The authorization event has no valid receipt.",
+            )
+        timestamp = now or utc_now_iso()
+        revocation = approval_provenance(
+            action=PROFILE_AUTHORIZATION_REVOKED_EVENT,
+            actor_kind=resolved_actor_kind,
+            actor=actor,
+            source=recording["source"],
+            source_kind=recording["source_kind"],
+            source_ref=recording["source_ref"],
+            recorder_kind=recording["recorder_kind"],
+            recorder=recording["recorder"],
+            timestamp=timestamp,
+            target=receipt["target"],
+            evidence_id=str(authorized["entity_id"]),
+            artifact_sha256=str(receipt["bound_evidence"]["artifact_sha256"]),
+            reason=cleaned_reason,
+        )
+        event_payload = {
+            "contract_version": "profile-authorization-revoked/v1",
+            "authorized_event_id": authorized_event_id,
+            "authorization_evidence_id": authorized["entity_id"],
+            "reason": cleaned_reason,
+            "revocation": revocation,
+        }
+        revoked_event_id = append_event(
+            conn=conn,
+            events_path=paths.events_path,
+            event_type=PROFILE_AUTHORIZATION_REVOKED_EVENT,
+            entity_type="evidence",
+            entity_id=str(authorized["entity_id"]),
+            payload=event_payload,
+        )
+        conn.commit()
+        return {
+            "ok": True,
+            "changed": True,
+            "replayed": False,
+            "authorized_event_id": authorized_event_id,
+            "revoked_event_id": revoked_event_id,
+            "evidence_id": authorized["entity_id"],
+            "revocation": event_payload,
+        }
+    except BaseException:
+        if not bool(getattr(conn, "_authoritative_commit_completed", False)):
+            conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def authorize_profile_request(
@@ -290,11 +419,11 @@ def authorization_findings(
         revoked = conn.execute(
             """
             SELECT 1 FROM events
-            WHERE event_type = 'profile_authorization_revoked'
+            WHERE event_type = ?
               AND json_extract(payload_json, '$.authorized_event_id') = ?
             LIMIT 1
             """,
-            (authorization.get("event_id"),),
+            (PROFILE_AUTHORIZATION_REVOKED_EVENT, authorization.get("event_id")),
         ).fetchone()
     finally:
         conn.close()
@@ -433,10 +562,10 @@ def _authorization_replay(
                 continue
             revoked = conn.execute(
                 """
-                SELECT 1 FROM events WHERE event_type = 'profile_authorization_revoked'
+                SELECT 1 FROM events WHERE event_type = ?
                   AND json_extract(payload_json, '$.authorized_event_id') = ? LIMIT 1
                 """,
-                (row["id"],),
+                (PROFILE_AUTHORIZATION_REVOKED_EVENT, row["id"]),
             ).fetchone()
             if revoked is not None:
                 continue
@@ -466,8 +595,8 @@ def _authorization_replay(
 
 def _write_authorized_output(paths: ProjectPaths, output: str, value: dict[str, Any]) -> None:
     destination = Path(output)
-    destination.parent.mkdir(parents=True, exist_ok=True)
     _validate_output_path(paths, output)
+    destination.parent.mkdir(parents=True, exist_ok=True)
     data = (json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2) + "\n").encode("utf-8")
     fd, temp_value = tempfile.mkstemp(prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent)
     temp = Path(temp_value)

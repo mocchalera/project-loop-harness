@@ -183,7 +183,11 @@ from .profiles import list_profiles, show_profile, validate_profile
 from .profile_ingest import plan_profile_ingest
 from .profile_bundle_store import ingest_profile_bundle
 from .profile_decisions import select_profile_proposal, show_profile_proposal
-from .profile_authorization import authorize_profile_request
+from .profile_authorization import (
+    ProfileAuthorizationError,
+    authorize_profile_request,
+    revoke_profile_authorization,
+)
 from .profile_fixture_runner import run_profile_fixture
 from .profile_prepare import prepare_profile_request
 from .renderer import render_dashboard
@@ -1038,8 +1042,13 @@ def build_parser() -> argparse.ArgumentParser:
         "authorize",
         help="Record bounded human authorization for one candidate request; never run a provider",
     )
-    p_profile_authorize.add_argument("--request", required=True, dest="request_file")
-    p_profile_authorize.add_argument("--output", required=True)
+    p_profile_authorize.add_argument("--request", dest="request_file")
+    p_profile_authorize.add_argument("--output")
+    p_profile_authorize.add_argument(
+        "--revoke",
+        dest="authorized_event_id",
+        help="Revoke a prior profile_run_authorized event; never run a provider",
+    )
     p_profile_authorize.add_argument("--actor", required=True)
     p_profile_authorize.add_argument("--actor-kind", default=None)
     p_profile_authorize.add_argument("--recorded-by", default=None)
@@ -2209,23 +2218,47 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "profile" and args.profile_command == "authorize":
-            result = authorize_profile_request(
-                paths,
-                request_file=args.request_file,
-                output=args.output,
-                actor=args.actor,
-                actor_kind=args.actor_kind,
-                recorded_by=args.recorded_by,
-                recorder_kind=args.recorder_kind,
-                source_kind=args.source_kind,
-                source_ref=args.source_ref,
-                reason=args.reason,
-                max_cost=args.max_cost,
-                currency=args.currency,
-                allowed_providers=args.provider,
-                data_classes=args.data_class,
-                expires_at=args.expires_at,
-            )
+            provenance = {
+                "actor": args.actor,
+                "actor_kind": args.actor_kind,
+                "recorded_by": args.recorded_by,
+                "recorder_kind": args.recorder_kind,
+                "source_kind": args.source_kind,
+                "source_ref": args.source_ref,
+                "reason": args.reason,
+            }
+            if args.authorized_event_id:
+                if args.request_file or args.output:
+                    raise ProfileAuthorizationError(
+                        message="--revoke cannot be combined with --request or --output.",
+                        code="profile_authorization_revoke_arguments",
+                        exit_code=2,
+                        details={},
+                    )
+                result = revoke_profile_authorization(
+                    paths,
+                    authorized_event_id=args.authorized_event_id,
+                    **provenance,
+                )
+            else:
+                if not args.request_file or not args.output:
+                    raise ProfileAuthorizationError(
+                        message="--request and --output are required unless --revoke is used.",
+                        code="profile_authorization_request_arguments",
+                        exit_code=2,
+                        details={},
+                    )
+                result = authorize_profile_request(
+                    paths,
+                    request_file=args.request_file,
+                    output=args.output,
+                    max_cost=args.max_cost,
+                    currency=args.currency,
+                    allowed_providers=args.provider,
+                    data_classes=args.data_class,
+                    expires_at=args.expires_at,
+                    **provenance,
+                )
             if json_output:
                 _print_json(result)
             else:

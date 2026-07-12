@@ -11,6 +11,7 @@ from typing import Any
 import uuid
 
 from .contracts._profile_contract import load_strict_json
+from .contracts.profile_output_bundle import bundle_digest as calculate_bundle_digest
 from .db import connect, connect_mutation
 from .errors import DataStoreError, EXIT_USAGE, PclError
 from .events import append_event
@@ -515,6 +516,62 @@ def assess_profile_output_evidence(
                 findings.append({"code": "stored_hash_mismatch", "message": f"{label} hash differs."})
         except OSError as exc:
             findings.append({"code": "stored_file_unhealthy", "message": f"{label}: {exc}"})
+    expected_files = {"evidence-manifest.json"}
+    expected_files.update(relative for relative, _, _, _ in controls if relative)
+    actual_files = {
+        path.relative_to(base).as_posix()
+        for path in base.rglob("*")
+        if path.is_file() or path.is_symlink()
+    }
+    for relative in sorted(actual_files - expected_files):
+        findings.append(
+            {
+                "code": "unexpected_stored_file",
+                "message": f"Unlisted file exists in finalized Evidence: {relative}",
+            }
+        )
+    if isinstance(bundle, dict):
+        bundle_path = base / str(bundle.get("stored_manifest_path") or "")
+        try:
+            stored_bundle = load_strict_json(bundle_path)
+            if not isinstance(stored_bundle, dict):
+                raise ValueError("stored bundle manifest is not an object")
+            recomputed_digest = calculate_bundle_digest(stored_bundle)
+            conn = connect(paths.db_path)
+            try:
+                event = conn.execute(
+                    """
+                    SELECT payload_json FROM events
+                    WHERE event_type = 'profile_output_ingested'
+                      AND entity_type = 'evidence' AND entity_id = ?
+                    ORDER BY sequence LIMIT 1
+                    """,
+                    (evidence_id,),
+                ).fetchone()
+            finally:
+                conn.close()
+            if event is None:
+                findings.append(
+                    {"code": "ingest_event_missing", "message": "Ingest event is missing."}
+                )
+            else:
+                payload = json.loads(str(event["payload_json"]))
+                event_digest = payload.get("bundle_digest")
+                if (
+                    recomputed_digest != event_digest
+                    or bundle.get("bundle_digest") != event_digest
+                    or stored_bundle.get("bundle_digest", {}).get("value") != event_digest
+                ):
+                    findings.append(
+                        {
+                            "code": "bundle_event_digest_mismatch",
+                            "message": "Stored bundle digest differs from the immutable ingest event.",
+                        }
+                    )
+        except (OSError, ValueError, json.JSONDecodeError, TypeError) as exc:
+            findings.append(
+                {"code": "stored_bundle_digest_unreadable", "message": str(exc)}
+            )
     return {"health": "ok" if not findings else "error", "findings": findings}
 
 

@@ -15,12 +15,12 @@ from pcl.audit import audit_check
 from pcl.contracts.profile_output_bundle import bundle_digest
 from pcl.contracts.profile_run_request import request_basis_digest, request_digest
 from pcl.contracts.profile_run_request import validate_profile_run_request
-from pcl.db import connect, connect_mutation
-from pcl.events import append_event
+from pcl.db import connect
 from pcl.init_project import init_project
 from pcl.paths import resolve_paths
 from pcl.profile_prepare import prepare_profile_request
 from pcl.profile_decisions import ProfileDecisionError, select_profile_proposal
+from pcl.profile_bundle_store import assess_profile_output_evidence
 from pcl.profile_authorization import (
     ProfileAuthorizationError,
     authorization_findings,
@@ -444,6 +444,24 @@ def test_atomic_ingest_adds_exact_rows_and_exact_replay_is_idempotent(
     assert _snapshot(root) == replay_before
     if status == "completed":
         assert audit_check(resolve_paths(root))["ok"] is True
+        unexpected = manifest_path.parent / "payload" / "smuggled.txt"
+        unexpected.write_text("not listed", encoding="utf-8")
+        assessment = assess_profile_output_evidence(
+            resolve_paths(root),
+            evidence_id=result["evidence"]["id"],
+            manifest_path_value=result["evidence"]["manifest_path"],
+        )
+        assert "unexpected_stored_file" in {
+            item["code"] for item in assessment["findings"]
+        }
+        audit = audit_check(resolve_paths(root))
+        assert "evidence_metadata_file_mismatch" in {
+            item["type"]
+            for classification in audit["anomalies"].values()
+            for item in classification
+        }
+        unexpected.unlink()
+        assert audit_check(resolve_paths(root))["ok"] is True
         stored = manifest_path.parent / manifest["members"][0]["storage_path"]
         data = stored.read_bytes()
         stored.write_bytes(bytes([data[0] ^ 1]) + data[1:])
@@ -453,6 +471,50 @@ def test_atomic_ingest_adds_exact_rows_and_exact_replay_is_idempotent(
             for classification in audit["anomalies"].values()
             for item in classification
         }
+
+
+def test_profile_bundle_audit_is_anchored_to_ingest_event_digest(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    root, task_id, request_path, request = _prepared(tmp_path, capsys)
+    bundle_path = _bundle(tmp_path, request, task_id, "completed")
+    assert main([
+        "--root", str(root), "profile", "ingest", "--request", str(request_path),
+        "--bundle", str(bundle_path), "--json",
+    ]) == 0
+    result = json.loads(capsys.readouterr().out)
+    manifest_path = root / result["evidence"]["manifest_path"]
+    manifest = _json(manifest_path)
+    run_member = manifest["members"][0]
+    stored_run_path = manifest_path.parent / run_member["storage_path"]
+    stored_run = _json(stored_run_path)
+    stored_run["selection_rationale"] = "coordinated rewrite"
+    _write(stored_run_path, stored_run)
+    run_member["sha256"] = hashlib.sha256(stored_run_path.read_bytes()).hexdigest()
+    run_member["size_bytes"] = stored_run_path.stat().st_size
+
+    stored_bundle_path = manifest_path.parent / manifest["bundle"]["stored_manifest_path"]
+    stored_bundle = _json(stored_bundle_path)
+    stored_bundle["artifacts"][0]["sha256"] = run_member["sha256"]
+    stored_bundle["artifacts"][0]["size_bytes"] = run_member["size_bytes"]
+    stored_bundle["bundle_digest"]["value"] = bundle_digest(stored_bundle)
+    _write(stored_bundle_path, stored_bundle)
+    manifest["bundle"]["bundle_digest"] = stored_bundle["bundle_digest"]["value"]
+    manifest["bundle"]["stored_manifest_sha256"] = hashlib.sha256(
+        stored_bundle_path.read_bytes()
+    ).hexdigest()
+    manifest["bundle"]["stored_manifest_size_bytes"] = stored_bundle_path.stat().st_size
+    _write(manifest_path, manifest)
+
+    assessment = assess_profile_output_evidence(
+        resolve_paths(root),
+        evidence_id=result["evidence"]["id"],
+        manifest_path_value=result["evidence"]["manifest_path"],
+    )
+    assert "bundle_event_digest_mismatch" in {
+        item["code"] for item in assessment["findings"]
+    }
 
 
 def test_atomic_ingest_replay_conflict_and_human_gate_are_zero_mutation(
@@ -900,19 +962,21 @@ def test_profile_authorize_is_human_gated_bound_and_idempotent(
     assert not expanded_validation.ok
     assert any("profile_authorization_basis_mismatch" in error for error in expanded_validation.errors)
 
-    conn = connect_mutation(resolve_paths(root))
-    try:
-        append_event(
-            conn=conn,
-            events_path=resolve_paths(root).events_path,
-            event_type="profile_authorization_revoked",
-            entity_type="evidence",
-            entity_id=result["evidence_id"],
-            payload={"authorized_event_id": result["event_id"], "reason": "Owner revoked scope"},
-        )
-        conn.commit()
-    finally:
-        conn.close()
+    revoke_command = [
+        "--root", str(root), "profile", "authorize", "--revoke", result["event_id"],
+        "--actor", "human:owner", "--recorded-by", "agent:codex",
+        "--source-kind", "cockpit", "--source-ref", "cockpit-task-0159",
+        "--reason", "Owner revoked scope", "--json",
+    ]
+    assert main(revoke_command) == 0
+    revocation = json.loads(capsys.readouterr().out)
+    assert revocation["changed"] is True
+    assert revocation["authorized_event_id"] == result["event_id"]
+    assert revocation["revocation"]["revocation"]["actor_kind"] == "human"
+    assert main(revoke_command) == 0
+    replayed_revocation = json.loads(capsys.readouterr().out)
+    assert replayed_revocation["changed"] is False
+    assert replayed_revocation["revoked_event_id"] == revocation["revoked_event_id"]
     revoked_before = _snapshot(root)
     assert main([
         "--root", str(root), "profile", "ingest", "--request", str(output),
