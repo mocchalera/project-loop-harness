@@ -71,6 +71,7 @@ SAFE_PROJECT_EXECUTABLES = {
     "yarn",
 }
 SAFE_PYTHON_MODULES = {"mypy", "pytest", "pyright", "ruff"}
+SAFE_NODE_MODES = {"--check", "--test"}
 FAIL_OPEN_CHECK_COMMAND_REASON = "fail_open_check_command"
 FAIL_OPEN_FALLBACK_EXECUTABLES = {"true", "echo", "printf"}
 FORBIDDEN_PCL_FLAGS = {"--root"}
@@ -575,9 +576,32 @@ def _mark_project_command_safety(command: dict[str, Any], *, key: str) -> None:
             return
         command["blocked_reason"] = "python project commands must use -m with an allowlisted test or lint module"
         return
+    if executable == "node":
+        _mark_node_command_safety(command, argv)
+        return
     if executable not in SAFE_PROJECT_EXECUTABLES:
         command["blocked_reason"] = f"project command executable is not allowlisted: {executable}"
         return
+    _mark_safe(command)
+
+
+def _mark_node_command_safety(command: dict[str, Any], argv: list[str]) -> None:
+    if len(argv) < 2 or argv[1] not in SAFE_NODE_MODES:
+        command["blocked_reason"] = "node project commands must use --test or --check"
+        return
+    mode = argv[1]
+    operands = argv[2:]
+    if mode == "--check" and len(operands) != 1:
+        command["blocked_reason"] = "node --check requires exactly one project-relative JavaScript file"
+        return
+    for operand in operands:
+        path = Path(operand)
+        if operand.startswith("-") or path.is_absolute() or ".." in path.parts:
+            command["blocked_reason"] = "node verification operands must be project-relative paths"
+            return
+        if mode == "--check" and path.suffix not in {".js", ".mjs", ".cjs"}:
+            command["blocked_reason"] = "node --check requires a JavaScript file"
+            return
     _mark_safe(command)
 
 

@@ -155,6 +155,46 @@ def test_finish_check_planner_blocks_recognized_fail_open_commands(
 
 
 @pytest.mark.parametrize(
+    "command,argv",
+    [
+        ("node --test", ["node", "--test"]),
+        ("node --test tests/game.test.js", ["node", "--test", "tests/game.test.js"]),
+        ("node --check src/main.js", ["node", "--check", "src/main.js"]),
+    ],
+)
+def test_finish_check_planner_allows_bounded_node_verification(
+    tmp_path: Path,
+    command: str,
+    argv: list[str],
+) -> None:
+    planned = _plan_finish_check(tmp_path, command)
+
+    assert planned["safe_to_run"] is True
+    assert planned["argv"] == argv
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "node app.js",
+        "node --eval console.log(1)",
+        "node --test ../outside.test.js",
+        "node --test --import helper.js",
+        "node --check src/main.ts",
+        "node --check src/a.js src/b.js",
+    ],
+)
+def test_finish_check_planner_rejects_unbounded_node_execution(
+    tmp_path: Path,
+    command: str,
+) -> None:
+    planned = _plan_finish_check(tmp_path, command)
+
+    assert planned["safe_to_run"] is False
+    assert planned["blocked_reason"].startswith("node ")
+
+
+@pytest.mark.parametrize(
     "command",
     [
         "python -m pytest -q tests/test_echo.py",
