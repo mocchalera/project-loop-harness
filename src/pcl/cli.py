@@ -180,6 +180,7 @@ from .migrations import apply_migrations, migration_status
 from .outbox import project_pending_events
 from .paths import resolve_paths
 from .profiles import list_profiles, show_profile, validate_profile
+from .profile_prepare import prepare_profile_request
 from .renderer import render_dashboard
 from .receipt_show import receipt_summary_for_ref
 from .registry import (
@@ -953,6 +954,33 @@ def build_parser() -> argparse.ArgumentParser:
     p_profile_validate.add_argument(
         "runner_profile_id",
         help="Runner Profile ID, for example council.discovery (not a role_profile)",
+    )
+    p_profile_prepare = profile_sub.add_parser(
+        "prepare",
+        help=(
+            "Build a deterministic read-only request from recorded route Evidence; "
+            "never execute a runner"
+        ),
+    )
+    p_profile_prepare.add_argument(
+        "runner_profile_id",
+        help="Runner Profile ID, for example council.discovery",
+    )
+    p_profile_prepare.add_argument(
+        "--target",
+        required=True,
+        dest="target_ref",
+        help="Target reference as task:T-XXXX",
+    )
+    p_profile_prepare.add_argument(
+        "--brief",
+        dest="brief_id",
+        help="Explicit healthy Work Brief Evidence ID when candidates are ambiguous",
+    )
+    p_profile_prepare.add_argument(
+        "--output",
+        default=None,
+        help="Write only the generated request JSON to this explicit path",
     )
 
     p_contract = sub.add_parser("contract", help="Validate versioned artifact contracts")
@@ -2014,6 +2042,25 @@ def main(argv: list[str] | None = None) -> int:
                 for error in result["errors"]:
                     print(f"ERROR: {error}", file=sys.stderr)
             return 0 if result["ok"] else 1
+
+        if args.command == "profile" and args.profile_command == "prepare":
+            result = prepare_profile_request(
+                paths,
+                runner_profile_id=args.runner_profile_id,
+                target_ref=args.target_ref,
+                brief_id=args.brief_id,
+                output=args.output,
+            )
+            if json_output:
+                _print_json(result)
+            elif result["output_path"]:
+                print(
+                    f"Prepared {args.runner_profile_id} request at "
+                    f"{result['output_path']} (runner_executed=false)"
+                )
+            else:
+                print(to_pretty_json(result["request"]))
+            return 0
 
         if args.command == "contract" and args.contract_command == "validate":
             return _validate_contract_file(

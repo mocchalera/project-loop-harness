@@ -1,6 +1,6 @@
 # 0156: Deterministic read-only Profile request preparation
 
-- **Status:** Planned
+- **Status:** Done
 - **Milestone:** v0.5.0 Council Profile
 - **Priority:** P0
 - **Size:** L
