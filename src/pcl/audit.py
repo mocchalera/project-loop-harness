@@ -16,6 +16,7 @@ from .evidence import ADHOC_EVIDENCE_TYPES, assess_adhoc_evidence
 from .locks import jsonl_projector_lock, project_operation_lock
 from .outbox import canonical_event_bytes, canonical_event_record, project_pending_events
 from .paths import ProjectPaths
+from .profile_bundle_store import assess_profile_output_evidence
 
 
 AUDIT_CHECK_CONTRACT_VERSION = "audit-check/v1"
@@ -605,6 +606,7 @@ def _check_evidence(
     anomalies: dict[str, list[dict[str, Any]]],
 ) -> dict[str, int]:
     referenced: set[Path] = set()
+    referenced_profile_directories: set[Path] = set()
     missing_count = 0
     mismatch_count = 0
     for row in evidence_rows:
@@ -616,6 +618,8 @@ def _check_evidence(
             artifact = paths.root / artifact
         artifact = artifact.resolve()
         referenced.add(artifact)
+        if row["type"] == "profile_output_bundle":
+            referenced_profile_directories.add(artifact.parent)
         if not artifact.exists() or not artifact.is_file():
             missing_count += 1
             _add_anomaly(
@@ -651,13 +655,35 @@ def _check_evidence(
                     evidence_id=row["id"],
                     finding=finding,
                 )
+        elif row["type"] == "profile_output_bundle":
+            assessment = assess_profile_output_evidence(
+                paths,
+                evidence_id=str(row["id"]),
+                manifest_path_value=value,
+            )
+            for finding in assessment["findings"]:
+                mismatch_count += 1
+                _add_anomaly(
+                    anomalies,
+                    "human_review",
+                    "evidence_metadata_file_mismatch",
+                    f"Profile bundle Evidence {row['id']} failed reconciliation.",
+                    "report_only",
+                    evidence_id=row["id"],
+                    finding=finding,
+                )
 
     orphan_temp_count = 0
     orphan_manifest_count = 0
     orphan_completion_packet_count = 0
+    orphan_profile_temp_count = 0
+    orphan_profile_bundle_count = 0
+    profile_root = paths.evidence_dir / "profile-output-bundles"
     if paths.evidence_dir.exists():
         for candidate in sorted(paths.evidence_dir.rglob("*")):
             if not candidate.is_file():
+                continue
+            if profile_root in candidate.parents:
                 continue
             if candidate.resolve() in referenced:
                 continue
@@ -693,12 +719,39 @@ def _check_evidence(
                     "quarantine_or_report",
                     path=_relative_or_absolute(paths, candidate),
                 )
+        if profile_root.exists():
+            for candidate in sorted(profile_root.iterdir()):
+                if not candidate.is_dir():
+                    continue
+                resolved = candidate.resolve()
+                if candidate.name.startswith(".staging-"):
+                    orphan_profile_temp_count += 1
+                    _add_anomaly(
+                        anomalies,
+                        "human_review",
+                        "orphan_profile_bundle_staging",
+                        "Unreferenced Profile bundle staging directory requires review; it was not deleted.",
+                        "quarantine_or_report",
+                        path=_relative_or_absolute(paths, candidate),
+                    )
+                elif resolved not in referenced_profile_directories:
+                    orphan_profile_bundle_count += 1
+                    _add_anomaly(
+                        anomalies,
+                        "human_review",
+                        "orphan_profile_bundle_directory",
+                        "Finalized Profile bundle directory has no durable Evidence row.",
+                        "quarantine_or_report",
+                        path=_relative_or_absolute(paths, candidate),
+                    )
     return {
         "evidence_missing_files": missing_count,
         "evidence_mismatches": mismatch_count,
         "orphan_temp_evidence": orphan_temp_count,
         "orphan_evidence_manifests": orphan_manifest_count,
         "orphan_completion_packets": orphan_completion_packet_count,
+        "orphan_profile_bundle_staging": orphan_profile_temp_count,
+        "orphan_profile_bundle_directories": orphan_profile_bundle_count,
     }
 
 

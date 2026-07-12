@@ -181,6 +181,7 @@ from .outbox import project_pending_events
 from .paths import resolve_paths
 from .profiles import list_profiles, show_profile, validate_profile
 from .profile_ingest import plan_profile_ingest
+from .profile_bundle_store import ingest_profile_bundle
 from .profile_prepare import prepare_profile_request
 from .renderer import render_dashboard
 from .receipt_show import receipt_summary_for_ref
@@ -1004,9 +1005,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_profile_ingest.add_argument(
         "--dry-run",
-        required=True,
         action="store_true",
         help="Validate and return an exact read-only mutation plan",
+    )
+    p_profile_ingest.add_argument(
+        "--accept-failed",
+        action="store_true",
+        help="Explicitly persist a failed bundle; requires --summary",
+    )
+    p_profile_ingest.add_argument(
+        "--summary",
+        help="Human summary required with --accept-failed",
     )
 
     p_contract = sub.add_parser("contract", help="Validate versioned artifact contracts")
@@ -2089,10 +2098,13 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "profile" and args.profile_command == "ingest":
-            result = plan_profile_ingest(
+            operation = plan_profile_ingest if args.dry_run else ingest_profile_bundle
+            result = operation(
                 paths,
                 request_file=args.request_file,
                 bundle_file=args.bundle_file,
+                accept_failed=args.accept_failed,
+                summary=args.summary,
             )
             if json_output:
                 _print_json(result)

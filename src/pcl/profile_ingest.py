@@ -52,6 +52,8 @@ def plan_profile_ingest(
     *,
     request_file: str,
     bundle_file: str,
+    accept_failed: bool = False,
+    summary: str | None = None,
 ) -> dict[str, Any]:
     require_initialized(paths)
     request_path = Path(request_file)
@@ -101,7 +103,11 @@ def plan_profile_ingest(
         _raise_findings(findings, request_file, bundle_file)
 
     proposal_count = len(bundle["decision_proposal_artifact_ids"])
-    persistable = bundle["status"] != "failed"
+    persistable_without_extra_flag = bundle["status"] != "failed"
+    failed_accepted = bundle["status"] == "failed" and accept_failed and bool(
+        str(summary or "").strip()
+    )
+    persistable = persistable_without_extra_flag or failed_accepted
     decision_count = proposal_count if bundle["status"] == "needs_human" else 0
     mutation = {
         "evidence_rows": 1 if persistable else 0,
@@ -132,8 +138,9 @@ def plan_profile_ingest(
             "artifact_count": len(bundle["artifacts"]),
             "decision_proposal_count": proposal_count,
         },
-        "persistable_without_extra_flag": persistable,
-        "requires_accept_failed": bundle["status"] == "failed",
+        "persistable_without_extra_flag": persistable_without_extra_flag,
+        "failed_acceptance_satisfied": failed_accepted,
+        "requires_accept_failed": bundle["status"] == "failed" and not failed_accepted,
         "mutation": mutation,
         "next_action": {
             **bundle["next_action"],

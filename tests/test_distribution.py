@@ -73,6 +73,7 @@ def test_wheel_install_smoke_runs_cli_mcp_and_bundled_templates(tmp_path: Path) 
         for schema_name in PROFILE_SCHEMA_NAMES:
             assert f"pcl/contracts/schemas/{schema_name}" in names
         assert "pcl/profiles/builtin/council.discovery.json" in names
+        assert "pcl/profile_bundle_store.py" in names
 
     venv_dir = tmp_path / "venv"
     venv.EnvBuilder(with_pip=True).create(venv_dir)
@@ -84,6 +85,9 @@ def test_wheel_install_smoke_runs_cli_mcp_and_bundled_templates(tmp_path: Path) 
     _run([python, "-m", "pip", "install", "--no-deps", wheels[0]], env=wheel_env)
 
     assert "Project Loop Harness CLI" in _run([pcl, "--help"], env=wheel_env).stdout
+    assert "--accept-failed" in _run(
+        [pcl, "profile", "ingest", "--help"], env=wheel_env
+    ).stdout
     assert "Project Loop Harness MCP server" in _run([pcl_mcp, "--help"], env=wheel_env).stdout
     profile_list = _json_output(
         _run([pcl, "--json", "profile", "list"], env=wheel_env, cwd=tmp_path)
@@ -208,3 +212,5 @@ def test_sdist_contains_profile_contracts_and_builtin_manifest(tmp_path: Path) -
         name.endswith("/src/pcl/profiles/builtin/council.discovery.json")
         for name in names
     )
+    assert any(name.endswith("/src/pcl/profile_bundle_store.py") for name in names)
+    assert any(name.endswith("/tests/test_profile_ingest_dry_run.py") for name in names)

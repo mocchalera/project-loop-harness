@@ -3,11 +3,15 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
 from pcl.cli import main
+from pcl.audit import audit_check
 from pcl.contracts.profile_output_bundle import bundle_digest
 from pcl.contracts.profile_run_request import request_basis_digest, request_digest
 from pcl.db import connect
@@ -367,3 +371,232 @@ def test_symlink_artifact_is_rejected_read_only(tmp_path: Path, capsys) -> None:
     payload = json.loads(capsys.readouterr().out)
     assert "bundle_artifact_symlink" in [item["code"] for item in payload["error"]["details"]["findings"]]
     assert _snapshot(root) == before
+
+
+@pytest.mark.parametrize("status", ["completed", "partial", "budget_exhausted", "skipped"])
+def test_atomic_ingest_adds_exact_rows_and_exact_replay_is_idempotent(
+    tmp_path: Path,
+    capsys,
+    status: str,
+) -> None:
+    root, task_id, request_path, request = _prepared(tmp_path, capsys)
+    bundle_path = _bundle(tmp_path, request, task_id, status)
+    (bundle_path.parent / "unlisted-neighbor.txt").write_text("ignored", encoding="utf-8")
+    before = _snapshot(root)
+    command = [
+        "--root",
+        str(root),
+        "profile",
+        "ingest",
+        "--request",
+        str(request_path),
+        "--bundle",
+        str(bundle_path),
+        "--json",
+    ]
+    assert main(command) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["changed"] is True
+    assert result["idempotent"] is False
+    after = _snapshot(root)
+    for table in ("evidence", "evidence_links", "events", "outbox_records"):
+        assert after["counts"][table] == before["counts"][table] + 1
+    assert after["counts"]["decisions"] == before["counts"]["decisions"]
+    manifest_path = root / result["evidence"]["manifest_path"]
+    manifest = _json(manifest_path)
+    assert manifest["bundle"]["status"] == status
+    assert manifest["request"]["request_id"] == request["request_id"]
+    assert len(manifest["members"]) == len(_json(bundle_path)["artifacts"])
+    assert not any("unlisted-neighbor" in str(path) for path in manifest_path.parent.rglob("*"))
+
+    stored_hashes = {
+        item["logical_path"]: hashlib.sha256(
+            (manifest_path.parent / item["storage_path"]).read_bytes()
+        ).hexdigest()
+        for item in manifest["members"]
+    }
+    (bundle_path.parent / "council-run.json").write_text("source changed", encoding="utf-8")
+    assert {
+        item["logical_path"]: hashlib.sha256(
+            (manifest_path.parent / item["storage_path"]).read_bytes()
+        ).hexdigest()
+        for item in manifest["members"]
+    } == stored_hashes
+
+    replay_before = _snapshot(root)
+    (bundle_path.parent / "council-run.json").write_bytes(
+        (manifest_path.parent / manifest["members"][0]["storage_path"]).read_bytes()
+    )
+    assert main(command) == 0
+    replay = json.loads(capsys.readouterr().out)
+    assert replay["changed"] is False
+    assert replay["idempotent"] is True
+    assert replay["evidence"]["id"] == result["evidence"]["id"]
+    assert replay["event_id"] == result["event_id"]
+    assert _snapshot(root) == replay_before
+    if status == "completed":
+        assert audit_check(resolve_paths(root))["ok"] is True
+        stored = manifest_path.parent / manifest["members"][0]["storage_path"]
+        data = stored.read_bytes()
+        stored.write_bytes(bytes([data[0] ^ 1]) + data[1:])
+        audit = audit_check(resolve_paths(root))
+        assert "evidence_metadata_file_mismatch" in {
+            item["type"]
+            for classification in audit["anomalies"].values()
+            for item in classification
+        }
+
+
+def test_atomic_ingest_replay_conflict_and_human_gate_are_zero_mutation(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    root, task_id, request_path, request = _prepared(tmp_path, capsys)
+    bundle_path = _bundle(tmp_path, request, task_id, "completed")
+    base = [
+        "--root",
+        str(root),
+        "profile",
+        "ingest",
+        "--request",
+        str(request_path),
+        "--bundle",
+        str(bundle_path),
+        "--json",
+    ]
+    assert main(base) == 0
+    capsys.readouterr()
+    bundle = _json(bundle_path)
+    bundle["summary"] = "same ID, different digest"
+    bundle["bundle_digest"]["value"] = bundle_digest(bundle)
+    _write(bundle_path, bundle)
+    before = _snapshot(root)
+    assert main(base) == 2
+    conflict = json.loads(capsys.readouterr().out)
+    assert conflict["error"]["code"] == "profile_bundle_replay_conflict"
+    assert _snapshot(root) == before
+
+    human_path = _bundle(tmp_path, request, task_id, "needs_human")
+    human_command = [*base[:-3], "--bundle", str(human_path), "--json"]
+    assert main(human_command) == 2
+    gated = json.loads(capsys.readouterr().out)
+    assert gated["error"]["code"] == "profile_decision_ingest_not_available"
+    assert _snapshot(root) == before
+
+
+def test_failed_bundle_requires_explicit_acceptance_and_summary(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    root, task_id, request_path, request = _prepared(tmp_path, capsys)
+    bundle_path = _bundle(tmp_path, request, task_id, "failed")
+    command = [
+        "--root",
+        str(root),
+        "profile",
+        "ingest",
+        "--request",
+        str(request_path),
+        "--bundle",
+        str(bundle_path),
+        "--json",
+    ]
+    before = _snapshot(root)
+    assert main(command) == 2
+    refused = json.loads(capsys.readouterr().out)
+    assert refused["error"]["code"] == "profile_failed_bundle_acceptance_required"
+    assert _snapshot(root) == before
+
+    assert main([*command[:-1], "--accept-failed", "--summary", "Retain runner failure for audit", "--json"]) == 0
+    accepted = json.loads(capsys.readouterr().out)
+    assert accepted["mutation"] == {
+        "evidence_rows": 1,
+        "evidence_links": 1,
+        "decision_rows": 0,
+        "events": 1,
+        "outbox_records": 1,
+        "filesystem_bundle_directories": 1,
+    }
+    after = _snapshot(root)
+    for table in ("evidence", "evidence_links", "events", "outbox_records"):
+        assert after["counts"][table] == before["counts"][table] + 1
+    assert after["counts"]["decisions"] == before["counts"]["decisions"]
+    manifest = _json(root / accepted["evidence"]["manifest_path"])
+    assert manifest["failed_acceptance"] == {
+        "accepted": True,
+        "summary": "Retain runner failure for audit",
+    }
+
+
+@pytest.mark.parametrize(
+    ("fault_point", "anomaly_type"),
+    [
+        ("profile_ingest_after_copy", "orphan_profile_bundle_staging"),
+        ("profile_ingest_before_rename", "orphan_profile_bundle_staging"),
+        ("profile_ingest_after_rename_before_commit", "orphan_profile_bundle_directory"),
+        ("profile_ingest_after_outbox_before_commit", "orphan_profile_bundle_directory"),
+    ],
+)
+def test_atomic_ingest_crash_points_leave_no_rows_and_are_auditable(
+    tmp_path: Path,
+    capsys,
+    fault_point: str,
+    anomaly_type: str,
+) -> None:
+    root, task_id, request_path, request = _prepared(tmp_path, capsys)
+    bundle_path = _bundle(tmp_path, request, task_id, "completed")
+    before = _snapshot(root)
+    marker = tmp_path / f"{fault_point}.json"
+    env = {
+        **os.environ,
+        "PYTHONPATH": str(Path("src").resolve()),
+        "PCL_ENABLE_TEST_FAULTS": "1",
+        "PCL_TEST_FAULT_POINT": fault_point,
+        "PCL_TEST_FAULT_MARKER": str(marker),
+    }
+    crashed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "pcl",
+            "--root",
+            str(root),
+            "profile",
+            "ingest",
+            "--request",
+            str(request_path),
+            "--bundle",
+            str(bundle_path),
+            "--json",
+        ],
+        cwd=Path.cwd(),
+        env=env,
+        text=True,
+        capture_output=True,
+        timeout=20,
+        check=False,
+    )
+    assert crashed.returncode != 0
+    assert json.loads(marker.read_text(encoding="utf-8"))["point"] == fault_point
+    after_crash = _snapshot(root)
+    assert after_crash["counts"] == before["counts"]
+    assert after_crash["events_jsonl"] == before["events_jsonl"]
+    assert {
+        path: digest
+        for path, digest in after_crash["files"].items()
+        if "/profile-output-bundles/" not in path
+    } == before["files"]
+    report = audit_check(resolve_paths(root))
+    anomaly_types = {
+        item["type"]
+        for classification in report["anomalies"].values()
+        for item in classification
+    }
+    assert anomaly_type in anomaly_types
+    matching = [
+        item
+        for classification in report["anomalies"].values()
+        for item in classification
+        if item["type"] == anomaly_type
+    ]
+    assert all(item["supported_action"] == "quarantine_or_report" for item in matching)

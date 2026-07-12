@@ -1,6 +1,6 @@
 # 0158: Atomic Profile bundle Evidence ingest and idempotency
 
-- **Status:** Planned
+- **Status:** Done
 - **Milestone:** v0.5.0 Council Profile
 - **Priority:** P0
 - **Size:** L
@@ -43,3 +43,19 @@ an outbox event, zero partial mutation, and exact replay idempotency.
 4. Audit detects Profile temp files and finalized unreferenced bundle
    directories; cleanup remains explicit and never guesses durable state.
 5. Source, wheel, and sdist ingest tests pass without migration/dependency.
+
+## Implementation evidence
+
+- `src/pcl/profile_bundle_store.py` re-validates staged bytes, copies only
+  listed artifacts, atomically publishes one immutable directory, and commits
+  one Evidence/link/event/outbox transaction.
+- Exact replay returns the original Evidence/event IDs; same bundle ID with a
+  different digest fails closed.
+- Failed bundles require `--accept-failed --summary`; `needs_human` remains
+  blocked until task 0159 adds Decision handling.
+- `audit._check_evidence` validates stored hashes and reports staging/finalized
+  orphan directories with explicit quarantine/report guidance only.
+- Four process-kill fault points cover copy, pre-rename,
+  post-rename/pre-commit, and post-outbox/pre-commit behavior.
+- Verification: `ruff check .`; targeted source/wheel/sdist tests 46 passed;
+  full suite 922 passed, 1 skipped.
