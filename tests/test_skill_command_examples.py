@@ -33,6 +33,11 @@ SKILL_PARSER_CONTRACT_EXAMPLES = [
     'pcl verification record --run WR-XXXX --result approved --reason "..."',
     'pcl goal close G-XXXX --summary "..." --evidence-id E-PACKET',
     'pcl goal close G-XXXX --summary "..." --verification V-XXXX',
+    'pcl --json profile prepare council.discovery --target task:T-XXXX --brief E-XXXX --output /tmp/council-request.json',
+    'pcl --json profile fixture-run --request /tmp/council-request.json --status completed --output-dir /tmp/council-output',
+    'pcl --json profile ingest --request /tmp/council-request.json --bundle /tmp/council-output/profile-output-bundle.json --dry-run',
+    'pcl --json profile ingest --request /tmp/council-request.json --bundle /tmp/council-output/profile-output-bundle.json',
+    'pcl --json profile authorize --revoke EV-XXXXXXXXXXXX --actor "human:owner" --source-kind cockpit --source-ref "cockpit:<task-id>" --reason "Withdraw scope"',
 ]
 
 

@@ -120,3 +120,17 @@ Activation reviewで次を修正した。
 
 `docs/growth-plan-v0.2.4-v0.5.md` は **Active with integrated amendments**。
 supersede ではない。amendments の要点は growth plan 末尾 §10 を参照。
+
+## v0.5.0 Council Profile 0161 dogfood record（2026-07-12追記）
+
+Council Profile は引き続き opt-in であり、Direct を既定値として維持する。
+既存の人間承認済み Work Brief を持つ高リスク・曖昧タスク `T-0039` で、
+offline fixture の `completed` / `partial` / `budget_exhausted` を本番と同じ
+検証・取り込み経路へ通した。Evidence は `E-0190`〜`E-0192`、外部通信・費用・
+provider 実行はすべて 0。明確な `T-0035` への Council 挿入は
+`profile_route_mismatch` で fail closed した。
+
+0162 に向けた暫定推奨は **continue experiment**。理由は、境界・安全停止・
+Evidence 連携は実証できた一方、実モデルによる品質差、追加の人間注意量、費用、
+遅延の比較サンプルがまだないため。既定値変更・実 provider 利用・公開は、この
+記録には含めない。

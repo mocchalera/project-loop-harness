@@ -240,6 +240,24 @@ If you start a workflow run, you own closing it out:
 
 ## Agent handoff commands
 
+Council Profile is opt-in for ambiguous or high-risk work. Direct remains the
+default for clear tasks. Council output is advisory Evidence, never approval or
+proof, and no returned command is executed automatically:
+
+```bash
+pcl --json profile prepare council.discovery --target task:T-XXXX --brief E-XXXX --output /tmp/council-request.json
+pcl --json profile fixture-run --request /tmp/council-request.json --status completed --output-dir /tmp/council-output
+pcl --json profile ingest --request /tmp/council-request.json --bundle /tmp/council-output/profile-output-bundle.json --dry-run
+pcl --json profile ingest --request /tmp/council-request.json --bundle /tmp/council-output/profile-output-bundle.json
+pcl --json profile authorize --revoke EV-XXXXXXXXXXXX --actor "human:owner" --source-kind cockpit --source-ref "cockpit:<task-id>" --reason "Withdraw scope"
+```
+
+Real network or paid use requires separate hash-bound human authorization that
+names providers, data classes, budget, and expiry. Never infer a route override,
+candidate selection, or authorization. Never send secrets, credentials,
+production data, or full transcripts. Validate with `--dry-run` first; preserve
+`partial`, `budget_exhausted`, `failed`, and `skipped` as factual safe stops.
+
 By default, generate prompts and adapter command templates, then ingest the
 resulting output as evidence:
 

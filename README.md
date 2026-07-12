@@ -255,6 +255,39 @@ resolution as separate hash-bound Evidence. Task context, completion packets,
 and resume handoffs expose additive references without rewriting historical
 artifacts.
 
+## Council Profile (opt-in)
+
+Council is an external advisory boundary for ambiguous or high-risk work. It is
+not a model provider, executor, verifier, approval, or replacement for Direct.
+The Core prepares a deterministic request, validates and stores returned bytes,
+and keeps any proposed choice behind a human Decision:
+
+```bash
+pcl --json profile list
+pcl --json profile prepare council.discovery --target task:T-0001 --brief E-0001 \
+  --output /tmp/council-request.json
+pcl --json profile fixture-run --request /tmp/council-request.json --status completed \
+  --output-dir /tmp/council-output
+pcl --json profile ingest --request /tmp/council-request.json \
+  --bundle /tmp/council-output/profile-output-bundle.json --dry-run
+pcl --json profile ingest --request /tmp/council-request.json \
+  --bundle /tmp/council-output/profile-output-bundle.json
+```
+
+Real network or paid execution is outside Core and requires a hash-bound human
+authorization. `pcl profile authorize` only emits an authorized request; it
+never runs a provider. Revoke an authorization through the governed CLI, never
+by editing SQLite:
+
+```bash
+pcl --json profile authorize --revoke EV-XXXXXXXXXXXX --actor "human:owner" \
+  --recorded-by "agent:codex" --source-kind cockpit \
+  --source-ref "cockpit:<task-id>" --reason "Withdraw provider scope"
+```
+
+See [docs/council-profile.md](docs/council-profile.md) for the operator flow,
+privacy boundary, status handling, and adoption constraints.
+
 ## Evidence Sets
 
 Use `evidence-set/v1` when one passing artifact is not enough and the target
