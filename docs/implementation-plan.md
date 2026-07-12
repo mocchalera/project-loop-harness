@@ -325,6 +325,37 @@ The core does not implement mockup motion, crop generation, typography
 inventory, or visual line detection. Those remain external-tool dependencies.
 The plan remains schema 8; any migration requires a separate human decision.
 
+## Milestone 18: v0.5.0 Council Profile
+
+The canonical implementation plan is `docs/plan-v0.5.0-council-profile.md`.
+It activates the integrated roadmap's optional Discovery Profile as a
+model-independent, built-in-only contract boundary. Provider execution remains
+outside PLH Core.
+
+- 0154 freezes the ADR and seven proposal contracts without runtime behavior.
+- 0155 packages standard-library validators and a data-only built-in registry.
+- 0156 adds deterministic read-only request preparation.
+- 0157 proves bundle validation and dry-run zero mutation.
+- 0158 adds atomic immutable Evidence ingest, replay idempotency, and Profile
+  orphan detection in audit.
+- 0159 binds up to three proposals to existing Decisions and adds hash-bound
+  paid/network human authorization without executing a runner; legacy plain
+  resolve/waive cannot bypass proposal provenance.
+- 0160 proves the complete path with an offline fixture in source/wheel/sdist.
+- 0161 dogfoods two real tasks and aligns Skill/CLI/operator guidance.
+- 0162 freezes a 10..20 task evaluation and records the human adoption gate.
+
+The slices are serialized through 0160 because contracts, CLI, Evidence,
+validators, Decisions, and package fixtures overlap. Schema remains 8. A
+separate external runner may start only after the 0157 boundary is frozen and
+its repository/network/paid-service gates receive explicit human approval.
+
+Council Profile is the v0.5.0 feature track, not the complete release gate.
+README split, contract stability policy, quickstarts, `.project-loop` commit
+policy, and publication readiness remain a separately numbered
+Adoption/Distribution track. Both evidence packets are required before a
+v0.5.0 publication decision.
+
 ## Semantic promotion gate
 
 Embeddings, Tree-sitter, call graphs, and semantic retrieval stay out

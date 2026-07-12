@@ -159,6 +159,15 @@ Give these tasks to coding agents in this order:
 155. `agent-tasks/0152-next-action-approval-provenance.md` (v0.4.3 Evidence Completeness, non-idle unfinished Feature routing and factual approval authority)
 156. `agent-tasks/0153-cross-skill-integrity-dogfood.md` (v0.4.3 release gate, incomplete/complete cross-skill fixtures, Skill parity, and human review)
 157. `agent-tasks/0153b-v0.4.3-release-preparation.md` (v0.4.3 local package/release preparation; publication remains separate)
+158. `agent-tasks/0154-profile-boundary-adr-contract-freeze.md` (v0.5.0 Council Profile, ADR and seven proposal contracts before runtime behavior)
+159. `agent-tasks/0155-profile-contract-runtime-and-registry.md` (v0.5.0 Council Profile, standard-library validators and built-in data-only registry)
+160. `agent-tasks/0156-profile-read-only-prepare.md` (v0.5.0 Council Profile, deterministic zero-mutation request preparation)
+161. `agent-tasks/0157-profile-bundle-validation-dry-run.md` (v0.5.0 Council Profile, fail-closed bundle validation and deterministic mutation planning)
+162. `agent-tasks/0158-profile-bundle-atomic-ingest.md` (v0.5.0 Council Profile, external bundle staging, atomic Evidence ingest, replay idempotency, and audit orphan detection)
+163. `agent-tasks/0159-decision-proposal-human-selection.md` (v0.5.0 Council Profile, existing Decision projection, hash-bound human selection/paid authorization, and legacy bypass guard)
+164. `agent-tasks/0160-council-profile-offline-e2e.md` (v0.5.0 Council Profile, provider-free source/wheel/sdist end-to-end fixture)
+165. `agent-tasks/0161-council-dogfood-skill-parity.md` (v0.5.0 Council Profile, two-repository dogfood, safe-stop, and Skill/CLI parity)
+166. `agent-tasks/0162-council-evaluation-adoption-gate.md` (v0.5.0 Council Profile, frozen baseline comparison and human adoption Decision)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and
@@ -184,5 +193,6 @@ v0.4.0 = Dogfood Operations + Three-command Wedge (Wave B) + RC2 Integrity Gate,
 v0.4.1 = Integrity Migration, see `docs/plan-v0.4.1.md`. Dispatch is 0141 idle routing → 0142 plan-only lifecycle repair action model → 0143 one-way consumer implementing link mutation and explicit structural apply → 0144 schema-8 artifact/event-anchored Skill provenance → 0145 structured diagnostics → enforced-policy dogfood. 0142 has no mutation dependency back on 0143. The implementation slices are serialized because adjacent tasks share CLI, validator, Evidence, and report surfaces. Adaptive Entry moves to v0.4.2.
 v0.4.2 = Adaptive Entry, see `docs/plan-v0.4.2.md`. Dispatch is canonical baseline → 0146 Work Brief Evidence → 0147 route recommendation → 0148 policy resolve/explain → 0149 override integration → 0149a dogfood/human review → 0149b release preparation. Schema remains 8 and recommendation/explanation are read-only by default.
 v0.4.3 = Evidence Completeness, see `docs/plan-v0.4.3.md`. Dispatch is 0150 target-bound evidence-set completeness → 0151 domain-neutral completion-policy and terminal preflight → 0152 unfinished-work routing and approval provenance → 0153 cross-skill dogfood/Skill parity/human review → 0153b local release preparation. The plan comes from Cockpit task cb004add LP dogfood; it does not hard-code web-design semantics into core and keeps schema 8 unless a separately approved migration is required.
+v0.5.0 Council Profile feature track: see `docs/plan-v0.5.0-council-profile.md`. Dispatch is 0154 ADR/proposal contract freeze → 0155 runtime validators/built-in registry → 0156 read-only prepare → 0157 dry-run validator → 0158 atomic Evidence ingest/audit extension → 0159 existing Decision/human provenance/run authorization and legacy-bypass guard → 0160 offline E2E → 0161 dogfood/Skill parity → 0162 evaluation/adoption gate. The built-in-only MVP keeps schema 8 and never invokes provider code from Core. README split, stability policy, quickstarts, commit policy, and publication readiness are a separately numbered Adoption/Distribution track required before v0.5.0 publication, not part of the Council Feature DoD.
 
 Do not start with MCP as the runtime. Do not start with a hosted UI. The CLI/runtime must become reliable first. (Fixing the existing optional MCP server to match its declared spec — 0125/0126 — is reliability work, not a runtime pivot.)

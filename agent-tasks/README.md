@@ -70,6 +70,15 @@ implement from the spec file, not from prompt summaries.
 | 0152 | Next-action and approval-provenance integrity | v0.4.3 Evidence Completeness | P0 | done (local RC) |
 | 0153 | Cross-skill integrity dogfood and release gate | v0.4.3 Evidence Completeness | P0 | done (human-approved local RC) |
 | 0153b | v0.4.3 local release preparation | v0.4.3 Evidence Completeness | P0 | done (local RC; not published) |
+| 0154 | Profile boundary ADR and proposal contract freeze | v0.5.0 Council Profile | P0 | planned (human ADR gate) |
+| 0155 | Profile contract runtime and built-in registry | v0.5.0 Council Profile | P0 | planned |
+| 0156 | Deterministic read-only Profile request preparation | v0.5.0 Council Profile | P0 | planned |
+| 0157 | Profile bundle validation and dry-run planner | v0.5.0 Council Profile | P0 | planned |
+| 0158 | Atomic Profile bundle Evidence ingest | v0.5.0 Council Profile | P0 | planned |
+| 0159 | Decision proposal selection and paid/network authorization | v0.5.0 Council Profile | P0 | planned |
+| 0160 | Council Discovery offline fixture E2E | v0.5.0 Council Profile | P1 | planned |
+| 0161 | Council dogfood, Skill parity, and operator docs | v0.5.0 Council Profile | P1 | planned |
+| 0162 | Council evaluation baseline and adoption gate | v0.5.0 Council Profile | P1 | planned |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
@@ -114,6 +123,16 @@ parity, and human review → **0153b** local release preparation. The slices are
 terminal guards, validators, routing, Evidence contracts, and fixtures. See
 `docs/plan-v0.4.3.md`.
 
+v0.5.0 Council Profile dispatch order: **0154** ADR/proposal contract freeze →
+**0155** packaged validators and built-in data-only registry → **0156**
+read-only request preparation → **0157** fail-closed dry-run validation →
+**0158** atomic Evidence ingest/idempotency + audit orphan detection → **0159**
+existing Decision + human provenance/run-authorization binding + legacy bypass
+guard → **0160** offline
+source/wheel/sdist E2E → **0161**
+two-repository dogfood/Skill parity → **0162** frozen evaluation and human
+adoption gate. See `docs/plan-v0.5.0-council-profile.md`.
+
 ## Planned next (see growth plan for scope)
 
 | Milestone | Theme |
@@ -124,7 +143,7 @@ terminal guards, validators, routing, Evidence contracts, and fixtures. See
 | v0.4.1 | Integrity migration: idle routing, lifecycle repair/link commands, diagnostics, Skill provenance |
 | v0.4.2 | Adaptive Entry: local RC prepared; immutable brief, deterministic route, multi-axis explain/override |
 | v0.4.3 | Evidence Completeness: local RC prepared; complete evidence sets, external verdict policy, approval provenance, cross-skill dogfood |
-| v0.5.0 | Adoption: README split, contract stability policy, upstream-layer adoption decision |
+| v0.5.0 | Two tracks: Council Profile 0154–0162; separately numbered Adoption/Distribution release readiness before publication |
 
 Everything with an ID below 0102 is completed design history; see `TASKS.md`
 for the one-line summary of each.
