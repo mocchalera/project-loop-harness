@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 
@@ -32,6 +33,7 @@ def test_council_evaluation_cohort_is_frozen_before_results() -> None:
 def test_council_results_preserve_frozen_cohort_and_safe_stop_threshold() -> None:
     cohort = json.loads(COHORT.read_text(encoding="utf-8"))
     results = json.loads(RESULTS.read_text(encoding="utf-8"))
+    assert results["cohort_sha256"] == hashlib.sha256(COHORT.read_bytes()).hexdigest()
     assert results["cohort_id"] == cohort["cohort_id"]
     assert results["sample_size"] == cohort["sample_size"]
     assert [item["id"] for item in results["cases"]] == [
