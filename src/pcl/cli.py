@@ -180,6 +180,7 @@ from .migrations import apply_migrations, migration_status
 from .outbox import project_pending_events
 from .paths import resolve_paths
 from .profiles import list_profiles, show_profile, validate_profile
+from .profile_ingest import plan_profile_ingest
 from .profile_prepare import prepare_profile_request
 from .renderer import render_dashboard
 from .receipt_show import receipt_summary_for_ref
@@ -981,6 +982,31 @@ def build_parser() -> argparse.ArgumentParser:
         "--output",
         default=None,
         help="Write only the generated request JSON to this explicit path",
+    )
+    p_profile_ingest = profile_sub.add_parser(
+        "ingest",
+        help=(
+            "Validate an external Profile bundle and plan mutations; "
+            "dry-run never mutates state or executes proposed commands"
+        ),
+    )
+    p_profile_ingest.add_argument(
+        "--request",
+        required=True,
+        dest="request_file",
+        help="Prepared profile-run-request/v1 JSON file",
+    )
+    p_profile_ingest.add_argument(
+        "--bundle",
+        required=True,
+        dest="bundle_file",
+        help="External profile-output-bundle/v1 JSON manifest",
+    )
+    p_profile_ingest.add_argument(
+        "--dry-run",
+        required=True,
+        action="store_true",
+        help="Validate and return an exact read-only mutation plan",
     )
 
     p_contract = sub.add_parser("contract", help="Validate versioned artifact contracts")
@@ -2060,6 +2086,18 @@ def main(argv: list[str] | None = None) -> int:
                 )
             else:
                 print(to_pretty_json(result["request"]))
+            return 0
+
+        if args.command == "profile" and args.profile_command == "ingest":
+            result = plan_profile_ingest(
+                paths,
+                request_file=args.request_file,
+                bundle_file=args.bundle_file,
+            )
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result))
             return 0
 
         if args.command == "contract" and args.contract_command == "validate":

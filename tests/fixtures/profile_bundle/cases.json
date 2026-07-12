@@ -1,0 +1,28 @@
+{
+  "contract_version": "profile-bundle-invalid-corpus/v1",
+  "cases": [
+    {"id": "bad_project", "expected_code": "request_project_fingerprint_mismatch"},
+    {"id": "missing_target", "expected_code": "request_target_missing"},
+    {"id": "manifest_mismatch", "expected_code": "request_profile_manifest_mismatch"},
+    {"id": "authorization_required", "expected_code": "profile_authorization_required"},
+    {"id": "bundle_request_mismatch", "expected_code": "bundle_request_mismatch"},
+    {"id": "bundle_profile_mismatch", "expected_code": "bundle_profile_mismatch"},
+    {"id": "path_parent", "expected_code": "bundle_contract_invalid"},
+    {"id": "path_absolute", "expected_code": "bundle_contract_invalid"},
+    {"id": "path_unc", "expected_code": "bundle_contract_invalid"},
+    {"id": "path_drive", "expected_code": "bundle_contract_invalid"},
+    {"id": "case_collision", "expected_code": "bundle_contract_invalid"},
+    {"id": "hash_mismatch", "expected_code": "bundle_artifact_hash_mismatch"},
+    {"id": "size_mismatch", "expected_code": "bundle_artifact_size_mismatch"},
+    {"id": "declared_size_limit", "expected_code": "bundle_declared_size_limit"},
+    {"id": "bad_status", "expected_code": "bundle_contract_invalid"},
+    {"id": "bad_digest", "expected_code": "bundle_contract_invalid"},
+    {"id": "required_role_missing", "expected_code": "bundle_required_role_count"},
+    {"id": "run_request_mismatch", "expected_code": "run_request_mismatch"},
+    {"id": "run_status_mismatch", "expected_code": "run_status_mismatch"},
+    {"id": "claim_participant_missing", "expected_code": "claim_participant_ref_missing"},
+    {"id": "verification_claim_missing", "expected_code": "verification_claim_ref_missing"},
+    {"id": "proposal_participant_missing", "expected_code": "decision_proposal_participant_ref_missing"},
+    {"id": "proposal_evidence_missing", "expected_code": "decision_proposal_evidence_ref_missing"}
+  ]
+}

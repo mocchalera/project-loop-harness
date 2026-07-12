@@ -1,6 +1,6 @@
 # 0157: Profile bundle validation and dry-run planner
 
-- **Status:** Planned
+- **Status:** Done
 - **Milestone:** v0.5.0 Council Profile
 - **Priority:** P0
 - **Size:** L
@@ -38,3 +38,14 @@ without copying files or touching PLH state.
 4. Bundle/request limits are enforced before expensive parsing/hashing.
 5. Targeted and full suites pass.
 
+## Implementation evidence
+
+- `src/pcl/profile_ingest.py` validates request/bundle bindings, bounded strict
+  JSON, listed artifact bytes, safe paths, contracts, and cross-references.
+- `pcl profile ingest --request ... --bundle ... --dry-run` returns a stable,
+  exact mutation plan without copying files or executing runner/verification
+  commands.
+- `tests/fixtures/profile_bundle/cases.json` and
+  `tests/test_profile_ingest_dry_run.py` cover all six statuses and the invalid
+  corpus, with before/after state snapshots.
+- Verification: `ruff check .` and `pytest -q` (911 passed, 1 skipped).
