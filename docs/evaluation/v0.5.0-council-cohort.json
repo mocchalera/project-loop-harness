@@ -1,0 +1,45 @@
+{
+  "contract_version": "council-evaluation-cohort/v1",
+  "cohort_id": "CEC-20260712-01",
+  "frozen_at": "2026-07-12T05:24:00Z",
+  "sample_size": 12,
+  "baseline": {
+    "comparison": "direct_or_single_model_vs_council",
+    "direct_is_default": true,
+    "offline_fixture_is_not_quality_evidence": true,
+    "ratings_require_sources_and_sample_size": true
+  },
+  "success_thresholds": {
+    "invalid_partial_budget_safe_stop_rate": 1.0,
+    "invalid_bundle_persisted_count": 0,
+    "clear_task_unnecessary_council_count": 0,
+    "max_human_decisions_per_run": 3,
+    "max_schema_corrections_per_valid_fixture": 0,
+    "real_provider_paired_sample_required_for_adoption": 10,
+    "minimum_first_pass_check_improvement": 0.1,
+    "maximum_human_review_time_regression": 0.2,
+    "maximum_cost_per_task_usd": 2.0,
+    "maximum_p95_latency_seconds": 300
+  },
+  "exclusions": [
+    "production data or credentials required",
+    "a provider request lacks hash-bound human authorization",
+    "the target has no approved Work Brief where one is required",
+    "the route is Direct and has no explicit human override",
+    "the result was created after thresholds were changed"
+  ],
+  "cases": [
+    {"id": "CEC-01", "category": "clear", "route": "direct", "fixture_status": "completed", "risk_prediction": "low", "council_expected": false},
+    {"id": "CEC-02", "category": "clear", "route": "direct", "fixture_status": "skipped", "risk_prediction": "low", "council_expected": false},
+    {"id": "CEC-03", "category": "clear", "route": "direct", "fixture_status": "failed", "risk_prediction": "low", "council_expected": false},
+    {"id": "CEC-04", "category": "ambiguous", "route": "discover", "fixture_status": "completed", "risk_prediction": "medium", "council_expected": true},
+    {"id": "CEC-05", "category": "ambiguous", "route": "discover", "fixture_status": "partial", "risk_prediction": "medium", "council_expected": true},
+    {"id": "CEC-06", "category": "ambiguous", "route": "discover", "fixture_status": "needs_human", "risk_prediction": "medium", "council_expected": true},
+    {"id": "CEC-07", "category": "repository_analysis", "route": "discover", "fixture_status": "completed", "risk_prediction": "medium", "council_expected": true},
+    {"id": "CEC-08", "category": "repository_analysis", "route": "discover", "fixture_status": "budget_exhausted", "risk_prediction": "medium", "council_expected": true},
+    {"id": "CEC-09", "category": "migration_auth_security", "route": "assure", "fixture_status": "needs_human", "risk_prediction": "high", "council_expected": true},
+    {"id": "CEC-10", "category": "migration_auth_security", "route": "assure", "fixture_status": "failed", "risk_prediction": "high", "council_expected": true},
+    {"id": "CEC-11", "category": "product_decision", "route": "discover", "fixture_status": "needs_human", "risk_prediction": "medium", "council_expected": true},
+    {"id": "CEC-12", "category": "product_decision", "route": "discover", "fixture_status": "skipped", "risk_prediction": "medium", "council_expected": true}
+  ]
+}
