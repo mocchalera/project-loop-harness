@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from pathlib import Path
+from typing import Any
 
 from .db import initialize_database
 from .db import connect_mutation
@@ -27,6 +29,8 @@ DEFAULT_DIRS = [
     "tmp",
     "cache",
 ]
+
+NODE_COMMAND_KEYS = ("lint", "typecheck", "test", "e2e", "build")
 
 
 @dataclass(frozen=True)
@@ -150,15 +154,29 @@ def plan_init_project(paths: ProjectPaths, *, overwrite: bool = False, with_clau
                 reason="create append-only audit log",
             )
         )
+    _, detected_node = _project_config_text(paths.root)
+    config_create_reason = "install project-loop configuration template"
+    config_overwrite_reason = "would overwrite pcl.yaml from template"
+    if detected_node is not None:
+        detected_commands = ", ".join(detected_node["commands"])
+        command_suffix = f" with commands: {detected_commands}" if detected_commands else ""
+        config_create_reason = (
+            "install project-loop configuration for detected Node project "
+            f"{detected_node['name']}{command_suffix}"
+        )
+        config_overwrite_reason = (
+            "would overwrite pcl.yaml for detected Node project "
+            f"{detected_node['name']}{command_suffix}"
+        )
     _plan_file(
         changes,
         errors,
         paths.root,
         paths.root / "pcl.yaml",
         overwrite=overwrite,
-        create_reason="install project-loop configuration template",
+        create_reason=config_create_reason,
         skip_reason="pcl.yaml already exists",
-        overwrite_reason="would overwrite pcl.yaml from template",
+        overwrite_reason=config_overwrite_reason,
     )
 
     _plan_resource_tree(
@@ -256,7 +274,8 @@ def init_project(paths: ProjectPaths, *, overwrite: bool = False, with_claude: b
     # Project config and templates
     pcl_yaml = paths.root / "pcl.yaml"
     if overwrite or not pcl_yaml.exists():
-        pcl_yaml.write_text(read_text_resource("templates/project/pcl.yaml"), encoding="utf-8")
+        config_text, _ = _project_config_text(paths.root)
+        pcl_yaml.write_text(config_text, encoding="utf-8")
 
     copy_tree_resource("templates/workflows", paths.workflows_dir, overwrite=overwrite)
     copy_tree_resource("templates/skills/project-control-loop", paths.agents_skill_dir, overwrite=overwrite)
@@ -308,6 +327,66 @@ def init_project(paths: ProjectPaths, *, overwrite: bool = False, with_claude: b
             conn.close()
 
     return InitResult(root=paths.root, created=not was_initialized, event_appended=event_appended)
+
+
+def _project_config_text(root: Path) -> tuple[str, dict[str, Any] | None]:
+    template = read_text_resource("templates/project/pcl.yaml")
+    package = _read_package_json(root / "package.json")
+    if package is None:
+        return template, None
+
+    raw_name = package.get("name")
+    name = raw_name.strip() if isinstance(raw_name, str) else ""
+    if not name:
+        name = root.name or "CHANGE_ME"
+    scripts = package.get("scripts")
+    scripts = scripts if isinstance(scripts, dict) else {}
+    command_keys = [
+        key
+        for key in NODE_COMMAND_KEYS
+        if isinstance(scripts.get(key), str) and scripts[key].strip()
+    ]
+    package_runner = _node_package_runner(root, package)
+
+    config = template.replace('  name: "CHANGE_ME"', f"  name: {_yaml_string(name)}", 1)
+    config = config.replace('  type: "generic"', '  type: "node"', 1)
+    for key in command_keys:
+        config = config.replace(
+            f'  {key}: ""',
+            f"  {key}: {_yaml_string(f'{package_runner} run {key}')}",
+            1,
+        )
+    return config, {"name": name, "commands": command_keys, "runner": package_runner}
+
+
+def _read_package_json(path: Path) -> dict[str, Any] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _node_package_runner(root: Path, package: dict[str, Any]) -> str:
+    package_manager = package.get("packageManager")
+    if isinstance(package_manager, str):
+        runner = package_manager.partition("@")[0].strip()
+        if runner in {"npm", "pnpm", "yarn", "bun"}:
+            return runner
+    lockfile_runners = (
+        ("pnpm-lock.yaml", "pnpm"),
+        ("yarn.lock", "yarn"),
+        ("bun.lock", "bun"),
+        ("bun.lockb", "bun"),
+    )
+    for lockfile, runner in lockfile_runners:
+        if (root / lockfile).is_file():
+            return runner
+    return "npm"
+
+
+def _yaml_string(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False)
 
 
 def _plan_dir(changes: list[InitPlanEntry], errors: list[str], root: Path, path: Path, reason: str) -> bool:

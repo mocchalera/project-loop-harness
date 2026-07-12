@@ -171,6 +171,37 @@ def test_start_apply_auto_initializes_and_records_active_target_receipt_and_even
     assert _counts(root)["events"] == _counts(root)["jsonl"]
 
 
+def test_start_auto_initialization_detects_node_project_commands(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    root = tmp_path / "node-project"
+    root.mkdir()
+    (root / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "agent-ready-node-app",
+                "scripts": {
+                    "test": "node --test",
+                    "build": "node --check src/main.js",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["--root", str(root), "start", "Add a puzzle mode", "--json"]) == 0
+    payload = _json_output(capsys)
+
+    assert payload["status"] == "started"
+    assert payload["result"]["project_initialized"] is True
+    config = (root / "pcl.yaml").read_text(encoding="utf-8")
+    assert 'name: "agent-ready-node-app"' in config
+    assert 'type: "node"' in config
+    assert 'test: "npm run test"' in config
+    assert 'build: "npm run build"' in config
+
+
 def test_start_is_idempotent_for_active_work_and_new_is_explicit(
     tmp_path: Path,
     capsys,

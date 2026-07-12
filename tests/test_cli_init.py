@@ -62,6 +62,94 @@ def test_init_dry_run_reports_plan_without_writing(tmp_path: Path, capsys) -> No
     )
 
 
+def test_init_detects_node_project_configuration_from_package_json(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "name": "strange-puzzle",
+                "packageManager": "pnpm@10.0.0",
+                "scripts": {
+                    "dev": "vite",
+                    "lint": "eslint .",
+                    "typecheck": "tsc --noEmit",
+                    "test": "vitest run",
+                    "e2e": "playwright test",
+                    "build": "vite build",
+                    "release": "npm publish",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert main(["init", "--target", str(tmp_path), "--dry-run", "--json"]) == 0
+    plan = _json_output(capsys)
+    config_change = next(change for change in plan["changes"] if change["path"] == "pcl.yaml")
+    assert config_change == {
+        "action": "create",
+        "path": "pcl.yaml",
+        "reason": (
+            "install project-loop configuration for detected Node project "
+            "strange-puzzle with commands: lint, typecheck, test, e2e, build"
+        ),
+    }
+    assert not (tmp_path / "pcl.yaml").exists()
+
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    config = (tmp_path / "pcl.yaml").read_text(encoding="utf-8")
+    assert 'name: "strange-puzzle"' in config
+    assert 'type: "node"' in config
+    assert 'install: ""' in config
+    assert 'lint: "pnpm run lint"' in config
+    assert 'typecheck: "pnpm run typecheck"' in config
+    assert 'test: "pnpm run test"' in config
+    assert 'e2e: "pnpm run e2e"' in config
+    assert 'build: "pnpm run build"' in config
+    assert "release:" not in config
+
+
+def test_init_node_detection_uses_lockfile_and_preserves_existing_config(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps({"name": "locked-app", "scripts": {"test": "node --test"}}),
+        encoding="utf-8",
+    )
+    (tmp_path / "yarn.lock").write_text("", encoding="utf-8")
+    existing = "project:\n  name: existing\ncommands:\n  test: custom-test\n"
+    (tmp_path / "pcl.yaml").write_text(existing, encoding="utf-8")
+
+    assert main(["init", "--target", str(tmp_path), "--dry-run", "--json"]) == 0
+    plan = _json_output(capsys)
+    config_change = next(change for change in plan["changes"] if change["path"] == "pcl.yaml")
+    assert config_change["action"] == "skip"
+    assert config_change["reason"] == "pcl.yaml already exists"
+
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert (tmp_path / "pcl.yaml").read_text(encoding="utf-8") == existing
+
+
+def test_init_malformed_package_json_falls_back_to_generic_template(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    (tmp_path / "package.json").write_text("{not-json", encoding="utf-8")
+
+    assert main(["init", "--target", str(tmp_path), "--dry-run", "--json"]) == 0
+    plan = _json_output(capsys)
+    config_change = next(change for change in plan["changes"] if change["path"] == "pcl.yaml")
+    assert config_change["reason"] == "install project-loop configuration template"
+
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    config = (tmp_path / "pcl.yaml").read_text(encoding="utf-8")
+    assert 'name: "CHANGE_ME"' in config
+    assert 'type: "generic"' in config
+
+
 def test_init_dry_run_force_does_not_claim_database_overwrite(tmp_path: Path, capsys) -> None:
     assert main(["init", "--target", str(tmp_path)]) == 0
     capsys.readouterr()
