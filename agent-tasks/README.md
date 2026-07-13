@@ -80,7 +80,7 @@ implement from the spec file, not from prompt summaries.
 | 0161 | Council dogfood, Skill parity, and operator docs | v0.5.0 Council Profile | P1 | parked after offline dogfood; second-repo/real-provider work human-gated |
 | 0162 | Council evaluation baseline and adoption gate | v0.5.0 Council Profile | P1 | done (`continue experiment`) |
 | 0163 | Adoption-first release readiness | v0.5.0 Adoption / Distribution | P0 | done (Claude Fable approved) |
-| 0164 | Guided dashboard review experience | v0.5.0 Adoption / Distribution | P0 | final review pending |
+| 0164 | Guided dashboard review experience | v0.5.0 Adoption / Distribution | P0 | Codex review remediation |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the

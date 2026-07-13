@@ -114,15 +114,18 @@ def test_dashboard_surfaces_validation_warnings(tmp_path: Path) -> None:
     skill_path = tmp_path / ".agents" / "skills" / "project-control-loop" / "SKILL.md"
     skill_path.unlink()
 
-    assert main(["--root", str(tmp_path), "render"]) == 0
+    assert main(["--root", str(tmp_path), "render", "--locale", "ja"]) == 0
 
     html = _read_dashboard(tmp_path)
     data = _read_dashboard_data(tmp_path)
-    assert "Validation Warnings" in html
+    assert "検証警告" in html
     assert "Missing project-control-loop Skill" in html
     assert data["risk_summary"]["highest_severity"] == "low"
     assert data["risk_summary"]["items"][0]["type"] == "validation_warnings"
     assert data["risk_summary"]["items"][0]["blocking"] is False
+    summary_start = html.index('id="operator-summary"')
+    summary_html = html[summary_start : html.index("</section>", summary_start)]
+    assert "確認すべき注意点が 1 件あります（最大: 低）。" in summary_html
 
 
 def test_dashboard_surfaces_open_human_queue_risks(tmp_path: Path) -> None:
@@ -392,7 +395,7 @@ def test_dashboard_operator_summary_precedes_advanced_details_in_japanese(
     assert summary_start < advanced_start
     assert all(label in summary_html for label in ["今", "完了", "次", "あなたの判断", "注意点"])
     assert "日本語の案内を確認する" in summary_html
-    assert "次の安全な処理はエージェントが続けます。" in summary_html
+    assert "次の処理は確認待ちです。" in summary_html
     assert "今、あなたの判断は必要ありません。" in summary_html
     assert "証跡付きの完了記録はまだありません。" in summary_html
     assert "詳細なProject Loop情報" in dashboard
@@ -423,6 +426,84 @@ def test_dashboard_operator_summary_localizes_human_gate_without_english_reason(
     assert "あなたの判断が 1 件必要です。" in summary_html
     assert "Open decision" not in summary_html
     assert "blocks safe continuation" not in summary_html
+
+
+def test_dashboard_operator_summary_distinguishes_idle_manual_and_agent_safe(
+    tmp_path: Path,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "render", "--locale", "ja"]) == 0
+
+    idle_dashboard = _read_dashboard(tmp_path)
+    idle_start = idle_dashboard.index('id="operator-summary"')
+    idle_summary = idle_dashboard[idle_start : idle_dashboard.index("</section>", idle_start)]
+    assert "次の作業は登録されていません。" in idle_summary
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "goal",
+        "create",
+        "--title",
+        "<script>手動確認 & 続行</script>",
+    ]) == 0
+    assert main(["--root", str(tmp_path), "render", "--locale", "ja"]) == 0
+
+    manual_dashboard = _read_dashboard(tmp_path)
+    manual_start = manual_dashboard.index('id="operator-summary"')
+    manual_summary = manual_dashboard[
+        manual_start : manual_dashboard.index("</section>", manual_start)
+    ]
+    assert "次の処理は確認待ちです。" in manual_summary
+    assert "次の安全な処理はエージェントが続けます。" not in manual_summary
+    assert "&lt;script&gt;手動確認 &amp; 続行&lt;/script&gt;" in manual_summary
+    assert "<script>手動確認" not in manual_summary
+
+    assert main([
+        "--root",
+        str(tmp_path),
+        "loop",
+        "run",
+        "feature_coverage",
+        "--goal",
+        "G-0001",
+    ]) == 0
+    assert main(["--root", str(tmp_path), "render", "--locale", "ja"]) == 0
+
+    safe_dashboard = _read_dashboard(tmp_path)
+    safe_start = safe_dashboard.index('id="operator-summary"')
+    safe_summary = safe_dashboard[safe_start : safe_dashboard.index("</section>", safe_start)]
+    assert "次の安全な処理はエージェントが続けます。" in safe_summary
+
+
+def test_dashboard_keeps_detailed_risks_decisions_and_commands_inside_disclosure(
+    tmp_path: Path,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "decision",
+        "open",
+        "--question",
+        "Which release path?",
+        "--recommendation",
+        "Use the reversible path",
+    ]) == 0
+    assert main(["--root", str(tmp_path), "render"]) == 0
+
+    dashboard = _read_dashboard(tmp_path)
+    details_start = dashboard.index('<details class="advanced-details"')
+    before_details = dashboard[:details_start]
+    inside_details = dashboard[details_start:]
+
+    assert 'id="operator-summary"' in before_details
+    assert "Risk &amp; Blockers" not in before_details
+    assert "Needs Your Decision" not in before_details
+    assert "<code>" not in before_details
+    assert "Risk &amp; Blockers" in inside_details
+    assert "Needs Your Decision" in inside_details
+    assert "pcl decision resolve DEC-0001 --selected-option" in inside_details
 
 
 def test_dashboard_operator_done_only_reports_evidence_backed_transitions(
@@ -516,6 +597,136 @@ def test_dashboard_operator_done_only_reports_evidence_backed_transitions(
     assert "E-0001" in summary_html
     assert "証跡付きで完了記録済み" in summary_html
     assert "successfully" not in summary_html
+
+
+def test_dashboard_operator_done_reconciles_current_state_without_event_window_loss(
+    tmp_path: Path,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main([
+        "--root", str(tmp_path), "feature", "add", "--name", "Current Done",
+        "--surface", "dashboard",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "story", "draft", "--feature", "F-0001",
+        "--actor", "operator", "--goal", "trust Done",
+        "--expected-behavior", "Only current terminal states appear",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "story", "approve", "US-0001",
+        "--summary", "Approved current-state semantics",
+    ]) == 0
+    for scenario in ["remains passing", "is later superseded"]:
+        assert main([
+            "--root", str(tmp_path), "test", "plan", "--feature", "F-0001",
+            "--story", "US-0001", "--type", "acceptance", "--scenario", scenario,
+            "--expected", "Done follows current state",
+        ]) == 0
+
+    artifact = tmp_path / "acceptance.txt"
+    artifact.write_text("acceptance passed\n", encoding="utf-8")
+    assert main([
+        "--root", str(tmp_path), "evidence", "add", "--file", "acceptance.txt",
+        "--summary", "Acceptance output", "--command", "pytest", "--copy",
+    ]) == 0
+    for test_case_id in ["TC-0001", "TC-0002"]:
+        assert main([
+            "--root", str(tmp_path), "test", "pass", test_case_id,
+            "--summary", "Acceptance passed", "--evidence-id", "E-0001",
+        ]) == 0
+    assert main([
+        "--root", str(tmp_path), "feature", "status", "F-0001", "--status", "done",
+        "--summary", "Feature completed", "--evidence-id", "E-0001",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "feature", "status", "F-0001", "--status", "needs_fix",
+        "--summary", "Feature reopened after review", "--evidence-id", "E-0001",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "test", "fail", "TC-0002",
+        "--summary", "Regression found", "--evidence-id", "E-0001",
+    ]) == 0
+
+    assert main([
+        "--root", str(tmp_path), "feature", "add", "--name", "Event Noise",
+        "--surface", "internal",
+    ]) == 0
+    for index in range(52):
+        status = "specified" if index % 2 == 0 else "needs_test"
+        assert main([
+            "--root", str(tmp_path), "feature", "status", "F-0002", "--status", status,
+            "--summary", f"Noise transition {index}", "--evidence-id", "E-0001",
+        ]) == 0
+
+    assert main(["--root", str(tmp_path), "render", "--locale", "ja"]) == 0
+    dashboard = _read_dashboard(tmp_path)
+    summary_start = dashboard.index('id="operator-summary"')
+    summary_html = dashboard[summary_start : dashboard.index("</section>", summary_start)]
+
+    assert "TC-0001" in summary_html
+    assert "TC-0002" not in summary_html
+    assert "F-0001" not in summary_html
+
+
+def test_dashboard_operator_done_covers_goal_verification_and_excludes_tasks(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Coverage"]) == 0
+    assert main([
+        "--root", str(tmp_path), "loop", "run", "feature_coverage", "--goal", "G-0001",
+    ]) == 0
+    output_path = (
+        tmp_path / ".project-loop" / "evidence" / "agent-runs" / "J-0001" / "output.md"
+    )
+    output_path.write_text(
+        "# Mapper result\n\n## Findings\n\n- Mapped.\n\n## Evidence\n\n"
+        "- `.project-loop/evidence/agent-runs/J-0001/prompt.md`\n",
+        encoding="utf-8",
+    )
+    assert main([
+        "--root", str(tmp_path), "jobs", "complete", "J-0001", "--summary", "Mapped",
+        "--output", ".project-loop/evidence/agent-runs/J-0001/output.md", "--json",
+    ]) == 0
+    capsys.readouterr()
+    for job_id in ["J-0002", "J-0003"]:
+        assert main([
+            "--root", str(tmp_path), "jobs", "complete", job_id,
+            "--summary", "Completed review job", "--json",
+        ]) == 0
+        capsys.readouterr()
+    assert main([
+        "--root", str(tmp_path), "verification", "record", "--run", "WR-0001",
+        "--result", "approved", "--reason", "Reviewed evidence", "--json",
+    ]) == 0
+    capsys.readouterr()
+    assert main([
+        "--root", str(tmp_path), "loop", "complete", "WR-0001",
+        "--summary", "Coverage complete", "--json",
+    ]) == 0
+    capsys.readouterr()
+    assert main([
+        "--root", str(tmp_path), "goal", "close", "G-0001", "--summary", "Goal done",
+        "--verification", "V-0001", "--json",
+    ]) == 0
+    capsys.readouterr()
+    assert main([
+        "--root", str(tmp_path), "task", "create", "--title", "Reason-only task",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "task", "status", "T-0001", "done",
+        "--reason", "No evidence attached to this task transition",
+    ]) == 0
+
+    assert main(["--root", str(tmp_path), "render", "--locale", "ja"]) == 0
+    dashboard = _read_dashboard(tmp_path)
+    summary_start = dashboard.index('id="operator-summary"')
+    summary_html = dashboard[summary_start : dashboard.index("</section>", summary_start)]
+
+    assert "ゴール G-0001" in summary_html
+    assert "検証 V-0001" in summary_html
+    assert "T-0001" not in summary_html
 
 
 def test_dashboard_human_decision_cockpit_renders_japanese_chrome(tmp_path: Path) -> None:

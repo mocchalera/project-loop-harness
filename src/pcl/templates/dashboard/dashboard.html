@@ -57,6 +57,9 @@
     </div>
   </section>
 
+  <details class="advanced-details">
+    <summary>{{ heading_advanced_details }}</summary>
+    <div class="advanced-content">
   <section class="panel-box">
     <h2>{{ heading_risk_and_blockers }}</h2>
     {{ risk_summary_block }}
@@ -67,9 +70,6 @@
     {{ human_decisions_block }}
   </section>
 
-  <details class="advanced-details">
-    <summary>{{ heading_advanced_details }}</summary>
-    <div class="advanced-content">
   <section class="warning">
     <strong>{{ label_rule }}:</strong> {{ rule_text }}
     <span class="muted">{{ label_source_db }}: <code>{{ source_db }}</code></span>

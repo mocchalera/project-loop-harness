@@ -1,6 +1,6 @@
 # 0164: Guided dashboard review experience
 
-- **Status:** Implementation complete; final Claude review pending
+- **Status:** Codex substitute review remediation in progress
 - **Milestone:** v0.5.0 Adoption / Distribution
 - **Priority:** P0
 - **Size:** M
@@ -98,8 +98,9 @@ operator's language:
 7. The generated dashboard is visually inspected in Cockpit at desktop and
    narrow widths, including confirmation that `#row-...` navigation keeps
    targets reachable inside advanced-details disclosure.
-8. Claude Fable reviews the plan and final implementation; required findings
-   are resolved before closure.
+8. Claude Fable reviews the plan. The final implementation is reviewed by
+   Claude Fable or an explicitly human-authorized independent substitute;
+   required findings are resolved before closure.
 
 ## Non-goals
 

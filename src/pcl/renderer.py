@@ -75,10 +75,12 @@ def _operator_summary(conn, data: dict[str, Any]) -> dict[str, Any]:
     human_count = len(durable_human_items) or (1 if human_items else 0)
     if human_count or action.get("requires_human") is True:
         next_state = "human"
-    elif str(action.get("type") or "") == "idle":
+    elif str(action.get("type") or "") == "idle" or str(action.get("run_policy") or "") == "idle":
         next_state = "idle"
-    else:
+    elif action.get("safe_to_run") is True and str(action.get("run_policy") or "") == "agent_safe":
         next_state = "agent_safe"
+    else:
+        next_state = "waiting"
 
     risk_summary = data.get("risk_summary", {})
     risk_items = risk_summary.get("items", [])
@@ -98,6 +100,26 @@ def _operator_summary(conn, data: dict[str, Any]) -> dict[str, Any]:
 
 
 def _evidence_backed_done_items(conn, *, limit: int = 3) -> list[dict[str, str]]:
+    current_terminal_ids = {
+        "feature": {
+            str(row["id"])
+            for row in conn.execute("SELECT id FROM features WHERE status = 'done'").fetchall()
+        },
+        "test": {
+            str(row["id"])
+            for row in conn.execute("SELECT id FROM test_cases WHERE status = 'passing'").fetchall()
+        },
+        "goal": {
+            str(row["id"])
+            for row in conn.execute("SELECT id FROM goals WHERE status = 'closed'").fetchall()
+        },
+        "verification": {
+            str(row["id"])
+            for row in conn.execute(
+                "SELECT id FROM verifications WHERE result = 'approved'"
+            ).fetchall()
+        },
+    }
     rows = conn.execute(
         """
         SELECT event_type, entity_type, entity_id, payload_json, created_at
@@ -109,10 +131,10 @@ def _evidence_backed_done_items(conn, *, limit: int = 3) -> list[dict[str, str]]
           'verification_recorded'
         )
         ORDER BY sequence DESC, id DESC
-        LIMIT 50
         """
     ).fetchall()
     items: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
     for row in rows:
         try:
             payload = json.loads(str(row["payload_json"] or "{}"))
@@ -136,8 +158,16 @@ def _evidence_backed_done_items(conn, *, limit: int = 3) -> list[dict[str, str]]
         elif event_type == "verification_recorded" and payload.get("result") == "approved":
             kind = "verification"
             proof_id = entity_id
-        if not kind or not entity_id or not proof_id:
+        key = (kind, entity_id)
+        if (
+            not kind
+            or not entity_id
+            or not proof_id
+            or entity_id not in current_terminal_ids[kind]
+            or key in seen
+        ):
             continue
+        seen.add(key)
         items.append(
             {
                 "kind": kind,
