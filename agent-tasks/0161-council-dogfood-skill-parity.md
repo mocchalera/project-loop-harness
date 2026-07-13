@@ -1,6 +1,6 @@
 # 0161: Council dogfood, Skill parity, and operator documentation
 
-- **Status:** Planned; paid/network work remains human-gated
+- **Status:** Parked after offline dogfood; paid/network and second-repository work remain human-gated
 - **Milestone:** v0.5.0 Council Profile
 - **Priority:** P1
 - **Size:** L
@@ -36,4 +36,3 @@ operator docs, and handoff behavior without hiding approvals or failure cases.
 3. Skill/CLI/docs commands are parser-valid and behaviorally aligned.
 4. A concrete adopt/modify/continue/reject recommendation is ready for 0162.
 5. Strict validation and full tests pass.
-

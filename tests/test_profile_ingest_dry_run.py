@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
@@ -909,13 +910,16 @@ def test_profile_authorize_is_human_gated_bound_and_idempotent(
     output = tmp_path / "authorized.json"
     _write(candidate_path, candidate)
     before = _snapshot(root)
+    future_expiry = (
+        datetime.now(timezone.utc) + timedelta(days=1)
+    ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     command = [
         "--root", str(root), "profile", "authorize", "--request", str(candidate_path),
         "--output", str(output), "--actor", "human:owner", "--recorded-by", "agent:codex",
         "--source-kind", "cockpit", "--source-ref", "cockpit-task-0159",
         "--reason", "Authorize bounded paid Council discovery", "--max-cost", "12",
         "--currency", "USD", "--provider", "provider-a", "--data-class",
-        "selected_snippets", "--expires-at", "2026-07-13T00:00:00Z", "--json",
+        "selected_snippets", "--expires-at", future_expiry, "--json",
     ]
     assert main(command) == 0
     result = json.loads(capsys.readouterr().out)

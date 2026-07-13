@@ -1,22 +1,76 @@
 # Project Loop Harness
 
-Project Loop Harness is a local control plane for coding agents.
+> A local, model-neutral control plane that turns an agent's “done” into
+> reviewable Evidence, verification status, residual risk, and a resumable next
+> step.
 
-It is not just an Agent Skill. The core product is `pcl`, a small local CLI/runtime that gives Codex, Claude Code, and similar agents a guarded project-scoped loop: durable state in SQLite, append-only audit events in JSONL, generated prompts and evidence, strict validation, human-readable reports, and a deterministic dashboard.
+## Understand it in 30 seconds
 
-## Quick Start
+Coding agents are good at producing changes. They are less reliable at
+remembering project state, proving completion, stopping at human decisions, and
+handing work to another session or model.
 
-Install the published `pcl` CLI/runtime from PyPI with `pipx`:
+Project Loop Harness (`pcl`) gives Codex, Claude Code, and similar agents a
+shared local state machine:
+
+- SQLite keeps current state; JSONL keeps an auditable event projection.
+- Tests, artifacts, reviews, and completion packets preserve what “done” means.
+- Agents continue routine safe work; humans are asked only for genuine product,
+  permission, security, destructive, or external-service decisions.
+- The runtime does not call an LLM and does not depend on one agent vendor.
+
+It is designed for people coordinating multiple coding agents, not as another
+single-agent chat wrapper.
+
+## Get first value in five minutes
+
+### One-time operator setup
+
+Install the runtime, inspect the adoption plan, and initialize the repository:
 
 ```bash
 pipx install project-loop-harness
-pcl --version
-pcl --help
+cd /path/to/your-project
+pcl init --dry-run --json
+pcl init
 ```
+
+`pcl init` retains existing `AGENTS.md`, `CLAUDE.md`, and `.gitignore` content
+and appends its marked instruction block once. It also preserves an existing
+`pcl.yaml` by default. `--force` can replace generated templates such as
+`pcl.yaml`, workflows, the bundled Skill, and dashboard files; it does not
+replace existing project-instruction content. See the
+[Adoption Guide](docs/adoption-guide.md) for the exact file boundary.
+
+### After setup, tell the agent the outcome you want
+
+Copy this into Cockpit, Codex, Claude Code, or another coding-agent session:
+
+```text
+Read AGENTS.md, CLAUDE.md if present, and pcl.yaml. Use the Project Control
+Loop. Start this goal: <describe the outcome>. Continue every agent-safe next
+action, run the configured checks, preserve evidence, emit a completion packet,
+and close the goal. Do not ask me to run routine pcl commands. Stop only for a
+genuine human decision or external blocker.
+```
+
+The agent owns the routine `pcl start → implementation → finish → close` flow.
+The operator uses the CLI during setup or deliberate maintenance, not to
+manually advance every task.
+
+The project remains local-only by default. No telemetry, provider call, cloud
+sync, or automatic GitHub write is enabled by initialization.
+
+## Install and inspect in more detail
 
 Use `python -m pip install project-loop-harness` when installing inside a
 project-specific virtual environment or CI job instead of exposing the command
-globally.
+globally. Confirm the installed runtime with:
+
+```bash
+pcl --version
+pcl --help
+```
 
 For unreleased changes, install from a pinned GitHub tag or commit:
 
@@ -50,6 +104,10 @@ advisory warning alongside normal harness health checks. Set
 
 Then ask your coding agent to read `AGENTS.md`, `CLAUDE.md` if present, and
 `pcl.yaml`, run `pcl next --json`, and follow the next safe harness action.
+
+Compatibility promises for JSON contracts, typed errors, migrations, and
+internal surfaces are documented in the
+[Alpha Stability Policy](docs/stability-policy.md).
 
 ## Mental Model
 

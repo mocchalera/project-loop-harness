@@ -1,6 +1,6 @@
 # v0.5.0 Council Profile implementation plan
 
-**Status:** ADR/contract freeze accepted; runtime implementation in progress
+**Status:** Core/offline evaluation complete; human outcome `continue experiment`; real-provider work parked; Adoption/Distribution active
 **Approved direction:** 2026-07-12, Cockpit human selection
 **Baseline:** `main` at `0eb3273`, PLH `0.4.3`, SQLite schema 8
 **Source handoff:** `/Users/mocchalera/Downloads/plh-council-handoff-2026-07-11.zip`

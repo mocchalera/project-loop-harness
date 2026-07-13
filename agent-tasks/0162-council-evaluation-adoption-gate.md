@@ -1,6 +1,6 @@
 # 0162: Council evaluation baseline and adoption gate
 
-- **Status:** Planned
+- **Status:** Done; human outcome `continue experiment` on 2026-07-12
 - **Milestone:** v0.5.0 Council Profile
 - **Priority:** P1
 - **Size:** L
@@ -37,4 +37,3 @@ recommendation.
 3. Invalid/partial/budget safe-stop rate is 100%.
 4. Human owner records the adoption outcome and constraints.
 5. Any default change is a separate narrowly scoped task.
-

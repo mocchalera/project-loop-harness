@@ -3,6 +3,33 @@
 This guide is for taking Project Loop Harness from this repository into a new
 software project.
 
+## Safe coexistence with an existing project
+
+Adoption is inspect-first and additive. In a non-empty repository, start with:
+
+```bash
+pcl init --dry-run --json
+```
+
+The plan reports which files would be created, updated, or skipped. Normal
+initialization preserves existing project instructions and configuration:
+
+- existing `AGENTS.md`, `CLAUDE.md`, and `.gitignore` content is retained;
+- the Project Loop instruction block is added once and is not duplicated on a
+  rerun;
+- an existing `pcl.yaml` is preserved;
+- `.project-loop/project.db` remains local state rather than a file agents edit;
+- generated dashboard HTML is a human view, not machine context.
+
+Do not use `pcl init --force` merely to adopt an existing repository. `--force`
+is an explicit replacement boundary for generated templates and requires a
+human decision after reviewing the dry-run plan.
+
+After this one-time setup, humans should be able to state an outcome in their
+agent interface while the agent runs routine `pcl` commands. Human involvement
+is reserved for real decisions such as permissions, migrations, destructive
+operations, product behavior, and external services.
+
 Use it when you need to answer three operator questions:
 
 - how to distribute the `pcl` runtime;

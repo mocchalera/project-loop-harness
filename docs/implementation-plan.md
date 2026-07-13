@@ -356,6 +356,28 @@ policy, and publication readiness remain a separately numbered
 Adoption/Distribution track. Both evidence packets are required before a
 v0.5.0 publication decision.
 
+## Milestone 19: v0.5.0 Adoption / Distribution
+
+The 2026-07-13 business and technical review is preserved in
+`docs/reviews/2026-07-13-business-technical-review.md`. It identifies adoption,
+not control-plane depth, as the current bottleneck. The ordered reset is
+`docs/roadmap/priority-reset-2026-07-13.md`.
+
+- 0163 is the active P0: 30-second README value, five-minute initialization,
+  agent-owned routine CLI, safe coexistence, alpha stability policy, and the
+  fixed-date release-suite repair.
+- The next P0 is a local v0.5.0 release candidate with source/wheel/sdist smoke
+  and independent review. Publication remains a separate human decision.
+- External launch assets are prepared only after the RC; posting them is an
+  external action and remains human-gated.
+- CLI module splitting and scale/event-log design follow Adoption proof instead
+  of delaying the first useful external feedback.
+- Council remains opt-in. The 0162 human outcome is `continue experiment`, so
+  no default activation or real-provider run is implied.
+
+This milestone adds no dependency, database migration, hosted service,
+telemetry, provider call, or automatic GitHub write.
+
 ## Semantic promotion gate
 
 Embeddings, Tree-sitter, call graphs, and semantic retrieval stay out

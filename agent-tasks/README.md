@@ -77,8 +77,9 @@ implement from the spec file, not from prompt summaries.
 | 0158 | Atomic Profile bundle Evidence ingest | v0.5.0 Council Profile | P0 | done |
 | 0159 | Decision proposal selection and paid/network authorization | v0.5.0 Council Profile | P0 | done |
 | 0160 | Council Discovery offline fixture E2E | v0.5.0 Council Profile | P1 | done |
-| 0161 | Council dogfood, Skill parity, and operator docs | v0.5.0 Council Profile | P1 | planned |
-| 0162 | Council evaluation baseline and adoption gate | v0.5.0 Council Profile | P1 | planned |
+| 0161 | Council dogfood, Skill parity, and operator docs | v0.5.0 Council Profile | P1 | parked after offline dogfood; second-repo/real-provider work human-gated |
+| 0162 | Council evaluation baseline and adoption gate | v0.5.0 Council Profile | P1 | done (`continue experiment`) |
+| 0163 | Adoption-first release readiness | v0.5.0 Adoption / Distribution | P0 | done (Claude Fable approved) |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
@@ -133,6 +134,13 @@ source/wheel/sdist E2E → **0161**
 two-repository dogfood/Skill parity → **0162** frozen evaluation and human
 adoption gate. See `docs/plan-v0.5.0-council-profile.md`.
 
+v0.5.0 Adoption / Distribution now takes precedence over additional Council or
+v0.5.1 feature work: **0163** 30-second README + five-minute setup + coexistence
+contract + stability policy + release-suite repair → local v0.5.0 RC and
+independent review → separate human publication decision. Public launch assets,
+real-provider Council runs, telemetry, and publication remain human-gated. See
+`docs/roadmap/priority-reset-2026-07-13.md`.
+
 ## Planned next (see growth plan for scope)
 
 | Milestone | Theme |
@@ -143,7 +151,7 @@ adoption gate. See `docs/plan-v0.5.0-council-profile.md`.
 | v0.4.1 | Integrity migration: idle routing, lifecycle repair/link commands, diagnostics, Skill provenance |
 | v0.4.2 | Adaptive Entry: local RC prepared; immutable brief, deterministic route, multi-axis explain/override |
 | v0.4.3 | Evidence Completeness: local RC prepared; complete evidence sets, external verdict policy, approval provenance, cross-skill dogfood |
-| v0.5.0 | Two tracks: Council Profile 0154–0162; separately numbered Adoption/Distribution release readiness before publication |
+| v0.5.0 | Council Profile core/offline evaluation complete with `continue experiment`; 0163 Adoption/Distribution is active before publication |
 
 Everything with an ID below 0102 is completed design history; see `TASKS.md`
 for the one-line summary of each.
