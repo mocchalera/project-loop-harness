@@ -172,6 +172,9 @@ Edit `pcl.yaml` before asking agents to do real work:
   `permissions.agent_may_modify`;
 - add human approval gates for migrations, dependencies, auth, production
   config, destructive operations, and external writes.
+- set `dashboard.locale: "ja"` when the operator wants Japanese HTML chrome;
+  the default remains English and `pcl render --locale ...` overrides it for a
+  single render.
 
 Then rerun:
 
@@ -226,6 +229,20 @@ pcl next --json
 
 Then follow `pcl next`. It is the router for validation failures, human queues,
 active workflows, defects, goals, and feature coverage.
+
+The installed Project Control Loop Skill distinguishes routine rendering from
+operator presentation. The agent presents the dashboard after plan approval,
+at a major milestone, when human input blocks progress, and after goal closure.
+It should open the generated file in a host-provided visual/file panel when one
+exists, or provide the path otherwise, and state what to inspect using **Now,
+Done, Next, Human needed, and Risks**. It should not interrupt the operator with
+the dashboard after every state mutation.
+
+The first dashboard section is the simple operator view. Detailed counters,
+commands, queues, Evidence, and entity tables remain available under the native
+HTML disclosure labeled **Detailed Project Loop information**. Dashboard HTML
+is still a human-only view; agents prepare their explanation from `pcl` JSON
+state rather than parsing the page.
 
 After several small features, let `pcl next` stop the loop for a checkpoint
 instead of blindly starting another feature coverage run:

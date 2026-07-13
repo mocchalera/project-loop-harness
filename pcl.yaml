@@ -71,5 +71,6 @@ permissions:
     - destructive_operation
 
 dashboard:
+  locale: "ja"
   output: ".project-loop/dashboard/dashboard.html"
   auto_render: true

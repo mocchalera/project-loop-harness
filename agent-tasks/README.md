@@ -80,6 +80,7 @@ implement from the spec file, not from prompt summaries.
 | 0161 | Council dogfood, Skill parity, and operator docs | v0.5.0 Council Profile | P1 | parked after offline dogfood; second-repo/real-provider work human-gated |
 | 0162 | Council evaluation baseline and adoption gate | v0.5.0 Council Profile | P1 | done (`continue experiment`) |
 | 0163 | Adoption-first release readiness | v0.5.0 Adoption / Distribution | P0 | done (Claude Fable approved) |
+| 0164 | Guided dashboard review experience | v0.5.0 Adoption / Distribution | P0 | final review pending |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
@@ -136,7 +137,8 @@ adoption gate. See `docs/plan-v0.5.0-council-profile.md`.
 
 v0.5.0 Adoption / Distribution now takes precedence over additional Council or
 v0.5.1 feature work: **0163** 30-second README + five-minute setup + coexistence
-contract + stability policy + release-suite repair → local v0.5.0 RC and
+contract + stability policy + release-suite repair → **0164** guided Japanese
+dashboard review experience → local v0.5.0 RC and
 independent review → separate human publication decision. Public launch assets,
 real-provider Council runs, telemetry, and publication remain human-gated. See
 `docs/roadmap/priority-reset-2026-07-13.md`.

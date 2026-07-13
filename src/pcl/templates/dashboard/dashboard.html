@@ -18,6 +18,13 @@
     .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin: 18px 0; }
     .panel { border-top: 1px solid #9994; padding-top: 14px; margin-top: 24px; }
     .panel-box { border: 1px solid #9994; border-radius: 8px; padding: 14px; }
+    .operator-summary { margin: 20px 0; padding: 20px; border: 2px solid #5a78; border-radius: 12px; background: #5a710; }
+    .operator-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
+    .operator-card { border: 1px solid #9994; border-radius: 8px; padding: 12px; background: Canvas; }
+    .operator-card p, .operator-card ul { margin: 6px 0 0; }
+    .advanced-details { margin-top: 24px; border-top: 1px solid #9994; padding-top: 14px; }
+    .advanced-details > summary { cursor: pointer; font-size: 17px; font-weight: 700; padding: 10px 0; }
+    .advanced-content { padding-top: 6px; }
     .decision-panel { border: 2px solid #9996; border-radius: 8px; padding: 16px; }
     .decision-list { display: grid; gap: 12px; margin: 12px 0 18px; }
     .decision-card { border: 1px solid #9994; border-radius: 8px; padding: 14px; }
@@ -41,11 +48,31 @@
       <h1>{{ title }}</h1>
       <div class="muted">{{ label_generated_at }} {{ generated_at }}</div>
     </div>
-    <div class="muted">{{ label_source_db }}: <code>{{ source_db }}</code></div>
   </header>
 
+  <section id="operator-summary" class="operator-summary">
+    <h2>{{ heading_operator_summary }}</h2>
+    <div class="operator-grid">
+      {{ operator_summary_block }}
+    </div>
+  </section>
+
+  <section class="panel-box">
+    <h2>{{ heading_risk_and_blockers }}</h2>
+    {{ risk_summary_block }}
+  </section>
+
+  <section class="panel decision-panel">
+    <h2>{{ heading_needs_your_decision }}</h2>
+    {{ human_decisions_block }}
+  </section>
+
+  <details class="advanced-details">
+    <summary>{{ heading_advanced_details }}</summary>
+    <div class="advanced-content">
   <section class="warning">
     <strong>{{ label_rule }}:</strong> {{ rule_text }}
+    <span class="muted">{{ label_source_db }}: <code>{{ source_db }}</code></span>
   </section>
 
   <section class="cards">
@@ -70,15 +97,6 @@
       <h2>{{ heading_validation }}</h2>
       {{ validation_block }}
     </div>
-    <div class="panel-box">
-      <h2>{{ heading_risk_and_blockers }}</h2>
-      {{ risk_summary_block }}
-    </div>
-  </section>
-
-  <section class="panel decision-panel">
-    <h2>{{ heading_needs_your_decision }}</h2>
-    {{ human_decisions_block }}
   </section>
 
   <section class="grid">
@@ -173,7 +191,9 @@
 
   <section class="panel">
     <h2>{{ heading_agent_jobs }}</h2>
-  {{ agent_jobs_table }}
+    {{ agent_jobs_table }}
   </section>
+    </div>
+  </details>
 </body>
 </html>

@@ -49,6 +49,108 @@ def _one(conn, sql: str, params: tuple = ()) -> dict[str, Any] | None:
     return None if row is None else dict(row)
 
 
+def _operator_summary(conn, data: dict[str, Any]) -> dict[str, Any]:
+    current_goal = data.get("current_goal")
+    current_task = None
+    if isinstance(current_goal, dict):
+        goal_id = str(current_goal.get("id") or "")
+        current_task = next(
+            (
+                task
+                for task in data.get("tasks", [])
+                if str(task.get("related_goal_id") or "") == goal_id
+                and str(task.get("status") or "") in {"in_progress", "ready", "todo", "blocked"}
+            ),
+            None,
+        )
+
+    action = data.get("next_action", {})
+    human_decisions = data.get("human_decisions", {})
+    human_items = human_decisions.get("items", [])
+    durable_human_items = [
+        item
+        for item in human_items
+        if isinstance(item, dict) and str(item.get("kind") or "") != "next_action"
+    ] if isinstance(human_items, list) else []
+    human_count = len(durable_human_items) or (1 if human_items else 0)
+    if human_count or action.get("requires_human") is True:
+        next_state = "human"
+    elif str(action.get("type") or "") == "idle":
+        next_state = "idle"
+    else:
+        next_state = "agent_safe"
+
+    risk_summary = data.get("risk_summary", {})
+    risk_items = risk_summary.get("items", [])
+    return {
+        "now": {
+            "goal_id": str(current_goal.get("id") or "") if isinstance(current_goal, dict) else "",
+            "goal_title": str(current_goal.get("title") or "") if isinstance(current_goal, dict) else "",
+            "task_id": str(current_task.get("id") or "") if isinstance(current_task, dict) else "",
+            "task_title": str(current_task.get("title") or "") if isinstance(current_task, dict) else "",
+        },
+        "done": _evidence_backed_done_items(conn),
+        "next_state": next_state,
+        "human_count": human_count,
+        "risk_count": len(risk_items) if isinstance(risk_items, list) else 0,
+        "risk_severity": str(risk_summary.get("highest_severity") or "none"),
+    }
+
+
+def _evidence_backed_done_items(conn, *, limit: int = 3) -> list[dict[str, str]]:
+    rows = conn.execute(
+        """
+        SELECT event_type, entity_type, entity_id, payload_json, created_at
+        FROM events
+        WHERE event_type IN (
+          'feature_status_updated',
+          'test_case_passed',
+          'goal_closed',
+          'verification_recorded'
+        )
+        ORDER BY sequence DESC, id DESC
+        LIMIT 50
+        """
+    ).fetchall()
+    items: list[dict[str, str]] = []
+    for row in rows:
+        try:
+            payload = json.loads(str(row["payload_json"] or "{}"))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        event_type = str(row["event_type"] or "")
+        entity_id = str(row["entity_id"] or "")
+        proof_id = ""
+        kind = ""
+        if event_type == "feature_status_updated" and payload.get("status") == "done":
+            kind = "feature"
+            proof_id = str(payload.get("evidence_id") or "")
+        elif event_type == "test_case_passed":
+            kind = "test"
+            proof_id = str(payload.get("evidence_id") or "")
+        elif event_type == "goal_closed":
+            kind = "goal"
+            proof_id = str(payload.get("evidence_id") or payload.get("verification_id") or "")
+        elif event_type == "verification_recorded" and payload.get("result") == "approved":
+            kind = "verification"
+            proof_id = entity_id
+        if not kind or not entity_id or not proof_id:
+            continue
+        items.append(
+            {
+                "kind": kind,
+                "id": entity_id,
+                "proof_id": proof_id,
+                "created_at": str(row["created_at"] or ""),
+            }
+        )
+        if len(items) >= limit:
+            break
+    return items
+
+
 def _approval_provenance_rows(conn) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
@@ -311,6 +413,7 @@ def render_dashboard(paths: ProjectPaths, *, locale: str | None = None) -> None:
             open_decisions=open_decisions,
             open_escalations=open_escalations,
         )
+        operator_summary = _operator_summary(conn, data)
     finally:
         conn.close()
 
@@ -319,7 +422,10 @@ def render_dashboard(paths: ProjectPaths, *, locale: str | None = None) -> None:
         json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    paths.dashboard_html.write_text(_render_html(data, locale=resolved_locale), encoding="utf-8")
+    paths.dashboard_html.write_text(
+        _render_html(data, locale=resolved_locale, operator_summary=operator_summary),
+        encoding="utf-8",
+    )
 
 
 def _with_workflow_budget(paths: ProjectPaths, active_workflow: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -1221,6 +1327,73 @@ def _risk_summary_block(summary: dict[str, Any], strings: dict[str, str]) -> str
     return "".join(parts)
 
 
+def _operator_summary_block(summary: dict[str, Any], strings: dict[str, str]) -> str:
+    now = summary.get("now", {})
+    goal_id = html.escape(str(now.get("goal_id") or ""))
+    goal_title = html.escape(str(now.get("goal_title") or ""))
+    task_id = html.escape(str(now.get("task_id") or ""))
+    task_title = html.escape(str(now.get("task_title") or ""))
+    if goal_id:
+        now_text = strings["operator.now.goal"].format(goal_id=goal_id, goal_title=goal_title)
+        if task_id:
+            now_text += " " + strings["operator.now.task"].format(
+                task_id=task_id,
+                task_title=task_title,
+            )
+    else:
+        now_text = strings["operator.now.idle"]
+
+    done_items = summary.get("done", [])
+    if done_items:
+        rendered_done = []
+        for item in done_items:
+            kind = str(item.get("kind") or "")
+            kind_label = strings.get(f"operator.done.kind.{kind}", kind)
+            rendered_done.append(
+                "<li>"
+                + strings["operator.done.item"].format(
+                    kind=html.escape(kind_label),
+                    entity_id=html.escape(str(item.get("id") or "")),
+                    proof_id=html.escape(str(item.get("proof_id") or "")),
+                )
+                + "</li>"
+            )
+        done_text = "<ul>" + "".join(rendered_done) + "</ul>"
+    else:
+        done_text = f"<p>{html.escape(strings['operator.done.none'])}</p>"
+
+    next_state = str(summary.get("next_state") or "waiting")
+    next_text = html.escape(strings.get(f"operator.next.{next_state}", strings["operator.next.waiting"]))
+    human_count = int(summary.get("human_count") or 0)
+    human_text = (
+        strings["operator.human.count"].format(count=human_count)
+        if human_count
+        else strings["operator.human.none"]
+    )
+    risk_count = int(summary.get("risk_count") or 0)
+    severity = str(summary.get("risk_severity") or "none")
+    if risk_count:
+        risk_text = strings["operator.risks.count"].format(
+            count=risk_count,
+            severity=html.escape(strings.get(f"operator.severity.{severity}", severity)),
+        )
+    else:
+        risk_text = strings["operator.risks.none"]
+
+    cards = [
+        ("operator.label.now", f"<p>{now_text}</p>"),
+        ("operator.label.done", done_text),
+        ("operator.label.next", f"<p>{next_text}</p>"),
+        ("operator.label.human", f"<p>{html.escape(human_text)}</p>"),
+        ("operator.label.risks", f"<p>{risk_text}</p>"),
+    ]
+    return "".join(
+        '<article class="operator-card">'
+        f"<h3>{html.escape(strings[label_key])}</h3>{content}</article>"
+        for label_key, content in cards
+    )
+
+
 def _next_action_block(action: dict[str, Any], strings: dict[str, str]) -> str:
     command = html.escape(str(action.get("command") or ""))
     command_block = f"<p><code>{command}</code></p>" if command else ""
@@ -1415,7 +1588,12 @@ def _human_decision_details(item: dict[str, Any], strings: dict[str, str]) -> li
     return details
 
 
-def _render_html(data: dict, *, locale: str = "en") -> str:
+def _render_html(
+    data: dict,
+    *,
+    locale: str = "en",
+    operator_summary: dict[str, Any] | None = None,
+) -> str:
     template = read_text_resource("templates/dashboard/dashboard.html")
     strings = dashboard_strings(locale)
     counts = data["counts"]
@@ -1427,6 +1605,8 @@ def _render_html(data: dict, *, locale: str = "en") -> str:
         "{{ label_rule }}": html.escape(strings["rule"]),
         "{{ rule_text }}": strings["rule_text"],
         "{{ heading_next_human_action }}": html.escape(strings["next_human_action"]),
+        "{{ heading_operator_summary }}": html.escape(strings["operator.heading"]),
+        "{{ heading_advanced_details }}": html.escape(strings["operator.advanced_details"]),
         "{{ heading_validation }}": html.escape(strings["validation"]),
         "{{ heading_risk_and_blockers }}": html.escape(strings["risk_and_blockers"]),
         "{{ heading_needs_your_decision }}": html.escape(strings["needs_your_decision"]),
@@ -1474,6 +1654,7 @@ def _render_html(data: dict, *, locale: str = "en") -> str:
         "{{ open_escalations_count }}": str(counts["open_escalations"]),
         "{{ workflow_proposals_count }}": str(counts["workflow_proposals"]),
         "{{ validation_block }}": _validation_block(data["validation"], strings),
+        "{{ operator_summary_block }}": _operator_summary_block(operator_summary or {}, strings),
         "{{ next_action_block }}": _next_action_block(data["next_action"], strings),
         "{{ risk_summary_block }}": _risk_summary_block(data["risk_summary"], strings),
         "{{ human_decisions_block }}": _human_decisions_block(data["human_decisions"], strings),

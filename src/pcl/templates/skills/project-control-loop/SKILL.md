@@ -311,6 +311,23 @@ Every progress handoff must make orientation immediate with four facts:
 Do not make the human ask what is happening or run routine CLI commands to
 advance a known agent-safe loop.
 
+## Dashboard presentation moments
+
+Rendering and presenting are different. Render routinely and silently; present
+only at those four review moments. Present the dashboard after plan approval, a
+major milestone, a blocking human decision, and goal closure.
+
+At each presentation moment:
+
+1. Run validation before `pcl render` whenever possible.
+2. Use `pcl` JSON state to prepare the explanation; never parse dashboard HTML
+   as machine context.
+3. If the host provides a visual or file side panel, open the generated
+   dashboard in that host. Otherwise, provide the dashboard path.
+4. Tell the operator exactly what to review using the same orientation words:
+   **Now, Done, Next, Human needed, and Risks**. When nothing needs the human,
+   say so instead of directing them to empty tables.
+
 ## Human gates
 
 Escalate to the human only when ambiguity changes one of:

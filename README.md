@@ -584,6 +584,17 @@ flag, `pcl render` reads `dashboard.locale` from `pcl.yaml` and then falls back
 to English. The locale affects only `dashboard.html`; `dashboard-data.json`
 keys and values stay English for agents and integrations.
 
+The dashboard opens with a simple operator view: **Now, Done, Next, Human
+needed, and Risks**. `Done` lists only evidence-backed terminal records; it does
+not turn a status label into a success claim. Counters, commands, queues, and
+entity tables remain available under **Detailed Project Loop information**.
+
+Agents should render routinely but present the dashboard only after plan
+approval, at a major milestone, when a human decision blocks progress, and
+after goal closure. When the host provides a visual or file panel, the agent
+opens it and explains what to review; otherwise it provides the generated path.
+The human should not need to remember when to ask for the dashboard.
+
 If validation fails or generated artifacts look stale, use [docs/recovery-playbook.md](docs/recovery-playbook.md) before continuing normal work.
 
 ## Example Projects

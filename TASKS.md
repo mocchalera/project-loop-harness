@@ -169,6 +169,7 @@ Give these tasks to coding agents in this order:
 165. `agent-tasks/0161-council-dogfood-skill-parity.md` (v0.5.0 Council Profile, two-repository dogfood, safe-stop, and Skill/CLI parity)
 166. `agent-tasks/0162-council-evaluation-adoption-gate.md` (v0.5.0 Council Profile, frozen baseline comparison and human adoption Decision)
 167. `agent-tasks/0163-adoption-first-release-readiness.md` (v0.5.0 Adoption / Distribution, 30-second value path, five-minute setup, coexistence and stability policy, release-suite repair)
+168. `agent-tasks/0164-guided-dashboard-review-experience.md` (v0.5.0 Adoption / Distribution, localized operator summary plus milestone-triggered agent presentation)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and

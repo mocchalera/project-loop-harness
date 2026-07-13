@@ -94,10 +94,15 @@ def test_project_control_loop_skill_is_synced_across_packages() -> None:
     assert len(set(skill_copies)) == 1
 
     root_skill = skill_copies[0].decode("utf-8")
+    normalized_skill = " ".join(root_skill.split())
     assert "pcl prompt job J-0001" in root_skill
     assert "pcl ingest-agent-run .project-loop/evidence/agent-runs/J-0001/output.md" in root_skill
     assert "pcl feature status F-XXXX --status done --summary \"...\" --evidence-id E-XXXX" in root_skill
     assert "pcl goal close G-XXXX --summary \"...\" --verification V-XXXX" in root_skill
+    assert "plan approval, a major milestone, a blocking human decision, and goal closure" in normalized_skill
+    assert "Render routinely and silently; present only at those four review moments." in normalized_skill
+    assert "Now, Done, Next, Human needed, and Risks" in normalized_skill
+    assert "open the generated dashboard in that host" in normalized_skill
 
 
 def test_codex_plugin_hooks_are_safe_and_optional() -> None:
