@@ -1,6 +1,6 @@
 # 0164: Guided dashboard review experience
 
-- **Status:** Codex substitute review remediation in progress
+- **Status:** Done
 - **Milestone:** v0.5.0 Adoption / Distribution
 - **Priority:** P0
 - **Size:** M

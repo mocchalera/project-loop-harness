@@ -4,8 +4,8 @@
 
 The guided dashboard review experience satisfies the implementation and
 compatibility acceptance criteria after remediation of the human-authorized
-Codex substitute review. A clean independent re-review remains pending before
-goal closure. The operator summary is rendered in HTML only, the existing
+Codex substitute review. The clean independent re-review returned `Approve`
+with no remaining findings. The operator summary is rendered in HTML only, the existing
 `dashboard-data/v1` contract is unchanged, and all bundled Project Loop Skill
 copies contain the same presentation rules.
 
@@ -59,7 +59,9 @@ were labeled agent-safe, detailed commands remained outside disclosure,
 historical Done events ignored current state, and direct state coverage was
 incomplete. The findings are saved in
 `docs/reviews/0164-guided-dashboard-codex-final-review.md` and were repaired
-test-first. A clean substitute re-review is required before closure.
+test-first. Re-review of commit `f8e0122` resolved all four findings and returned
+`Approve`; the receipt is saved in
+`docs/reviews/0164-guided-dashboard-codex-rereview.md`.
 
 ## Acceptance mapping
 
@@ -76,5 +78,5 @@ test-first. A clean substitute re-review is required before closure.
    passing suite.
 7. Desktop, narrow, and fragment navigation: manually verified as above.
 8. Claude plan findings and the first Codex substitute-review findings are
-   resolved; a clean independent Codex re-review remains pending before goal
-   closure.
+   resolved; independent Codex re-review returned `Approve` with no remaining
+   findings.
