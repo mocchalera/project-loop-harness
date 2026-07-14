@@ -14,13 +14,28 @@ checkout's source code or installed `pcl` command.
 
 ## Run it
 
-Requirements: `python3`, `git`, and network access to PyPI. No project
-dependency is added.
+Requirements: Python 3.10 or newer, `git`, and network access to PyPI. No
+project dependency is added. The script tries `python3`, then versioned Python
+3.14 through 3.10, and uses the first interpreter that can create a venv.
 
 ```bash
 cd examples/v0.5.0-adoption-demo
 ./run-demo.sh --keep
 ```
+
+To select an interpreter explicitly, use either form:
+
+```bash
+./run-demo.sh --python python3.13 --keep
+PYTHON_BIN=/path/to/python3 ./run-demo.sh --keep
+```
+
+An explicit interpreter must be Python 3.10 or newer and able to create a
+virtual environment. If it is not, the script stops with an actionable error
+instead of silently selecting a different interpreter.
+
+Use `./run-demo.sh --check-python` to verify interpreter selection without
+installing the package or running the demo.
 
 Open the final `DASHBOARD=...` path in a browser. Use `--paced` for a narrated
 run. Without `--keep`, the script removes only the marker-protected temporary

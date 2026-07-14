@@ -3,13 +3,20 @@ set -Eeuo pipefail
 
 KEEP=0
 PACED=0
+CHECK_PYTHON_ONLY=0
+PYTHON_REQUESTED="${PYTHON_BIN:-}"
 
 usage() {
   cat <<'EOF'
-Usage: ./run-demo.sh [--keep] [--paced]
+Usage: ./run-demo.sh [--keep] [--paced] [--python COMMAND] [--check-python]
 
   --keep    Keep the isolated temporary directory so the dashboard can be opened.
   --paced   Pause briefly between checkpoints for a narrated recording.
+  --python  Use this Python 3.10+ interpreter to create the isolated venv.
+  --check-python  Verify interpreter selection without installing or running the demo.
+
+Set PYTHON_BIN instead of --python when an environment variable is more convenient.
+Without either override, the script tries python3, then versioned Python 3.14-3.10.
 
 The script installs project-loop-harness==0.5.0 from PyPI into a new venv.
 It never writes to the source repository's .project-loop, .claude, or pcl.yaml.
@@ -20,18 +27,27 @@ while (($#)); do
   case "$1" in
     --keep) KEEP=1 ;;
     --paced) PACED=1 ;;
+    --check-python) CHECK_PYTHON_ONLY=1 ;;
+    --python)
+      if (($# < 2)); then
+        printf 'Option --python requires a command.\n' >&2
+        usage >&2
+        exit 2
+      fi
+      PYTHON_REQUESTED="$2"
+      shift
+      ;;
+    --python=*) PYTHON_REQUESTED="${1#*=}" ;;
     -h|--help) usage; exit 0 ;;
     *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
   esac
   shift
 done
 
-for command in python3 git; do
-  if ! command -v "$command" >/dev/null 2>&1; then
-    printf 'Required command not found: %s\n' "$command" >&2
-    exit 1
-  fi
-done
+if ! command -v git >/dev/null 2>&1; then
+  printf 'Required command not found: git\n' >&2
+  exit 1
+fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TMP_BASE="${TMPDIR:-/tmp}"
@@ -64,6 +80,56 @@ cleanup() {
 }
 trap cleanup EXIT
 
+python_is_supported() {
+  "$1" -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)' \
+    >/dev/null 2>&1
+}
+
+try_python() {
+  local candidate="$1"
+  local resolved
+
+  resolved="$(command -v "$candidate" 2>/dev/null || true)"
+  if [[ -z "$resolved" ]] || ! python_is_supported "$resolved"; then
+    return 1
+  fi
+
+  rm -rf -- "$VENV"
+  if ! "$resolved" -m venv "$VENV" >/dev/null 2>&1; then
+    return 1
+  fi
+  if [[ ! -x "$VENV/bin/python" ]]; then
+    return 1
+  fi
+
+  VENV_CREATOR="$resolved"
+  return 0
+}
+
+select_python() {
+  local candidate
+
+  if [[ -n "$PYTHON_REQUESTED" ]]; then
+    if ! try_python "$PYTHON_REQUESTED"; then
+      printf 'Requested Python cannot create a venv or is older than 3.10: %s\n' \
+        "$PYTHON_REQUESTED" >&2
+      printf 'Choose another interpreter with --python COMMAND or PYTHON_BIN=COMMAND.\n' >&2
+      return 1
+    fi
+    return 0
+  fi
+
+  for candidate in python3 python3.14 python3.13 python3.12 python3.11 python3.10; do
+    if try_python "$candidate"; then
+      return 0
+    fi
+  done
+
+  printf 'No usable Python 3.10+ interpreter could create an isolated venv.\n' >&2
+  printf 'Install one or specify it with --python COMMAND or PYTHON_BIN=COMMAND.\n' >&2
+  return 1
+}
+
 stage() {
   printf '\n\033[1;36m[%s]\033[0m %s\n' "$1" "$2"
   if ((PACED == 1)); then sleep 1; fi
@@ -81,9 +147,14 @@ mkdir -p "$PROJECT"
 cp -R "$SCRIPT_DIR/seed/." "$PROJECT/"
 
 stage "0:00" "公開 PyPI 版をクリーンな venv に固定インストール"
-python3 -m venv "$VENV"
+select_python
 PYTHON="$VENV/bin/python"
 PCL="$VENV/bin/pcl"
+printf 'VENV_CREATOR=%s\n' "$VENV_CREATOR"
+if ((CHECK_PYTHON_ONLY == 1)); then
+  printf 'PYTHON_CHECK_OK=1\n'
+  exit 0
+fi
 PIP_DISABLE_PIP_VERSION_CHECK=1 "$PYTHON" -m pip install --quiet --no-cache-dir \
   project-loop-harness==0.5.0
 "$PCL" --version
