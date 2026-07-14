@@ -1,6 +1,6 @@
 # 0166: Local Skill usage improvement loop MVP
 
-- **Status:** In progress
+- **Status:** Complete
 - **Milestone:** v0.5.0 Adoption / Distribution
 - **Priority:** P1
 - **Size:** L

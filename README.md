@@ -566,10 +566,14 @@ pcl report run --root /tmp/pcl-demo WR-0001
 pcl report feature --root /tmp/pcl-demo F-0001
 pcl report defect --root /tmp/pcl-demo D-0001
 pcl report validation --root /tmp/pcl-demo --strict
+pcl report skill-usage --since 2026-07-01 --json
 pcl render --root /tmp/pcl-demo
 ```
 
-Reports are written to `.project-loop/reports/`. The dashboard writes:
+Entity and validation reports are written to `.project-loop/reports/`.
+`report skill-usage` is read-only and prints its privacy-safe aggregate to
+stdout unless `--output` is explicit; see [Local Skill usage report](docs/skill-usage-report.md).
+The dashboard writes:
 
 ```text
 .project-loop/dashboard/dashboard-data.json

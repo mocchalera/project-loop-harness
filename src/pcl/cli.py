@@ -153,6 +153,13 @@ from .escalations import (
 )
 from .init_project import init_project, plan_init_project
 from .kpi_report import report_kpi
+from .skill_usage_report import (
+    default_skill_usage_roots,
+    render_skill_usage_markdown,
+    report_skill_usage,
+    serialized_skill_usage_report,
+    write_skill_usage_report,
+)
 from .lifecycle import (
     cancel_goal,
     cancel_job,
@@ -1729,6 +1736,34 @@ def build_parser() -> argparse.ArgumentParser:
     p_report_kpi = report_sub.add_parser("kpi", help="Read local dogfood KPI measurements")
     p_report_kpi.add_argument(
         "--since", default=None, help="Include records on or after YYYY-MM-DD"
+    )
+    p_report_skill_usage = report_sub.add_parser(
+        "skill-usage",
+        help="Read local Codex, Claude, and Cockpit Skill usage without retaining raw logs",
+    )
+    p_report_skill_usage.add_argument(
+        "--since",
+        default=None,
+        help="Include local log signals on or after YYYY-MM-DD (default: 30 days ago)",
+    )
+    p_report_skill_usage.add_argument(
+        "--until",
+        default=None,
+        help="Include local log signals on or before YYYY-MM-DD (default: today)",
+    )
+    p_report_skill_usage.add_argument(
+        "--source",
+        action="append",
+        default=[],
+        help="Source to scan: codex, claude, or cockpit. Repeat to select multiple.",
+    )
+    p_report_skill_usage.add_argument("--codex-root", default=None)
+    p_report_skill_usage.add_argument("--claude-root", default=None)
+    p_report_skill_usage.add_argument("--cockpit-root", default=None)
+    p_report_skill_usage.add_argument(
+        "--output",
+        default=None,
+        help="Also atomically write the privacy-safe JSON or Markdown report to this path",
     )
 
     return parser
@@ -4150,6 +4185,40 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json(result)
             else:
                 print(to_pretty_json(result["sections"]))
+            return 0
+
+        if args.command == "report" and args.report_command == "skill-usage":
+            result = report_skill_usage(
+                since=args.since,
+                until=args.until,
+                sources=args.source or None,
+                codex_root=args.codex_root,
+                claude_root=args.claude_root,
+                cockpit_root=args.cockpit_root,
+            )
+            rendered = (
+                serialized_skill_usage_report(result)
+                if json_output
+                else render_skill_usage_markdown(result)
+            )
+            if args.output:
+                source_roots = default_skill_usage_roots(
+                    codex_root=args.codex_root,
+                    claude_root=args.claude_root,
+                    cockpit_root=args.cockpit_root,
+                )
+                write_skill_usage_report(
+                    args.output,
+                    rendered,
+                    forbidden_roots=source_roots.values(),
+                    forbidden_paths=(
+                        paths.db_path,
+                        paths.events_path,
+                        paths.dashboard_html,
+                        paths.dashboard_data,
+                    ),
+                )
+            print(rendered, end="")
             return 0
 
         parser.error("Unhandled command")
