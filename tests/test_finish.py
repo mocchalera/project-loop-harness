@@ -9,6 +9,7 @@ import pytest
 from pcl.cli import main
 from pcl.contracts.completion_packet import load_completion_packet, validate_completion_packet
 from pcl.db import connect
+from pcl.finish_recovery import completion_packet_timeout_action
 from pcl.outbox import ProjectionResult
 from pcl.paths import resolve_paths
 from pcl.route_overrides import override_route
@@ -178,6 +179,33 @@ def _evidence_count(root: Path, evidence_type: str) -> int:
         )
     finally:
         conn.close()
+
+
+def _record_fake_timeout(root: Path, command: dict, run_dir: Path) -> None:
+    run_dir.mkdir(parents=True, exist_ok=True)
+    stdout_path = run_dir / "01-finish.stdout.txt"
+    stderr_path = run_dir / "01-finish.stderr.txt"
+    stdout_path.write_text("", encoding="utf-8")
+    stderr_path.write_text("Timed out during test.\n", encoding="utf-8")
+    command.update(
+        {
+            "exit_code": None,
+            "status": "failed",
+            "timed_out": True,
+            "stdout_path": str(stdout_path.relative_to(root)),
+            "stderr_path": str(stderr_path.relative_to(root)),
+            "stdout": {"text": "", "path": str(stdout_path.relative_to(root))},
+            "stderr": {
+                "text": "Timed out during test.\n",
+                "path": str(stderr_path.relative_to(root)),
+            },
+            "output_truncated": False,
+            "redacted": False,
+            "termination": {"reason": "timeout", "signal": "SIGTERM"},
+            "failure_kind": "timeout",
+            "permission_contract": {"backend": "test"},
+        }
+    )
 
 
 def test_finish_plans_active_workflow_without_mutation(tmp_path: Path, capsys) -> None:
@@ -387,6 +415,124 @@ def test_finish_emit_packet_failure_keeps_task_active(tmp_path: Path, capsys) ->
         assert conn.execute("SELECT status FROM tasks WHERE id = 'T-0001'").fetchone()[0] == "in_progress"
     finally:
         conn.close()
+
+
+def test_finish_timeout_exposes_bounded_retry_and_next_preserves_it(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+
+    def fake_timeout(paths, command, *, run_dir, **kwargs):
+        _record_fake_timeout(paths.root, command, run_dir)
+
+    monkeypatch.setattr(
+        "pcl.finish_execution.execute_planned_guarded_command",
+        fake_timeout,
+    )
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001", "--json",
+    ]) == 1
+    finish = _finish_payload(capsys)
+    expected = "pcl finish --emit-packet --task T-0001 --timeout 600 --json"
+    assert finish["checks"][0]["status"] == "timed_out"
+    assert finish["timeout_recovery"] == {
+        "available": True,
+        "reason": "finish_check_timed_out",
+        "timed_out_evidence_id": finish["checks"][0]["evidence_id"],
+        "previous_timeout_seconds": 120,
+        "suggested_timeout_seconds": 600,
+        "retry_command": expected,
+        "diagnostic_command": (
+            f"pcl evidence show {finish['checks'][0]['evidence_id']} --json"
+        ),
+    }
+    packet = load_completion_packet(tmp_path / finish["packet"]["path"])
+    assert packet["next_action"]["command"] == expected
+    packet["next_action"]["command"] = "pcl finish --emit-packet --task T-9999 --timeout 600 --json"
+    assert completion_packet_timeout_action(packet) is None
+
+    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    action = _json_output(capsys)
+    assert action["type"] == "retry_finish_timeout"
+    assert action["command"] == expected
+    assert action["run_policy"] == "agent_safe"
+    assert action["requires_human"] is False
+    assert action["safe_to_run"] is True
+
+
+def test_finish_timeout_at_limit_routes_to_evidence_diagnosis(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+
+    def fake_timeout(paths, command, *, run_dir, **kwargs):
+        _record_fake_timeout(paths.root, command, run_dir)
+
+    monkeypatch.setattr(
+        "pcl.finish_execution.execute_planned_guarded_command",
+        fake_timeout,
+    )
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001",
+        "--timeout", "600", "--json",
+    ]) == 1
+    finish = _finish_payload(capsys)
+    evidence_id = finish["checks"][0]["evidence_id"]
+    diagnostic = f"pcl evidence show {evidence_id} --json"
+    assert finish["timeout_recovery"] == {
+        "available": False,
+        "reason": "finish_timeout_limit_reached",
+        "timed_out_evidence_id": evidence_id,
+        "previous_timeout_seconds": 600,
+        "suggested_timeout_seconds": None,
+        "retry_command": None,
+        "diagnostic_command": diagnostic,
+    }
+    packet = load_completion_packet(tmp_path / finish["packet"]["path"])
+    assert packet["next_action"]["command"] == diagnostic
+    assert "--timeout 600" not in packet["next_action"]["command"]
+
+    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    action = _json_output(capsys)
+    assert action["type"] == "diagnose_finish_timeout"
+    assert action["command"] == diagnostic
+    assert action["blocking"] is True
+    assert action["requires_human"] is False
+
+
+def test_newer_non_timeout_packet_suppresses_stale_timeout_recovery(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+
+    def fake_timeout(paths, command, *, run_dir, **kwargs):
+        _record_fake_timeout(paths.root, command, run_dir)
+
+    monkeypatch.setattr(
+        "pcl.finish_execution.execute_planned_guarded_command",
+        fake_timeout,
+    )
+    finish_command = [
+        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001", "--json",
+    ]
+    assert main(finish_command) == 1
+    _finish_payload(capsys)
+
+    monkeypatch.undo()
+    (tmp_path / "test_sample.py").write_text(
+        "def test_sample():\n    assert False\n\n# newer ordinary failure\n",
+        encoding="utf-8",
+    )
+    assert main(finish_command) == 1
+    newer = _finish_payload(capsys)
+    assert newer["checks"][0]["status"] == "failed"
+    assert "timeout_recovery" not in newer
+
+    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    action = _json_output(capsys)
+    assert action["type"] not in {"retry_finish_timeout", "diagnose_finish_timeout"}
 
 
 def test_finish_rejects_fail_open_missing_path_check_before_execution(

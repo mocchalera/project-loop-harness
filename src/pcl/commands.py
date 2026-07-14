@@ -5,6 +5,7 @@ from json import JSONDecodeError
 from typing import Any
 
 from .checkpoints import checkpoint_status
+from .contracts.completion_packet import validate_completion_packet
 from .db import connect, connect_mutation
 from .dispatch import expired_lease_job_ids
 from .evidence import (
@@ -17,6 +18,7 @@ from .evidence import (
 )
 from .events import append_event
 from .errors import InvalidInputError
+from .finish_recovery import completion_packet_timeout_action
 from .guards import require_initialized
 from .ids import next_prefixed_id
 from .lifecycle import ACTIVE_JOB_STATUSES, ACTIVE_RUN_STATUSES, TERMINAL_JOB_STATUSES
@@ -844,6 +846,9 @@ def next_action(paths: ProjectPaths) -> dict:
     checkpoint = _checkpoint_review_next_action(paths)
     if checkpoint is not None:
         return checkpoint
+    timeout_recovery = _finish_timeout_recovery_next_action(paths)
+    if timeout_recovery is not None:
+        return timeout_recovery
     task = _task_next_action(paths)
     if task is not None:
         return task
@@ -860,6 +865,77 @@ def next_action(paths: ProjectPaths) -> dict:
     if uncovered_feature is not None:
         return uncovered_feature
     return _idle_next_action()
+
+
+def _finish_timeout_recovery_next_action(paths: ProjectPaths) -> dict | None:
+    conn = connect(paths.db_path)
+    try:
+        rows = conn.execute(
+            """
+            SELECT evidence.id, evidence.path, evidence.created_at,
+                   evidence_links.target_type, evidence_links.target_id
+            FROM evidence_links
+            JOIN evidence ON evidence.id = evidence_links.evidence_id
+            WHERE evidence.type = 'completion_packet'
+              AND evidence_links.link_role = 'completion_packet'
+              AND evidence_links.target_type IN ('goal', 'task')
+            ORDER BY evidence.created_at DESC, evidence.id DESC
+            """
+        ).fetchall()
+        seen_targets: set[tuple[str, str]] = set()
+        for row in rows:
+            target_type = str(row["target_type"])
+            target_id = str(row["target_id"])
+            target_key = (target_type, target_id)
+            if target_key in seen_targets:
+                continue
+            table = "goals" if target_type == "goal" else "tasks"
+            target_row = conn.execute(
+                f"SELECT status FROM {table} WHERE id = ?",
+                (target_id,),
+            ).fetchone()
+            if target_row is None or str(target_row["status"]) in {
+                "closed",
+                "done",
+                "cancelled",
+                "waived",
+            }:
+                continue
+            path = paths.root / str(row["path"])
+            try:
+                packet = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, JSONDecodeError):
+                continue
+            if not validate_completion_packet(packet).ok:
+                continue
+            seen_targets.add(target_key)
+            action = completion_packet_timeout_action(packet)
+            if action is None:
+                continue
+            retrying = action["type"] == "retry_finish_timeout"
+            return build_next_action(
+                action_type=action["type"],
+                command=action["command"],
+                reason=action["reason"],
+                target={
+                    "id": target_id,
+                    "type": target_type,
+                    "status": str(target_row["status"]),
+                    "completion_packet_evidence_id": str(row["id"]),
+                },
+                priority=45,
+                blocking=not retrying,
+                requires_human=False,
+                safe_to_run=True,
+                expected_after=(
+                    "Configured finish checks rerun with the bounded timeout and emit a new packet."
+                    if retrying
+                    else "The agent inspects timeout Evidence before choosing a different corrective action."
+                ),
+            )
+    finally:
+        conn.close()
+    return None
 
 
 def _terminal_direct_goal_next_action(paths: ProjectPaths) -> dict | None:

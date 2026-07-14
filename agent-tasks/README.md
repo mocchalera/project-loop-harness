@@ -87,6 +87,7 @@ implement from the spec file, not from prompt summaries.
 | 0168 | Structured command guide | v0.5.0 Adoption / Distribution | P1 | done |
 | 0169 | Dashboard decision summary | v0.5.0 Adoption / Distribution | P0 | done |
 | 0170 | Exit-status-aware Skill usage friction | v0.5.0 Adoption / Distribution | P0 | done |
+| 0171 | Actionable finish timeout recovery | v0.5.0 Adoption / Distribution | P0 | done |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the

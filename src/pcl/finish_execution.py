@@ -21,6 +21,7 @@ from .db import connect, connect_mutation
 from .errors import DataStoreError, FinishChecksNotConfiguredError, InvalidInputError
 from .events import append_event
 from .evidence import insert_evidence_link, linked_task_provenance
+from .finish_recovery import finish_timeout_recovery
 from .guarded_process import DEFAULT_MAX_OUTPUT_BYTES
 from .guards import require_initialized
 from .ids import next_prefixed_id
@@ -163,11 +164,12 @@ def emit_finish_packet(
             race_detected=race_detected,
             blockers=blockers,
             outcome=outcome,
+            timeout_seconds=timeout_seconds,
         )
     finally:
         if stage_dir.exists():
             shutil.rmtree(stage_dir, ignore_errors=True)
-    return {
+    result = {
         **plan,
         "dry_run": False,
         "repository": after["packet_repository"],
@@ -186,6 +188,14 @@ def emit_finish_packet(
         "target_transition": committed["target_transition"],
         "exit_code": 1 if outcome == "INCOMPLETE_VALIDATION" else 0,
     }
+    recovery = finish_timeout_recovery(
+        target=target,
+        checks=committed["checks"],
+        timeout_seconds=timeout_seconds,
+    )
+    if recovery is not None:
+        result["timeout_recovery"] = recovery
+    return result
 
 
 def _resolve_target(
@@ -405,6 +415,7 @@ def _commit_completion_packet(
     paths: ProjectPaths, *, target: dict[str, Any], repository: dict[str, Any],
     commands: list[dict[str, Any]], stage_dir: Path, strict_errors: list[str],
     strict_warnings: list[str], race_detected: bool, blockers: dict[str, Any], outcome: str,
+    timeout_seconds: int,
 ) -> dict[str, Any]:
     conn = connect_mutation(paths)
     now = utc_now_iso().replace("+00:00", "Z")
@@ -443,6 +454,7 @@ def _commit_completion_packet(
             strict_errors=strict_errors, strict_warnings=strict_warnings,
             race_detected=race_detected, blockers=blockers, generated_at=now,
             adaptive_route=adaptive_route,
+            timeout_seconds=timeout_seconds,
         )
         validation = validate_completion_packet(packet)
         if not validation.ok:
@@ -490,6 +502,7 @@ def _build_packet(
     outcome: str, strict_errors: list[str], strict_warnings: list[str], race_detected: bool,
     blockers: dict[str, Any], generated_at: str,
     adaptive_route: dict[str, Any] | None = None,
+    timeout_seconds: int = 120,
 ) -> dict[str, Any]:
     checks = [
         {
@@ -513,7 +526,12 @@ def _build_packet(
         reasons.append("Configured checks did not pass: " + ", ".join(failed))
     human_decisions = [item["question"] for item in blockers["decisions"]]
     human_decisions.extend(str(step["reason"]) for step in blockers["human_steps"])
-    next_action = _next_action(outcome, target)
+    recovery = finish_timeout_recovery(
+        target=target,
+        checks=check_rows,
+        timeout_seconds=timeout_seconds,
+    )
+    next_action = _next_action(outcome, target, timeout_recovery=recovery)
     packet = {
         "contract_version": COMPLETION_PACKET_CONTRACT_VERSION,
         "packet_id": "cp-sha256:" + "0" * 64,
@@ -552,9 +570,29 @@ def _build_packet(
     return with_computed_packet_id(packet)
 
 
-def _next_action(outcome: str, target: dict[str, Any]) -> dict[str, Any] | None:
+def _next_action(
+    outcome: str,
+    target: dict[str, Any],
+    *,
+    timeout_recovery: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
     command = f"pcl finish --emit-packet --{target['type']} {target['id']}"
     if outcome == "INCOMPLETE_VALIDATION":
+        if timeout_recovery is not None and timeout_recovery["available"]:
+            return {
+                "text": (
+                    "A finish check timed out. Retry once with the bounded 600-second timeout."
+                ),
+                "command": timeout_recovery["retry_command"],
+            }
+        if timeout_recovery is not None:
+            return {
+                "text": (
+                    "A finish check timed out at the 600-second limit. Inspect its Evidence "
+                    "before changing the check or retrying."
+                ),
+                "command": timeout_recovery["diagnostic_command"],
+            }
         return {"text": "Fix failed checks or repository drift, then rerun finish.", "command": command}
     if outcome == "INCOMPLETE_BUDGET_EXHAUSTED":
         return {"text": "Review and explicitly extend or close the exhausted budget.", "command": None}

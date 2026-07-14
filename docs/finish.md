@@ -120,6 +120,20 @@ dirty-state, changed-path, or diff-hash change yields
 `INCOMPLETE_VALIDATION`; finish records the check Evidence and packet but does
 not complete the target.
 
+### Timeout recovery
+
+When a guarded finish check reaches the per-check timeout, the JSON result adds
+`timeout_recovery`. For a timeout below the guarded executor ceiling, it names
+one exact retry command for the same target with `--timeout 600 --json`.
+The incomplete completion packet stores the same command in `next_action`, so a
+subsequent `pcl next --json` preserves the recovery route for an agent.
+
+PCL does not run this retry automatically and does not change `pcl.yaml`. If a
+check times out at the 600-second ceiling, the recovery instead points to the
+timed-out check Evidence. `pcl next` then recommends diagnosis rather than the
+same ineffective retry. In both cases the packet outcome remains
+`INCOMPLETE_VALIDATION` until a later explicit finish run passes.
+
 ### Evidence and commit boundary
 
 Each check uses the host guarded executor with argv execution, fixed project
