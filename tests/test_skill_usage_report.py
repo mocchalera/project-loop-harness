@@ -33,7 +33,7 @@ def _codex_call(command: str, *, call_id: str) -> dict:
     }
 
 
-def _codex_output(output: str, *, call_id: str) -> dict:
+def _codex_output(output: object, *, call_id: str) -> dict:
     return {
         "timestamp": "2026-07-14T00:02:00Z",
         "type": "response_item",
@@ -324,6 +324,247 @@ def test_skill_usage_report_counts_only_failure_driven_matching_retries(
     assert friction["command_error"]["commands"] == [
         {"command": "validate", "occurrence_count": 2, "session_count": 2}
     ]
+
+
+def test_skill_usage_report_uses_codex_result_status_before_output_text(
+    tmp_path: Path,
+) -> None:
+    codex = tmp_path / "codex"
+    session_meta = {
+        "timestamp": "2026-07-14T00:00:00Z",
+        "type": "session_meta",
+        "payload": {"id": "SECRET-ID", "cwd": "/SECRET/workspace"},
+    }
+    skill_read = _codex_call(
+        "sed -n '1,380p' /SECRET/project-control-loop/SKILL.md",
+        call_id="SECRET-READ",
+    )
+    successful_result = [
+        {
+            "type": "input_text",
+            "text": "Script completed\nWall time 0.2 seconds\nOutput:\n",
+        },
+        {
+            "type": "input_text",
+            "text": json.dumps(
+                {
+                    "ok": True,
+                    "historical_summary": (
+                        "finish_checks_not_configured, timeout, "
+                        "guarded_execution_blocked, Exit code 2, "
+                        "COMPLETED_WITH_RISK"
+                    ),
+                }
+            ),
+        },
+    ]
+    truncated_self_report = [
+        {
+            "type": "input_text",
+            "text": "Script completed\nWall time 8.2 seconds\nOutput:\n",
+        },
+        {
+            "type": "input_text",
+            "text": (
+                "Warning: truncated output\n{\"ok\": true, \"friction\": "
+                "finish_checks_not_configured timeout guarded_execution_blocked "
+                "Exit code 2 COMPLETED_WITH_RISK"
+            ),
+        },
+    ]
+    typed_risk_result = [
+        {
+            "type": "input_text",
+            "text": "Script completed\nWall time 0.2 seconds\nOutput:\n",
+        },
+        {
+            "type": "input_text",
+            "text": json.dumps(
+                {"completion_packet": {"outcome": "COMPLETED_WITH_RISK"}}
+            ),
+        },
+    ]
+    failed_result = [
+        {
+            "type": "input_text",
+            "text": "Script completed\nWall time 0.2 seconds\nOutput:\n",
+        },
+        {
+            "type": "input_text",
+            "text": json.dumps(
+                {
+                    "ok": False,
+                    "error": (
+                        "Exit code 2 finish_checks_not_configured timeout "
+                        "guarded_execution_blocked"
+                    ),
+                }
+            ),
+        },
+    ]
+    _write_jsonl(
+        codex / "2026" / "07" / "status-aware.jsonl",
+        [
+            session_meta,
+            skill_read,
+            _codex_call("pcl validate --json", call_id="SUCCESS"),
+            _codex_output(successful_result, call_id="SUCCESS"),
+            _codex_call("pcl report skill-usage --json", call_id="SELF"),
+            _codex_output(truncated_self_report, call_id="SELF"),
+            _codex_call("pcl finish --emit-packet --json", call_id="RISK"),
+            _codex_output(typed_risk_result, call_id="RISK"),
+            _codex_call("pcl validate --json", call_id="FAILURE"),
+            _codex_output(failed_result, call_id="FAILURE"),
+        ],
+    )
+
+    report = report_skill_usage(
+        since=WINDOW["since"],
+        until=WINDOW["until"],
+        sources=["codex"],
+        codex_root=codex,
+    )
+    friction = {item["code"]: item for item in report["friction"]}
+
+    for code in (
+        "finish_checks_not_configured",
+        "guarded_execution_blocked",
+        "timeout",
+        "command_error",
+    ):
+        assert friction[code]["commands"] == [
+            {"command": "validate", "occurrence_count": 1, "session_count": 1}
+        ]
+    assert friction["completed_with_risk"]["commands"] == [
+        {"command": "finish", "occurrence_count": 1, "session_count": 1}
+    ]
+
+
+def test_skill_usage_report_uses_claude_success_status_and_typed_outcome(
+    tmp_path: Path,
+) -> None:
+    claude = tmp_path / "claude"
+    _write_jsonl(
+        claude / "project" / "status-aware.jsonl",
+        [
+            {
+                "timestamp": "2026-07-14T01:00:00Z",
+                "type": "assistant",
+                "sessionId": "SECRET-ID",
+                "cwd": "/SECRET/workspace",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "name": "Skill",
+                            "id": "SECRET-SKILL",
+                            "input": {"skill": "project-control-loop"},
+                        },
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "id": "SUCCESS",
+                            "input": {"command": "pcl report skill-usage --json"},
+                        },
+                        {
+                            "type": "tool_use",
+                            "name": "Bash",
+                            "id": "RISK",
+                            "input": {"command": "pcl finish --emit-packet --json"},
+                        },
+                    ]
+                },
+            },
+            {
+                "timestamp": "2026-07-14T01:01:00Z",
+                "type": "user",
+                "sessionId": "SECRET-ID",
+                "message": {
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "SUCCESS",
+                            "is_error": False,
+                            "content": (
+                                "Historical summary: finish_checks_not_configured, "
+                                "timeout, guarded_execution_blocked, Exit code 2, "
+                                "COMPLETED_WITH_RISK"
+                            ),
+                        },
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "RISK",
+                            "is_error": False,
+                            "content": json.dumps(
+                                {
+                                    "completion_packet": {
+                                        "outcome": "COMPLETED_WITH_RISK"
+                                    }
+                                }
+                            ),
+                        },
+                    ]
+                },
+            },
+        ],
+    )
+
+    report = report_skill_usage(
+        since=WINDOW["since"],
+        until=WINDOW["until"],
+        sources=["claude"],
+        claude_root=claude,
+    )
+    friction = {item["code"]: item for item in report["friction"]}
+
+    assert set(friction) == {"completed_with_risk"}
+    assert friction["completed_with_risk"]["commands"] == [
+        {"command": "finish", "occurrence_count": 1, "session_count": 1}
+    ]
+
+
+def test_skill_usage_report_keeps_explicit_self_report_failure(
+    tmp_path: Path,
+) -> None:
+    codex = tmp_path / "codex"
+    _write_jsonl(
+        codex / "2026" / "07" / "failed-self-report.jsonl",
+        [
+            {
+                "timestamp": "2026-07-14T00:00:00Z",
+                "type": "session_meta",
+                "payload": {"id": "SECRET-ID", "cwd": "/SECRET/workspace"},
+            },
+            _codex_call(
+                "sed -n '1,380p' /SECRET/project-control-loop/SKILL.md",
+                call_id="SECRET-READ",
+            ),
+            _codex_call("pcl report skill-usage --json", call_id="FAILURE"),
+            _codex_output(
+                json.dumps(
+                    {"ok": False, "error": "Exit code 2 timeout SECRET_FAILURE"}
+                ),
+                call_id="FAILURE",
+            ),
+        ],
+    )
+
+    report = report_skill_usage(
+        since=WINDOW["since"],
+        until=WINDOW["until"],
+        sources=["codex"],
+        codex_root=codex,
+    )
+    friction = {item["code"]: item for item in report["friction"]}
+
+    for code in ("timeout", "command_error"):
+        assert friction[code]["commands"] == [
+            {
+                "command": "report skill-usage",
+                "occurrence_count": 1,
+                "session_count": 1,
+            }
+        ]
 
 
 def test_skill_usage_report_attributes_help_probe_to_normalized_command(

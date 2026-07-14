@@ -44,6 +44,18 @@ command in its matching tool call; the breakdown is therefore attribution,
 not a partition of the signal total. JSON includes the full breakdown and
 Markdown shows the three leading commands.
 
+When a supported Codex or Claude result explicitly reports success, historical
+failure wording in its output is not classified as a new finish-check,
+guarded-block, timeout, or command-error signal. A successful
+`COMPLETED_WITH_RISK` result is counted only when a typed completion outcome is
+present. Explicit failures keep normal friction and retry attribution. Results
+whose adapter status is unknown retain the best-effort text classification for
+backward compatibility.
+
+The report also excludes its own non-failed output from friction
+classification. This prevents aggregate or truncated `report skill-usage`
+output from recursively creating a new copy of the findings it is displaying.
+
 When `rg` is available, PCL uses it only as a local read accelerator and parses
 the selected JSONL records itself. The standard-library streaming fallback
 keeps the command functional without `rg`.

@@ -625,11 +625,12 @@ def _scan_claude(root: Path, *, window: dict[str, str]) -> _SourceScan:
                     tool_use_id = item.get("tool_use_id")
                     if not isinstance(tool_use_id, str) or tool_use_id not in session.pcl_call_ids:
                         continue
+                    error_state = item.get("is_error")
                     _classify_output(
                         session,
                         item.get("content"),
                         call_id=tool_use_id,
-                        is_error=item.get("is_error") is True,
+                        is_error=error_state if isinstance(error_state, bool) else None,
                     )
         _merge_session(scan.sessions, session)
     return scan
@@ -1169,22 +1170,33 @@ def _classify_output(
     value: Any,
     *,
     call_id: str,
-    is_error: bool = False,
+    is_error: bool | None = None,
 ) -> None:
     text = _output_text(value)
-    if not text and not is_error:
+    result_status = _tool_result_status(value, is_error=is_error)
+    commands = session.pcl_call_commands.get(call_id, Counter())
+    if (
+        commands
+        and set(commands) == {"report skill-usage"}
+        and result_status != "failure"
+    ):
+        return
+    if not text and result_status != "failure":
         return
     observed = Counter[str]()
-    for code, pattern in _FRICTION_PATTERNS.items():
-        if pattern.search(text):
-            observed[code] += 1
-    if is_error or _COMMAND_ERROR_RE.search(text):
-        observed["command_error"] += 1
+    if result_status == "success":
+        if _has_typed_completed_with_risk(value):
+            observed["completed_with_risk"] += 1
+    else:
+        for code, pattern in _FRICTION_PATTERNS.items():
+            if pattern.search(text):
+                observed[code] += 1
+        if result_status == "failure" or _COMMAND_ERROR_RE.search(text):
+            observed["command_error"] += 1
     if not observed:
         return
 
     session.friction.update(observed)
-    commands = session.pcl_call_commands.get(call_id, Counter())
     for code, count in observed.items():
         for command in commands:
             _add_friction_command(
@@ -1195,6 +1207,94 @@ def _classify_output(
             )
     if observed.keys() & _RETRY_TRIGGER_CODES:
         session.pending_retry_commands = Counter({command: 1 for command in commands})
+
+
+def _tool_result_status(value: Any, *, is_error: bool | None) -> str:
+    if is_error is not None:
+        return "failure" if is_error else "success"
+    if isinstance(value, dict):
+        ok = value.get("ok")
+        if isinstance(ok, bool):
+            return "success" if ok else "failure"
+        for key in ("exit_code", "exitCode", "returncode", "return_code"):
+            exit_code = value.get(key)
+            if isinstance(exit_code, int) and not isinstance(exit_code, bool):
+                return "success" if exit_code == 0 else "failure"
+    for text in _result_text_leaves(value):
+        header = text.lstrip()[:256]
+        if re.match(r"Script failed with code [1-9]\d*", header, re.IGNORECASE):
+            return "failure"
+        process_status = re.search(
+            r"(?:^|\n)Process exited with code (\d+)(?:\r?\n|$)",
+            header,
+            re.IGNORECASE,
+        )
+        if process_status:
+            return "success" if int(process_status.group(1)) == 0 else "failure"
+        stripped = text.strip()
+        if stripped and stripped[0] == "{":
+            try:
+                payload = json.loads(stripped)
+            except JSONDecodeError:
+                continue
+            if isinstance(payload, dict) and isinstance(payload.get("ok"), bool):
+                return "success" if payload["ok"] else "failure"
+    return "unknown"
+
+
+def _has_typed_completed_with_risk(value: Any) -> bool:
+    for text in _result_text_leaves(value):
+        stripped = text.strip()
+        if stripped == "COMPLETED_WITH_RISK":
+            return True
+        if not stripped or stripped[0] not in "[{":
+            continue
+        try:
+            payload = json.loads(stripped)
+        except JSONDecodeError:
+            continue
+        if _has_completion_outcome(payload, expected="COMPLETED_WITH_RISK"):
+            return True
+    if isinstance(value, (dict, list)):
+        return _has_completion_outcome(value, expected="COMPLETED_WITH_RISK")
+    return False
+
+
+def _has_completion_outcome(value: Any, *, expected: str) -> bool:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in {"outcome", "completion_outcome"}:
+                if isinstance(item, str) and item.upper() == expected:
+                    return True
+            if isinstance(item, (dict, list)) and _has_completion_outcome(
+                item, expected=expected
+            ):
+                return True
+    elif isinstance(value, list):
+        return any(
+            _has_completion_outcome(item, expected=expected)
+            for item in value
+            if isinstance(item, (dict, list))
+        )
+    return False
+
+
+def _result_text_leaves(value: Any) -> Iterable[str]:
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, list):
+        for item in value:
+            yield from _result_text_leaves(item)
+    elif isinstance(value, dict):
+        text = value.get("text")
+        if isinstance(text, str):
+            yield text
+        content = value.get("content")
+        if content is not text:
+            yield from _result_text_leaves(content)
+        output = value.get("output")
+        if output is not content and output is not text:
+            yield from _result_text_leaves(output)
 
 
 def _add_friction_command(
