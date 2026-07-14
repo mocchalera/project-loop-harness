@@ -1,6 +1,6 @@
 # 0168: Structured command guide
 
-- **Status:** In progress
+- **Status:** Complete
 - **Milestone:** v0.5.0 Adoption / Distribution
 - **Priority:** P1
 - **Size:** M
