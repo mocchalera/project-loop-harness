@@ -1,6 +1,6 @@
 # 0167: Actionable Skill usage retry signals
 
-- **Status:** In progress
+- **Status:** Complete
 - **Milestone:** v0.5.0 Adoption / Distribution
 - **Priority:** P1
 - **Size:** M

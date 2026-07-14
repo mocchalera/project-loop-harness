@@ -37,6 +37,13 @@ monitoring, database mutation, or event append. Cockpit reports are counted as
 separate control-plane task signals and are not added to Codex/Claude agent
 session totals.
 
+Friction rows contain command breakdowns made only from the same normalized
+allowlisted labels used by the command summary. They never contain command
+arguments. A typed output signal is associated with every normalized PCL
+command in its matching tool call; the breakdown is therefore attribution,
+not a partition of the signal total. JSON includes the full breakdown and
+Markdown shows the three leading commands.
+
 When `rg` is available, PCL uses it only as a local read accelerator and parses
 the selected JSONL records itself. The standard-library streaming fallback
 keeps the command functional without `rg`.
@@ -45,8 +52,12 @@ keeps the command functional without `rg`.
 
 The report identifies execution signals, not intent. A command error, timeout,
 help probe, or repeated command is an observed signal and does not prove a PCL
-defect. Unknown transcript adapters can be undercounted. Results are therefore
-advisory and must not change the Skill or project state automatically.
+defect. `repeated_command` means that the next detected PCL call after a command
+error, timeout, or guarded-execution block repeated the same normalized command
+family. Routine lifecycle reuse elsewhere in a session is not retry friction.
+Unknown transcript adapters and retries separated across log shards can be
+undercounted. Results are therefore advisory and must not change the Skill or
+project state automatically.
 
 ## Improvement loop
 

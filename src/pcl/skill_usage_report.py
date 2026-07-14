@@ -105,6 +105,11 @@ _FRICTION_ORDER = (
     "help_probe",
     "repeated_command",
 )
+_RETRY_TRIGGER_CODES = {
+    "command_error",
+    "guarded_execution_blocked",
+    "timeout",
+}
 _KNOWN_SUBCOMMANDS = {
     "agent": {"command"},
     "audit": {"check", "flush", "rebuild-jsonl", "repair"},
@@ -175,8 +180,12 @@ class _SessionObservation:
     skill_seen_in_window: bool = False
     commands: Counter[str] = field(default_factory=Counter)
     help_probes: int = 0
+    help_probe_commands: Counter[str] = field(default_factory=Counter)
     friction: Counter[str] = field(default_factory=Counter)
+    friction_commands: dict[str, Counter[str]] = field(default_factory=dict)
     pcl_call_ids: set[str] = field(default_factory=set)
+    pcl_call_commands: dict[str, Counter[str]] = field(default_factory=dict)
+    pending_retry_commands: Counter[str] = field(default_factory=Counter)
 
     @property
     def included(self) -> bool:
@@ -233,6 +242,8 @@ def report_skill_usage(
     command_sessions: dict[str, int] = Counter()
     friction = Counter[str]()
     friction_sessions: dict[str, int] = Counter()
+    friction_commands: dict[str, Counter[str]] = {}
+    friction_command_sessions: dict[str, Counter[str]] = {}
     workspaces: set[str] = set()
     sessions_with_commands = 0
 
@@ -245,14 +256,23 @@ def report_skill_usage(
         if session.workspace:
             workspaces.add(session.workspace)
         session_friction = Counter(session.friction)
+        session_friction_commands = {
+            code: Counter(command_counts)
+            for code, command_counts in session.friction_commands.items()
+        }
         if session.help_probes:
             session_friction["help_probe"] += session.help_probes
-        repeated = sum(max(0, count - 1) for count in session.commands.values())
-        if repeated:
-            session_friction["repeated_command"] += repeated
+            session_friction_commands["help_probe"] = Counter(
+                session.help_probe_commands
+            )
         friction.update(session_friction)
         for code in session_friction:
             friction_sessions[code] += 1
+        for code, command_counts in session_friction_commands.items():
+            friction_commands.setdefault(code, Counter()).update(command_counts)
+            attributed_sessions = friction_command_sessions.setdefault(code, Counter())
+            for command in command_counts:
+                attributed_sessions[command] += 1
 
     cockpit_tasks = len(scans.get("cockpit", _SourceScan("cockpit", False)).cockpit_tasks)
     source_payloads = {
@@ -260,16 +280,32 @@ def report_skill_usage(
         for source in SKILL_USAGE_SOURCES
         if source in scans
     }
-    friction_payload = [
-        {
-            "code": code,
-            "occurrence_count": friction[code],
-            "session_count": friction_sessions[code],
-            "classification": "observed_signal_not_proven_product_defect",
-        }
-        for code in _FRICTION_ORDER
-        if friction[code]
-    ]
+    friction_command_payloads = {
+        code: [
+            {
+                "command": command,
+                "occurrence_count": count,
+                "session_count": friction_command_sessions.get(code, Counter())[command],
+            }
+            for command, count in sorted(
+                command_counts.items(), key=lambda item: (-item[1], item[0])
+            )
+        ]
+        for code, command_counts in friction_commands.items()
+    }
+    friction_payload = []
+    for code in _FRICTION_ORDER:
+        if not friction[code]:
+            continue
+        friction_payload.append(
+            {
+                "code": code,
+                "occurrence_count": friction[code],
+                "session_count": friction_sessions[code],
+                "classification": "observed_signal_not_proven_product_defect",
+                "commands": friction_command_payloads.get(code, []),
+            }
+        )
     report = {
         "ok": True,
         "contract_version": SKILL_USAGE_REPORT_CONTRACT_VERSION,
@@ -294,6 +330,7 @@ def report_skill_usage(
         "improvement_candidates": _improvement_candidates(
             friction=friction,
             friction_sessions=friction_sessions,
+            friction_commands=friction_command_payloads,
         ),
         "privacy": {
             "raw_content_retained": False,
@@ -352,10 +389,20 @@ def render_skill_usage_markdown(report: dict[str, Any]) -> str:
 
     lines.extend(["", "## Friction signals", ""])
     if report["friction"]:
-        lines.extend(["| Signal | Occurrences | Sessions |", "|---|---:|---:|"])
+        lines.extend(
+            [
+                "| Signal | Occurrences | Sessions | Leading commands |",
+                "|---|---:|---:|---|",
+            ]
+        )
         for item in report["friction"]:
+            leading = ", ".join(
+                f"`{command['command']}` {command['occurrence_count']}"
+                for command in item["commands"][:3]
+            )
             lines.append(
-                f"| `{item['code']}` | {item['occurrence_count']} | {item['session_count']} |"
+                f"| `{item['code']}` | {item['occurrence_count']} | "
+                f"{item['session_count']} | {leading or '—'} |"
             )
     else:
         lines.append("No supported friction signal was detected in the selected window.")
@@ -363,9 +410,11 @@ def render_skill_usage_markdown(report: dict[str, Any]) -> str:
     lines.extend(["", "## Advisory improvement candidates", ""])
     if report["improvement_candidates"]:
         for item in report["improvement_candidates"]:
+            leading = item["evidence"].get("leading_command")
+            leading_text = f", leading command `{leading['command']}`" if leading else ""
             lines.append(
                 f"- **{item['priority']} `{item['code']}`** — {item['recommendation']} "
-                f"({item['evidence']['session_count']} sessions)"
+                f"({item['evidence']['session_count']} sessions{leading_text})"
             )
     else:
         lines.append("No improvement candidate has enough observed evidence in this window.")
@@ -565,17 +614,22 @@ def _scan_claude(root: Path, *, window: dict[str, str]) -> _SourceScan:
                     if name == "Bash" and in_window and isinstance(tool_input, dict):
                         shell_command = tool_input.get("command")
                         if isinstance(shell_command, str):
-                            command_count = _record_pcl_commands(session, shell_command)
                             tool_id = item.get("id")
-                            if command_count and isinstance(tool_id, str):
-                                session.pcl_call_ids.add(tool_id)
+                            _record_pcl_call(
+                                session,
+                                [shell_command],
+                                call_id=tool_id if isinstance(tool_id, str) else None,
+                            )
                 elif item.get("type") == "tool_result" and in_window:
                     tool_use_id = item.get("tool_use_id")
                     if not isinstance(tool_use_id, str) or tool_use_id not in session.pcl_call_ids:
                         continue
-                    if item.get("is_error") is True:
-                        session.friction["command_error"] += 1
-                    _classify_output(session, item.get("content"))
+                    _classify_output(
+                        session,
+                        item.get("content"),
+                        call_id=tool_use_id,
+                        is_error=item.get("is_error") is True,
+                    )
         _merge_session(scan.sessions, session)
     return scan
 
@@ -816,21 +870,23 @@ def _consume_codex_row(
     in_window = _row_in_window(row, window=window, fallback=path)
     payload_type = payload.get("type")
     if payload_type in {"custom_tool_call", "function_call"}:
-        command_count = 0
-        for shell_command in _codex_shell_commands(payload):
+        shell_commands = _codex_shell_commands(payload)
+        for shell_command in shell_commands:
             if _is_skill_read_command(shell_command):
                 session.skill_seen_any = True
                 if in_window:
                     session.skill_seen_in_window = True
-            if in_window:
-                command_count += _record_pcl_commands(session, shell_command)
         call_id = payload.get("call_id")
-        if command_count and isinstance(call_id, str):
-            session.pcl_call_ids.add(call_id)
+        if in_window:
+            _record_pcl_call(
+                session,
+                shell_commands,
+                call_id=call_id if isinstance(call_id, str) else None,
+            )
     elif payload_type in {"custom_tool_call_output", "function_call_output"} and in_window:
         call_id = payload.get("call_id")
         if isinstance(call_id, str) and call_id in session.pcl_call_ids:
-            _classify_output(session, payload.get("output"))
+            _classify_output(session, payload.get("output"), call_id=call_id)
 
 
 def _file_contains_any(path: Path, needles: tuple[bytes, ...]) -> bool:
@@ -992,12 +1048,45 @@ def _claude_skill_signal(name: Any, tool_input: Any) -> bool:
     return False
 
 
-def _record_pcl_commands(session: _SessionObservation, shell_command: str) -> int:
-    normalized = _normalized_pcl_commands(shell_command)
+def _record_pcl_call(
+    session: _SessionObservation,
+    shell_commands: Iterable[str],
+    *,
+    call_id: str | None,
+) -> int:
+    normalized = [
+        item
+        for shell_command in shell_commands
+        for item in _normalized_pcl_commands(shell_command)
+    ]
+    if not normalized:
+        return 0
+
+    current_commands = Counter(command for command, _help_probe in normalized)
+    if session.pending_retry_commands:
+        for command in current_commands.keys() & session.pending_retry_commands.keys():
+            repeat_count = min(
+                current_commands[command], session.pending_retry_commands[command]
+            )
+            if repeat_count:
+                session.friction["repeated_command"] += repeat_count
+                _add_friction_command(
+                    session,
+                    code="repeated_command",
+                    command=command,
+                    count=repeat_count,
+                )
+        session.pending_retry_commands.clear()
+
+    session.commands.update(current_commands)
     for command, help_probe in normalized:
-        session.commands[command] += 1
         if help_probe:
             session.help_probes += 1
+            session.help_probe_commands[command] += 1
+
+    if call_id is not None:
+        session.pcl_call_ids.add(call_id)
+        session.pcl_call_commands.setdefault(call_id, Counter()).update(current_commands)
     return len(normalized)
 
 
@@ -1074,15 +1163,47 @@ def _normalize_pcl_segment(tokens: list[str]) -> tuple[str, bool] | None:
     return command, help_probe
 
 
-def _classify_output(session: _SessionObservation, value: Any) -> None:
+def _classify_output(
+    session: _SessionObservation,
+    value: Any,
+    *,
+    call_id: str,
+    is_error: bool = False,
+) -> None:
     text = _output_text(value)
-    if not text:
+    if not text and not is_error:
         return
+    observed = Counter[str]()
     for code, pattern in _FRICTION_PATTERNS.items():
         if pattern.search(text):
-            session.friction[code] += 1
-    if _COMMAND_ERROR_RE.search(text):
-        session.friction["command_error"] += 1
+            observed[code] += 1
+    if is_error or _COMMAND_ERROR_RE.search(text):
+        observed["command_error"] += 1
+    if not observed:
+        return
+
+    session.friction.update(observed)
+    commands = session.pcl_call_commands.get(call_id, Counter())
+    for code, count in observed.items():
+        for command in commands:
+            _add_friction_command(
+                session,
+                code=code,
+                command=command,
+                count=count,
+            )
+    if observed.keys() & _RETRY_TRIGGER_CODES:
+        session.pending_retry_commands = Counter({command: 1 for command in commands})
+
+
+def _add_friction_command(
+    session: _SessionObservation,
+    *,
+    code: str,
+    command: str,
+    count: int,
+) -> None:
+    session.friction_commands.setdefault(code, Counter())[command] += count
 
 
 def _output_text(value: Any) -> str:
@@ -1108,8 +1229,13 @@ def _merge_session(
     current.skill_seen_in_window = current.skill_seen_in_window or incoming.skill_seen_in_window
     current.commands.update(incoming.commands)
     current.help_probes += incoming.help_probes
+    current.help_probe_commands.update(incoming.help_probe_commands)
     current.friction.update(incoming.friction)
+    for code, command_counts in incoming.friction_commands.items():
+        current.friction_commands.setdefault(code, Counter()).update(command_counts)
     current.pcl_call_ids.update(incoming.pcl_call_ids)
+    for call_id, command_counts in incoming.pcl_call_commands.items():
+        current.pcl_call_commands.setdefault(call_id, Counter()).update(command_counts)
 
 
 def _source_payload(scan: _SourceScan) -> dict[str, Any]:
@@ -1138,6 +1264,7 @@ def _improvement_candidates(
     *,
     friction: Counter[str],
     friction_sessions: dict[str, int],
+    friction_commands: dict[str, list[dict[str, Any]]],
 ) -> list[dict[str, Any]]:
     definitions = {
         "finish_checks_not_configured": (
@@ -1180,15 +1307,19 @@ def _improvement_candidates(
     for friction_code, (code, priority, recommendation) in definitions.items():
         if not friction[friction_code]:
             continue
+        evidence: dict[str, Any] = {
+            "friction_code": friction_code,
+            "session_count": friction_sessions[friction_code],
+        }
+        command_breakdown = friction_commands.get(friction_code, [])
+        if command_breakdown:
+            evidence["leading_command"] = command_breakdown[0]
         candidates.append(
             {
                 "code": code,
                 "priority": priority,
                 "recommendation": recommendation,
-                "evidence": {
-                    "friction_code": friction_code,
-                    "session_count": friction_sessions[friction_code],
-                },
+                "evidence": evidence,
                 "advisory": True,
             }
         )

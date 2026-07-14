@@ -83,7 +83,7 @@ implement from the spec file, not from prompt summaries.
 | 0164 | Guided dashboard review experience | v0.5.0 Adoption / Distribution | P0 | done |
 | 0165 | Resolve v0.4.3 field-feedback finish friction | v0.5.0 Adoption / Distribution | P0 | done |
 | 0166 | Local Skill usage improvement loop MVP | v0.5.0 Adoption / Distribution | P1 | done |
-| 0167 | Actionable Skill usage retry signals | v0.5.0 Adoption / Distribution | P1 | in progress |
+| 0167 | Actionable Skill usage retry signals | v0.5.0 Adoption / Distribution | P1 | done |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
