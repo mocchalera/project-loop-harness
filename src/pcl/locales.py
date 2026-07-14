@@ -135,8 +135,20 @@ DASHBOARD_STRINGS = {
         "operator.done.kind.verification": "Verification",
         "operator.done.none": "No evidence-backed completion has been recorded yet.",
         "operator.heading": "What to review now",
+        "operator.human.checkpoint": (
+            "{count} features have been completed since the last checkpoint, reaching the "
+            "review threshold of {threshold}. Before starting more major work, review the "
+            "larger product direction."
+        ),
         "operator.human.count": "{count} item(s) need your decision.",
+        "operator.human.more": "{count} more decision(s) are listed in the detailed information.",
         "operator.human.none": "No decision is needed from you now.",
+        "operator.human.option.Approve": "Approve",
+        "operator.human.option.Hold": "Hold",
+        "operator.human.option.Reject": "Reject",
+        "operator.human.option.Request more evidence": "Request more evidence",
+        "operator.human.options": "Available choices",
+        "operator.human.what": "What to decide",
         "operator.label.done": "Done",
         "operator.label.human": "Human needed",
         "operator.label.next": "Next",
@@ -326,8 +338,19 @@ DASHBOARD_STRINGS = {
         "operator.done.kind.verification": "検証",
         "operator.done.none": "証跡付きの完了記録はまだありません。",
         "operator.heading": "今回見るところ",
+        "operator.human.checkpoint": (
+            "前回の節目以降に {count} 件の機能が完了し、確認基準の {threshold} 件に達しました。"
+            "次の大きな作業へ進む前に、プロジェクト全体の方向性を確認してください。"
+        ),
         "operator.human.count": "あなたの判断が {count} 件必要です。",
+        "operator.human.more": "ほか {count} 件は詳細情報に表示されています。",
         "operator.human.none": "今、あなたの判断は必要ありません。",
+        "operator.human.option.Approve": "承認",
+        "operator.human.option.Hold": "保留",
+        "operator.human.option.Reject": "却下",
+        "operator.human.option.Request more evidence": "追加の証跡を確認",
+        "operator.human.options": "選べる内容",
+        "operator.human.what": "判断すること",
         "operator.label.done": "完了",
         "operator.label.human": "あなたの判断",
         "operator.label.next": "次",

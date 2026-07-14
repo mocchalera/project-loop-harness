@@ -73,6 +73,13 @@ def _operator_summary(conn, data: dict[str, Any]) -> dict[str, Any]:
         if isinstance(item, dict) and str(item.get("kind") or "") != "next_action"
     ] if isinstance(human_items, list) else []
     human_count = len(durable_human_items) or (1 if human_items else 0)
+    summary_human_items = durable_human_items or (
+        [item for item in human_items[:1] if isinstance(item, dict)]
+        if isinstance(human_items, list)
+        else []
+    )
+    if not summary_human_items and action.get("requires_human") is True:
+        summary_human_items = [action]
     if human_count or action.get("requires_human") is True:
         next_state = "human"
     elif str(action.get("type") or "") == "idle" or str(action.get("run_policy") or "") == "idle":
@@ -94,6 +101,8 @@ def _operator_summary(conn, data: dict[str, Any]) -> dict[str, Any]:
         "done": _evidence_backed_done_items(conn),
         "next_state": next_state,
         "human_count": human_count,
+        "human_items": summary_human_items,
+        "human_action_target": action.get("target", {}),
         "risk_count": len(risk_items) if isinstance(risk_items, list) else 0,
         "risk_severity": str(risk_summary.get("highest_severity") or "none"),
     }
@@ -1394,12 +1403,7 @@ def _operator_summary_block(summary: dict[str, Any], strings: dict[str, str]) ->
 
     next_state = str(summary.get("next_state") or "waiting")
     next_text = html.escape(strings.get(f"operator.next.{next_state}", strings["operator.next.waiting"]))
-    human_count = int(summary.get("human_count") or 0)
-    human_text = (
-        strings["operator.human.count"].format(count=human_count)
-        if human_count
-        else strings["operator.human.none"]
-    )
+    human_content = _operator_human_content(summary, strings)
     risk_count = int(summary.get("risk_count") or 0)
     severity = str(summary.get("risk_severity") or "none")
     if risk_count:
@@ -1414,7 +1418,7 @@ def _operator_summary_block(summary: dict[str, Any], strings: dict[str, str]) ->
         ("operator.label.now", f"<p>{now_text}</p>"),
         ("operator.label.done", done_text),
         ("operator.label.next", f"<p>{next_text}</p>"),
-        ("operator.label.human", f"<p>{html.escape(human_text)}</p>"),
+        ("operator.label.human", human_content),
         ("operator.label.risks", f"<p>{risk_text}</p>"),
     ]
     return "".join(
@@ -1422,6 +1426,84 @@ def _operator_summary_block(summary: dict[str, Any], strings: dict[str, str]) ->
         f"<h3>{html.escape(strings[label_key])}</h3>{content}</article>"
         for label_key, content in cards
     )
+
+
+def _operator_human_content(summary: dict[str, Any], strings: dict[str, str]) -> str:
+    human_count = int(summary.get("human_count") or 0)
+    if not human_count:
+        return f"<p>{html.escape(strings['operator.human.none'])}</p>"
+
+    parts = [
+        "<p>"
+        + html.escape(strings["operator.human.count"].format(count=human_count))
+        + "</p>"
+    ]
+    items = summary.get("human_items", [])
+    if not isinstance(items, list):
+        items = []
+    target = summary.get("human_action_target", {})
+    if not isinstance(target, dict):
+        target = {}
+
+    visible_items = [item for item in items if isinstance(item, dict)][:3]
+    for item in visible_items:
+        preview = _operator_human_preview(item, target, strings)
+        if preview:
+            parts.append(
+                '<p class="operator-decision-preview"><strong>'
+                + html.escape(strings["operator.human.what"])
+                + ":</strong> "
+                + html.escape(preview)
+                + "</p>"
+            )
+
+        options = item.get("options", [])
+        if isinstance(options, list):
+            labels = [
+                strings.get(
+                    f"operator.human.option.{str(option.get('label') or '')}",
+                    str(option.get("label") or ""),
+                )
+                for option in options
+                if isinstance(option, dict) and str(option.get("label") or "")
+            ]
+            if labels:
+                parts.append(
+                    '<p class="operator-decision-options"><strong>'
+                    + html.escape(strings["operator.human.options"])
+                    + ":</strong> "
+                    + html.escape(" / ".join(labels))
+                    + "</p>"
+                )
+
+    hidden_count = max(human_count - len(visible_items), 0)
+    if hidden_count:
+        parts.append(
+            "<p>"
+            + html.escape(strings["operator.human.more"].format(count=hidden_count))
+            + "</p>"
+        )
+    return "".join(parts)
+
+
+def _operator_human_preview(
+    item: dict[str, Any],
+    action_target: dict[str, Any],
+    strings: dict[str, str],
+) -> str:
+    if str(item.get("type") or "") == "checkpoint_review":
+        count = int(action_target.get("completed_features_since_checkpoint") or 0)
+        threshold = int(action_target.get("threshold") or count)
+        if count:
+            return strings["operator.human.checkpoint"].format(
+                count=count,
+                threshold=threshold,
+            )
+    for key in ("question", "reason", "why_blocked", "recommendation_reason"):
+        value = str(item.get(key) or "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _next_action_block(action: dict[str, Any], strings: dict[str, str]) -> str:

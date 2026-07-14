@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 
 from pcl.cli import main
+from pcl.locales import dashboard_strings
+from pcl.renderer import _operator_summary_block
 
 
 def _read_dashboard(root: Path) -> str:
@@ -424,8 +426,53 @@ def test_dashboard_operator_summary_localizes_human_gate_without_english_reason(
     summary_html = dashboard[summary_start : dashboard.index("</section>", summary_start)]
     assert "あなたの判断を待って停止しています。" in summary_html
     assert "あなたの判断が 1 件必要です。" in summary_html
+    assert "判断すること" in summary_html
+    assert "公開方法を選びますか？" in summary_html
+    assert "承認 / 却下 / 保留 / 追加の証跡を確認" in summary_html
+    assert "pcl decision resolve" not in summary_html
     assert "Open decision" not in summary_html
     assert "blocks safe continuation" not in summary_html
+
+
+def test_operator_summary_localizes_checkpoint_decision_preview() -> None:
+    summary = {
+        "now": {},
+        "done": [],
+        "next_state": "human",
+        "human_count": 1,
+        "human_items": [
+            {
+                "kind": "next_action",
+                "type": "checkpoint_review",
+                "reason": "5 features were marked done since the last checkpoint.",
+                "options": [
+                    {"label": "Approve", "command": "pcl checkpoint record"},
+                    {"label": "Reject", "command": "pcl next --json"},
+                    {"label": "Hold", "command": "pcl next --json"},
+                    {"label": "Request more evidence", "command": "pcl validate --json"},
+                ],
+            }
+        ],
+        "human_action_target": {
+            "completed_features_since_checkpoint": 5,
+            "threshold": 5,
+        },
+        "risk_count": 0,
+        "risk_severity": "none",
+    }
+
+    ja_html = _operator_summary_block(summary, dashboard_strings("ja"))
+    assert "前回の節目以降に 5 件の機能が完了し、確認基準の 5 件に達しました。" in ja_html
+    assert "次の大きな作業へ進む前に、プロジェクト全体の方向性を確認してください。" in ja_html
+    assert "承認 / 却下 / 保留 / 追加の証跡を確認" in ja_html
+    assert "pcl checkpoint record" not in ja_html
+    assert "5 features were marked done" not in ja_html
+
+    en_html = _operator_summary_block(summary, dashboard_strings("en"))
+    assert "5 features have been completed since the last checkpoint" in en_html
+    assert "review the larger product direction" in en_html
+    assert "Approve / Reject / Hold / Request more evidence" in en_html
+    assert "pcl checkpoint record" not in en_html
 
 
 def test_dashboard_operator_summary_distinguishes_idle_manual_and_agent_safe(
