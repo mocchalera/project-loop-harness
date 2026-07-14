@@ -131,7 +131,30 @@ For every match:
 
 ## 4. Copy and channel review
 
-- [ ] Remove the editorial draft note from the published copy.
+### Zenn first-channel review (2026-07-14)
+
+The human owner selected Zenn as the first channel in Cockpit Ask
+`ask_2d2912fb7b9b`. The final review candidate is
+`zenn-agent-done-evidence-pcl-v050.md`; it remains `published: false` until a
+separate approval names the exact title and body.
+
+The current official [community guideline](https://zenn.dev/guideline),
+[Markdown guide](https://zenn.dev/zenn/articles/markdown-guide), and
+[Zenn CLI guide](https://zenn.dev/zenn/articles/zenn-cli-guide) were checked.
+The candidate was revised accordingly:
+
+- it leads with a concrete engineering problem and reproducible dogfood result,
+  rather than making product promotion the main content;
+- the title describes the actual SQLite/JSONL/Evidence design without a
+  superlative or adoption claim;
+- headings begin at level 2, the five-topic front matter stays within the
+  documented limit, and the public image uses supported URL/alt/caption syntax;
+- the author/maintainer relationship is disclosed, and public/project-owned
+  text and image assets are used;
+- the three-person feedback plan is explicitly qualitative and is not presented
+  as broad adoption evidence.
+
+- [x] The selected final copy contains no editorial draft note.
 - [ ] Preview code blocks, headings, and links in the destination renderer.
 - [ ] Confirm the title fits the channel and avoids unsupported superlatives.
 - [ ] Confirm the first paragraph states the problem before product vocabulary.
