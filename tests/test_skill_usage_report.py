@@ -440,6 +440,110 @@ def test_skill_usage_report_uses_codex_result_status_before_output_text(
     ]
 
 
+def test_skill_usage_report_uses_composite_pcl_json_status_before_output_text(
+    tmp_path: Path,
+) -> None:
+    codex = tmp_path / "codex"
+    successful_composite = "\n".join(
+        [
+            json.dumps(
+                {
+                    "ok": True,
+                    "intent": "Investigate timeout and guarded_execution_blocked",
+                }
+            ),
+            json.dumps(
+                {
+                    "ok": True,
+                    "expected_behavior": (
+                        "Keep finish_checks_not_configured and Exit code 2 examples"
+                    ),
+                }
+            ),
+        ]
+    )
+    failed_composite = "\n".join(
+        [
+            json.dumps({"ok": True, "command": "validate"}),
+            json.dumps({"ok": False, "error": "Exit code 2 timeout"}),
+        ]
+    )
+    successful_typed_risk = "\n".join(
+        [
+            json.dumps({"ok": True, "command": "finish"}),
+            json.dumps(
+                {
+                    "ok": True,
+                    "completion_packet": {"outcome": "COMPLETED_WITH_RISK"},
+                }
+            ),
+        ]
+    )
+    truncated_success = [
+        {
+            "type": "input_text",
+            "text": "Script completed\nWall time 0.2 seconds\nOutput:\n",
+        },
+        {
+            "type": "input_text",
+            "text": (
+                "Warning: truncated output\n"
+                '{"ok": true, "summary": "timeout Exit code 2'
+            ),
+        },
+    ]
+    _write_jsonl(
+        codex / "2026" / "07" / "composite-status-aware.jsonl",
+        [
+            {
+                "timestamp": "2026-07-14T00:00:00Z",
+                "type": "session_meta",
+                "payload": {"id": "SECRET-ID", "cwd": "/SECRET/workspace"},
+            },
+            _codex_call(
+                "sed -n '1,380p' /SECRET/project-control-loop/SKILL.md",
+                call_id="SECRET-READ",
+            ),
+            _codex_call(
+                "pcl start 'timeout' --json; pcl story draft --json",
+                call_id="SUCCESS",
+            ),
+            _codex_output(successful_composite, call_id="SUCCESS"),
+            _codex_call("pcl evidence show E-SECRET --json", call_id="TRUNCATED"),
+            _codex_output(truncated_success, call_id="TRUNCATED"),
+            _codex_call(
+                "pcl finish --emit-packet --json; pcl next --json",
+                call_id="RISK",
+            ),
+            _codex_output(successful_typed_risk, call_id="RISK"),
+            _codex_call(
+                "pcl validate --json; pcl next --json",
+                call_id="FAILURE",
+            ),
+            _codex_output(failed_composite, call_id="FAILURE"),
+        ],
+    )
+
+    report = report_skill_usage(
+        since=WINDOW["since"],
+        until=WINDOW["until"],
+        sources=["codex"],
+        codex_root=codex,
+    )
+    friction = {item["code"]: item for item in report["friction"]}
+
+    assert set(friction) == {"timeout", "command_error", "completed_with_risk"}
+    for code in ("timeout", "command_error"):
+        assert friction[code]["commands"] == [
+            {"command": "next", "occurrence_count": 1, "session_count": 1},
+            {"command": "validate", "occurrence_count": 1, "session_count": 1},
+        ]
+    assert friction["completed_with_risk"]["commands"] == [
+        {"command": "finish", "occurrence_count": 1, "session_count": 1},
+        {"command": "next", "occurrence_count": 1, "session_count": 1},
+    ]
+
+
 def test_skill_usage_report_uses_claude_success_status_and_typed_outcome(
     tmp_path: Path,
 ) -> None:

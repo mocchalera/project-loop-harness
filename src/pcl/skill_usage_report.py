@@ -1173,8 +1173,12 @@ def _classify_output(
     is_error: bool | None = None,
 ) -> None:
     text = _output_text(value)
-    result_status = _tool_result_status(value, is_error=is_error)
     commands = session.pcl_call_commands.get(call_id, Counter())
+    result_status = _tool_result_status(
+        value,
+        is_error=is_error,
+        expected_json_results=sum(commands.values()),
+    )
     if (
         commands
         and set(commands) == {"report skill-usage"}
@@ -1209,7 +1213,12 @@ def _classify_output(
         session.pending_retry_commands = Counter({command: 1 for command in commands})
 
 
-def _tool_result_status(value: Any, *, is_error: bool | None) -> str:
+def _tool_result_status(
+    value: Any,
+    *,
+    is_error: bool | None,
+    expected_json_results: int,
+) -> str:
     if is_error is not None:
         return "failure" if is_error else "success"
     if isinstance(value, dict):
@@ -1220,10 +1229,15 @@ def _tool_result_status(value: Any, *, is_error: bool | None) -> str:
             exit_code = value.get(key)
             if isinstance(exit_code, int) and not isinstance(exit_code, bool):
                 return "success" if exit_code == 0 else "failure"
+    json_statuses: list[bool] = []
+    parsed_json_values = 0
+    wrapper_completed = False
     for text in _result_text_leaves(value):
         header = text.lstrip()[:256]
         if re.match(r"Script failed with code [1-9]\d*", header, re.IGNORECASE):
             return "failure"
+        if re.match(r"Script completed(?:\r?\n|$)", header, re.IGNORECASE):
+            wrapper_completed = True
         process_status = re.search(
             r"(?:^|\n)Process exited with code (\d+)(?:\r?\n|$)",
             header,
@@ -1231,14 +1245,17 @@ def _tool_result_status(value: Any, *, is_error: bool | None) -> str:
         )
         if process_status:
             return "success" if int(process_status.group(1)) == 0 else "failure"
-        stripped = text.strip()
-        if stripped and stripped[0] == "{":
-            try:
-                payload = json.loads(stripped)
-            except JSONDecodeError:
-                continue
+        payloads = _standalone_json_values(text)
+        parsed_json_values += len(payloads)
+        for payload in payloads:
             if isinstance(payload, dict) and isinstance(payload.get("ok"), bool):
-                return "success" if payload["ok"] else "failure"
+                json_statuses.append(payload["ok"])
+    if any(status is False for status in json_statuses):
+        return "failure"
+    if expected_json_results > 0 and parsed_json_values == expected_json_results:
+        return "success"
+    if expected_json_results > 0 and wrapper_completed:
+        return "success"
     return "unknown"
 
 
@@ -1247,17 +1264,46 @@ def _has_typed_completed_with_risk(value: Any) -> bool:
         stripped = text.strip()
         if stripped == "COMPLETED_WITH_RISK":
             return True
-        if not stripped or stripped[0] not in "[{":
-            continue
-        try:
-            payload = json.loads(stripped)
-        except JSONDecodeError:
-            continue
-        if _has_completion_outcome(payload, expected="COMPLETED_WITH_RISK"):
-            return True
+        for payload in _standalone_json_values(text):
+            if _has_completion_outcome(payload, expected="COMPLETED_WITH_RISK"):
+                return True
     if isinstance(value, (dict, list)):
         return _has_completion_outcome(value, expected="COMPLETED_WITH_RISK")
     return False
+
+
+def _json_stream_values(value: str) -> list[Any]:
+    """Parse a whitespace-separated stream only when every byte is JSON."""
+    stripped = value.strip()
+    if not stripped or stripped[0] not in "[{":
+        return []
+    decoder = json.JSONDecoder()
+    parsed: list[Any] = []
+    index = 0
+    while index < len(stripped):
+        try:
+            payload, end = decoder.raw_decode(stripped, index)
+        except JSONDecodeError:
+            return []
+        parsed.append(payload)
+        index = end
+        while index < len(stripped) and stripped[index].isspace():
+            index += 1
+        if index < len(stripped) and stripped[index] not in "[{":
+            return []
+    return parsed
+
+
+def _standalone_json_values(value: str) -> list[Any]:
+    parsed = _json_stream_values(value)
+    if parsed:
+        return parsed
+    values: list[Any] = []
+    for line in value.splitlines():
+        candidate = _json_stream_values(line)
+        if candidate:
+            values.extend(candidate)
+    return values
 
 
 def _has_completion_outcome(value: Any, *, expected: str) -> bool:

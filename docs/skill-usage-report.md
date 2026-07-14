@@ -52,6 +52,13 @@ present. Explicit failures keep normal friction and retry attribution. Results
 whose adapter status is unknown retain the best-effort text classification for
 backward compatibility.
 
+Codex success recognition includes one-result-per-command composite PCL JSON,
+compact standalone PCL JSON after unrelated shell preamble, and the supported
+`Script completed` wrapper when long output is truncated. A parsed top-level
+`ok:false`, failed wrapper, or non-zero process status always takes precedence.
+This keeps Goal, Story, guide, and Evidence wording from becoming a new failure
+while retaining explicit failed results.
+
 The report also excludes its own non-failed output from friction
 classification. This prevents aggregate or truncated `report skill-usage`
 output from recursively creating a new copy of the findings it is displaying.
