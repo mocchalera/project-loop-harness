@@ -156,6 +156,7 @@ _KNOWN_SUBCOMMANDS = {
 _DIRECT_COMMANDS = {
     "doctor",
     "finish",
+    "guide",
     "impact",
     "ingest-agent-run",
     "init",

@@ -24,6 +24,11 @@ When this skill is invoked:
 1. Read `AGENTS.md`, `CLAUDE.md` if present, and `pcl.yaml`.
 2. Run `pcl doctor` or `pcl validate` if project-loop state may be stale.
 3. Use `pcl next` to determine the next harness action when ambiguous.
+   When the lifecycle route or command syntax itself is unclear, run
+   `pcl guide --json` once, or `pcl guide <topic> --json` for `start`,
+   `direct`, `finish`, `dashboard`, or `recover`, before probing multiple help
+   pages. Do not add a guide lookup to routine work whose route is already
+   clear.
 4. When the user has already supplied explicit implementation intent and no
    active work exists, pass that intent literally to `pcl start`; do not create
    an extra human gate merely to register it.

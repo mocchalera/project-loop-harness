@@ -364,6 +364,47 @@ def test_skill_usage_report_attributes_help_probe_to_normalized_command(
     assert "SECRET_ARGUMENT" not in markdown
 
 
+def test_skill_usage_report_tracks_guide_without_retaining_topic_or_arguments(
+    tmp_path: Path,
+) -> None:
+    codex = tmp_path / "codex"
+    _write_jsonl(
+        codex / "2026" / "07" / "guide.jsonl",
+        [
+            {
+                "timestamp": "2026-07-14T00:00:00Z",
+                "type": "session_meta",
+                "payload": {"id": "SECRET-ID", "cwd": "/SECRET/workspace"},
+            },
+            _codex_call(
+                "sed -n '1,380p' /SECRET/project-control-loop/SKILL.md",
+                call_id="SECRET-READ",
+            ),
+            _codex_call(
+                "pcl guide direct --json SECRET_ARGUMENT",
+                call_id="SECRET-GUIDE",
+            ),
+        ],
+    )
+
+    report = report_skill_usage(
+        since=WINDOW["since"],
+        until=WINDOW["until"],
+        sources=["codex"],
+        codex_root=codex,
+    )
+
+    assert report["commands"] == [
+        {"command": "guide", "count": 1, "session_count": 1}
+    ]
+    serialized = json.dumps(report, ensure_ascii=False, sort_keys=True)
+    markdown = render_skill_usage_markdown(report)
+    assert "direct" not in serialized
+    assert "SECRET_ARGUMENT" not in serialized
+    assert "| `guide` | 1 | 1 |" in markdown
+    assert "SECRET_ARGUMENT" not in markdown
+
+
 def test_skill_usage_report_never_retains_sensitive_raw_values(tmp_path: Path) -> None:
     report = _report(tmp_path)
     serialized = json.dumps(report, ensure_ascii=False, sort_keys=True)

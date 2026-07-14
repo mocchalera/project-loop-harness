@@ -25,6 +25,7 @@ from .agents import (
 )
 from .adaptive_policy import render_policy_explanation, resolve_policy_for_target
 from .checkpoints import checkpoint_status, record_checkpoint
+from .command_guide import command_guide, render_command_guide
 from .code_index import (
     GIT_DIFF_SENTINEL,
     analyze_impact,
@@ -1656,6 +1657,16 @@ def build_parser() -> argparse.ArgumentParser:
     p_checkpoint_record.add_argument("--evidence", required=True)
     p_checkpoint_record.add_argument("--review-type", default="integration")
 
+    p_guide = sub.add_parser(
+        "guide", help="Show purpose-oriented command routes for agents and operators"
+    )
+    p_guide.add_argument(
+        "topic",
+        nargs="?",
+        default=None,
+        help="Optional topic: start, direct, finish, dashboard, or recover",
+    )
+
     p_next = sub.add_parser("next", help="Suggest the next harness action")
     p_next.add_argument(
         "--strict",
@@ -2171,6 +2182,14 @@ def main(argv: list[str] | None = None) -> int:
     json_output = json_override or args.json
 
     try:
+        if args.command == "guide":
+            result = command_guide(args.topic)
+            if json_output:
+                _print_json(result)
+            else:
+                print(render_command_guide(result), end="")
+            return 0
+
         if args.command == "profile" and args.profile_command == "list":
             result = list_profiles()
             if json_output:
