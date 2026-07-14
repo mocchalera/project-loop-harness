@@ -4,6 +4,13 @@
 > and obtain human approval for the final channel, title, body, and timing before
 > posting.
 
+> **Hacker News compliance stop (checked 2026-07-14):** Hacker News now says,
+> "Don't post generated text or AI-edited text." The HN title candidates and
+> body below were prepared with AI assistance and therefore **must not be
+> submitted or adapted for submission**. They remain only as an internal record
+> of the abandoned draft. The human poster must write any HN title and text from
+> scratch without using this copy; see [hn-human-authoring-brief.md](hn-human-authoring-brief.md).
+
 ## Title candidates
 
 ### Hacker News

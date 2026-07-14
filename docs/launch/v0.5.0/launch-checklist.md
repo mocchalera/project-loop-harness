@@ -131,6 +131,27 @@ For every match:
 
 ## 4. Copy and channel review
 
+### Hacker News human-authorship boundary (2026-07-14)
+
+The official Hacker News Guidelines now say not to post generated text or
+AI-edited text. The existing HN title candidates and body in
+`en-hn-reddit-draft.md` were AI-assisted and are therefore retained only as an
+abandoned internal draft. They must not be submitted, adapted, or polished for
+submission.
+
+Any HN title, submission text, or first comment must be written from scratch by
+the human poster without AI editing. Agents may perform a factual and rules
+check without supplying replacement wording. The non-postable source and rules
+packet is `hn-human-authoring-brief.md`.
+
+- [x] Re-check the current official HN Guidelines, Show HN rules, and FAQ.
+- [x] Mark the existing AI-assisted HN draft as ineligible for submission.
+- [x] Preserve only public facts and source links in a non-postable human brief.
+- [ ] Human writes a fresh HN title and any text from scratch without AI help.
+- [ ] Agent performs a report-only fact/rules check with no rewriting.
+- [ ] Human explicitly approves the independently written title, target URL,
+      timing, and any first comment before posting.
+
 ### Zenn first-channel review (2026-07-14)
 
 The human owner selected Zenn as the first channel in Cockpit Ask
