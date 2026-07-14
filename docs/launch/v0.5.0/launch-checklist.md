@@ -23,20 +23,23 @@ Read-only checks performed on 2026-07-14:
 | PyPI | https://pypi.org/project/project-loop-harness/0.5.0/ | Latest version `0.5.0`; wheel and sdist uploaded 2026-07-14 |
 | Python/runtime metadata | PyPI JSON and `pyproject.toml` | Python `>=3.10`; no required runtime dependencies |
 
-### Known publication inconsistency — resolve before posting
+### Resolved publication inconsistency
 
-The GitHub Release exists publicly, but its body was copied from the local RC
-note and still says **“Local release candidate; not published”** and that
-publication requires a later action. This contradicts the public release and
-PyPI state.
+The GitHub Release was initially published with a body copied from the local RC
+note that still said **“Local release candidate; not published”**. The human
+owner authorized correcting it after the launch packet review, and the public
+Release body was updated on 2026-07-14 to the independently verified published
+status.
 
-- [ ] Human owner decides whether to correct the GitHub Release body.
-- [ ] If corrected, re-open the public Release and save the checked timestamp.
-- [ ] If not corrected, do not quote or link readers to the contradictory status
-      text without a clear explanation.
+- [x] Human owner authorized correcting the GitHub Release body in Cockpit Ask
+      `ask_1e632aa9a84c`.
+- [x] The public Release was re-opened after the edit; the stale phrase was
+      absent and the published/independently-verified status was present.
+- [ ] Re-check the Release body immediately before an external post, together
+      with the other URLs and claims below.
 
-Updating the Release body is an external GitHub write and is outside this draft
-task. Do not perform it without separate explicit approval.
+Any later Release-body edit remains an external GitHub write and requires
+separate explicit approval.
 
 ## 1. Human approval gate
 
