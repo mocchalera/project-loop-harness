@@ -178,6 +178,7 @@ Give these tasks to coding agents in this order:
 174. `agent-tasks/0170-exit-status-aware-skill-usage-friction.md` (v0.5.0 Adoption / Distribution, explicit result-status classification without report self-observation)
 175. `agent-tasks/0171-actionable-finish-timeout-recovery.md` (v0.5.0 Adoption / Distribution, bounded finish timeout retry and Evidence diagnosis routing)
 176. `agent-tasks/0172-composite-pcl-result-status.md` (v0.5.0 Adoption / Distribution, suppress descriptive self-observation friction in successful composite PCL results)
+177. `agent-tasks/0173-v050-release-preparation.md` (v0.5.0 Adoption / Distribution, local release-candidate version/docs/package verification; no publication)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and

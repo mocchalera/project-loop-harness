@@ -89,6 +89,7 @@ implement from the spec file, not from prompt summaries.
 | 0170 | Exit-status-aware Skill usage friction | v0.5.0 Adoption / Distribution | P0 | done |
 | 0171 | Actionable finish timeout recovery | v0.5.0 Adoption / Distribution | P0 | done |
 | 0172 | Composite PCL result status | v0.5.0 Adoption / Distribution | P0 | done |
+| 0173 | v0.5.0 local release preparation | v0.5.0 Adoption / Distribution | P0 | done (local RC; not published) |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the

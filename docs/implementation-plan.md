@@ -366,8 +366,8 @@ not control-plane depth, as the current bottleneck. The ordered reset is
 - 0163 is the active P0: 30-second README value, five-minute initialization,
   agent-owned routine CLI, safe coexistence, alpha stability policy, and the
   fixed-date release-suite repair.
-- The next P0 is a local v0.5.0 release candidate with source/wheel/sdist smoke
-  and independent review. Publication remains a separate human decision.
+- 0173 prepared the local v0.5.0 release candidate with source/wheel/sdist
+  smoke and independent review. Publication remains a separate human decision.
 - External launch assets are prepared only after the RC; posting them is an
   external action and remains human-gated.
 - CLI module splitting and scale/event-log design follow Adoption proof instead

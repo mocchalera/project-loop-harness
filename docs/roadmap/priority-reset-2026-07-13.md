@@ -16,9 +16,9 @@ the offline Council adoption outcome.
 | Order | Priority | Work | Exit condition |
 |---:|---|---|---|
 | 1 | P0 done | 0163 Adoption-first release readiness | 30-second README, five-minute setup, coexistence contract, stability policy, time-safe tests, full verification |
-| 2 | P0 next | 0164 Guided dashboard review experience | agents present a localized simple view at meaningful milestones and explain what the operator should inspect |
-| 3 | P0 | v0.5.0 local release candidate | version/docs/package surfaces agree; source, wheel, and sdist smokes pass; independent review complete |
-| 4 | P1 | External-feedback launch packet | demo and Japanese/English post drafts are reviewable; publication remains human-approved |
+| 2 | P0 done | 0164 Guided dashboard review experience | agents present a localized simple view at meaningful milestones and explain what the operator should inspect |
+| 3 | P0 done | 0173 v0.5.0 local release candidate | version/docs/package surfaces agree; source, wheel, and sdist smokes pass; independent review complete |
+| 4 | P1 next | External-feedback launch packet | demo and Japanese/English post drafts are reviewable; publication remains human-approved |
 | 5 | P1 | Maintainer entry hardening | dev environment can identify stale editable installs; CLI split plan freezes behavior before refactor |
 | 6 | P2 | Scale baseline and event-log policy | documented file/event ranges, benchmark fixture, rotation/compaction design note; no premature implementation |
 | 7 | P2 | v0.5.1 Trace & Efficient Handoff | claim-bound handoff and cross-session resume are measured after Adoption evidence exists |
