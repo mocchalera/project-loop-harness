@@ -81,7 +81,8 @@ implement from the spec file, not from prompt summaries.
 | 0162 | Council evaluation baseline and adoption gate | v0.5.0 Council Profile | P1 | done (`continue experiment`) |
 | 0163 | Adoption-first release readiness | v0.5.0 Adoption / Distribution | P0 | done (Claude Fable approved) |
 | 0164 | Guided dashboard review experience | v0.5.0 Adoption / Distribution | P0 | done |
-| 0165 | Resolve v0.4.3 field-feedback finish friction | v0.5.0 Adoption / Distribution | P0 | in progress |
+| 0165 | Resolve v0.4.3 field-feedback finish friction | v0.5.0 Adoption / Distribution | P0 | done |
+| 0166 | Local Skill usage improvement loop MVP | v0.5.0 Adoption / Distribution | P1 | in progress |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
