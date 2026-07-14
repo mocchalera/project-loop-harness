@@ -172,6 +172,7 @@ Give these tasks to coding agents in this order:
 168. `agent-tasks/0164-guided-dashboard-review-experience.md` (v0.5.0 Adoption / Distribution, localized operator summary plus milestone-triggered agent presentation)
 169. `agent-tasks/0165-v043-field-feedback-friction.md` (v0.5.0 Adoption / Distribution, resolve v0.4.3 finish-check, copied-Evidence, direct-route, and local-state friction)
 170. `agent-tasks/0166-local-skill-usage-improvement-loop.md` (v0.5.0 Adoption / Distribution, local read-only Codex/Claude/Cockpit Skill-usage and friction report)
+171. `agent-tasks/0167-actionable-skill-usage-retry-signals.md` (v0.5.0 Adoption / Distribution, failure-driven retry detection and normalized friction command breakdowns)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and
