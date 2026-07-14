@@ -113,6 +113,20 @@
         }
       }
     },
+    "harness_local_state": {
+      "type": "array",
+      "description": "PCL runtime-generated paths excluded from repository dirty/risk classification.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["path", "change_type"],
+        "properties": {
+          "path": {"type": "string", "minLength": 1},
+          "change_type": {"enum": ["added", "modified", "deleted", "renamed", "untracked"]},
+          "previous_path": {"type": ["string", "null"], "minLength": 1}
+        }
+      }
+    },
     "checks": {
       "type": "array",
       "items": {

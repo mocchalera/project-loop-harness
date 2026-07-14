@@ -5,11 +5,17 @@ from pathlib import Path
 import re
 from typing import Any
 
-from .db import connect
+from .db import connect, table_exists
 from .errors import EXIT_USAGE, PclError
 from .guards import require_initialized
 from .paths import ProjectPaths
-from .evidence import EXECUTION_PROVENANCE_EVIDENCE_TYPE, assess_execution_provenance
+from .evidence import (
+    EVIDENCE_SUPERSEDES_ROLE,
+    EVIDENCE_SUPERSEDES_TARGET,
+    EXECUTION_PROVENANCE_EVIDENCE_TYPE,
+    assess_execution_provenance,
+    superseding_evidence_id,
+)
 
 
 EVIDENCE_ID_RE = re.compile(r"^E-[0-9]{4,}$")
@@ -41,6 +47,20 @@ def show_evidence(paths: ProjectPaths, evidence_id: str) -> dict[str, Any]:
             """,
             (evidence_id,),
         ).fetchone()
+        superseded_by = superseding_evidence_id(conn, evidence_id)
+        supersedes = []
+        if table_exists(conn, "evidence_links"):
+            supersedes = [
+                str(item["target_id"])
+                for item in conn.execute(
+                    """
+                    SELECT target_id FROM evidence_links
+                    WHERE evidence_id = ? AND target_type = ? AND link_role = ?
+                    ORDER BY created_at, target_id
+                    """,
+                    (evidence_id, EVIDENCE_SUPERSEDES_TARGET, EVIDENCE_SUPERSEDES_ROLE),
+                ).fetchall()
+            ]
     finally:
         conn.close()
     if row is None:
@@ -57,6 +77,8 @@ def show_evidence(paths: ProjectPaths, evidence_id: str) -> dict[str, Any]:
         "claimed_command": row["command"],
         "recorded_path": str(row["path"]),
         "created_at": str(row["created_at"]),
+        "superseded_by": superseded_by,
+        "supersedes": supersedes,
     }
     manifest = _manifest_metadata(
         paths,
@@ -82,6 +104,7 @@ def render_evidence_metadata(payload: dict[str, Any]) -> str:
         f"claimed_command: {evidence['claimed_command'] or ''}",
         f"recorded_path: {evidence['recorded_path']}",
         f"created_at: {evidence['created_at']}",
+        f"superseded_by: {evidence['superseded_by'] or ''}",
     ]
     manifest = evidence.get("manifest")
     if isinstance(manifest, dict):

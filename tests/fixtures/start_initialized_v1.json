@@ -46,5 +46,7 @@
     }
   },
   "status": "started",
-  "warnings": []
+  "warnings": [
+    "No enabled finish checks are configured; `pcl finish --emit-packet` cannot verify completion. Add at least one check, for example:\ncommands:\n  test: \"python -m pytest\""
+  ]
 }

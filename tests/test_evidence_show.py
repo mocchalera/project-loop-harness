@@ -50,8 +50,10 @@ def test_evidence_show_resolves_manifest_metadata_without_body_and_is_read_only(
             "type": "adhoc_artifact",
             "summary": "Targeted checks",
             "claimed_command": "python -m pytest tests/test_target.py",
-            "recorded_path": ".project-loop/evidence/adhoc/e-0001-adhoc-v0.json",
-            "created_at": payload["evidence"]["created_at"],
+                "recorded_path": ".project-loop/evidence/adhoc/e-0001-adhoc-v0.json",
+                "created_at": payload["evidence"]["created_at"],
+                "superseded_by": None,
+                "supersedes": [],
             "manifest": {
                 "contract_version": "adhoc-evidence/v0",
                 "members": [{

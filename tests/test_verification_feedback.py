@@ -637,7 +637,7 @@ def test_verification_stats_reports_copied_adhoc_health_from_copy(
     source_missing_health = source_missing_stats["supporting_evidence_health"]["by_evidence_id"][evidence["id"]]
     assert source_missing_stats["executed_pass_rate"] == 1.0
     assert source_missing_health == {
-        "health": "warning",
+        "health": "ok",
         "findings": [{"code": "source_drifted", "path": "pytest-out.txt", "detail": "missing"}],
     }
 

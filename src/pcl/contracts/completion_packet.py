@@ -25,6 +25,7 @@ _TOP_LEVEL_FIELDS = {
     "target",
     "repository",
     "changes",
+    "harness_local_state",
     "checks",
     "claims",
     "unverified_claims",
@@ -34,7 +35,11 @@ _TOP_LEVEL_FIELDS = {
     "verifier_provenance",
     "adaptive_route",
 }
-_REQUIRED_TOP_LEVEL_FIELDS = _TOP_LEVEL_FIELDS - {"verifier_provenance", "adaptive_route"}
+_REQUIRED_TOP_LEVEL_FIELDS = _TOP_LEVEL_FIELDS - {
+    "verifier_provenance",
+    "adaptive_route",
+    "harness_local_state",
+}
 _OUTCOMES = {
     "COMPLETED_VERIFIED",
     "COMPLETED_WITH_RISK",
@@ -160,6 +165,8 @@ def validate_completion_packet(packet: Any) -> CompletionPacketValidationResult:
     _validate_target(packet.get("target"), errors)
     _validate_repository(packet.get("repository"), errors)
     _validate_changes(packet.get("changes"), errors)
+    if "harness_local_state" in packet:
+        _validate_changes(packet.get("harness_local_state"), errors, path="$.harness_local_state")
     _validate_checks(packet.get("checks"), errors)
     _validate_claims(packet.get("claims"), errors)
     _validate_unverified_claims(packet.get("unverified_claims"), errors)
@@ -262,22 +269,22 @@ def _validate_repository(value: Any, errors: list[str]) -> None:
     _validate_bool(value.get("dirty"), "$.repository.dirty", errors)
 
 
-def _validate_changes(value: Any, errors: list[str]) -> None:
-    if not _is_array(value, "$.changes", errors):
+def _validate_changes(value: Any, errors: list[str], *, path: str = "$.changes") -> None:
+    if not _is_array(value, path, errors):
         return
     for index, change in enumerate(value):
-        path = f"$.changes[{index}]"
-        if not _is_object(change, path, errors):
+        item_path = f"{path}[{index}]"
+        if not _is_object(change, item_path, errors):
             continue
         allowed = {"path", "change_type", "previous_path"}
-        _check_object_fields(change, path=path, required={"path", "change_type"}, allowed=allowed, errors=errors)
-        _validate_string(change.get("path"), f"{path}.path", errors)
-        _expect_enum(change.get("change_type"), _CHANGE_TYPES, f"{path}.change_type", errors)
+        _check_object_fields(change, path=item_path, required={"path", "change_type"}, allowed=allowed, errors=errors)
+        _validate_string(change.get("path"), f"{item_path}.path", errors)
+        _expect_enum(change.get("change_type"), _CHANGE_TYPES, f"{item_path}.change_type", errors)
         previous_path = change.get("previous_path")
         if previous_path is not None:
-            _validate_string(previous_path, f"{path}.previous_path", errors)
+            _validate_string(previous_path, f"{item_path}.previous_path", errors)
         if change.get("change_type") == "renamed" and not previous_path:
-            errors.append(f"{path}.previous_path: is required for a renamed change")
+            errors.append(f"{item_path}.previous_path: is required for a renamed change")
 
 
 def _validate_checks(value: Any, errors: list[str]) -> None:

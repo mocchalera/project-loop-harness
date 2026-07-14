@@ -18,13 +18,14 @@ from .contracts.completion_packet import (
     with_computed_packet_id,
 )
 from .db import connect, connect_mutation
-from .errors import DataStoreError, InvalidInputError
+from .errors import DataStoreError, FinishChecksNotConfiguredError, InvalidInputError
 from .events import append_event
 from .evidence import insert_evidence_link, linked_task_provenance
 from .guarded_process import DEFAULT_MAX_OUTPUT_BYTES
 from .guards import require_initialized
 from .ids import next_prefixed_id
 from .paths import ProjectPaths
+from .project_config import finish_check_configuration
 from .route_overrides import recorded_route_context
 from .timeutil import utc_now_iso
 from .validators import validate_project
@@ -55,6 +56,7 @@ def plan_finish_packet(
         "target": target,
         "repository": repository["packet_repository"],
         "changes": repository["changes"],
+        "harness_local_state": repository["harness_local_state"],
         "check_plan": [_public_check_plan(command) for command in commands],
         "safe_to_execute": bool(commands) and all(command["safe_to_run"] for command in commands),
         "blocked_checks": [
@@ -79,6 +81,15 @@ def emit_finish_packet(
         raise InvalidInputError("--timeout must be at least 1 second.")
     if max_output_bytes < 1:
         raise InvalidInputError("--max-output-bytes must be at least 1.")
+    configuration = finish_check_configuration(paths.root)
+    if not configuration["configured"]:
+        raise FinishChecksNotConfiguredError(
+            details={
+                **configuration,
+                "failure_kind": "configuration_missing",
+                "next_command": "pcl doctor --json",
+            }
+        )
     plan = plan_finish_packet(
         paths,
         run_id=run_id,
@@ -105,9 +116,12 @@ def emit_finish_packet(
 
     commands = plan_guarded_project_checks(paths)
     if not commands:
-        raise InvalidInputError(
-            "No finish checks are configured.",
-            details={"configured_keys": [], "required_any_of": ["lint", "typecheck", "test", "e2e", "build"]},
+        raise FinishChecksNotConfiguredError(
+            details={
+                **configuration,
+                "failure_kind": "configuration_missing",
+                "next_command": "pcl doctor --json",
+            }
         )
     blocked = [command for command in commands if not command["safe_to_run"]]
     if blocked:
@@ -158,6 +172,7 @@ def emit_finish_packet(
         "dry_run": False,
         "repository": after["packet_repository"],
         "changes": after["changes"],
+        "harness_local_state": after["harness_local_state"],
         "changed": True,
         "idempotent": False,
         "race_detected": race_detected,
@@ -252,10 +267,15 @@ def _repository_snapshot(paths: ProjectPaths, *, base_revision: str | None) -> d
     root = paths.root
     head = _git(root, ["rev-parse", "HEAD"]).strip()
     base = _git(root, ["rev-parse", base_revision or "HEAD"]).strip()
-    tracked_diff = _git_bytes(root, ["diff", "--binary", "--no-ext-diff", base, "--"])
-    untracked = [
+    tracked_diff = _git_bytes(
+        root,
+        ["diff", "--binary", "--no-ext-diff", base, "--", ".", ":(exclude).project-loop/**"],
+    )
+    all_untracked = [
         line for line in _git(root, ["ls-files", "--others", "--exclude-standard", "-z"]).split("\0") if line
     ]
+    harness_untracked = [path for path in all_untracked if _is_harness_local_path(path)]
+    untracked = [path for path in all_untracked if not _is_harness_local_path(path)]
     untracked_bytes = bytearray()
     for path_value in sorted(untracked):
         try:
@@ -269,22 +289,31 @@ def _repository_snapshot(paths: ProjectPaths, *, base_revision: str | None) -> d
         untracked_bytes.extend(b"\0PCL-UNTRACKED\0" + str(len(name)).encode() + b":" + name)
         untracked_bytes.extend(b"\0" + str(len(data)).encode() + b":" + data)
     diff_bytes = tracked_diff + bytes(untracked_bytes)
-    changes = _changed_paths(root, base=base, untracked=untracked)
-    status = _git(root, ["status", "--porcelain=v1", "-z"])
+    changes = _changed_paths(root, base=base, untracked=untracked, harness_local=False)
+    harness_local_state = _changed_paths(
+        root, base=base, untracked=harness_untracked, harness_local=True
+    )
     return {
         "packet_repository": {
             "base_revision": base,
             "head_revision": head,
             "diff_sha256": f"sha256:{hashlib.sha256(diff_bytes).hexdigest()}",
-            "dirty": bool(status),
+            "dirty": bool(changes),
         },
         "changes": changes,
-        "status": status,
+        "harness_local_state": harness_local_state,
     }
 
 
-def _changed_paths(root: Path, *, base: str, untracked: list[str]) -> list[dict[str, Any]]:
-    output = _git(root, ["diff", "--name-status", "--find-renames", base, "--"])
+def _changed_paths(
+    root: Path,
+    *,
+    base: str,
+    untracked: list[str],
+    harness_local: bool,
+) -> list[dict[str, Any]]:
+    pathspec = [".project-loop"] if harness_local else [".", ":(exclude).project-loop/**"]
+    output = _git(root, ["diff", "--name-status", "--find-renames", base, "--", *pathspec])
     changes: list[dict[str, Any]] = []
     mapping = {"A": "added", "M": "modified", "D": "deleted"}
     for line in output.splitlines():
@@ -299,6 +328,10 @@ def _changed_paths(root: Path, *, base: str, untracked: list[str]) -> list[dict[
         for path_value in sorted(untracked)
     )
     return sorted(changes, key=lambda item: (item["path"], item["change_type"]))
+
+
+def _is_harness_local_path(path: str) -> bool:
+    return path == ".project-loop" or path.startswith(".project-loop/")
 
 
 def _git(root: Path, args: list[str]) -> str:
@@ -488,7 +521,9 @@ def _build_packet(
         "generated_at": generated_at,
         "outcome": outcome,
         "target": {"type": target["type"], "id": target["id"], "intent": target["intent"], "work_brief_ref": target["work_brief_ref"]},
-        "repository": repository["packet_repository"], "changes": repository["changes"],
+        "repository": repository["packet_repository"],
+        "changes": repository["changes"],
+        "harness_local_state": repository["harness_local_state"],
         "checks": checks, "claims": claims,
         "unverified_claims": [
             {"text": reason, "reason": "Finish did not establish a completed outcome.", "critical": False}

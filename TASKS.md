@@ -170,6 +170,7 @@ Give these tasks to coding agents in this order:
 166. `agent-tasks/0162-council-evaluation-adoption-gate.md` (v0.5.0 Council Profile, frozen baseline comparison and human adoption Decision)
 167. `agent-tasks/0163-adoption-first-release-readiness.md` (v0.5.0 Adoption / Distribution, 30-second value path, five-minute setup, coexistence and stability policy, release-suite repair)
 168. `agent-tasks/0164-guided-dashboard-review-experience.md` (v0.5.0 Adoption / Distribution, localized operator summary plus milestone-triggered agent presentation)
+169. `agent-tasks/0165-v043-field-feedback-friction.md` (v0.5.0 Adoption / Distribution, resolve v0.4.3 finish-check, copied-Evidence, direct-route, and local-state friction)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and

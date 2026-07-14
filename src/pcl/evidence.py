@@ -44,7 +44,6 @@ ADHOC_WARNING_FINDING_CODES = {
     "member_outside_project_root",
     "copy_missing",
     "copy_hash_mismatch",
-    "source_drifted",
 }
 ADHOC_PATH_SCOPES = {"in_project", "outside_project"}
 ADHOC_COPY_STORAGE_MODE = "copied"
@@ -53,6 +52,8 @@ EVIDENCE_TASK_LINK_REQUIRED_SCHEMA_VERSION = 6
 EVIDENCE_TASK_LINK_MIGRATION_ID = "006_evidence_task_link"
 EVIDENCE_LINK_SUPPORTING_ROLE = "supporting"
 EVIDENCE_LINK_TASK_TARGET = "task"
+EVIDENCE_SUPERSEDES_ROLE = "supersedes"
+EVIDENCE_SUPERSEDES_TARGET = "evidence"
 EXECUTION_PROVENANCE_CONTRACT_VERSION = "execution-provenance/v1"
 EXECUTION_PROVENANCE_EVIDENCE_TYPE = "execution_provenance"
 EXECUTION_PROVENANCE_LINK_ROLE = "execution_provenance"
@@ -465,6 +466,17 @@ def require_healthy_terminal_evidence(
             code=error_code,
             details={"evidence_id": evidence_id, "reason": "missing_evidence"},
         )
+    superseded_by = superseding_evidence_id(conn, evidence_id)
+    if superseded_by is not None:
+        raise EvidenceAddError(
+            f"Evidence {evidence_id} was superseded by {superseded_by} and cannot be terminal proof.",
+            code=error_code,
+            details={
+                "evidence_id": evidence_id,
+                "reason": "evidence_superseded",
+                "superseded_by": superseded_by,
+            },
+        )
     evidence_type = str(row["type"])
     if allowed_types is not None and evidence_type not in allowed_types:
         raise EvidenceAddError(
@@ -738,6 +750,112 @@ def insert_evidence_link(
     )
 
 
+def superseding_evidence_id(conn: sqlite3.Connection, evidence_id: str) -> str | None:
+    if not table_exists(conn, "evidence_links"):
+        return None
+    row = conn.execute(
+        """
+        SELECT evidence_id
+        FROM evidence_links
+        WHERE target_type = ? AND target_id = ? AND link_role = ?
+        ORDER BY created_at DESC, evidence_id DESC
+        LIMIT 1
+        """,
+        (EVIDENCE_SUPERSEDES_TARGET, evidence_id, EVIDENCE_SUPERSEDES_ROLE),
+    ).fetchone()
+    return None if row is None else str(row["evidence_id"])
+
+
+def supersede_evidence(
+    paths: ProjectPaths,
+    *,
+    evidence_id: str,
+    replacement_evidence_id: str,
+    summary: str,
+) -> dict[str, Any]:
+    if not paths.db_path.is_file():
+        raise ProjectNotInitializedError(root=str(paths.root))
+    summary = summary.strip()
+    if not summary:
+        raise InvalidInputError("--summary must not be empty.", details={"field": "summary"})
+    if evidence_id == replacement_evidence_id:
+        raise InvalidInputError(
+            "Evidence cannot supersede itself.",
+            details={"evidence_id": evidence_id},
+        )
+
+    conn = connect_mutation(paths)
+    try:
+        if not table_exists(conn, "evidence_links"):
+            raise InvalidInputError(
+                "Evidence supersede requires the evidence-links schema. Run `pcl migrate` first.",
+                details={
+                    "migration": "007_evidence_links",
+                    "next_command": "pcl migrate",
+                },
+            )
+        old = conn.execute("SELECT id FROM evidence WHERE id = ?", (evidence_id,)).fetchone()
+        if old is None:
+            raise InvalidInputError(
+                f"Evidence does not exist: {evidence_id}", details={"evidence_id": evidence_id}
+            )
+        require_healthy_terminal_evidence(
+            paths,
+            conn,
+            evidence_id=replacement_evidence_id,
+            error_code="evidence_supersede_replacement_invalid",
+        )
+        existing = superseding_evidence_id(conn, evidence_id)
+        if existing is not None:
+            if existing == replacement_evidence_id:
+                return {
+                    "ok": True,
+                    "changed": False,
+                    "evidence_id": evidence_id,
+                    "superseded_by": existing,
+                    "summary": summary,
+                }
+            raise InvalidInputError(
+                f"Evidence {evidence_id} is already superseded by {existing}.",
+                details={
+                    "evidence_id": evidence_id,
+                    "superseded_by": existing,
+                    "requested_replacement": replacement_evidence_id,
+                },
+            )
+        now = utc_now_iso()
+        insert_evidence_link(
+            conn,
+            evidence_id=replacement_evidence_id,
+            target_type=EVIDENCE_SUPERSEDES_TARGET,
+            target_id=evidence_id,
+            link_role=EVIDENCE_SUPERSEDES_ROLE,
+            created_at=now,
+        )
+        event_id = append_event(
+            conn=conn,
+            events_path=paths.events_path,
+            event_type="evidence_superseded",
+            entity_type="evidence",
+            entity_id=evidence_id,
+            payload={
+                "superseded_by": replacement_evidence_id,
+                "summary": summary,
+            },
+        )
+        conn.commit()
+        return {
+            "ok": True,
+            "changed": True,
+            "event_id": event_id,
+            "evidence_id": evidence_id,
+            "superseded_by": replacement_evidence_id,
+            "summary": summary,
+        }
+    finally:
+        conn.close()
+
+
 def newest_linked_evidence_id(
     conn: sqlite3.Connection,
     *,
@@ -933,13 +1051,6 @@ def _assess_adhoc_members(
                     }
                 )
                 continue
-        if member_path.startswith("../"):
-            findings.append(
-                {
-                    "code": "member_outside_project_root",
-                    "path": member_path,
-                }
-            )
         if not isinstance(size_bytes, int) or size_bytes < 0:
             findings.append(
                 {
@@ -962,6 +1073,13 @@ def _assess_adhoc_members(
         storage_mode = member.get("storage_mode")
         stored_path = member.get("stored_path")
         if storage_mode is None and stored_path is None:
+            if member_path.startswith("../"):
+                findings.append(
+                    {
+                        "code": "member_outside_project_root",
+                        "path": member_path,
+                    }
+                )
             findings.extend(_assess_reference_member(paths, member_path, expected_sha256))
             continue
         if storage_mode != ADHOC_COPY_STORAGE_MODE:

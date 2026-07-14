@@ -23,6 +23,7 @@ from .lifecycle import ACTIVE_JOB_STATUSES, ACTIVE_RUN_STATUSES, TERMINAL_JOB_ST
 from .links import linked_decisions_for_escalation
 from .locales import HUMAN_GATE_JA
 from .paths import ProjectPaths
+from .project_config import finish_check_configuration
 from .timeutil import utc_now_iso
 from .workflow_proposals import next_reviewable_workflow_proposal
 
@@ -78,11 +79,36 @@ def create_goal(paths: ProjectPaths, *, title: str, completion_json: str = "{}",
         conn.close()
 
 
-def add_feature(paths: ProjectPaths, *, name: str, surface: str, description: str = "", evidence: str = "") -> str:
+def add_feature(
+    paths: ProjectPaths,
+    *,
+    name: str,
+    surface: str,
+    description: str = "",
+    evidence: str = "",
+    task_id: str | None = None,
+) -> str:
     require_initialized(paths)
 
     conn = connect_mutation(paths)
     try:
+        task = None
+        if task_id:
+            task = conn.execute(
+                "SELECT id, related_feature_id FROM tasks WHERE id = ?", (task_id,)
+            ).fetchone()
+            if task is None:
+                raise InvalidInputError(
+                    f"Task does not exist: {task_id}", details={"task_id": task_id}
+                )
+            if task["related_feature_id"]:
+                raise InvalidInputError(
+                    f"Task {task_id} is already linked to Feature {task['related_feature_id']}.",
+                    details={
+                        "task_id": task_id,
+                        "related_feature_id": str(task["related_feature_id"]),
+                    },
+                )
         feature_id = next_prefixed_id(conn, "features", "F")
         now = utc_now_iso()
         conn.execute(
@@ -92,7 +118,18 @@ def add_feature(paths: ProjectPaths, *, name: str, surface: str, description: st
             """,
             (feature_id, name, surface, description, "discovered", "medium", now, now),
         )
-        payload = {"name": name, "surface": surface, "description": description, "evidence": evidence}
+        if task_id:
+            conn.execute(
+                "UPDATE tasks SET related_feature_id = ?, updated_at = ? WHERE id = ?",
+                (feature_id, now, task_id),
+            )
+        payload = {
+            "name": name,
+            "surface": surface,
+            "description": description,
+            "evidence": evidence,
+            "related_task_id": task_id,
+        }
         append_event(
             conn=conn,
             events_path=paths.events_path,
@@ -101,6 +138,15 @@ def add_feature(paths: ProjectPaths, *, name: str, surface: str, description: st
             entity_id=feature_id,
             payload=payload,
         )
+        if task_id:
+            append_event(
+                conn=conn,
+                events_path=paths.events_path,
+                event_type="task_feature_linked",
+                entity_type="task",
+                entity_id=task_id,
+                payload={"feature_id": feature_id},
+            )
         conn.commit()
         return feature_id
     finally:
@@ -801,6 +847,9 @@ def next_action(paths: ProjectPaths) -> dict:
     task = _task_next_action(paths)
     if task is not None:
         return task
+    terminal_goal = _terminal_direct_goal_next_action(paths)
+    if terminal_goal is not None:
+        return terminal_goal
     passing_feature = _passing_feature_next_action(paths)
     if passing_feature is not None:
         return passing_feature
@@ -811,6 +860,82 @@ def next_action(paths: ProjectPaths) -> dict:
     if uncovered_feature is not None:
         return uncovered_feature
     return _idle_next_action()
+
+
+def _terminal_direct_goal_next_action(paths: ProjectPaths) -> dict | None:
+    conn = connect(paths.db_path)
+    try:
+        goal = conn.execute(
+            """
+            SELECT goals.id, goals.title, goals.status
+            FROM goals
+            WHERE goals.status IN ('open', 'active')
+              AND EXISTS (SELECT 1 FROM tasks WHERE tasks.related_goal_id = goals.id)
+              AND NOT EXISTS (
+                SELECT 1 FROM tasks
+                WHERE tasks.related_goal_id = goals.id
+                  AND tasks.status NOT IN ('done', 'cancelled', 'waived')
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM workflow_runs WHERE workflow_runs.goal_id = goals.id
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM tasks
+                JOIN features ON features.id = tasks.related_feature_id
+                WHERE tasks.related_goal_id = goals.id
+                  AND features.status NOT IN ('done', 'waived')
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM tasks
+                JOIN test_cases ON test_cases.feature_id = tasks.related_feature_id
+                WHERE tasks.related_goal_id = goals.id
+                  AND test_cases.status NOT IN ('passing', 'waived')
+              )
+            ORDER BY goals.created_at, goals.id
+            LIMIT 1
+            """
+        ).fetchone()
+    finally:
+        conn.close()
+    if goal is None:
+        return None
+    target = dict(goal)
+    configuration = finish_check_configuration(paths.root)
+    target["finish_checks"] = configuration
+    if not configuration["configured"]:
+        return build_next_action(
+            action_type="configure_finish_checks",
+            command="pcl doctor --json",
+            reason=(
+                "All linked direct-route Tasks are terminal, but no enabled finish check is "
+                "configured. Configure verification before emitting a completion packet."
+            ),
+            target=target,
+            priority=57,
+            blocking=True,
+            requires_human=False,
+            safe_to_run=True,
+            expected_after=(
+                "pcl.yaml contains at least one enabled finish check and `pcl finish --emit-packet` "
+                "can distinguish executed verification from configuration setup."
+            ),
+        )
+    return build_next_action(
+        action_type="emit_completion_packet",
+        command=f"pcl finish --emit-packet --goal {goal['id']} --json",
+        reason=(
+            "All linked direct-route Tasks and their Feature/Test work are terminal; emit the "
+            "goal-bound completion packet instead of starting feature_coverage."
+        ),
+        target=target,
+        priority=57,
+        blocking=False,
+        requires_human=False,
+        safe_to_run=True,
+        expected_after="Configured checks run and a goal-bound completion packet records the result.",
+    )
 
 
 def finish_plan(paths: ProjectPaths, *, run_id: str | None = None, goal_id: str | None = None) -> dict:

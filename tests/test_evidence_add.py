@@ -1450,7 +1450,7 @@ def test_strict_validate_checks_copied_member_health_from_copy(
 
     artifact.write_text("rewrite!\n", encoding="utf-8")
     assert _assess_adhoc_evidence(tmp_path, evidence) == {
-        "health": "warning",
+        "health": "ok",
         "findings": [{"code": "source_drifted", "path": "artifact.txt", "detail": "hash_mismatch"}],
     }
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
@@ -1458,7 +1458,7 @@ def test_strict_validate_checks_copied_member_health_from_copy(
     _assert_legacy_validation(source_hash_mismatch, {
         "errors": [],
         "ok": True,
-        "warnings": ["Adhoc evidence E-0001 source member artifact.txt drifted: hash mismatch."],
+        "warnings": [],
     })
     assert (tmp_path / stored_path).read_text(encoding="utf-8") == "original\n"
 
@@ -1470,7 +1470,6 @@ def test_strict_validate_checks_copied_member_health_from_copy(
         "ok": True,
         "warnings": [
             f"Adhoc evidence E-0001 copied member {stored_path} drifted: hash mismatch.",
-            "Adhoc evidence E-0001 source member artifact.txt drifted: hash mismatch.",
         ],
     })
     assert _assess_adhoc_evidence(tmp_path, evidence) == {
@@ -1491,12 +1490,10 @@ def test_strict_validate_checks_copied_member_health_from_copy(
     source_missing = _json_output(capsys)
     assert source_missing["ok"] is True
     assert source_missing["errors"] == []
-    assert source_missing["warnings"] == [
-        "Adhoc evidence E-0001 source member artifact.txt drifted: missing."
-    ]
+    assert source_missing["warnings"] == []
     assert (tmp_path / stored_path).read_text(encoding="utf-8") == "original\n"
     assert _assess_adhoc_evidence(tmp_path, evidence) == {
-        "health": "warning",
+        "health": "ok",
         "findings": [{"code": "source_drifted", "path": "artifact.txt", "detail": "missing"}],
     }
 
@@ -1507,7 +1504,6 @@ def test_strict_validate_checks_copied_member_health_from_copy(
     assert copy_mismatch["errors"] == []
     assert copy_mismatch["warnings"] == [
         f"Adhoc evidence E-0001 copied member {stored_path} drifted: hash mismatch.",
-        "Adhoc evidence E-0001 source member artifact.txt drifted: missing.",
     ]
     assert _assess_adhoc_evidence(tmp_path, evidence) == {
         "health": "warning",
@@ -1557,7 +1553,7 @@ def test_copied_adhoc_source_size_mismatch_warns_without_touching_copy(
     artifact.write_text("changed source length\n", encoding="utf-8")
 
     assert _assess_adhoc_evidence(tmp_path, evidence) == {
-        "health": "warning",
+        "health": "ok",
         "findings": [{"code": "source_drifted", "path": "artifact.txt", "detail": "size_mismatch"}],
     }
     assert (tmp_path / stored_path).read_text(encoding="utf-8") == "original\n"
@@ -1565,7 +1561,7 @@ def test_copied_adhoc_source_size_mismatch_warns_without_touching_copy(
     _assert_legacy_validation(_json_output(capsys), {
         "errors": [],
         "ok": True,
-        "warnings": ["Adhoc evidence E-0001 source member artifact.txt drifted: size mismatch."],
+        "warnings": [],
     })
 
 

@@ -26,6 +26,7 @@ from .errors import DataStoreError, InvalidInputError, ProjectNotInitializedErro
 from .ids import next_prefixed_id
 from .init_project import init_project, plan_init_project
 from .paths import ProjectPaths
+from .project_config import finish_check_configuration_warning
 from .tasks import create_task
 from .timeutil import utc_now_iso
 
@@ -145,6 +146,7 @@ def start_work(
     if provenance is not None:
         created_ids["provenance_evidence"] = provenance["evidence_id"]
 
+    finish_warning = finish_check_configuration_warning(paths.root)
     return _payload(
         status="started",
         mutated=True,
@@ -164,6 +166,7 @@ def start_work(
                 target={"type": "task", "id": task_id},
             )
         ],
+        warnings=[] if finish_warning is None else [finish_warning],
     )
 
 

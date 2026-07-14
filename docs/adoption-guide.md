@@ -262,7 +262,7 @@ goal rather than simply taking the next small item.
 For test-first work, keep behavior in harness state instead of only in prose:
 
 ```bash
-pcl feature add --name "Import invoices" --surface "cli:import"
+pcl feature add --name "Import invoices" --surface "cli:import" --task T-0001
 pcl story draft --feature F-0001 --actor "operator" --goal "import invoices" --expected-behavior "valid CSV rows become invoice records"
 pcl story approve US-0001 --summary "Acceptance behavior is clear"
 pcl test plan --feature F-0001 --story US-0001 --type acceptance --scenario "Valid CSV import" --expected "Invoices are created and reported"
@@ -271,6 +271,12 @@ pcl test plan --feature F-0001 --story US-0001 --type acceptance --scenario "Val
 Then run the relevant project command, record the red/green result with `pcl
 test fail`, `pcl test missing`, `pcl test block`, or `pcl test pass`, and use
 `pcl validate --strict` before calling the loop done.
+
+`--task` links the new Feature to an existing unlinked Task atomically. If the
+Task is unknown or already linked, no Feature is created. When terminal Task,
+Feature, and Test work is already complete, `pcl next` recommends
+`pcl finish --emit-packet` directly (or finish-check configuration first)
+instead of starting redundant `feature_coverage` work.
 
 For a command-only smoke check of the executor:
 

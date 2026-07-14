@@ -14,6 +14,7 @@ from .errors import DataStoreError, InvalidInputError, ProjectNotInitializedErro
 from .guarded_process import DEFAULT_MAX_OUTPUT_BYTES, execute_guarded_process
 from .ids import next_prefixed_id
 from .paths import ProjectPaths
+from .project_config import FINISH_CHECK_COMMAND_KEYS, enabled_project_commands
 from .redaction import compile_redaction_patterns
 from .timeutil import utc_now_iso
 from .workflow_proposal_validation import PROPOSAL_ID_RE, validate_workflow_proposal_text
@@ -35,8 +36,7 @@ SAFE_PCL_COMMANDS = {
     ("validate",),
     ("workflow", "verify"),
 }
-SAFE_PROJECT_COMMAND_KEYS = {"lint", "typecheck", "test", "e2e", "build"}
-FINISH_CHECK_COMMAND_KEYS = ("lint", "typecheck", "test", "e2e", "build")
+SAFE_PROJECT_COMMAND_KEYS = set(FINISH_CHECK_COMMAND_KEYS)
 BLOCKED_PROJECT_EXECUTABLES = {
     "bash",
     "chmod",
@@ -449,30 +449,7 @@ def _parse_verified_workflow(text: str, source_label: str) -> dict[str, Any]:
 
 
 def _load_project_commands(paths: ProjectPaths) -> dict[str, str]:
-    config_path = paths.root / "pcl.yaml"
-    if not config_path.exists():
-        return {}
-    commands: dict[str, str] = {}
-    in_commands = False
-    for raw_line in config_path.read_text(encoding="utf-8").splitlines():
-        if raw_line.startswith("commands:"):
-            in_commands = True
-            continue
-        if in_commands and raw_line and not raw_line.startswith(" "):
-            break
-        if not in_commands or not raw_line.startswith("  ") or ":" not in raw_line:
-            continue
-        key, value = raw_line.strip().split(":", 1)
-        value = _strip_yaml_string(value.strip())
-        if value:
-            commands[key.strip()] = value
-    return commands
-
-
-def _strip_yaml_string(value: str) -> str:
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-        return value[1:-1]
-    return value
+    return enabled_project_commands(paths.root)
 
 
 def _extract_command_plans(
@@ -563,6 +540,9 @@ def _mark_project_command_safety(command: dict[str, Any], *, key: str) -> None:
         return
     command["argv"] = argv
     executable = Path(argv[0]).name
+    if argv == ["git", "diff", "--check"]:
+        _mark_safe(command)
+        return
     if executable in BLOCKED_PROJECT_EXECUTABLES:
         command["blocked_reason"] = f"project command executable is blocked: {executable}"
         return

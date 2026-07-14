@@ -87,10 +87,17 @@ Project Loop state.
 In non-interactive use, invoking `--emit-packet` without `--dry-run` is the
 operator's confirmation to run the displayed project-configured check plan.
 There is no prompt and no implicit arbitrary command. The plan contains only
-non-empty `pcl.yaml` entries from `commands.lint`, `typecheck`, `test`, `e2e`,
-and `build`, in that order. Every command must pass the guarded-executor
-allowlist. Missing checks or a blocked configured check return exit 2 before
-execution.
+enabled `pcl.yaml` entries from `commands.lint`, `typecheck`, `test`, `e2e`,
+and `build`, in that order. Commands that do not apply may be marked explicitly
+with `null`, `{disabled: true}`, or a nested `disabled: true`. Empty values
+remain configuration warnings. `pcl start` and `pcl doctor` report an actionable
+warning when no finish check is enabled, and packet emission returns the typed
+`finish_checks_not_configured` error before repository inspection.
+
+Every enabled command must pass the guarded-executor allowlist. The exact argv
+`git diff --check` is accepted as a read-only whitespace check; other `git`
+forms remain blocked. Missing checks or a blocked configured check return exit
+2 before execution.
 
 `--task` selects a task directly. Existing `--goal` and goal-backed `--run`
 targets are also accepted. Without an explicit target, packet mode uses the
@@ -100,10 +107,13 @@ without a goal cannot be represented by `completion-packet/v1` and is rejected.
 ### Repository snapshot and race guard
 
 `--base <revision>` selects the Git base; the default is `HEAD`. The producer
-records the resolved base and head commit IDs, porcelain dirty state, changed
+records the resolved base and head commit IDs, repository dirty state, changed
 paths, and a deterministic diff hash. The hashed bytes are the exact output of
-`git diff --binary --no-ext-diff <resolved-base> --`, followed by sorted,
-length-prefixed path/content records for Git-unignored untracked files.
+`git diff --binary --no-ext-diff <resolved-base> --` excluding
+`.project-loop/**`, followed by sorted, length-prefixed path/content records for
+Git-unignored untracked files. PCL-owned files under `.project-loop/**` are
+reported separately as `harness_local_state`; they do not turn a clean
+repository result into `COMPLETED_WITH_RISK`.
 
 The snapshot is captured before checks and again afterward. Any base, head,
 dirty-state, changed-path, or diff-hash change yields

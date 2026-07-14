@@ -13,10 +13,11 @@ from .context_binding import _receipt_target_binding_agrees
 from .contracts.completion_packet import load_completion_packet, validate_completion_packet
 from .contracts.evidence_set import load_evidence_set, validate_evidence_set
 from .db import connect, table_exists
-from .evidence import ADHOC_EVIDENCE_TYPES, assess_adhoc_evidence
+from .evidence import ADHOC_EVIDENCE_TYPES, assess_adhoc_evidence, superseding_evidence_id
 from .errors import DataStoreError, InvalidInputError
 from .migrations import migration_status
 from .paths import ProjectPaths
+from .project_config import finish_check_configuration, finish_check_configuration_warning, project_command_specs
 from .rubric import claims_rubric_v1, evidence_ids_in_rubric, validate_rubric
 from .timeutil import utc_now_iso
 from .workflow_proposal_validation import PROPOSAL_ID_RE, validate_workflow_proposal_text
@@ -439,9 +440,11 @@ def _validate_pcl_yaml_advice(paths: ProjectPaths, result: ValidationResult) -> 
             requires_human=True,
         )
 
-    commands = _simple_yaml_section(lines, "commands")
-    if commands:
-        empty_commands = sorted(key for key, value in commands.items() if not value)
+    command_specs = project_command_specs(paths.root)
+    if command_specs:
+        empty_commands = sorted(
+            key for key, value in command_specs.items() if value["status"] == "empty"
+        )
         if empty_commands:
             result.add_warning(
                 "pcl.yaml commands are empty: "
@@ -457,6 +460,20 @@ def _validate_pcl_yaml_advice(paths: ProjectPaths, result: ValidationResult) -> 
             "pcl.yaml has no commands section; configured checks cannot be discovered.",
             code="config_commands_section_missing",
             entity={"type": "project", "id": str(paths.root)},
+            repair_class="human_review",
+            requires_human=True,
+        )
+    finish_warning = finish_check_configuration_warning(paths.root)
+    if finish_warning is not None:
+        configuration = finish_check_configuration(paths.root)
+        result.add_warning(
+            finish_warning,
+            code="config_finish_checks_missing",
+            entity={"type": "project", "id": str(paths.root)},
+            related=[
+                {"type": "config_command", "id": key}
+                for key in configuration["required_any_of"]
+            ],
             repair_class="human_review",
             requires_human=True,
         )
@@ -1108,6 +1125,7 @@ def _validate_evidence_links(
     known_targets = {
         "task": "tasks",
         "agent_job": "agent_jobs",
+        "evidence": "evidence",
     }
     for row in rows:
         evidence_id = str(row["evidence_id"] or "")
@@ -2214,6 +2232,8 @@ def _validate_adhoc_evidence_manifests(
     ).fetchall()
     for row in evidence_rows:
         evidence_id = str(row["id"])
+        if superseding_evidence_id(conn, evidence_id) is not None:
+            continue
         manifest_path_value = str(row["path"] or "").strip()
         assessment = assess_adhoc_evidence(
             paths,
@@ -2295,13 +2315,10 @@ def _add_adhoc_assessment_findings(
                 f"Adhoc evidence {evidence_id} member {path} is outside the project root."
             )
         elif code == "source_drifted":
-            rendered_detail = {
-                "hash_mismatch": "hash mismatch",
-                "size_mismatch": "size mismatch",
-            }.get(detail, detail)
-            emitter.warning(
-                f"Adhoc evidence {evidence_id} source member {path} drifted: {rendered_detail}."
-            )
+            # Copied Evidence is anchored to its canonical stored bytes. Source
+            # drift remains visible through `pcl evidence show`, but is not an
+            # active project-health warning.
+            continue
         else:
             emitter.error(f"Adhoc evidence {evidence_id} has unsupported health finding: {code}.")
 

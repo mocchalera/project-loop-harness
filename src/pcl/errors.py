@@ -64,6 +64,19 @@ class InvalidInputError(PclError):
         )
 
 
+class FinishChecksNotConfiguredError(PclError):
+    def __init__(self, *, details: dict[str, Any]) -> None:
+        super().__init__(
+            message=(
+                "No enabled finish checks are configured. Add at least one check to pcl.yaml "
+                "before running `pcl finish --emit-packet`."
+            ),
+            code="finish_checks_not_configured",
+            exit_code=EXIT_USAGE,
+            details=details,
+        )
+
+
 class ContextPackBudgetError(PclError):
     def __init__(self, *, details: dict[str, Any]) -> None:
         estimated_min = details.get("estimated_min_max_tokens")

@@ -137,7 +137,7 @@ from .decisions import (
     waive_decision,
 )
 from .dispatch import assign_job, heartbeat_job, lease_job, reap_expired_leases, release_job
-from .evidence import record_adhoc_evidence
+from .evidence import record_adhoc_evidence, supersede_evidence
 from .evidence_sets import plan_evidence_set, record_evidence_set, show_evidence_set
 from .completion_policies import evaluate_completion_policy
 from .evidence_show import render_evidence_metadata, show_evidence
@@ -425,6 +425,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_feature_add.add_argument("--surface", required=True)
     p_feature_add.add_argument("--description", default="")
     p_feature_add.add_argument("--evidence", default="")
+    p_feature_add.add_argument(
+        "--task", default=None, help="Atomically link the new Feature to an existing Task"
+    )
     p_feature_list = feature_sub.add_parser("list")
     p_feature_list.add_argument(
         "--status",
@@ -918,6 +921,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="Resolve read-only Evidence metadata without inlining artifact bodies",
     )
     p_evidence_show.add_argument("evidence_id")
+    p_evidence_supersede = evidence_sub.add_parser(
+        "supersede", help="Mark old Evidence as replaced while retaining its audit history"
+    )
+    p_evidence_supersede.add_argument("evidence_id")
+    p_evidence_supersede.add_argument("--with", required=True, dest="replacement_evidence_id")
+    p_evidence_supersede.add_argument("--summary", required=True)
     p_evidence_link = evidence_sub.add_parser(
         "link", help="Add one validated Evidence relationship"
     )
@@ -2734,6 +2743,7 @@ def main(argv: list[str] | None = None) -> int:
                 surface=args.surface,
                 description=args.description,
                 evidence=args.evidence,
+                task_id=args.task,
             )
             if json_output:
                 _print_json({"id": feature_id, "ok": True})
@@ -3565,6 +3575,22 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json(result)
             else:
                 print(render_evidence_metadata(result), end="")
+            return 0
+
+        if args.command == "evidence" and args.evidence_command == "supersede":
+            result = supersede_evidence(
+                paths,
+                evidence_id=args.evidence_id,
+                replacement_evidence_id=args.replacement_evidence_id,
+                summary=args.summary,
+            )
+            if json_output:
+                _print_json(result)
+            else:
+                print(
+                    f"Evidence {result['evidence_id']} superseded by {result['superseded_by']}"
+                    + ("" if result["changed"] else " (already recorded)")
+                )
             return 0
 
         if args.command == "evidence" and args.evidence_command == "link":

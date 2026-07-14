@@ -220,6 +220,13 @@ returns member paths, copied stored paths, and recorded hashes. It never inlines
 member contents or executes the claimed command. Unknown and malformed IDs are
 typed input errors.
 
+`pcl evidence supersede E-0003 --with E-0004 --summary "replacement reason"`
+marks a healthy replacement as the active proof without deleting or rewriting
+the older Evidence row. The relationship is stored in `evidence_links`, and an
+`evidence_superseded` event preserves the audit trail. Strict validation omits
+artifact-health warnings from the superseded row, and terminal transitions
+reject that older Evidence ID while accepting the healthy replacement.
+
 Schema version 6 adds `evidence.linked_task_id`, a nullable reference to
 `tasks.id`. `pcl evidence add --task T-XXXX` sets that column only when the
 task already exists. Unknown or invalid task ids are rejected before manifest
@@ -254,6 +261,9 @@ while keeping the recorded hash as the pinned claim.
 For copied members, the stored copy is the reviewable artifact. A missing or
 changed copy is a warning. Original source churn is informational in health
 surfaces and does not make strict validation warn when the copy remains intact.
+This includes a copied source outside the project root: once the stored copy's
+hash is verified, moving or deleting the original path does not invalidate the
+terminal proof.
 
 Worked example:
 
