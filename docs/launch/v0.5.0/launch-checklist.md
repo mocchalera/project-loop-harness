@@ -152,6 +152,14 @@ packet is `hn-human-authoring-brief.md`.
 - [ ] Human explicitly approves the independently written title, target URL,
       timing, and any first comment before posting.
 
+HN outcome record:
+
+- [x] The human owner chose **not to proceed with Hacker News** in Cockpit Ask
+      `ask_10f6a4d63d23` on 2026-07-14.
+- [x] No HN submission, title, comment, or external HN write was made.
+- [x] Any future HN attempt requires a fresh human-authored candidate and a new
+      explicit approval; the abandoned AI-assisted draft remains ineligible.
+
 ### Zenn first-channel review (2026-07-14)
 
 The human owner selected Zenn as the first channel in Cockpit Ask
@@ -174,6 +182,22 @@ The candidate was revised accordingly:
   text and image assets are used;
 - the three-person feedback plan is explicitly qualitative and is not presented
   as broad adoption evidence.
+
+Zenn publication record:
+
+```text
+Launch record ID: v0.5.0-zenn-20260714
+Channel and URL: Zenn / https://zenn.dev/mocchalera/articles/e9175fc4d09cf2
+Posted by: human owner
+Posted at: 2026-07-14 14:14:16 UTC / 23:14:16 JST
+Approved-copy path: docs/launch/v0.5.0/zenn-agent-done-evidence-pcl-v050.md
+Approved-copy SHA-256: 37294c423841acd3a06d8f977add84600fb220eca2711637dce81239f0432833
+Approval source/reference: Cockpit Ask ask_ee72ca70bb0d
+```
+
+- [x] Public article returned HTTP 200 after publication.
+- [x] Public title, `🔁` emoji, Tech category, five topics, and final section
+      were verified on the public page.
 
 - [x] The selected final copy contains no editorial draft note.
 - [ ] Preview code blocks, headings, and links in the destination renderer.
