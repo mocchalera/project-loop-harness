@@ -375,6 +375,8 @@ pcl completion evaluate --policy completion-policy.json \
   --evidence-set E-0003 --test TC-0001 --json
 pcl test pass TC-0001 --summary "Completion contract passed" \
   --evidence-id E-0003 --completion-policy completion-policy.json --json
+pcl test reverify TC-0001 --summary "Modernized completion receipt" \
+  --evidence-id E-0004 --completion-policy completion-policy.json --json
 ```
 
 Only allowlisted JSON predicates are evaluated. The Evidence Set must target

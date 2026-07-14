@@ -76,6 +76,28 @@ hash, Evidence Set hash, predicate results, and findings-free evaluation in the
 existing `test_case_passed` event. Ordinary adhoc Evidence keeps its existing
 Evidence-ID-first path and does not accept `--completion-policy`.
 
+## Reverify an already-passing Test
+
+`pcl test pass` remains a strict idempotent no-op when the Test is already
+passing. Use the explicit reverification path when a legacy passing Test must
+adopt a stronger completion receipt:
+
+```bash
+pcl test reverify TC-0001 \
+  --summary "Reverified against the current completion contract" \
+  --evidence-id E-0004 \
+  --completion-policy completion-policy.json \
+  --json
+```
+
+Reverification requires an approved or waived same-Feature Story and an exact
+target-bound complete Evidence Set whose policy evaluation passes. It preserves
+the Test's passing status and original `test_case_passed` history, updates the
+current Evidence pointer and acceptance link, and appends a
+`test_case_reverified` event containing the evaluation receipt. Invalid,
+drifted, wrong-target, or non-Evidence-Set proof fails before mutation. An
+exact repeated reverification is an event-free no-op.
+
 ## Story-linked planning
 
 Fresh/enforced projects reject `pcl test plan` without `--story` before ID

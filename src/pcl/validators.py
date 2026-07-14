@@ -1901,7 +1901,7 @@ def _terminal_evidence_set_health(
         """
         SELECT payload_json
         FROM events
-        WHERE event_type = 'test_case_passed'
+        WHERE event_type IN ('test_case_passed', 'test_case_reverified')
           AND entity_type = 'test_case'
           AND entity_id = ?
         ORDER BY sequence DESC, id DESC

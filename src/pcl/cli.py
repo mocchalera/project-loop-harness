@@ -227,6 +227,7 @@ from .stories import (
     plan_test_case,
     read_story,
     read_test_case,
+    reverify_test_case,
     review_story,
     waive_story,
     waive_test_case,
@@ -522,6 +523,19 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         dest="completion_policy_file",
         help="completion-policy/v1 JSON required when --evidence-id is an evidence_set receipt.",
+    )
+    p_test_reverify = test_sub.add_parser(
+        "reverify",
+        help="Replace proof for a passing Test with an evaluated Evidence Set",
+    )
+    p_test_reverify.add_argument("test_case_id")
+    p_test_reverify.add_argument("--summary", required=True)
+    p_test_reverify.add_argument("--evidence-id", required=True)
+    p_test_reverify.add_argument(
+        "--completion-policy",
+        required=True,
+        dest="completion_policy_file",
+        help="completion-policy/v1 JSON evaluated against the exact target-bound Evidence Set.",
     )
     p_test_fail = test_sub.add_parser("fail")
     p_test_fail.add_argument("test_case_id")
@@ -2953,6 +2967,22 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"Test case {result['id']} already {result['status']}; no change recorded.")
             else:
                 print(f"Passed test case {result['id']}")
+            return 0
+
+        if args.command == "test" and args.test_command == "reverify":
+            result = reverify_test_case(
+                paths,
+                test_case_id=args.test_case_id,
+                summary=args.summary,
+                evidence_id=args.evidence_id,
+                completion_policy_file=args.completion_policy_file,
+            )
+            if json_output:
+                _print_json(result)
+            elif result.get("changed") is False:
+                print(f"Test case {result['id']} already has this reverified proof; no change recorded.")
+            else:
+                print(f"Reverified test case {result['id']}")
             return 0
 
         if args.command == "test" and args.test_command == "fail":

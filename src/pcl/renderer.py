@@ -136,6 +136,7 @@ def _evidence_backed_done_items(conn, *, limit: int = 3) -> list[dict[str, str]]
         WHERE event_type IN (
           'feature_status_updated',
           'test_case_passed',
+          'test_case_reverified',
           'goal_closed',
           'verification_recorded'
         )
@@ -158,7 +159,7 @@ def _evidence_backed_done_items(conn, *, limit: int = 3) -> list[dict[str, str]]
         if event_type == "feature_status_updated" and payload.get("status") == "done":
             kind = "feature"
             proof_id = str(payload.get("evidence_id") or "")
-        elif event_type == "test_case_passed":
+        elif event_type in {"test_case_passed", "test_case_reverified"}:
             kind = "test"
             proof_id = str(payload.get("evidence_id") or "")
         elif event_type == "goal_closed":

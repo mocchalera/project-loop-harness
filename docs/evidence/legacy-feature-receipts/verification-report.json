@@ -1,0 +1,27 @@
+{
+  "commit": "f74476f0507a89df2569e0cd4e13139f0c687e66",
+  "recorded_at": "2026-07-15T01:24:41+09:00",
+  "findings": [],
+  "results": [
+    {
+      "command": "ruff check .",
+      "result": "All checks passed!",
+      "status": "pass"
+    },
+    {
+      "command": "pytest tests/test_distribution.py tests/test_update_check.py",
+      "result": "12 passed in 7.50s",
+      "status": "pass"
+    },
+    {
+      "command": "pytest tests/test_agents.py tests/test_mcp_server.py tests/test_workflow_executor.py tests/test_workflows.py tests/test_cli_init.py",
+      "result": "81 passed in 7.51s",
+      "status": "pass"
+    }
+  ],
+  "scope": [
+    "F-0003",
+    "F-0004"
+  ],
+  "status": "pass"
+}

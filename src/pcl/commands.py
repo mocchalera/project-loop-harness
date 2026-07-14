@@ -1265,7 +1265,7 @@ def _passing_feature_next_action(paths: ProjectPaths) -> dict | None:
                 """
                 SELECT payload_json
                 FROM events
-                WHERE event_type = 'test_case_passed'
+                WHERE event_type IN ('test_case_passed', 'test_case_reverified')
                   AND entity_type = 'test_case'
                   AND entity_id = ?
                 ORDER BY sequence DESC, id DESC
@@ -1284,7 +1284,10 @@ def _passing_feature_next_action(paths: ProjectPaths) -> dict | None:
                         "required_artifacts": ["evidence-set/v1", "completion-policy/v1"],
                     }
                 )
-            elif evaluation.get("status") != "passed":
+            elif (
+                evaluation.get("status") != "passed"
+                or evaluation.get("evidence_set_id") != str(test["evidence_id"] or "")
+            ):
                 blockers.append(
                     {
                         "code": "completion_policy_not_passed",

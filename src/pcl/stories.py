@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from .db import connect, connect_mutation
@@ -326,6 +327,166 @@ def pass_test_case(
         command_name="pcl test pass",
         completion_policy_file=completion_policy_file,
     )
+
+
+def reverify_test_case(
+    paths: ProjectPaths,
+    *,
+    test_case_id: str,
+    summary: str,
+    evidence_id: str,
+    completion_policy_file: str,
+) -> dict[str, Any]:
+    require_initialized(paths)
+    _validate_identifier(test_case_id, "test_case_id")
+    _require_text(summary, "--summary is required to reverify a test case.")
+    _require_text(evidence_id, "--evidence-id is required to reverify a test case.")
+    _require_text(
+        completion_policy_file,
+        "--completion-policy is required to reverify a test case.",
+    )
+    now = utc_now_iso()
+
+    conn = connect_mutation(paths)
+    try:
+        test_case = _get_test_case(conn, test_case_id)
+        if test_case["status"] != "passing":
+            raise EvidenceAddError(
+                f"Test case {test_case_id} is {test_case['status']}; reverify requires passing.",
+                code="test_reverify_status_required",
+                details={
+                    "test_case_id": test_case_id,
+                    "status": test_case["status"],
+                },
+            )
+        story_id = str(test_case["story_id"] or "")
+        if not story_id:
+            raise EvidenceAddError(
+                f"Test case {test_case_id} must link to a Story before reverification.",
+                code="test_story_required",
+                details={"test_case_id": test_case_id},
+            )
+        story = _get_story(conn, story_id)
+        if story["feature_id"] != test_case["feature_id"]:
+            raise EvidenceAddError(
+                f"Story {story_id} does not belong to test case feature {test_case['feature_id']}.",
+                code="test_story_required",
+                details={"test_case_id": test_case_id, "story_id": story_id},
+            )
+        if story["status"] not in {"approved", "waived"}:
+            raise EvidenceAddError(
+                f"Story {story_id} is {story['status']}; reverify requires approved or waived.",
+                code="test_story_not_terminal",
+                details={
+                    "test_case_id": test_case_id,
+                    "story_id": story_id,
+                    "story_status": story["status"],
+                },
+            )
+
+        evidence_row = conn.execute(
+            "SELECT type FROM evidence WHERE id = ?",
+            (evidence_id,),
+        ).fetchone()
+        evidence_type = "" if evidence_row is None else str(evidence_row["type"])
+        if evidence_type != EVIDENCE_SET_EVIDENCE_TYPE:
+            raise EvidenceAddError(
+                "Test reverification requires evidence_set Evidence via --evidence-id.",
+                code="test_reverify_evidence_set_required",
+                details={"test_case_id": test_case_id, "evidence_id": evidence_id},
+            )
+        completion_evaluation = require_completion_policy(
+            paths,
+            conn,
+            policy_file=completion_policy_file,
+            evidence_set_id=evidence_id,
+            test_case_id=test_case_id,
+        )
+
+        latest = conn.execute(
+            """
+            SELECT payload_json
+            FROM events
+            WHERE event_type = 'test_case_reverified'
+              AND entity_type = 'test_case'
+              AND entity_id = ?
+            ORDER BY sequence DESC, id DESC
+            LIMIT 1
+            """,
+            (test_case_id,),
+        ).fetchone()
+        latest_payload: dict[str, Any] = {}
+        if latest is not None:
+            try:
+                parsed = json.loads(str(latest["payload_json"] or "{}"))
+            except json.JSONDecodeError:
+                parsed = {}
+            if isinstance(parsed, dict):
+                latest_payload = parsed
+        if (
+            str(test_case["evidence_id"] or "") == evidence_id
+            and latest_payload.get("evidence_id") == evidence_id
+            and latest_payload.get("completion_evaluation") == completion_evaluation
+        ):
+            conn.rollback()
+            return {
+                "ok": True,
+                "changed": False,
+                "id": test_case_id,
+                "feature_id": test_case["feature_id"],
+                "story_id": story_id,
+                "status": "passing",
+                "previous_evidence_id": evidence_id,
+                "evidence_id": evidence_id,
+                "completion_evaluation": completion_evaluation,
+            }
+
+        previous_evidence_id = str(test_case["evidence_id"] or "") or None
+        insert_evidence_link(
+            conn,
+            evidence_id=evidence_id,
+            target_type="test_case",
+            target_id=test_case_id,
+            link_role="acceptance",
+            created_at=now,
+        )
+        conn.execute(
+            "UPDATE test_cases SET evidence_id = ?, updated_at = ? WHERE id = ?",
+            (evidence_id, now, test_case_id),
+        )
+        cleaned_summary = summary.strip()
+        event_id = append_event(
+            conn=conn,
+            events_path=paths.events_path,
+            event_type="test_case_reverified",
+            entity_type="test_case",
+            entity_id=test_case_id,
+            payload={
+                "summary": cleaned_summary,
+                "feature_id": test_case["feature_id"],
+                "story_id": story_id,
+                "status": "passing",
+                "previous_evidence_id": previous_evidence_id,
+                "evidence_id": evidence_id,
+                "completion_evaluation": completion_evaluation,
+            },
+        )
+        conn.commit()
+        return {
+            "ok": True,
+            "changed": True,
+            "event_id": event_id,
+            "id": test_case_id,
+            "feature_id": test_case["feature_id"],
+            "story_id": story_id,
+            "status": "passing",
+            "previous_evidence_id": previous_evidence_id,
+            "evidence_id": evidence_id,
+            "summary": cleaned_summary,
+            "completion_evaluation": completion_evaluation,
+        }
+    finally:
+        conn.close()
 
 
 def fail_test_case(

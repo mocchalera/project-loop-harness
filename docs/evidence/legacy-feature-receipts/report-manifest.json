@@ -1,0 +1,10 @@
+{
+  "contract_version": "evidence-report-manifest/v1",
+  "reports": [
+    {
+      "kind": "legacy_verification",
+      "path": "verification-report.json",
+      "status": "pass"
+    }
+  ]
+}

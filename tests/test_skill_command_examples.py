@@ -27,6 +27,7 @@ SKILL_PARSER_CONTRACT_EXAMPLES = [
     'pcl test plan --feature F-XXXX --story US-XXXX --type acceptance --scenario "..." --expected "..."',
     'pcl evidence add --file artifacts/acceptance.txt --summary "..." --command "..." --copy',
     'pcl test pass TC-XXXX --summary "..." --evidence-id E-XXXX',
+    'pcl test reverify TC-XXXX --summary "..." --evidence-id E-NEW --completion-policy completion-policy.json',
     'pcl feature status F-XXXX --status done --summary "..." --evidence-id E-XXXX',
     'pcl task status T-XXXX done --reason "..."',
     'pcl finish --emit-packet --goal G-XXXX',

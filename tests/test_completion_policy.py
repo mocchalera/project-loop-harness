@@ -132,6 +132,22 @@ def _evidence_set(
     return str(_json(capsys)["evidence"]["id"])
 
 
+def _pass_with_adhoc_evidence(root: Path, test_id: str, capsys) -> str:
+    report = root / "legacy-pass.json"
+    report.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+    assert main([
+        "--root", str(root), "evidence", "add", "--file", str(report),
+        "--summary", "legacy passing proof", "--json",
+    ]) == 0
+    evidence_id = str(_json(capsys)["evidence"]["id"])
+    assert main([
+        "--root", str(root), "test", "pass", test_id,
+        "--summary", "legacy pass", "--evidence-id", evidence_id, "--json",
+    ]) == 0
+    assert _json(capsys)["evidence_id"] == evidence_id
+    return evidence_id
+
+
 def test_completion_policy_schema_is_packaged() -> None:
     schema = completion_policy_schema()
     assert schema["$id"].endswith("completion-policy-v1.schema.json")
@@ -305,6 +321,121 @@ def test_complete_verdict_passes_and_records_evaluation(tmp_path: Path, capsys) 
     assert json.loads(event["payload_json"])["completion_evaluation"]["status"] == "passed"
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
     assert _json(capsys)["ok"] is True
+    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    next_action = _json(capsys)
+    assert next_action["target"]["id"] == "F-0001"
+    assert next_action["target"]["completion_status"] == "ready_for_explicit_done_review"
+
+
+def test_passing_test_can_be_explicitly_reverified_without_replaying_pass(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    init_project(resolve_paths(tmp_path))
+    _, _, test_id = _feature_story_test(tmp_path, capsys)
+    original_evidence_id = _pass_with_adhoc_evidence(tmp_path, test_id, capsys)
+    evidence_set_id = _evidence_set(tmp_path, test_id, capsys, verdict="complete")
+    policy = _policy(tmp_path)
+
+    before = _counts(tmp_path)
+    args = [
+        "--root", str(tmp_path), "test", "reverify", test_id,
+        "--summary", "modern completion receipt",
+        "--evidence-id", evidence_set_id,
+        "--completion-policy", str(policy),
+        "--json",
+    ]
+    assert main(args) == 0
+    result = _json(capsys)
+    assert result["changed"] is True
+    assert result["status"] == "passing"
+    assert result["previous_evidence_id"] == original_evidence_id
+    assert result["evidence_id"] == evidence_set_id
+    assert result["completion_evaluation"]["status"] == "passed"
+    assert _counts(tmp_path) == {
+        **before,
+        "links": before["links"] + 1,
+        "events": before["events"] + 1,
+        "outbox": before["outbox"] + 1,
+    }
+
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        test_row = conn.execute(
+            "SELECT status, evidence_id FROM test_cases WHERE id = ?", (test_id,)
+        ).fetchone()
+        event_rows = conn.execute(
+            "SELECT event_type, payload_json FROM events WHERE entity_type = 'test_case' "
+            "AND entity_id = ? AND event_type IN ('test_case_passed', 'test_case_reverified') "
+            "ORDER BY sequence",
+            (test_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    assert dict(test_row) == {"status": "passing", "evidence_id": evidence_set_id}
+    assert [row["event_type"] for row in event_rows] == [
+        "test_case_passed",
+        "test_case_reverified",
+    ]
+    reverified_payload = json.loads(event_rows[-1]["payload_json"])
+    assert reverified_payload["previous_evidence_id"] == original_evidence_id
+    assert reverified_payload["completion_evaluation"]["status"] == "passed"
+
+    assert main(args) == 0
+    repeated = _json(capsys)
+    assert repeated["changed"] is False
+    assert _counts(tmp_path) == {
+        **before,
+        "links": before["links"] + 1,
+        "events": before["events"] + 1,
+        "outbox": before["outbox"] + 1,
+    }
+
+    assert main([
+        "--root", str(tmp_path), "test", "pass", test_id,
+        "--summary", "ordinary pass remains idempotent", "--json",
+    ]) == 0
+    ordinary_pass = _json(capsys)
+    assert ordinary_pass["changed"] is False
+    assert ordinary_pass["evidence_id"] == evidence_set_id
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
+    assert _json(capsys)["ok"] is True
+    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    next_action = _json(capsys)
+    assert next_action["target"]["id"] == "F-0001"
+    assert next_action["target"]["completion_status"] == "ready_for_explicit_done_review"
+
+
+def test_reverify_rejects_non_evidence_set_and_non_passing_test_without_mutation(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    init_project(resolve_paths(tmp_path))
+    _, _, test_id = _feature_story_test(tmp_path, capsys)
+    report = tmp_path / "adhoc.json"
+    report.write_text(json.dumps({"status": "pass"}), encoding="utf-8")
+    assert main([
+        "--root", str(tmp_path), "evidence", "add", "--file", str(report),
+        "--summary", "not an evidence set", "--json",
+    ]) == 0
+    adhoc_id = str(_json(capsys)["evidence"]["id"])
+    policy = _policy(tmp_path)
+    before = _counts(tmp_path)
+
+    args = [
+        "--root", str(tmp_path), "test", "reverify", test_id,
+        "--summary", "must reject", "--evidence-id", adhoc_id,
+        "--completion-policy", str(policy), "--json",
+    ]
+    assert main(args) == 2
+    assert _json(capsys)["error"]["code"] == "test_reverify_status_required"
+    assert _counts(tmp_path) == before
+
+    _pass_with_adhoc_evidence(tmp_path, test_id, capsys)
+    before = _counts(tmp_path)
+    assert main(args) == 2
+    assert _json(capsys)["error"]["code"] == "test_reverify_evidence_set_required"
+    assert _counts(tmp_path) == before
 
 
 def test_storyless_test_plan_is_enforced_or_advisory_without_partial_mutation(

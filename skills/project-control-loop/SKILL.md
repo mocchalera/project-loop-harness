@@ -135,8 +135,13 @@ preceding command; do not invent IDs.
 
    ```bash
    pcl test pass TC-XXXX --summary "..." --evidence-id E-XXXX
+   pcl test reverify TC-XXXX --summary "..." --evidence-id E-NEW --completion-policy completion-policy.json
    pcl feature status F-XXXX --status done --summary "..." --evidence-id E-XXXX
    ```
+
+   Keep `pcl test pass` idempotent for an already-passing Test. Use
+   `pcl test reverify` only when an approved legacy Test must explicitly adopt
+   a stronger target-bound Evidence Set and completion-policy receipt.
 
 7. Mark the Task created by `pcl start` terminal after its acceptance work is
    complete. Do not leave a child Task active when closing its Goal:
