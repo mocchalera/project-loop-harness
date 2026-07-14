@@ -774,7 +774,10 @@ def test_skill_usage_report_never_retains_sensitive_raw_values(tmp_path: Path) -
     }
 
 
-def test_skill_usage_report_source_health_window_and_invalid_json(tmp_path: Path) -> None:
+def test_skill_usage_report_source_health_window_and_invalid_json(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(skill_usage_report.shutil, "which", lambda _name: None)
     codex = tmp_path / "codex"
     _write_jsonl(
         codex / "broken.jsonl",

@@ -34,6 +34,7 @@ Documentation = "https://github.com/mocchalera/project-loop-harness/tree/main/do
 
 [project.optional-dependencies]
 dev = [
+  "build>=1",
   "pytest>=8",
   "ruff>=0.6",
   "setuptools>=69",

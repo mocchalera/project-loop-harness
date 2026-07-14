@@ -190,6 +190,7 @@ def test_reusable_github_action_contract_is_documented_and_wired() -> None:
 
 def test_sdist_manifest_and_ci_include_doc_contract_smoke() -> None:
     manifest = (ROOT / "MANIFEST.in").read_text(encoding="utf-8")
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     ci_workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
     publish_workflow = (ROOT / ".github" / "workflows" / "publish-pypi.yml").read_text(
         encoding="utf-8"
@@ -202,6 +203,7 @@ def test_sdist_manifest_and_ci_include_doc_contract_smoke() -> None:
         "recursive-include tests *.py *.json",
     ]:
         assert expected in manifest
+    assert '"build>=1"' in pyproject
     assert '"docs"' in verifier
     assert '"agent-adapter-contract.md"' in verifier
     assert "tests/test_agent_adapter_contract.py::test_agent_adapter_docs_match_contract" in verifier

@@ -64,6 +64,7 @@ _OUTPUT_SIGNAL_MARKERS = (
 )
 _CODEX_LINE_NEEDLES = (
     b"session_meta",
+    b"project-control-loop/SKILL.md",
     b"tools.exec_command",
     b'"name":"exec_command"',
     b'"name": "exec_command"',
