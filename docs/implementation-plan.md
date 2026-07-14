@@ -367,7 +367,9 @@ not control-plane depth, as the current bottleneck. The ordered reset is
   agent-owned routine CLI, safe coexistence, alpha stability policy, and the
   fixed-date release-suite repair.
 - 0173 prepared the local v0.5.0 release candidate with source/wheel/sdist
-  smoke and independent review. Publication remains a separate human decision.
+  smoke and independent review. The separately authorized publication completed
+  from that release commit; 0174 independently verified the public GitHub
+  Release, release-triggered Actions run, PyPI artifacts, and clean install.
 - External launch assets are prepared only after the RC; posting them is an
   external action and remains human-gated.
 - CLI module splitting and scale/event-log design follow Adoption proof instead

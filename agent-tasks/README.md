@@ -90,6 +90,7 @@ implement from the spec file, not from prompt summaries.
 | 0171 | Actionable finish timeout recovery | v0.5.0 Adoption / Distribution | P0 | done |
 | 0172 | Composite PCL result status | v0.5.0 Adoption / Distribution | P0 | done |
 | 0173 | v0.5.0 local release preparation | v0.5.0 Adoption / Distribution | P0 | done (local RC; not published) |
+| 0174 | v0.5.0 publication closeout | v0.5.0 Adoption / Distribution | P0 | done (public Release/Actions/PyPI verified) |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
@@ -144,13 +145,13 @@ source/wheel/sdist E2E → **0161**
 two-repository dogfood/Skill parity → **0162** frozen evaluation and human
 adoption gate. See `docs/plan-v0.5.0-council-profile.md`.
 
-v0.5.0 Adoption / Distribution now takes precedence over additional Council or
+v0.5.0 Adoption / Distribution took precedence over additional Council or
 v0.5.1 feature work: **0163** 30-second README + five-minute setup + coexistence
 contract + stability policy + release-suite repair → **0164** guided Japanese
-dashboard review experience → local v0.5.0 RC and
-independent review → separate human publication decision. Public launch assets,
-real-provider Council runs, telemetry, and publication remain human-gated. See
-`docs/roadmap/priority-reset-2026-07-13.md`.
+dashboard review experience → **0173** local v0.5.0 RC and independent review →
+**0174** read-only verification of the public Release, Actions run, and PyPI
+artifacts. Public launch posts, real-provider Council runs, and telemetry remain
+human-gated. See `docs/roadmap/priority-reset-2026-07-13.md`.
 
 ## Planned next (see growth plan for scope)
 
@@ -162,7 +163,7 @@ real-provider Council runs, telemetry, and publication remain human-gated. See
 | v0.4.1 | Integrity migration: idle routing, lifecycle repair/link commands, diagnostics, Skill provenance |
 | v0.4.2 | Adaptive Entry: local RC prepared; immutable brief, deterministic route, multi-axis explain/override |
 | v0.4.3 | Evidence Completeness: local RC prepared; complete evidence sets, external verdict policy, approval provenance, cross-skill dogfood |
-| v0.5.0 | Council Profile core/offline evaluation complete with `continue experiment`; 0163 Adoption/Distribution is active before publication |
+| v0.5.0 | Published and independently verified; Council remains opt-in with `continue experiment`, and external launch work is next |
 
 Everything with an ID below 0102 is completed design history; see `TASKS.md`
 for the one-line summary of each.

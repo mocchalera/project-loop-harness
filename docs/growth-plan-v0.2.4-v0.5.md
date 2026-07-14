@@ -393,3 +393,8 @@ Adoption / Distributionを進める。
 Councilはopt-inのまま維持する。実provider、paid/network、telemetry、default
 変更、公開は本優先化に含めない。正規の並びとexit条件は
 `docs/roadmap/priority-reset-2026-07-13.md`を参照する。
+
+2026-07-14に0173でlocal RCを準備し、別途承認された公開後、0174でrelease
+commit、GitHub Release、Actions、PyPI artifacts、clean public installをread-only
+再検証した。v0.5.0は公開済みであり、次は外部feedback launch packetである。
+投稿、real-provider実行、telemetryは引き続き個別の人間承認を要する。
