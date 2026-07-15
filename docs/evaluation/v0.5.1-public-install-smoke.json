@@ -1,0 +1,52 @@
+{
+  "contract_version": "public-install-smoke-receipt/v0",
+  "release": "v0.5.1",
+  "verified_at": "2026-07-15",
+  "install": {
+    "index_url": "https://pypi.org/simple/",
+    "requirement": "project-loop-harness==0.5.1",
+    "no_cache": true,
+    "pythonpath_unset": true,
+    "result": "passed"
+  },
+  "version_output": "pcl 0.5.1",
+  "doctor": {
+    "ok": true,
+    "errors": 0,
+    "warning_codes": [
+      "config_project_name_placeholder",
+      "config_commands_empty",
+      "config_finish_checks_missing"
+    ],
+    "warning_disposition": "expected for a fresh generic scratch project"
+  },
+  "resume_paths": {
+    "no_index": {
+      "result": "passed",
+      "intent_index_ref": null,
+      "trace_claim_refs_present": false,
+      "sha256": "ec47fa5e1221a48dca96527e4c67998a2fc4dd735d212805b11142ba19ef4b9d"
+    },
+    "valid_binding": {
+      "result": "passed",
+      "intent_index_ref": "evidence:E-0002",
+      "trace_claim_ref_count": 2,
+      "trust": "unverified",
+      "sha256": "46b610352392415545b8576e74173cd53a9c1193eb9898dab6a28e99e1417283"
+    },
+    "invalid_binding": {
+      "result": "passed",
+      "intent_index_ref": "evidence:E-0003",
+      "trace_claim_refs_present": false,
+      "omission": "trace_claim_refs:invalid_binding",
+      "sha256": "c2cca02cb0e0a3b0583b6bb1c215c9bb56acac1fba2c11ce4eedd52a8acccdc7"
+    }
+  },
+  "strict_validation": {
+    "ok": true,
+    "findings": 0,
+    "sha256": "68c3b0a592a3039f5f58e95f89829c0d250574c727621e2eb728fd248f44c01f"
+  },
+  "render": "passed",
+  "workspace": "/tmp/pcl-v051-public-verify.kXxuqU"
+}

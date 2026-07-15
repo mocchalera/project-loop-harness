@@ -1,6 +1,6 @@
 # 0183: v0.5.1 publication closeout
 
-- **Status:** In Progress; publication authorized by `ask_6e4c5b339398`
+- **Status:** Done; published and independently verified
 - **Milestone:** v0.5.1 Trace & Efficient Handoff
 - **Priority:** P1
 - **Size:** S
@@ -39,3 +39,15 @@ v0.5.1 GitHub/PyPI chain and synchronize only factual release documentation.
 
 - External-user study or adoption claim.
 - Automatic announcement or broader distribution campaign.
+
+## Completion evidence
+
+- Release commit: `d3c6606ebdf9f7c61418421b57fe1cf9fdb8ad7e`
+- GitHub Release: `v0.5.1`
+- Trusted Publishing run: `29402348375`, success
+- Public wheel SHA-256:
+  `32b2df33131f541a70b32e0e5fcf668b77da5df9a8f9aa27e6fb6a0ba4a0efa4`
+- Public sdist SHA-256:
+  `4437260c38419a62abe95309e7ca05cde920dab8f6af504da355a3826c22ede2`
+- Clean public install three-path smoke and strict validation: passed
+- Independent Codex review `b7efeaac`: approved, no remaining findings

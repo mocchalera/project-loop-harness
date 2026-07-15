@@ -1,6 +1,6 @@
 # v0.5.1 Trace & Efficient Handoff plan
 
-- **Status:** Local RC independently approved; publication decision pending
+- **Status:** Published and independently verified
 - **Decision date:** 2026-07-15
 - **Decision source:** Cockpit Ask `ask_8f99470fc206`
 - **Schema baseline:** 8; no migration is assumed

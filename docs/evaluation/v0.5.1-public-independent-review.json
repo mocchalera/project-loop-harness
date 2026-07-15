@@ -1,0 +1,34 @@
+{
+  "contract_version": "independent-public-review-receipt/v0",
+  "release": "v0.5.1",
+  "reviewed_at": "2026-07-15",
+  "reviewer": {
+    "runtime": "codex",
+    "cockpit_task_id": "b7efeaac",
+    "session_id": "019f64fc-dcbc-7a70-9b96-269897dc011d"
+  },
+  "mode": "read_only",
+  "verdict": "approved",
+  "initial_findings": [
+    {
+      "severity": "low",
+      "finding": "GitHub Release retained pre-publication wording",
+      "resolution": "Release body synchronized to verified public facts"
+    },
+    {
+      "severity": "low",
+      "finding": "version and doctor output were not retained explicitly",
+      "resolution": "Added v0.5.1-public-install-smoke.json receipt"
+    }
+  ],
+  "remaining_findings": [],
+  "verified": {
+    "tag_and_commit": "passed",
+    "github_release_latest": "passed",
+    "actions_run": "passed",
+    "pypi_metadata_and_hashes": "passed",
+    "public_install_receipt": "passed",
+    "release_body_factual_sync": "passed"
+  },
+  "mutations_performed": []
+}

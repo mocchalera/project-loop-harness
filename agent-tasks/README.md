@@ -99,7 +99,7 @@ implement from the spec file, not from prompt summaries.
 | 0180 | Claim-bound context and resume | v0.5.1 Trace & Efficient Handoff | P0 | done |
 | 0181 | Controlled Trace resume evaluation | v0.5.1 Trace & Efficient Handoff | P0 | done (`continue`) |
 | 0182 | v0.5.1 local release preparation | v0.5.1 Trace & Efficient Handoff | P1 | done; local RC approved |
-| 0183 | v0.5.1 publication closeout | v0.5.1 Trace & Efficient Handoff | P1 | in progress; publication authorized |
+| 0183 | v0.5.1 publication closeout | v0.5.1 Trace & Efficient Handoff | P1 | done; published and independently verified |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
