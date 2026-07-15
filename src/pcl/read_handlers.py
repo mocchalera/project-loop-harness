@@ -7,6 +7,7 @@ from . import update_check
 from .command_guide import command_guide, render_command_guide
 from .commands import loop_status, to_pretty_json
 from .paths import ProjectPaths
+from .reports import report_defect, report_feature, report_goal, report_run, report_validation
 from .validators import validate_project
 
 
@@ -76,4 +77,33 @@ def handle_loop_status(paths: ProjectPaths, *, json_output: bool, output: TextIO
         output.write(json.dumps(status, ensure_ascii=False, sort_keys=True) + "\n")
     else:
         output.write(to_pretty_json(status) + "\n")
+    return 0
+
+
+def handle_report_artifact(
+    paths: ProjectPaths,
+    report_command: str,
+    *,
+    identifier: str | None,
+    strict: bool,
+    json_output: bool,
+    output: TextIO,
+) -> int:
+    if report_command == "goal":
+        result = report_goal(paths, str(identifier))
+    elif report_command == "run":
+        result = report_run(paths, str(identifier))
+    elif report_command == "feature":
+        result = report_feature(paths, str(identifier))
+    elif report_command == "defect":
+        result = report_defect(paths, str(identifier))
+    elif report_command == "validation":
+        result = report_validation(paths, strict=strict)
+    else:
+        raise ValueError(f"Unsupported report artifact command: {report_command}")
+
+    if json_output:
+        output.write(json.dumps(result, ensure_ascii=False, sort_keys=True) + "\n")
+    else:
+        output.write(f"{result['path']}\n")
     return 0

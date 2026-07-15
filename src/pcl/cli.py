@@ -210,7 +210,12 @@ from .profile_fixture_runner import run_profile_fixture
 from .profile_prepare import prepare_profile_request
 from .renderer import render_dashboard
 from .receipt_show import receipt_summary_for_ref
-from .read_handlers import handle_doctor, handle_guide, handle_loop_status
+from .read_handlers import (
+    handle_doctor,
+    handle_guide,
+    handle_loop_status,
+    handle_report_artifact,
+)
 from .registry import (
     AGENT_STATUSES,
     list_agents,
@@ -219,7 +224,6 @@ from .registry import (
     retire_agent,
     update_agent,
 )
-from .reports import report_defect, report_feature, report_goal, report_run, report_validation
 from .routing import recommend_route
 from .route_overrides import current_route, override_route
 from .resume import build_handoff_packet, render_handoff_markdown, serialized_handoff_packet
@@ -4045,45 +4049,32 @@ def main(argv: list[str] | None = None) -> int:
                     print(p)
             return 0
 
-        if args.command == "report" and args.report_command == "goal":
-            result = report_goal(paths, args.goal_id)
-            if json_output:
-                _print_json(result)
-            else:
-                print(result["path"])
-            return 0
-
-        if args.command == "report" and args.report_command == "run":
-            result = report_run(paths, args.workflow_run_id)
-            if json_output:
-                _print_json(result)
-            else:
-                print(result["path"])
-            return 0
-
-        if args.command == "report" and args.report_command == "feature":
-            result = report_feature(paths, args.feature_id)
-            if json_output:
-                _print_json(result)
-            else:
-                print(result["path"])
-            return 0
-
-        if args.command == "report" and args.report_command == "defect":
-            result = report_defect(paths, args.defect_id)
-            if json_output:
-                _print_json(result)
-            else:
-                print(result["path"])
-            return 0
-
-        if args.command == "report" and args.report_command == "validation":
-            result = report_validation(paths, strict=args.strict)
-            if json_output:
-                _print_json(result)
-            else:
-                print(result["path"])
-            return 0
+        if args.command == "report" and args.report_command in {
+            "goal",
+            "run",
+            "feature",
+            "defect",
+            "validation",
+        }:
+            identifier_attributes = {
+                "goal": "goal_id",
+                "run": "workflow_run_id",
+                "feature": "feature_id",
+                "defect": "defect_id",
+            }
+            identifier = getattr(
+                args,
+                identifier_attributes.get(args.report_command, ""),
+                None,
+            )
+            return handle_report_artifact(
+                paths,
+                args.report_command,
+                identifier=identifier,
+                strict=getattr(args, "strict", False),
+                json_output=json_output,
+                output=sys.stdout,
+            )
 
         if args.command == "report" and args.report_command == "kpi":
             result = report_kpi(paths, since=args.since)

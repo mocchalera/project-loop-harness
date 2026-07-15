@@ -76,7 +76,8 @@ Evidence. It must not be hidden inside a module move.
   then full suite.
 - Implemented families: `agent-tasks/0185-cli-stage2-guide-handler-extraction.md`;
   `agent-tasks/0186-cli-stage2-loop-status-handler-extraction.md`;
-  `agent-tasks/0187-cli-stage2-doctor-handler-extraction.md`.
+  `agent-tasks/0187-cli-stage2-doctor-handler-extraction.md`;
+  `agent-tasks/0188-cli-stage2-report-artifact-handler-extraction.md`.
 
 ### Stage 3 — Mutating command handlers
 
