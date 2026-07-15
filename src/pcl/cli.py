@@ -43,7 +43,6 @@ from .commands import (
     create_goal,
     finish_plan,
     list_features,
-    loop_status,
     next_action,
     open_defect,
     read_feature,
@@ -211,7 +210,7 @@ from .profile_fixture_runner import run_profile_fixture
 from .profile_prepare import prepare_profile_request
 from .renderer import render_dashboard
 from .receipt_show import receipt_summary_for_ref
-from .read_handlers import handle_guide
+from .read_handlers import handle_guide, handle_loop_status
 from .registry import (
     AGENT_STATUSES,
     list_agents,
@@ -3119,12 +3118,7 @@ def main(argv: list[str] | None = None) -> int:
             return 0
 
         if args.command == "loop" and args.loop_command == "status":
-            status = loop_status(paths)
-            if json_output:
-                _print_json(status)
-            else:
-                print(to_pretty_json(status))
-            return 0
+            return handle_loop_status(paths, json_output=json_output, output=sys.stdout)
 
         if args.command == "loop" and args.loop_command == "run":
             result = run_workflow(

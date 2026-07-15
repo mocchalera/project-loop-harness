@@ -74,7 +74,8 @@ Evidence. It must not be hidden inside a module move.
 - Pass `ProjectPaths` and parsed arguments explicitly; no hidden global state.
 - Gate: read-only zero-mutation assertions, output parity, distribution smoke,
   then full suite.
-- First implementation task: `agent-tasks/0185-cli-stage2-guide-handler-extraction.md`.
+- Implemented families: `agent-tasks/0185-cli-stage2-guide-handler-extraction.md`;
+  `agent-tasks/0186-cli-stage2-loop-status-handler-extraction.md`.
 
 ### Stage 3 — Mutating command handlers
 
