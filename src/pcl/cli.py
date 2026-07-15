@@ -210,7 +210,7 @@ from .profile_fixture_runner import run_profile_fixture
 from .profile_prepare import prepare_profile_request
 from .renderer import render_dashboard
 from .receipt_show import receipt_summary_for_ref
-from .read_handlers import handle_guide, handle_loop_status
+from .read_handlers import handle_doctor, handle_guide, handle_loop_status
 from .registry import (
     AGENT_STATUSES,
     list_agents,
@@ -1951,41 +1951,6 @@ def _print_validation(result, *, json_output: bool = False) -> int:
     return 1
 
 
-def _print_doctor(result, *, update_result=None, json_output: bool = False) -> int:
-    if update_result is not None:
-        if update_result.update_available and update_result.latest_version:
-            result.add_warning(
-                f"pcl {update_result.latest_version} is available; "
-                f"run `{update_result.install.command}`.",
-                code="update_available",
-                entity={"type": "package", "id": "project-loop-harness"},
-                repair_class="human_review",
-                requires_human=True,
-            )
-        elif not update_result.ok and not update_result.disabled:
-            result.add_warning(
-                f"Could not check for pcl updates: {update_result.error}",
-                code="update_check_failed",
-                entity={"type": "package", "id": "project-loop-harness"},
-                repair_class="unsupported",
-            )
-
-    if json_output:
-        payload = result.to_dict()
-        if update_result is not None:
-            payload["update"] = update_result.to_dict()
-        _print_json(payload)
-        return 0 if result.ok else 1
-
-    exit_code = _print_validation(result, json_output=False)
-    if update_result is not None and result.ok:
-        if update_result.disabled:
-            print(f"Update check disabled by {update_check.NO_VERSION_CHECK_ENV}.")
-        elif update_result.ok and not update_result.update_available:
-            print(f"Update check: pcl is up to date ({update_result.current_version})")
-    return exit_code
-
-
 def _print_update_check(result, *, json_output: bool = False) -> int:
     if json_output:
         _print_json(result.to_dict())
@@ -2534,11 +2499,13 @@ def main(argv: list[str] | None = None) -> int:
             return 1 if payload["status"] == "init_blocked" else 0
 
         if args.command == "doctor":
-            result = validate_project(paths, strict=args.strict, include_config_advice=True)
-            update_result = None
-            if args.check_updates:
-                update_result = update_check.check_for_update()
-            return _print_doctor(result, update_result=update_result, json_output=json_output)
+            return handle_doctor(
+                paths,
+                strict=args.strict,
+                check_updates=args.check_updates,
+                json_output=json_output,
+                output=sys.stdout,
+            )
 
         if args.command == "validate":
             result = validate_project(paths, strict=args.strict)
