@@ -9,6 +9,7 @@ import subprocess
 from pcl.cli import main
 from pcl.contracts.handoff_packet import validate_handoff_packet
 from pcl.db import connect
+from pcl.resume import render_handoff_markdown
 
 
 def _json_output(capsys) -> dict:
@@ -446,17 +447,42 @@ def test_resume_references_master_trace_and_intent_index_without_inlining(
         "---\ncontract_version: master-trace/v0\n---\nRAW_TRANSCRIPT_SENTINEL\n",
         encoding="utf-8",
     )
+    assert main([
+        "--root", str(tmp_path), "evidence", "add", "--file", master_trace.name,
+        "--summary", master_trace.stem, "--task", "T-0001", "--copy", "--json",
+    ]) == 0
+    trace_evidence = _json_output(capsys)["evidence"]
+    trace_member = trace_evidence["members"][0]
     intent_index = tmp_path / "intent-index.json"
-    intent_index.write_text(
-        json.dumps({"contract_version": "intent-index/v0", "items": []}) + "\n",
-        encoding="utf-8",
-    )
-    for path in (master_trace, intent_index):
-        assert main([
-            "--root", str(tmp_path), "evidence", "add", "--file", path.name,
-            "--summary", path.stem, "--task", "T-0001", "--json",
-        ]) == 0
-        _json_output(capsys)
+    intent_index.write_text(json.dumps({
+        "contract_version": "intent-index/v0",
+        "index_id": "ii-resume-fixture",
+        "generated_at": "2026-07-15T00:00:00Z",
+        "generator": "test-fixture",
+        "source_trace": {
+            "evidence_id": trace_evidence["id"],
+            "manifest_path": trace_evidence["manifest_path"],
+            "member_path": trace_member["path"],
+            "stored_path": trace_member["stored_path"],
+            "sha256": trace_member["sha256"],
+        },
+        "items": [{
+            "id": "I-001",
+            "kind": "task_hint",
+            "claim": "Continue from the source-bound claim.",
+            "source_refs": [{
+                "evidence_id": trace_evidence["id"],
+                "stored_path": trace_member["stored_path"],
+                "line_start": 4,
+                "line_end": 4,
+            }],
+        }],
+    }) + "\n", encoding="utf-8")
+    assert main([
+        "--root", str(tmp_path), "evidence", "add", "--file", intent_index.name,
+        "--summary", intent_index.stem, "--task", "T-0001", "--copy", "--json",
+    ]) == 0
+    index_evidence = _json_output(capsys)["evidence"]
 
     assert main(["--root", str(tmp_path), "resume", "--json"]) == 0
     packet = _json_output(capsys)["handoff_packet"]
@@ -466,7 +492,26 @@ def test_resume_references_master_trace_and_intent_index_without_inlining(
     assert kinds["intent-index/v0"]["freshness"] == "current"
     assert kinds["master-trace/v0"]["sha256"].startswith("sha256:")
     assert packet["intent_index_ref"] == kinds["intent-index/v0"]["ref"]
+    assert packet["trace_claim_refs"] == [{
+        "intent_index_ref": f"evidence:{index_evidence['id']}",
+        "item_id": "I-001",
+        "kind": "task_hint",
+        "claim": "Continue from the source-bound claim.",
+        "trust": "unverified",
+        "source_refs": [{
+            "evidence_id": trace_evidence["id"],
+            "stored_path": trace_member["stored_path"],
+            "line_start": 4,
+            "line_end": 4,
+        }],
+    }]
+    assert packet["trace_claim_ref_omissions"] == []
+    assert packet["trace_claim_ref_budget"]["included_items"] == 1
+    assert packet["verified"] == []
     assert "RAW_TRANSCRIPT_SENTINEL" not in json.dumps(packet)
+    markdown = render_handoff_markdown(packet)
+    assert "Continue from the source-bound claim." in markdown
+    assert "RAW_TRANSCRIPT_SENTINEL" not in markdown
     assert "full_transcript" in packet["omitted_sections"]
 
 
@@ -484,6 +529,36 @@ def test_resume_output_file_is_the_only_write(tmp_path: Path, capsys) -> None:
 
     assert payload["output"] == str(output)
     assert json.loads(output.read_text(encoding="utf-8"))["contract_version"] == "handoff-packet/v1"
+    assert _state_fingerprint(tmp_path) == before
+
+
+def test_resume_invalid_trace_binding_emits_no_claim_refs(tmp_path: Path, capsys) -> None:
+    _init(tmp_path, capsys)
+    _start(tmp_path, capsys)
+    trace = tmp_path / "master-trace.md"
+    trace.write_text(
+        "---\ncontract_version: master-trace/v0\n---\nRAW_INVALID_TRACE_SENTINEL\n",
+        encoding="utf-8",
+    )
+    index = tmp_path / "intent-index.json"
+    index.write_text(
+        json.dumps({"contract_version": "intent-index/v0", "items": []}) + "\n",
+        encoding="utf-8",
+    )
+    for path in (trace, index):
+        assert main([
+            "--root", str(tmp_path), "evidence", "add", "--file", path.name,
+            "--summary", path.stem, "--task", "T-0001", "--copy", "--json",
+        ]) == 0
+        _json_output(capsys)
+    before = _state_fingerprint(tmp_path)
+
+    assert main(["--root", str(tmp_path), "resume", "--json"]) == 0
+    packet = _json_output(capsys)["handoff_packet"]
+
+    assert "trace_claim_refs" not in packet
+    assert "trace_claim_refs:invalid_binding" in packet["omitted_sections"]
+    assert "RAW_INVALID_TRACE_SENTINEL" not in json.dumps(packet)
     assert _state_fingerprint(tmp_path) == before
 
 

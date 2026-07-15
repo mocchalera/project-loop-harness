@@ -191,13 +191,34 @@ def _record_master_trace_fixture_evidence(
         )
         recorded.append(_record_task_evidence(root, capsys, path.name, f"Master trace {index}"))
     for index in range(1, intent_index_count + 1):
+        trace_evidence = recorded[min(index - 1, len(recorded) - 1)]
+        trace_member = trace_evidence["members"][0]
         path = root / f"intent-index-{index}.json"
         path.write_text(
             json.dumps(
                 {
                     "contract_version": "intent-index/v0",
                     "index_id": f"ii-fixture-{index}",
-                    "items": [{"claim": f"INDEX_CLAIM_SENTINEL_{index}"}],
+                    "generated_at": "2026-07-10T00:01:00Z",
+                    "generator": "test-fixture",
+                    "source_trace": {
+                        "evidence_id": trace_evidence["id"],
+                        "manifest_path": trace_evidence["manifest_path"],
+                        "member_path": trace_member["path"],
+                        "stored_path": trace_member["stored_path"],
+                        "sha256": trace_member["sha256"],
+                    },
+                    "items": [{
+                        "id": f"I-{index:03d}",
+                        "kind": "task_hint",
+                        "claim": f"INDEX_CLAIM_SENTINEL_{index}",
+                        "source_refs": [{
+                            "evidence_id": trace_evidence["id"],
+                            "stored_path": trace_member["stored_path"],
+                            "line_start": 7,
+                            "line_end": 7,
+                        }],
+                    }],
                 },
                 sort_keys=True,
             )
@@ -1052,7 +1073,14 @@ def test_master_trace_context_contract_fixtures(
     expected = case["expected"]
 
     assert "RAW_TRACE_SENTINEL" not in output
-    assert "INDEX_CLAIM_SENTINEL" not in output
+    if expected["status"] == "present":
+        assert "INDEX_CLAIM_SENTINEL_1" in output
+    else:
+        assert "INDEX_CLAIM_SENTINEL" not in output
+    if expected["status"] == "present":
+        assert "trace_claim_refs" in output
+    else:
+        assert "trace_claim_refs" not in output
     if expected["status"] == "omitted":
         assert "master_trace_context" not in pack
         assert "master_trace_context" not in pack["included_sections"]
@@ -1072,6 +1100,10 @@ def test_master_trace_context_contract_fixtures(
             "target",
             "master_trace",
             "intent_index",
+            "binding",
+            "trace_claim_refs",
+            "trace_claim_ref_omissions",
+            "trace_claim_ref_budget",
             "trust_model",
             "source_ref_discipline",
             "raw_transcript_inlined",
@@ -1088,6 +1120,12 @@ def test_master_trace_context_contract_fixtures(
             "member_paths": ["intent-index-1.json"],
             "stored_paths": [evidence[1]["members"][0]["stored_path"]],
         }
+        assert context["binding"]["status"] == "valid"
+        assert context["binding"]["semantic_validation"] is False
+        assert context["trace_claim_refs"][0]["trust"] == "unverified"
+        assert context["trace_claim_refs"][0]["item_id"] == "I-001"
+        assert context["trace_claim_ref_omissions"] == []
+        assert context["trace_claim_ref_budget"]["included_items"] == 1
         assert context["trust_model"] == "claims-not-facts"
         assert context["source_ref_discipline"] == {
             "line_numbering": "one-based-inclusive",

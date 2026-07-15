@@ -1,0 +1,96 @@
+{
+  "contract_version": "trace-resume-evaluation-cohort/v1",
+  "cohort_id": "TRC-20260715-02",
+  "frozen_at": "2026-07-15T07:18:00Z",
+  "status": "authorized_frozen",
+  "supersedes_cohort_id": "TRC-20260715-01",
+  "fixture": {
+    "path": "tests/fixtures/trace_binding_v0/trace-resume-evaluation-fixture.json",
+    "sha256": "2905aef978180b01b3f8dc5bd3e7a8a88c8841465485fe71d3aae56a10615a44"
+  },
+  "thresholds": {
+    "resume_success_rate": 0.8,
+    "broken_binding_safe_stop_rate": 1.0,
+    "critical_trust_boundary_violations": 0
+  },
+  "consumer_boundary": {
+    "allowed": [
+      "assigned frozen handoff packets",
+      "packet-referenced copied Trace source lines",
+      "target test code and dependency metadata",
+      "read-only verification command output"
+    ],
+    "forbidden": [
+      "secrets or credentials",
+      "customer data",
+      "media files",
+      "full transcripts",
+      "originating-session explanations",
+      "cohort, authorization, or runbook files"
+    ],
+    "claim_trust": "unverified_until_source_lines_are_checked"
+  },
+  "execution_authorization": {
+    "authorization_ref": "evidence:E-0422",
+    "authorization_path": "docs/evaluation/v0.5.1-trace-resume-authorization-02.json",
+    "authorization_sha256": "7d1779dc94c6bfa40be4cecd5aee2d4114a18998afae65ae0aaabb08efc9a718",
+    "authorization_precedence": "referenced_authorization_evidence_is_authoritative",
+    "authorization_frozen_before_cohort": true,
+    "independent_agent_sessions": true,
+    "network_model_provider_runs": true,
+    "additional_paid_runs": false,
+    "session_count": 2,
+    "cases_per_session": 5,
+    "maximum_attempts_per_session": 2,
+    "expires_at": "2026-07-17T14:59:00Z"
+  },
+  "repository_slots": {
+    "A": {
+      "name": "project-loop-harness",
+      "root_hint": ".",
+      "observed_revision": "e40168577a63514fb39170c343b91e9e68bd31d0",
+      "worktree_policy": "read_only_for_consumer_except_assigned_result_file",
+      "verification_command": "PYTHONPATH=src pytest -q tests/test_trace_contract_fixtures.py",
+      "trace_evidence_id": "E-0423",
+      "trace_path": "docs/evaluation/v0.5.1-trace-source-02-a.md",
+      "full_trace_size_bytes": 5358
+    },
+    "B": {
+      "name": "video-os-v2-spec",
+      "root_hint": "../video-os-v2-spec",
+      "observed_revision": "ff6229f841307466cbcd2a6efa280e8c9e556318",
+      "worktree_policy": "read_only_for_consumer_except_assigned_result_file",
+      "verification_command": "npm exec vitest run tests/validate.test.ts",
+      "trace_evidence_id": "E-0424",
+      "trace_path": "docs/evaluation/v0.5.1-trace-source-02-b.md",
+      "full_trace_size_bytes": 5055
+    }
+  },
+  "cases": [
+    {"id":"TRE2-001","task_id":"T-0087","repository_slot":"A","binding_mode":"valid","expected_outcome":"resume","source_session_id":"source-A1","resume_session_id":"resume-1","source_runtime":"origin-session","resume_runtime":"codex","source_model":"origin-model","resume_model":"codex","packet_path":"docs/evaluation/v0.5.1-trace-resume-packets-02/TRE2-001.json","packet_sha256":"29e3bf98c79e951a254480b329d10acca0bee059fe9e3959f7be1b3c49121d11"},
+    {"id":"TRE2-002","task_id":"T-0088","repository_slot":"A","binding_mode":"valid","expected_outcome":"resume","source_session_id":"source-A2","resume_session_id":"resume-2","source_runtime":"origin-session","resume_runtime":"claude","source_model":"origin-model","resume_model":"claude","packet_path":"docs/evaluation/v0.5.1-trace-resume-packets-02/TRE2-002.json","packet_sha256":"0c4d5f854c8f8d7666a146fa2d360060e1446cfc5e21940739c29092a0ca4dd5"},
+    {"id":"TRE2-003","task_id":"T-0089","repository_slot":"A","binding_mode":"hash_mismatch","expected_outcome":"safe_stop","source_session_id":"source-A3","resume_session_id":"resume-1","source_runtime":"origin-session","resume_runtime":"codex","source_model":"origin-model","resume_model":"codex","packet_path":"docs/evaluation/v0.5.1-trace-resume-packets-02/TRE2-003.json","packet_sha256":"41190c56a9a045b8e153f6544af3ea6f56aeab18dee499eb7f06e3cc2d0db5f7"},
+    {"id":"TRE2-004","task_id":"T-0090","repository_slot":"A","binding_mode":"valid","expected_outcome":"resume","source_session_id":"source-A4","resume_session_id":"resume-2","source_runtime":"origin-session","resume_runtime":"claude","source_model":"origin-model","resume_model":"claude","packet_path":"docs/evaluation/v0.5.1-trace-resume-packets-02/TRE2-004.json","packet_sha256":"7e5e2c50fd499c5431df3c2c6d241eb034bfac5faba67faaad02a5b6af3bf50c"},
+    {"id":"TRE2-005","task_id":"T-0091","repository_slot":"A","binding_mode":"line_range_invalid","expected_outcome":"safe_stop","source_session_id":"source-A5","resume_session_id":"resume-1","source_runtime":"origin-session","resume_runtime":"codex","source_model":"origin-model","resume_model":"codex","packet_path":"docs/evaluation/v0.5.1-trace-resume-packets-02/TRE2-005.json","packet_sha256":"c2b1e427cf984b1b2bb670e934aaa37cdaca26c3179baae19778dc2f476f1b5a"},
+    {"id":"TRE2-006","task_id":"T-0092","repository_slot":"B","binding_mode":"valid","expected_outcome":"resume","source_session_id":"source-B1","resume_session_id":"resume-2","source_runtime":"origin-session","resume_runtime":"claude","source_model":"origin-model","resume_model":"claude","packet_path":"docs/evaluation/v0.5.1-trace-resume-packets-02/TRE2-006.json","packet_sha256":"627cc2d268926958136609f1bb866a61963138d720a0ce2fcd70e11b6607b441"},
+    {"id":"TRE2-007","task_id":"T-0093","repository_slot":"B","binding_mode":"evidence_mismatch","expected_outcome":"safe_stop","source_session_id":"source-B2","resume_session_id":"resume-1","source_runtime":"origin-session","resume_runtime":"codex","source_model":"origin-model","resume_model":"codex","packet_path":"docs/evaluation/v0.5.1-trace-resume-packets-02/TRE2-007.json","packet_sha256":"d54394508a2de3e6fb9e108ff8c8b8645a4ba6bafb430e36fcb084ce0abb15a8"},
+    {"id":"TRE2-008","task_id":"T-0094","repository_slot":"B","binding_mode":"valid","expected_outcome":"resume","source_session_id":"source-B3","resume_session_id":"resume-2","source_runtime":"origin-session","resume_runtime":"claude","source_model":"origin-model","resume_model":"claude","packet_path":"docs/evaluation/v0.5.1-trace-resume-packets-02/TRE2-008.json","packet_sha256":"97af0b46fef56736481c485ad030b946d410a11eaf431829c38f7d040b567e56"},
+    {"id":"TRE2-009","task_id":"T-0095","repository_slot":"B","binding_mode":"path_mismatch","expected_outcome":"safe_stop","source_session_id":"source-B4","resume_session_id":"resume-1","source_runtime":"origin-session","resume_runtime":"codex","source_model":"origin-model","resume_model":"codex","packet_path":"docs/evaluation/v0.5.1-trace-resume-packets-02/TRE2-009.json","packet_sha256":"bf2c8448e426f77cdc99fa275baf355fc1ad328a6bdd9af81404962c68e8b047"},
+    {"id":"TRE2-010","task_id":"T-0096","repository_slot":"B","binding_mode":"valid","expected_outcome":"resume","source_session_id":"source-B5","resume_session_id":"resume-2","source_runtime":"origin-session","resume_runtime":"claude","source_model":"origin-model","resume_model":"claude","packet_path":"docs/evaluation/v0.5.1-trace-resume-packets-02/TRE2-010.json","packet_sha256":"c2985f621674ceb4f280e2b09eb2ae72b0b1048eab3148cbc91f4e0e776dced6"}
+  ],
+  "no_index_compatibility_checks": [
+    {
+      "id": "NIC2-001",
+      "kind": "live_packet_shape",
+      "packet_path": "docs/evaluation/v0.5.1-trace-resume-packets-02/NO-INDEX-T-0066.json",
+      "packet_sha256": "8f7824e183bbd7d959a2d9831550d668db9dabcc6e745326557ae6e628330c07",
+      "expected": "trace claim fields are absent and the existing packet remains valid"
+    },
+    {
+      "id": "NIC2-002",
+      "kind": "regression_test",
+      "command": "PYTHONPATH=src pytest -q tests/test_resume.py::test_resume_active_target_is_valid_read_only_and_replayable tests/test_trace_resume_evaluation_cohort_02.py::test_no_index_compatibility_packet_keeps_existing_shape",
+      "expected": "existing no-index resume behavior stays compatible"
+    }
+  ]
+}

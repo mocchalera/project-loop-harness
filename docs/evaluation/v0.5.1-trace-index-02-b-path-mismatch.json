@@ -1,0 +1,21 @@
+{
+  "contract_version": "intent-index/v0",
+  "index_id": "ii-eval-20260715-02-b-path-mismatch",
+  "generated_at": "2026-07-15T07:13:00Z",
+  "generator": "controlled-dogfood-fixture",
+  "source_trace": {
+    "evidence_id": "E-0424",
+    "manifest_path": ".project-loop/evidence/adhoc/e-0424-adhoc-v0.json",
+    "member_path": "docs/evaluation/v0.5.1-trace-source-02-b.md",
+    "stored_path": ".project-loop/evidence/adhoc-files/e-0424/02-v0.5.1-trace-source-02-b.md",
+    "sha256": "9740089086968eecb605e69253f76b01821f60dec4786fe8891fbcf18c0fe721"
+  },
+  "items": [
+    {
+      "id": "I-001",
+      "kind": "next_action_hint",
+      "claim": "This claim must not be selected because its copied source path is invalid.",
+      "source_refs": [{"evidence_id": "E-0424", "stored_path": ".project-loop/evidence/adhoc-files/e-0424/02-v0.5.1-trace-source-02-b.md", "line_start": 38, "line_end": 40}]
+    }
+  ]
+}

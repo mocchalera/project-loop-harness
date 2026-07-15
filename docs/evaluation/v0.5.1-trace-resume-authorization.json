@@ -1,0 +1,44 @@
+{
+  "contract_version": "trace-resume-authorization/v0",
+  "authorization_id": "TRA-20260715-01",
+  "authorized_at": "2026-07-15T06:53:50Z",
+  "expires_at": "2026-07-16T14:59:00Z",
+  "approver": "human:owner",
+  "recorder": "agent:root",
+  "source_kind": "cockpit_ask",
+  "source_ref": "ask_4099e2c7c40e",
+  "selected_configuration": "codex_plus_claude",
+  "session_scope": {
+    "session_count": 2,
+    "cases_per_session": 5,
+    "assignments": {
+      "codex": ["TRE-001", "TRE-003", "TRE-005", "TRE-007", "TRE-009"],
+      "claude": ["TRE-002", "TRE-004", "TRE-006", "TRE-008", "TRE-010"]
+    },
+    "maximum_attempts_per_session": 2
+  },
+  "allowed_data_classes": [
+    "assigned frozen handoff packets",
+    "packet-referenced copied Trace source lines",
+    "target test code and dependency metadata",
+    "read-only verification command output"
+  ],
+  "forbidden_data_classes": [
+    "secrets or credentials",
+    "customer data",
+    "media files",
+    "full transcripts",
+    "originating-session explanations"
+  ],
+  "write_scope": [
+    "docs/evaluation/v0.5.1-trace-resume-results/resume-1-codex.json",
+    "docs/evaluation/v0.5.1-trace-resume-results/resume-2-claude.json"
+  ],
+  "budget": {
+    "model_sessions": 2,
+    "initial_runs_per_session": 1,
+    "correction_runs_per_session": 1,
+    "additional_paid_apis": 0,
+    "external_services": 0
+  }
+}

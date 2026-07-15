@@ -1,0 +1,27 @@
+{
+  "contract_version": "independent-review-receipt/v0",
+  "review_id": "0182-v051-local-rc-codex",
+  "reviewed_at": "2026-07-15T08:37:27Z",
+  "reviewer": {
+    "runtime": "codex",
+    "cockpit_task_id": "2c03b3cd",
+    "session_id": "019f64e6-b942-7cd3-b5a5-56af28c272cf"
+  },
+  "mode": "read_only",
+  "verdict": "approved",
+  "bounded_findings": [],
+  "checks": {
+    "version_alignment": "passed",
+    "artifact_hash_match": "passed",
+    "source_wheel_sdist_three_path_evidence": "passed",
+    "sdist_trace_fixture_inclusion": "passed",
+    "evaluation_thresholds_unchanged": "passed",
+    "publication_unauthorized": "passed",
+    "targeted_tests": {
+      "passed": 9,
+      "failed": 0
+    }
+  },
+  "mutations_performed": [],
+  "publication_authorized": false
+}

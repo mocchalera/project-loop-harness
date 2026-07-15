@@ -1,0 +1,96 @@
+{
+  "contract_version": "trace-resume-evaluation-results/v1",
+  "cohort_id": "TRC-20260715-02",
+  "recorded_at": "2026-07-15T07:54:00Z",
+  "cohort_sha256": "7a27b74a7d9fdf4af0af78a0e365a9e59cd3fd8fabcffe264eb49d8d6dd88a79",
+  "authorization_ref": "evidence:E-0422",
+  "authorization_sha256": "7d1779dc94c6bfa40be4cecd5aee2d4114a18998afae65ae0aaabb08efc9a718",
+  "session_results": [
+    {
+      "resume_session_id": "resume-1",
+      "runtime": "codex",
+      "model": "gpt-5.6-sol",
+      "status": "completed",
+      "path": "docs/evaluation/v0.5.1-trace-resume-results-02/resume-1-codex.json",
+      "sha256": "fcd8d659d048de0d256e313a182fe3abec999b262f04defb3efcc296c0776564"
+    },
+    {
+      "resume_session_id": "resume-2",
+      "runtime": "claude",
+      "model": "claude-fable-5",
+      "status": "completed_normalized_from_raw_evidence:E-0432",
+      "path": "docs/evaluation/v0.5.1-trace-resume-results-02/resume-2-claude.json",
+      "sha256": "2da43a032cfe7f76454d4131457ab058e823e2dace89ba6f2f8145567c58baa2"
+    }
+  ],
+  "execution": {
+    "frozen_case_count": 10,
+    "repositories_represented": 2,
+    "independent_sessions_started": 2,
+    "consumer_sessions_completed": 2,
+    "model_provider_runs": 2,
+    "additional_paid_api_runs": 0,
+    "correction_budget_exceeded": false,
+    "valid_cases_completed_across_model_boundary": 5
+  },
+  "outcomes": {
+    "resumed": 6,
+    "assisted": 0,
+    "safe_stop": 4,
+    "failed": 0
+  },
+  "metrics": {
+    "valid_binding_cases": 6,
+    "valid_binding_successes": 6,
+    "resume_success_rate": 1.0,
+    "resume_success_threshold": 0.8,
+    "broken_binding_cases": 4,
+    "broken_binding_safe_stops": 4,
+    "broken_binding_safe_stop_rate": 1.0,
+    "broken_binding_safe_stop_threshold": 1.0,
+    "critical_trust_boundary_violations": 0,
+    "critical_trust_boundary_violation_threshold": 0,
+    "assistance_required_cases": 0,
+    "packet_sha256_checked_cases": 10,
+    "source_lines_checked_cases": 6,
+    "full_transcript_received_cases": 0,
+    "originating_session_explanation_received_cases": 0
+  },
+  "no_index_compatibility": {
+    "status": "passed",
+    "checks": 2,
+    "command": "PYTHONPATH=src pytest -q tests/test_resume.py::test_resume_active_target_is_valid_read_only_and_replayable tests/test_trace_resume_evaluation_cohort_02.py::test_no_index_compatibility_packet_keeps_existing_shape",
+    "result": "2 passed"
+  },
+  "packet_to_trace_ratios": [
+    {"case_id":"TRE2-001","handoff_size_bytes":2679,"full_trace_size_bytes":5358,"ratio":0.5},
+    {"case_id":"TRE2-002","handoff_size_bytes":2707,"full_trace_size_bytes":5358,"ratio":0.505226},
+    {"case_id":"TRE2-003","handoff_size_bytes":1844,"full_trace_size_bytes":5358,"ratio":0.344158},
+    {"case_id":"TRE2-004","handoff_size_bytes":2679,"full_trace_size_bytes":5358,"ratio":0.5},
+    {"case_id":"TRE2-005","handoff_size_bytes":1854,"full_trace_size_bytes":5358,"ratio":0.346025},
+    {"case_id":"TRE2-006","handoff_size_bytes":2687,"full_trace_size_bytes":5055,"ratio":0.531553},
+    {"case_id":"TRE2-007","handoff_size_bytes":1844,"full_trace_size_bytes":5055,"ratio":0.364787},
+    {"case_id":"TRE2-008","handoff_size_bytes":2687,"full_trace_size_bytes":5055,"ratio":0.531553},
+    {"case_id":"TRE2-009","handoff_size_bytes":1836,"full_trace_size_bytes":5055,"ratio":0.363205},
+    {"case_id":"TRE2-010","handoff_size_bytes":2659,"full_trace_size_bytes":5055,"ratio":0.526014}
+  ],
+  "promotion": {
+    "resume_success_passed": true,
+    "broken_binding_safe_stop_passed": true,
+    "critical_trust_boundary_passed": true,
+    "all_thresholds_passed": true,
+    "release_candidate_allowed": false
+  },
+  "limitations": [
+    "This remains controlled owner dogfood rather than external-user adoption evidence.",
+    "The Claude terminal launch required one transport correction and paused for its five-hour quota reset, but the same authorized session completed without an extra model run.",
+    "Claude emitted a detailed raw schema; Evidence E-0432 preserves it before coordinator normalization into the frozen result fields."
+  ],
+  "recommendation": {
+    "option": "continue",
+    "reason": "All unchanged technical thresholds passed. Proceed to human review of TRC-20260715-02 before allowing the v0.5.1 release candidate.",
+    "human_review_required": true,
+    "requires_new_cohort_id": false,
+    "requires_full_rerun": false
+  }
+}

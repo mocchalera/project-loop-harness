@@ -1,0 +1,163 @@
+{
+  "contract_version": "trace-binding-fixtures/v0",
+  "trace_fixture_path": "master-trace.md",
+  "trace": {
+    "contract_version": "master-trace/v0",
+    "trace_id": "mt-fixture-001",
+    "line_count": 11,
+    "sha256": "878b803431816438557642fbc6e3112ae5f7a0347410f1d1a9dfd4724a141db6"
+  },
+  "evidence_manifest": {
+    "contract_version": "adhoc-evidence/v0",
+    "evidence_id": "E-9001",
+    "manifest_path": ".project-loop/evidence/adhoc/e-9001-adhoc-v0.json",
+    "member_path": ".work/master-trace.md",
+    "stored_path": ".project-loop/evidence/adhoc-files/e-9001/01-master-trace.md",
+    "sha256": "878b803431816438557642fbc6e3112ae5f7a0347410f1d1a9dfd4724a141db6"
+  },
+  "intent_index": {
+    "contract_version": "intent-index/v0",
+    "index_id": "ii-fixture-001",
+    "generated_at": "2026-07-15T00:01:00Z",
+    "generator": "fixture-indexer",
+    "source_trace": {
+      "evidence_id": "E-9001",
+      "manifest_path": ".project-loop/evidence/adhoc/e-9001-adhoc-v0.json",
+      "member_path": ".work/master-trace.md",
+      "stored_path": ".project-loop/evidence/adhoc-files/e-9001/01-master-trace.md",
+      "sha256": "878b803431816438557642fbc6e3112ae5f7a0347410f1d1a9dfd4724a141db6"
+    },
+    "items": [
+      {
+        "id": "I-001",
+        "kind": "constraint_hint",
+        "claim": "Intent-index claims stay unverified until their source lines are checked.",
+        "source_refs": [
+          {
+            "evidence_id": "E-9001",
+            "stored_path": ".project-loop/evidence/adhoc-files/e-9001/01-master-trace.md",
+            "line_start": 9,
+            "line_end": 10
+          }
+        ]
+      },
+      {
+        "id": "I-002",
+        "kind": "next_action_hint",
+        "claim": "Run the targeted contract tests before implementation.",
+        "source_refs": [
+          {
+            "evidence_id": "E-9001",
+            "stored_path": ".project-loop/evidence/adhoc-files/e-9001/01-master-trace.md",
+            "line_start": 11,
+            "line_end": 11
+          }
+        ]
+      }
+    ]
+  },
+  "cases": [
+    {
+      "id": "valid_binding",
+      "mutations": [],
+      "expected": {"status": "valid", "error_codes": []}
+    },
+    {
+      "id": "hash_mismatch",
+      "mutations": [
+        {"op": "replace", "path": "source_trace.sha256", "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+      ],
+      "expected": {"status": "invalid", "error_codes": ["trace_hash_mismatch"]}
+    },
+    {
+      "id": "evidence_id_mismatch",
+      "mutations": [
+        {"op": "replace", "path": "source_trace.evidence_id", "value": "E-9002"},
+        {"op": "replace", "path": "items.0.source_refs.0.evidence_id", "value": "E-9002"},
+        {"op": "replace", "path": "items.1.source_refs.0.evidence_id", "value": "E-9002"}
+      ],
+      "expected": {"status": "invalid", "error_codes": ["trace_evidence_mismatch"]}
+    },
+    {
+      "id": "manifest_path_mismatch",
+      "mutations": [
+        {"op": "replace", "path": "source_trace.manifest_path", "value": ".project-loop/evidence/adhoc/e-9002-adhoc-v0.json"}
+      ],
+      "expected": {"status": "invalid", "error_codes": ["trace_manifest_path_mismatch"]}
+    },
+    {
+      "id": "stored_path_mismatch",
+      "mutations": [
+        {"op": "replace", "path": "source_trace.stored_path", "value": ".project-loop/evidence/adhoc-files/e-9001/02-master-trace.md"},
+        {"op": "replace", "path": "items.0.source_refs.0.stored_path", "value": ".project-loop/evidence/adhoc-files/e-9001/02-master-trace.md"},
+        {"op": "replace", "path": "items.1.source_refs.0.stored_path", "value": ".project-loop/evidence/adhoc-files/e-9001/02-master-trace.md"}
+      ],
+      "expected": {"status": "invalid", "error_codes": ["trace_stored_path_mismatch"]}
+    },
+    {
+      "id": "unsupported_contract",
+      "mutations": [
+        {"op": "replace", "path": "contract_version", "value": "intent-index/v9"}
+      ],
+      "expected": {"status": "invalid", "error_codes": ["unsupported_intent_index_contract"]}
+    },
+    {
+      "id": "duplicate_item_id",
+      "mutations": [
+        {"op": "replace", "path": "items.1.id", "value": "I-001"}
+      ],
+      "expected": {"status": "invalid", "error_codes": ["duplicate_item_id"]}
+    },
+    {
+      "id": "empty_source_refs",
+      "mutations": [
+        {"op": "replace", "path": "items.0.source_refs", "value": []}
+      ],
+      "expected": {"status": "invalid", "error_codes": ["empty_source_refs"]}
+    },
+    {
+      "id": "reversed_line_range",
+      "mutations": [
+        {"op": "replace", "path": "items.0.source_refs.0.line_start", "value": 10},
+        {"op": "replace", "path": "items.0.source_refs.0.line_end", "value": 9}
+      ],
+      "expected": {"status": "invalid", "error_codes": ["reversed_line_range"]}
+    },
+    {
+      "id": "out_of_bounds_line_range",
+      "mutations": [
+        {"op": "replace", "path": "items.1.source_refs.0.line_end", "value": 12}
+      ],
+      "expected": {"status": "invalid", "error_codes": ["line_range_out_of_bounds"]}
+    }
+  ],
+  "proposed_handoff_extension": {
+    "field_name": "trace_claim_refs",
+    "optional": true,
+    "trust_model": "claims-not-facts",
+    "ordering": ["intent_index_ref", "item_id"],
+    "omission_reasons": [
+      "no_intent_index",
+      "binding_invalid",
+      "no_actionable_items",
+      "packet_budget"
+    ],
+    "example": [
+      {
+        "intent_index_ref": "evidence:E-9002",
+        "item_id": "I-001",
+        "kind": "constraint_hint",
+        "claim": "Intent-index claims stay unverified until their source lines are checked.",
+        "trust": "unverified",
+        "source_refs": [
+          {
+            "evidence_id": "E-9001",
+            "stored_path": ".project-loop/evidence/adhoc-files/e-9001/01-master-trace.md",
+            "line_start": 9,
+            "line_end": 10
+          }
+        ]
+      }
+    ]
+  }
+}

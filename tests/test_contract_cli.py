@@ -8,6 +8,9 @@ from pcl.cli import main
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "completion_packet"
 HANDOFF_FIXTURE = Path(__file__).parent / "fixtures" / "handoff_packet" / "minimal.json"
+TRACE_BINDING_FIXTURE = (
+    Path(__file__).parent / "fixtures" / "trace_binding_v0" / "trace-binding-fixtures.json"
+)
 
 
 def test_contract_validate_json_success_has_pure_stdout(capsys) -> None:
@@ -109,3 +112,40 @@ def test_contract_validate_handoff_packet_json_success(capsys) -> None:
         "ok": True,
         "path": str(HANDOFF_FIXTURE),
     }
+
+
+def test_contract_validate_intent_index_is_structural_only(tmp_path: Path, capsys) -> None:
+    fixture = json.loads(TRACE_BINDING_FIXTURE.read_text(encoding="utf-8"))
+    index = fixture["intent_index"]
+    index["source_trace"]["sha256"] = "a" * 64
+    path = tmp_path / "intent-index.json"
+    path.write_text(json.dumps(index), encoding="utf-8")
+
+    assert main([
+        "contract", "validate", "--type", "intent-index/v0", str(path), "--json",
+    ]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["ok"] is True
+    assert payload["validation_scope"] == "structure_only"
+    assert payload["evidence_binding_checked"] is False
+    assert payload["semantic_validation"] is False
+
+
+def test_contract_validate_intent_index_reports_typed_diagnostic(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    fixture = json.loads(TRACE_BINDING_FIXTURE.read_text(encoding="utf-8"))
+    index = fixture["intent_index"]
+    index["items"][1]["id"] = index["items"][0]["id"]
+    path = tmp_path / "intent-index.json"
+    path.write_text(json.dumps(index), encoding="utf-8")
+
+    assert main([
+        "contract", "validate", "--type", "intent-index/v0", str(path), "--json",
+    ]) == 1
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["diagnostics"][0]["code"] == "duplicate_item_id"
+    assert payload["evidence_binding_checked"] is False

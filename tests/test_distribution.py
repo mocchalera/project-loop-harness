@@ -200,7 +200,7 @@ def test_sdist_manifest_and_ci_include_doc_contract_smoke() -> None:
     for expected in [
         "recursive-include docs *.md",
         "recursive-include agent-tasks *.md",
-        "recursive-include tests *.py *.json",
+        "recursive-include tests *.py *.json *.md",
     ]:
         assert expected in manifest
     assert '"build>=1"' in pyproject
@@ -244,6 +244,17 @@ def test_sdist_contains_profile_contracts_and_builtin_manifest(tmp_path: Path) -
     assert any(name.endswith("/tests/test_profile_ingest_dry_run.py") for name in names)
     assert any(
         name.endswith("/src/pcl/profiles/fixtures/council.discovery/scenarios.json")
+        for name in names
+    )
+    assert any(
+        name.endswith("/tests/fixtures/trace_binding_v0/master-trace.md") for name in names
+    )
+    assert any(
+        name.endswith("/tests/fixtures/trace_binding_v0/release-smoke-valid-trace-binding.json")
+        for name in names
+    )
+    assert any(
+        name.endswith("/tests/fixtures/trace_binding_v0/release-smoke-invalid-trace-binding.json")
         for name in names
     )
     extract_dir = tmp_path / "extracted"

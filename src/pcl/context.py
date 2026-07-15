@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from json import JSONDecodeError
 from pathlib import Path
@@ -23,6 +24,7 @@ from .code_context.receipts import (
 )
 from .code_context.impact import _require_existing_target, _validate_target_id_shape
 from .context_binding import _receipt_target_binding_agrees
+from .contracts.intent_index import select_trace_claim_refs, validate_intent_index_binding
 from .db import connect, table_exists
 from .errors import ContextPackBudgetError, EXIT_USAGE, InvalidInputError, PclError
 from .evidence import newest_linked_evidence_id
@@ -1818,7 +1820,15 @@ def _master_trace_context_preflight(
     else:
         status = "present"
 
-    return {
+    binding = None
+    claim_selection = None
+    if status == "present":
+        binding = _master_trace_binding(paths, candidates)
+        claim_selection = binding.pop("_claim_selection", None)
+        if binding["status"] != "valid":
+            status = "invalid_binding"
+
+    result = {
         "contract_version": MASTER_TRACE_CONTEXT_CONTRACT_VERSION,
         "target": target,
         "status": status,
@@ -1831,17 +1841,23 @@ def _master_trace_context_preflight(
         "unresolved_stored_paths": unresolved,
         "raw_transcript_inlined": False,
     }
+    if binding is not None:
+        result["binding"] = binding
+    if claim_selection is not None:
+        result.update(claim_selection)
+    return result
 
 
 def _master_trace_context_payload(preflight: dict[str, Any]) -> dict[str, Any]:
     if preflight["status"] != "present":
         return preflight
     candidates = preflight["candidates"]
-    return {
+    result = {
         "contract_version": MASTER_TRACE_CONTEXT_CONTRACT_VERSION,
         "target": preflight["target"],
         "master_trace": candidates["master_trace"][0],
         "intent_index": candidates["intent_index"][0],
+        "binding": preflight["binding"],
         "trust_model": "claims-not-facts",
         "source_ref_discipline": {
             "line_numbering": "one-based-inclusive",
@@ -1850,6 +1866,13 @@ def _master_trace_context_payload(preflight: dict[str, Any]) -> dict[str, Any]:
         },
         "raw_transcript_inlined": False,
     }
+    for field in (
+        "trace_claim_refs",
+        "trace_claim_ref_omissions",
+        "trace_claim_ref_budget",
+    ):
+        result[field] = preflight[field]
+    return result
 
 
 def _master_trace_candidates(
@@ -1862,11 +1885,15 @@ def _master_trace_candidates(
     for evidence in linked_evidence:
         manifest_path = str(evidence.get("manifest_path") or "")
         members = _adhoc_manifest_members(paths, manifest_path)
-        matched_members = [
-            member
-            for member in members
-            if _evidence_member_contract_version(paths, member) == contract_version
-        ]
+        matched_members = []
+        for member in members:
+            version = _evidence_member_contract_version(paths, member)
+            if version == contract_version or (
+                contract_version == INTENT_INDEX_CONTRACT_VERSION
+                and isinstance(version, str)
+                and version.startswith("intent-index/")
+            ):
+                matched_members.append(member)
         if not matched_members:
             continue
         candidates.append(
@@ -1888,9 +1915,88 @@ def _master_trace_candidates(
                     for member in matched_members
                     if not _stored_member_path_resolves(paths, member)
                 ],
+                "members": matched_members,
             }
         )
     return candidates
+
+
+def _master_trace_binding(
+    paths: ProjectPaths,
+    candidates: dict[str, list[dict[str, Any]]],
+) -> dict[str, Any]:
+    trace_candidate = candidates["master_trace"][0]
+    index_candidate = candidates["intent_index"][0]
+    trace_members = trace_candidate["members"]
+    index_members = index_candidate["members"]
+    if len(trace_members) != 1 or len(index_members) != 1:
+        return {
+            "contract_version": "intent-index-binding/v0",
+            "status": "invalid",
+            "diagnostics": [{
+                "code": "candidate_member_selection_required",
+                "path": "$",
+                "message": "trace and index Evidence must each resolve to exactly one member",
+            }],
+            "structural_validation": False,
+            "source_binding_checked": False,
+            "semantic_validation": False,
+        }
+
+    trace_member = trace_members[0]
+    index_member = index_members[0]
+    trace_path = _local_path(paths, str(trace_member.get("stored_path") or ""))
+    index_path = _local_path(paths, str(index_member.get("stored_path") or ""))
+    try:
+        trace_bytes = trace_path.read_bytes() if trace_path is not None else b""
+        index_bytes = index_path.read_bytes() if index_path is not None else b""
+        index_value = json.loads(index_bytes.decode("utf-8"))
+    except (OSError, UnicodeError, JSONDecodeError) as exc:
+        return {
+            "contract_version": "intent-index-binding/v0",
+            "status": "invalid",
+            "diagnostics": [{
+                "code": "binding_artifact_unreadable",
+                "path": "$",
+                "message": str(exc),
+            }],
+            "structural_validation": False,
+            "source_binding_checked": False,
+            "semantic_validation": False,
+        }
+
+    result = validate_intent_index_binding(
+        index_value,
+        trace_evidence_id=str(trace_candidate["evidence_id"]),
+        trace_manifest_path=str(trace_candidate["manifest_path"]),
+        trace_member_path=str(trace_member.get("path") or ""),
+        trace_stored_path=str(trace_member.get("stored_path") or ""),
+        recorded_trace_sha256=str(trace_member.get("sha256") or ""),
+        trace_bytes=trace_bytes,
+    )
+    recorded_index_sha256 = str(index_member.get("sha256") or "")
+    actual_index_sha256 = hashlib.sha256(index_bytes).hexdigest()
+    result["intent_index"] = {
+        "evidence_id": str(index_candidate["evidence_id"]),
+        "manifest_path": str(index_candidate["manifest_path"]),
+        "member_path": str(index_member.get("path") or ""),
+        "stored_path": str(index_member.get("stored_path") or ""),
+        "recorded_sha256": recorded_index_sha256,
+        "actual_sha256": actual_index_sha256,
+    }
+    if recorded_index_sha256 != actual_index_sha256:
+        result["diagnostics"].append({
+            "code": "recorded_intent_index_hash_mismatch",
+            "path": "$.intent_index",
+            "message": "recorded index SHA-256 does not match copied bytes",
+        })
+        result["status"] = "invalid"
+    if result["status"] == "valid":
+        result["_claim_selection"] = select_trace_claim_refs(
+            index_value,
+            intent_index_ref=f"evidence:{index_candidate['evidence_id']}",
+        )
+    return result
 
 
 def _public_master_trace_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
@@ -1976,6 +2082,24 @@ def _render_master_trace_context_section(payload: dict[str, Any]) -> str:
                 "Raw transcript inlined: false",
             ]
         )
+        lines.extend(["", "### Trace claim references (unverified)", ""])
+        for claim_ref in payload["trace_claim_refs"]:
+            lines.append(
+                f"- {claim_ref['item_id']} [{claim_ref['kind']}]: {claim_ref['claim']}"
+            )
+            for source_ref in claim_ref["source_refs"]:
+                lines.append(
+                    f"  - {source_ref['evidence_id']} {source_ref['stored_path']} "
+                    f"lines {source_ref['line_start']}-{source_ref['line_end']}"
+                )
+        if not payload["trace_claim_refs"]:
+            lines.append("- None.")
+        if payload["trace_claim_ref_omissions"]:
+            lines.extend(["", "Omitted claim references:"])
+            lines.extend(
+                f"- {item['item_id']}: {item['reason']}"
+                for item in payload["trace_claim_ref_omissions"]
+            )
     return "\n".join(lines)
 
 

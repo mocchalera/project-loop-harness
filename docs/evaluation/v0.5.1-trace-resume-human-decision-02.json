@@ -1,0 +1,11 @@
+{
+  "contract_version": "trace-resume-human-decision/v0",
+  "cohort_id": "TRC-20260715-02",
+  "source_kind": "cockpit_ask",
+  "source_ref": "ask_6d59ffeb5ebf",
+  "decision": "continue",
+  "decided_by": "human:owner",
+  "recorded_at": "2026-07-15T08:03:00Z",
+  "reviewed_evidence": ["evidence:E-0432", "evidence:E-0433"],
+  "meaning": "Task 0181 is accepted and v0.5.1 local release preparation may begin. This does not authorize tag, push, GitHub Release, PyPI publication, pipx upgrade, or launch announcement."
+}

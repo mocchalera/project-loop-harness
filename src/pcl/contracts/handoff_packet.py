@@ -40,14 +40,21 @@ _TOP_LEVEL_FIELDS = {
     "size_bytes",
     "omitted_sections",
     "restart_context",
+    "trace_claim_refs",
+    "trace_claim_ref_omissions",
+    "trace_claim_ref_budget",
 }
 _REQUIRED_TOP_LEVEL_FIELDS = _TOP_LEVEL_FIELDS - {
     "intent_index_ref",
     "budget_remaining",
     "restart_context",
+    "trace_claim_refs",
+    "trace_claim_ref_omissions",
+    "trace_claim_ref_budget",
 }
 _PACKET_ID = re.compile(r"^hp-sha256:[0-9a-f]{64}$")
 _EVIDENCE_REF = re.compile(r"^evidence:E-[0-9]{4,}$")
+_EVIDENCE_ID = re.compile(r"^E-[0-9]{4,}$")
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _TARGETS = {
     "goal": re.compile(r"^G-[0-9]{4,}$"),
@@ -147,6 +154,18 @@ def validate_handoff_packet(packet: Any) -> HandoffPacketValidationResult:
     _string_array(packet.get("risks"), "$.risks", errors)
     _next_action(packet.get("next_safe_action"), errors)
     _context_refs(packet.get("context_refs"), errors)
+    claim_fields = (
+        packet.get("trace_claim_refs"),
+        packet.get("trace_claim_ref_omissions"),
+        packet.get("trace_claim_ref_budget"),
+    )
+    if any(value is not None for value in claim_fields):
+        if not all(value is not None for value in claim_fields):
+            errors.append("$.trace_claim_refs: claim refs, omissions, and budget must appear together")
+        else:
+            _trace_claim_refs(claim_fields[0], errors)
+            _trace_claim_ref_omissions(claim_fields[1], errors)
+            _trace_claim_ref_budget(claim_fields[2], claim_fields[0], errors)
     restart_context = packet.get("restart_context")
     if restart_context is not None:
         _restart_context(restart_context, errors)
@@ -269,6 +288,88 @@ def _context_refs(value: Any, errors: list[str]) -> None:
             if ref in seen:
                 errors.append(f"{path}.ref: duplicate context ref")
             seen.add(ref)
+
+
+def _trace_claim_refs(value: Any, errors: list[str]) -> None:
+    path = "$.trace_claim_refs"
+    if not _array(value, path, errors):
+        return
+    seen: set[tuple[str, str]] = set()
+    for index, item in enumerate(value):
+        item_path = f"{path}[{index}]"
+        if not _object(item, item_path, errors):
+            continue
+        fields = {"intent_index_ref", "item_id", "kind", "claim", "trust", "source_refs"}
+        _fields(item, item_path, fields, fields, errors)
+        _string(item.get("intent_index_ref"), f"{item_path}.intent_index_ref", errors, pattern=_EVIDENCE_REF)
+        for name in ("item_id", "kind", "claim"):
+            _string(item.get(name), f"{item_path}.{name}", errors)
+        _equal(item.get("trust"), "unverified", f"{item_path}.trust", errors)
+        refs = item.get("source_refs")
+        if _array(refs, f"{item_path}.source_refs", errors):
+            if not refs:
+                errors.append(f"{item_path}.source_refs: must not be empty")
+            for ref_index, ref in enumerate(refs):
+                ref_path = f"{item_path}.source_refs[{ref_index}]"
+                if not _object(ref, ref_path, errors):
+                    continue
+                ref_fields = {"evidence_id", "stored_path", "line_start", "line_end"}
+                _fields(ref, ref_path, ref_fields, ref_fields, errors)
+                _string(ref.get("evidence_id"), f"{ref_path}.evidence_id", errors, pattern=_EVIDENCE_ID)
+                _string(ref.get("stored_path"), f"{ref_path}.stored_path", errors)
+                start = ref.get("line_start")
+                end = ref.get("line_end")
+                _positive_int(start, f"{ref_path}.line_start", errors)
+                _positive_int(end, f"{ref_path}.line_end", errors)
+                if isinstance(start, int) and isinstance(end, int) and start > end:
+                    errors.append(f"{ref_path}: line_start must be <= line_end")
+        key = (str(item.get("intent_index_ref")), str(item.get("item_id")))
+        if key in seen:
+            errors.append(f"{item_path}: duplicate intent-index/item reference")
+        seen.add(key)
+
+
+def _trace_claim_ref_omissions(value: Any, errors: list[str]) -> None:
+    path = "$.trace_claim_ref_omissions"
+    if not _array(value, path, errors):
+        return
+    seen: set[str] = set()
+    for index, item in enumerate(value):
+        item_path = f"{path}[{index}]"
+        if not _object(item, item_path, errors):
+            continue
+        fields = {"item_id", "reason"}
+        _fields(item, item_path, fields, fields, errors)
+        _string(item.get("item_id"), f"{item_path}.item_id", errors)
+        if item.get("reason") not in {
+            "packet_budget",
+            "unsupported_item_shape",
+            "explicit_non_selection",
+        }:
+            errors.append(f"{item_path}.reason: has invalid omission reason")
+        item_id = str(item.get("item_id"))
+        if item_id in seen:
+            errors.append(f"{item_path}.item_id: duplicate omission")
+        seen.add(item_id)
+
+
+def _trace_claim_ref_budget(value: Any, refs: Any, errors: list[str]) -> None:
+    path = "$.trace_claim_ref_budget"
+    if not _object(value, path, errors):
+        return
+    fields = {"max_items", "max_bytes", "included_items", "included_bytes"}
+    _fields(value, path, fields, fields, errors)
+    for name in fields:
+        _nonnegative_int(value.get(name), f"{path}.{name}", errors)
+    if isinstance(refs, list) and value.get("included_items") != len(refs):
+        errors.append(f"{path}.included_items: must match trace_claim_refs length")
+    if isinstance(refs, list):
+        actual_bytes = sum(
+            len(json.dumps(item, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode("utf-8"))
+            for item in refs
+        )
+        if value.get("included_bytes") != actual_bytes:
+            errors.append(f"{path}.included_bytes: must match canonical selected item bytes")
 
 
 def _restart_context(value: Any, errors: list[str]) -> None:
@@ -454,6 +555,11 @@ def _equal(value: Any, expected: Any, path: str, errors: list[str]) -> None:
 def _nonnegative_int(value: Any, path: str, errors: list[str]) -> None:
     if not isinstance(value, int) or isinstance(value, bool) or value < 0:
         errors.append(f"{path}: must be a non-negative integer")
+
+
+def _positive_int(value: Any, path: str, errors: list[str]) -> None:
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        errors.append(f"{path}: must be a positive integer")
 
 
 def _timestamp(value: Any, path: str, errors: list[str]) -> None:

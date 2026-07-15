@@ -380,6 +380,31 @@ not control-plane depth, as the current bottleneck. The ordered reset is
 This milestone adds no dependency, database migration, hosted service,
 telemetry, provider call, or automatic GitHub write.
 
+## Milestone 20: v0.5.1 Trace & Efficient Handoff
+
+The canonical plan is `docs/plan-v0.5.1.md`. The owner removed availability of
+three external participants from the start gate on 2026-07-15; controlled
+cross-session/runtime dogfood replaces that unbounded dependency without being
+misrepresented as external adoption evidence.
+
+- 0178 characterizes the existing reference-only behavior and freezes binding,
+  claim-ref, and evaluation fixtures.
+- 0179 validates intent-index structure and exact Evidence/hash/path/line-range
+  binding through existing read-only surfaces.
+- 0180 emits bounded, deterministically selected **unverified** claim refs in
+  context/resume without inlining trace text.
+- 0181 runs at least 10 frozen cases across two owned repositories and two
+  independent sessions, with authorized cross-runtime/model coverage.
+- 0182 prepares the local source/wheel/sdist RC only after the evaluation gate
+  passes and a human records `continue`.
+- 0183 independently closes out public facts only after a separate publication
+  decision and release action.
+
+The slices keep schema 8, Core model-independent, inspection read-only, and
+no-index behavior compatible. First-class Trace/Intent entities, telemetry,
+provider execution, semantic retrieval, and automatic transcript capture stay
+out of scope.
+
 ## Semantic promotion gate
 
 Embeddings, Tree-sitter, call graphs, and semantic retrieval stay out

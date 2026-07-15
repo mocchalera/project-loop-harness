@@ -166,31 +166,44 @@ def _add_master_trace_pair(root: Path, capsys) -> list[dict[str, Any]]:
         "Preflight source line.\n",
         encoding="utf-8",
     )
+    assert main([
+        "--root", str(root), "evidence", "add", "--file", trace_path.name,
+        "--summary", "Master trace", "--copy", "--task", "T-0001", "--json",
+    ]) == 0
+    evidence = [_json_output(capsys)["evidence"]]
+    trace_evidence = evidence[0]
+    trace_member = trace_evidence["members"][0]
     index_path = root / "intent-index.json"
     index_path.write_text(
-        json.dumps({"contract_version": "intent-index/v0", "items": []}) + "\n",
+        json.dumps({
+            "contract_version": "intent-index/v0",
+            "index_id": "ii-check-fixture",
+            "generated_at": "2026-07-10T00:01:00Z",
+            "generator": "test-fixture",
+            "source_trace": {
+                "evidence_id": trace_evidence["id"],
+                "manifest_path": trace_evidence["manifest_path"],
+                "member_path": trace_member["path"],
+                "stored_path": trace_member["stored_path"],
+                "sha256": trace_member["sha256"],
+            },
+            "items": [{
+                "id": "I-001", "kind": "task_hint",
+                "claim": "Use the preflight source line.",
+                "source_refs": [{
+                    "evidence_id": trace_evidence["id"],
+                    "stored_path": trace_member["stored_path"],
+                    "line_start": 7, "line_end": 7,
+                }],
+            }],
+        }, sort_keys=True) + "\n",
         encoding="utf-8",
     )
-    evidence = []
-    for path, summary in (
-        (trace_path, "Master trace"),
-        (index_path, "Intent index"),
-    ):
-        assert main([
-            "--root",
-            str(root),
-            "evidence",
-            "add",
-            "--file",
-            path.name,
-            "--summary",
-            summary,
-            "--copy",
-            "--task",
-            "T-0001",
-            "--json",
-        ]) == 0
-        evidence.append(_json_output(capsys)["evidence"])
+    assert main([
+        "--root", str(root), "evidence", "add", "--file", index_path.name,
+        "--summary", "Intent index", "--copy", "--task", "T-0001", "--json",
+    ]) == 0
+    evidence.append(_json_output(capsys)["evidence"])
     return evidence
 
 
@@ -313,6 +326,10 @@ def test_context_check_reports_master_trace_preflight_and_remains_read_only(
     assert preflight["ambiguous"] == []
     assert preflight["unresolved_stored_paths"] == []
     assert preflight["raw_transcript_inlined"] is False
+    assert preflight["binding"]["status"] == "valid"
+    assert preflight["binding"]["semantic_validation"] is False
+    assert preflight["binding"]["trace"]["evidence_id"] == evidence[0]["id"]
+    assert preflight["binding"]["intent_index"]["evidence_id"] == evidence[1]["id"]
     assert preflight["candidates"]["master_trace"] == [
         {
             "evidence_id": evidence[0]["id"],
@@ -581,6 +598,33 @@ def test_context_check_is_read_only_for_rows_events_and_artifacts(
     ]) == 0
     _json_output(capsys)
 
+    assert _state_counts(tmp_path) == before
+
+
+def test_context_check_invalid_binding_fails_closed_and_remains_read_only(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_task_code_project(tmp_path, capsys)
+    evidence = _add_master_trace_pair(tmp_path, capsys)
+    copied_index = tmp_path / evidence[1]["members"][0]["stored_path"]
+    payload = json.loads(copied_index.read_text(encoding="utf-8"))
+    payload["items"][0]["claim"] = "Changed after Evidence capture"
+    copied_index.write_text(json.dumps(payload), encoding="utf-8")
+    before = _state_counts(tmp_path)
+
+    assert main([
+        "--root", str(tmp_path), "context", "check", "--task", "T-0001", "--json",
+    ]) == 0
+    preflight = _json_output(capsys)["context_check"]["master_trace_context"]
+
+    assert preflight["status"] == "invalid_binding"
+    assert preflight["binding"]["status"] == "invalid"
+    assert [item["code"] for item in preflight["binding"]["diagnostics"]] == [
+        "recorded_intent_index_hash_mismatch"
+    ]
+    assert preflight["binding"]["semantic_validation"] is False
+    assert "trace_claim_refs" not in preflight
     assert _state_counts(tmp_path) == before
 
 

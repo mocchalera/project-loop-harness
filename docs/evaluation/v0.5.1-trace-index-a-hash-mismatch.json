@@ -1,0 +1,21 @@
+{
+  "contract_version": "intent-index/v0",
+  "index_id": "ii-eval-20260715-a-hash-mismatch",
+  "generated_at": "2026-07-15T06:31:00Z",
+  "generator": "controlled-dogfood-fixture",
+  "source_trace": {
+    "evidence_id": "E-0409",
+    "manifest_path": ".project-loop/evidence/adhoc/e-0409-adhoc-v0.json",
+    "member_path": "docs/evaluation/v0.5.1-trace-source-a.md",
+    "stored_path": ".project-loop/evidence/adhoc-files/e-0409/01-v0.5.1-trace-source-a.md",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "items": [
+    {
+      "id": "I-001",
+      "kind": "next_action_hint",
+      "claim": "This claim must not be selected because its source trace hash is invalid.",
+      "source_refs": [{"evidence_id": "E-0409", "stored_path": ".project-loop/evidence/adhoc-files/e-0409/01-v0.5.1-trace-source-a.md", "line_start": 11, "line_end": 12}]
+    }
+  ]
+}

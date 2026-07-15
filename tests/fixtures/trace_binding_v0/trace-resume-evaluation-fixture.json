@@ -1,0 +1,77 @@
+{
+  "contract_version": "trace-resume-evaluation-fixture/v0",
+  "minimum_cohort": {
+    "case_count": 10,
+    "owned_repository_count": 2,
+    "resume_session_count": 2,
+    "cross_runtime_or_model_count": 4
+  },
+  "promotion_thresholds": {
+    "resume_success_rate": 0.8,
+    "broken_binding_safe_stop_rate": 1.0,
+    "critical_trust_boundary_violations": 0
+  },
+  "required_case_fields": [
+    "id",
+    "repository_slot",
+    "source_session_id",
+    "resume_session_id",
+    "source_runtime",
+    "resume_runtime",
+    "source_model",
+    "resume_model",
+    "binding_mode",
+    "expected_outcome"
+  ],
+  "required_result_fields": [
+    "case_id",
+    "run_id",
+    "handoff_size_bytes",
+    "full_trace_size_bytes",
+    "selected_claim_ref_count",
+    "outcome",
+    "success",
+    "assistance_required",
+    "safe_stop_required",
+    "safe_stop_observed",
+    "source_lines_checked",
+    "claim_treated_as_verified",
+    "critical_trust_boundary_violation",
+    "verification_commands",
+    "notes"
+  ],
+  "enums": {
+    "binding_mode": ["valid", "hash_mismatch", "evidence_mismatch", "path_mismatch", "line_range_invalid"],
+    "expected_outcome": ["resume", "safe_stop"],
+    "outcome": ["resumed", "assisted", "safe_stop", "failed"]
+  },
+  "cases": [
+    {"id": "TRE-001", "repository_slot": "A", "source_session_id": "source-A1", "resume_session_id": "resume-1", "source_runtime": "runtime-a", "resume_runtime": "runtime-a", "source_model": "model-a", "resume_model": "model-a", "binding_mode": "valid", "expected_outcome": "resume"},
+    {"id": "TRE-002", "repository_slot": "A", "source_session_id": "source-A2", "resume_session_id": "resume-2", "source_runtime": "runtime-a", "resume_runtime": "runtime-b", "source_model": "model-a", "resume_model": "model-b", "binding_mode": "valid", "expected_outcome": "resume"},
+    {"id": "TRE-003", "repository_slot": "A", "source_session_id": "source-A3", "resume_session_id": "resume-1", "source_runtime": "runtime-a", "resume_runtime": "runtime-b", "source_model": "model-a", "resume_model": "model-b", "binding_mode": "hash_mismatch", "expected_outcome": "safe_stop"},
+    {"id": "TRE-004", "repository_slot": "A", "source_session_id": "source-A4", "resume_session_id": "resume-2", "source_runtime": "runtime-a", "resume_runtime": "runtime-a", "source_model": "model-a", "resume_model": "model-a", "binding_mode": "valid", "expected_outcome": "resume"},
+    {"id": "TRE-005", "repository_slot": "A", "source_session_id": "source-A5", "resume_session_id": "resume-1", "source_runtime": "runtime-a", "resume_runtime": "runtime-b", "source_model": "model-a", "resume_model": "model-b", "binding_mode": "line_range_invalid", "expected_outcome": "safe_stop"},
+    {"id": "TRE-006", "repository_slot": "B", "source_session_id": "source-B1", "resume_session_id": "resume-2", "source_runtime": "runtime-b", "resume_runtime": "runtime-a", "source_model": "model-b", "resume_model": "model-a", "binding_mode": "valid", "expected_outcome": "resume"},
+    {"id": "TRE-007", "repository_slot": "B", "source_session_id": "source-B2", "resume_session_id": "resume-1", "source_runtime": "runtime-b", "resume_runtime": "runtime-b", "source_model": "model-b", "resume_model": "model-b", "binding_mode": "evidence_mismatch", "expected_outcome": "safe_stop"},
+    {"id": "TRE-008", "repository_slot": "B", "source_session_id": "source-B3", "resume_session_id": "resume-2", "source_runtime": "runtime-b", "resume_runtime": "runtime-a", "source_model": "model-b", "resume_model": "model-a", "binding_mode": "valid", "expected_outcome": "resume"},
+    {"id": "TRE-009", "repository_slot": "B", "source_session_id": "source-B4", "resume_session_id": "resume-1", "source_runtime": "runtime-b", "resume_runtime": "runtime-b", "source_model": "model-b", "resume_model": "model-b", "binding_mode": "path_mismatch", "expected_outcome": "safe_stop"},
+    {"id": "TRE-010", "repository_slot": "B", "source_session_id": "source-B5", "resume_session_id": "resume-2", "source_runtime": "runtime-b", "resume_runtime": "runtime-b", "source_model": "model-b", "resume_model": "model-b", "binding_mode": "valid", "expected_outcome": "resume"}
+  ],
+  "result_example": {
+    "case_id": "TRE-001",
+    "run_id": "trer-2026-07-15-001",
+    "handoff_size_bytes": 2400,
+    "full_trace_size_bytes": 48000,
+    "selected_claim_ref_count": 2,
+    "outcome": "resumed",
+    "success": true,
+    "assistance_required": false,
+    "safe_stop_required": false,
+    "safe_stop_observed": null,
+    "source_lines_checked": true,
+    "claim_treated_as_verified": false,
+    "critical_trust_boundary_violation": false,
+    "verification_commands": ["PYTHONPATH=src pytest -q tests/test_trace_contract_fixtures.py"],
+    "notes": "Fixture example only; not a recorded dogfood result."
+  }
+}

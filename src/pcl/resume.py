@@ -10,6 +10,7 @@ from typing import Any
 
 from . import __version__
 from .context_binding import _receipt_target_binding_agrees
+from .context import _linked_master_trace_evidence, _master_trace_context_preflight
 from .contracts.completion_packet import validate_completion_packet
 from .contracts.handoff_packet import (
     HANDOFF_PACKET_CONTRACT_VERSION,
@@ -76,6 +77,7 @@ def build_handoff_packet(
             completion=completion,
             work_brief=work_brief,
         )
+        trace_context = _trace_handoff_context(paths, conn, target=target)
         packet = _packet_body(
             paths,
             target=target,
@@ -84,6 +86,7 @@ def build_handoff_packet(
             decisions=decisions,
             context_refs=context_refs,
             omitted_sections=omitted,
+            trace_context=trace_context,
             generated_at=(now or utc_now_iso()).replace("+00:00", "Z"),
         )
     finally:
@@ -175,6 +178,23 @@ def render_handoff_markdown(packet: dict[str, Any]) -> str:
         lines.extend(f"- {path}" for path in restart_context["documentation_candidates"])
         if not restart_context["documentation_candidates"]:
             lines.append("- None.")
+    if "trace_claim_refs" in packet:
+        lines.extend(["", "## Trace claim references (unverified)", ""])
+        for claim_ref in packet["trace_claim_refs"]:
+            lines.append(
+                f"- {claim_ref['item_id']} [{claim_ref['kind']}]: {claim_ref['claim']}"
+            )
+            for source_ref in claim_ref["source_refs"]:
+                lines.append(
+                    f"  - {source_ref['evidence_id']} {source_ref['stored_path']} "
+                    f"lines {source_ref['line_start']}-{source_ref['line_end']}"
+                )
+        if packet["trace_claim_ref_omissions"]:
+            lines.extend(["", "Omitted claim references:"])
+            lines.extend(
+                f"- {item['item_id']}: {item['reason']}"
+                for item in packet["trace_claim_ref_omissions"]
+            )
     lines.extend(["", "## Context references", ""])
     if packet["context_refs"]:
         for item in packet["context_refs"]:
@@ -510,6 +530,7 @@ def _packet_body(
     decisions: list[dict[str, Any]],
     context_refs: list[dict[str, Any]],
     omitted_sections: list[str],
+    trace_context: dict[str, Any] | None,
     generated_at: str,
 ) -> dict[str, Any]:
     completion_packet = completion["packet"] if completion else None
@@ -599,10 +620,47 @@ def _packet_body(
         ),
         "omitted_sections": omitted_sections,
     }
+    if trace_context is not None and trace_context["status"] == "present":
+        for field in (
+            "trace_claim_refs",
+            "trace_claim_ref_omissions",
+            "trace_claim_ref_budget",
+        ):
+            packet[field] = trace_context[field]
+    elif trace_context is not None:
+        packet["omitted_sections"] = sorted(
+            set(packet["omitted_sections"] + [f"trace_claim_refs:{trace_context['status']}"])
+        )
     budget = _budget_remaining(target)
     if budget is not None:
         packet["budget_remaining"] = budget
     return packet
+
+
+def _trace_handoff_context(
+    paths: ProjectPaths,
+    conn: sqlite3.Connection,
+    *,
+    target: dict[str, Any],
+) -> dict[str, Any] | None:
+    if target["type"] != "task":
+        return None
+    preflight = _master_trace_context_preflight(
+        paths,
+        target={"type": "task", "id": str(target["id"])},
+        linked_evidence=_linked_master_trace_evidence(paths, conn, str(target["id"])),
+    )
+    candidates = preflight["candidates"]
+    if not candidates["master_trace"] and not candidates["intent_index"]:
+        return None
+    if preflight["status"] != "present":
+        return {"status": str(preflight["status"])}
+    return {
+        "status": "present",
+        "trace_claim_refs": preflight["trace_claim_refs"],
+        "trace_claim_ref_omissions": preflight["trace_claim_ref_omissions"],
+        "trace_claim_ref_budget": preflight["trace_claim_ref_budget"],
+    }
 
 
 def _next_safe_action(

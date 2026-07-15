@@ -69,6 +69,11 @@ from .contracts.handoff_packet import (
     load_handoff_packet,
     validate_handoff_packet,
 )
+from .contracts.intent_index import (
+    INTENT_INDEX_CONTRACT_VERSION,
+    load_intent_index,
+    validate_intent_index,
+)
 from .contracts.work_brief import (
     WORK_BRIEF_CONTRACT_VERSION,
     load_work_brief,
@@ -1133,6 +1138,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[
             COMPLETION_PACKET_CONTRACT_VERSION,
             HANDOFF_PACKET_CONTRACT_VERSION,
+            INTENT_INDEX_CONTRACT_VERSION,
             ROUTE_RECOMMENDATION_CONTRACT_VERSION,
             ROUTE_OVERRIDE_CONTRACT_VERSION,
             WORK_BRIEF_CONTRACT_VERSION,
@@ -1840,6 +1846,7 @@ def _validate_contract_file(
             validate_completion_packet,
         ),
         HANDOFF_PACKET_CONTRACT_VERSION: (load_handoff_packet, validate_handoff_packet),
+        INTENT_INDEX_CONTRACT_VERSION: (load_intent_index, validate_intent_index),
         ROUTE_RECOMMENDATION_CONTRACT_VERSION: (
             load_route_recommendation,
             validate_route_recommendation,

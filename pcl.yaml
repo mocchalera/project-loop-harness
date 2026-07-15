@@ -10,10 +10,7 @@ project:
 commands:
   install: "python -m pip install -e '.[dev]'"
   lint: "ruff check ."
-  typecheck: ""
   test: "pytest"
-  e2e: ""
-  build: ""
 
 discovery:
   include:

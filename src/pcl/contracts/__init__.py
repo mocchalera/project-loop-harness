@@ -20,6 +20,17 @@ from .handoff_packet import (
     load_handoff_packet,
     validate_handoff_packet,
 )
+from .intent_index import (
+    INTENT_INDEX_BINDING_CONTRACT_VERSION,
+    INTENT_INDEX_CONTRACT_VERSION,
+    IntentIndexValidationResult,
+    TRACE_CLAIM_MAX_BYTES,
+    TRACE_CLAIM_MAX_ITEMS,
+    load_intent_index,
+    select_trace_claim_refs,
+    validate_intent_index,
+    validate_intent_index_binding,
+)
 from .work_brief import (
     WORK_BRIEF_CONTRACT_VERSION,
     WorkBriefValidationResult,
@@ -131,6 +142,15 @@ __all__ = [
     "handoff_packet_schema",
     "load_handoff_packet",
     "validate_handoff_packet",
+    "INTENT_INDEX_BINDING_CONTRACT_VERSION",
+    "INTENT_INDEX_CONTRACT_VERSION",
+    "IntentIndexValidationResult",
+    "TRACE_CLAIM_MAX_BYTES",
+    "TRACE_CLAIM_MAX_ITEMS",
+    "load_intent_index",
+    "select_trace_claim_refs",
+    "validate_intent_index",
+    "validate_intent_index_binding",
     "WORK_BRIEF_CONTRACT_VERSION",
     "WorkBriefValidationResult",
     "canonical_work_brief_json",

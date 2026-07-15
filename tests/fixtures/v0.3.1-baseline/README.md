@@ -61,6 +61,8 @@ is a regression, not an automatic regeneration result.
 
 ## Intended changes since v0.3.1 freeze
 
+- 2026-07-15 — `snapshots/pcl-version.json` regenerated for the v0.5.1 local
+  release candidate bump (`0.5.0` → `0.5.1`).
 - 2026-07-14 — `snapshots/pcl-version.json` regenerated for the v0.5.0 local
   release candidate bump (`0.4.3` → `0.5.0`).
 - 2026-07-14 — `snapshots/pcl-help.json` regenerated for task 0168 to include

@@ -1,0 +1,28 @@
+{
+  "contract_version": "intent-index/v0",
+  "index_id": "ii-v051-release-smoke-invalid",
+  "generated_at": "2026-07-15T08:10:00Z",
+  "generator": "release-smoke-fixture",
+  "source_trace": {
+    "evidence_id": "E-0001",
+    "manifest_path": ".project-loop/evidence/adhoc/e-0001-adhoc-v0.json",
+    "member_path": "trace.md",
+    "stored_path": ".project-loop/evidence/adhoc-files/e-0001/01-trace.md",
+    "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "items": [
+    {
+      "id": "I-001",
+      "kind": "next_action_hint",
+      "claim": "This claim must be omitted because the source hash is invalid.",
+      "source_refs": [
+        {
+          "evidence_id": "E-0001",
+          "stored_path": ".project-loop/evidence/adhoc-files/e-0001/01-trace.md",
+          "line_start": 11,
+          "line_end": 11
+        }
+      ]
+    }
+  ]
+}

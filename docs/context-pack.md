@@ -81,6 +81,14 @@ For model-derived artifacts such as intent indexes, the pack repeats that
 claims-not-facts vocabulary and points readers to member paths rather than
 treating model output as source of truth.
 
+Task packs may opt into `--master-trace-context`. When exactly one copied
+`master-trace/v0` and one copied `intent-index/v0` pass source-binding
+validation, the section includes bounded `trace_claim_refs`,
+`trace_claim_ref_omissions`, and `trace_claim_ref_budget`. Claims are explicitly
+`unverified`; only Evidence/path/line coordinates are included, never trace or
+resolved source-line text. Invalid or ambiguous bindings emit no claim refs and
+retain their typed preflight status.
+
 `--include-code-context` is opt-in. Without the flag, context packs do not look
 for code-context receipts and keep the same v1 payload shape. With the flag,
 the pack first queries `evidence_links` for the newest receipt bound to the

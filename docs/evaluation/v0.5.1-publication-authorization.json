@@ -1,0 +1,29 @@
+{
+  "contract_version": "publication-authorization-receipt/v0",
+  "release": "v0.5.1",
+  "decision": "continue_and_publish",
+  "decided_at": "2026-07-15",
+  "human_approver": "human:owner",
+  "recorded_by": "codex:cockpit-task-agent",
+  "source": {
+    "kind": "cockpit_ask",
+    "ref": "ask_6e4c5b339398",
+    "answer": "Continueして公開"
+  },
+  "authorized_operations": [
+    "commit_release_source_to_main",
+    "push_main",
+    "create_and_push_v0.5.1_tag",
+    "publish_github_release",
+    "trigger_trusted_pypi_publication",
+    "verify_public_github_and_pypi_state",
+    "synchronize_factual_release_docs"
+  ],
+  "excluded_operations": [
+    "launch_announcement",
+    "provider_run",
+    "telemetry",
+    "database_migration",
+    "external_adoption_claim"
+  ]
+}

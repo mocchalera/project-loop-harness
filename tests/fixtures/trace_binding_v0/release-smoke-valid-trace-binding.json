@@ -1,0 +1,41 @@
+{
+  "contract_version": "intent-index/v0",
+  "index_id": "ii-v051-release-smoke-valid",
+  "generated_at": "2026-07-15T08:10:00Z",
+  "generator": "release-smoke-fixture",
+  "source_trace": {
+    "evidence_id": "E-0001",
+    "manifest_path": ".project-loop/evidence/adhoc/e-0001-adhoc-v0.json",
+    "member_path": "trace.md",
+    "stored_path": ".project-loop/evidence/adhoc-files/e-0001/01-trace.md",
+    "sha256": "878b803431816438557642fbc6e3112ae5f7a0347410f1d1a9dfd4724a141db6"
+  },
+  "items": [
+    {
+      "id": "I-001",
+      "kind": "constraint_hint",
+      "claim": "Keep the release smoke claim unverified until source lines are checked.",
+      "source_refs": [
+        {
+          "evidence_id": "E-0001",
+          "stored_path": ".project-loop/evidence/adhoc-files/e-0001/01-trace.md",
+          "line_start": 9,
+          "line_end": 10
+        }
+      ]
+    },
+    {
+      "id": "I-002",
+      "kind": "next_action_hint",
+      "claim": "Run the targeted contract tests before implementation.",
+      "source_refs": [
+        {
+          "evidence_id": "E-0001",
+          "stored_path": ".project-loop/evidence/adhoc-files/e-0001/01-trace.md",
+          "line_start": 11,
+          "line_end": 11
+        }
+      ]
+    }
+  ]
+}

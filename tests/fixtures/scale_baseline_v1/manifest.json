@@ -1,0 +1,137 @@
+{
+  "contract_version": "scale-baseline/v1",
+  "fixture_id": "scale-baseline-v1",
+  "purpose": "Synthetic, deterministic workload description for event-log and file-size planning.",
+  "reference_snapshot": {
+    "revision": "67cb42190bcf99921b4fc7fed8a8d8ade9259ac1",
+    "observed_date": "2026-07-15",
+    "event_rows": 1207,
+    "event_jsonl_bytes": 628896,
+    "sqlite_events": 1207,
+    "sqlite_outbox_records": 1207,
+    "sqlite_event_sequence": [1, 1207],
+    "dashboard_data_bytes": 156713,
+    "dashboard_html_bytes": 109580,
+    "project_loop_bytes": 15728640,
+    "project_db_bytes": 3579904
+  },
+  "advisory_bands": [
+    {
+      "id": "S0",
+      "max_event_rows": 1000,
+      "max_jsonl_bytes": 5242880,
+      "max_project_loop_bytes": 26214400,
+      "meaning": "smoke"
+    },
+    {
+      "id": "S1",
+      "min_event_rows": 1001,
+      "max_event_rows": 10000,
+      "min_jsonl_bytes": 5242881,
+      "max_jsonl_bytes": 26214400,
+      "min_project_loop_bytes": 26214401,
+      "max_project_loop_bytes": 104857600,
+      "meaning": "maintainer"
+    },
+    {
+      "id": "S2",
+      "min_event_rows": 10001,
+      "max_event_rows": 100000,
+      "min_jsonl_bytes": 26214401,
+      "max_jsonl_bytes": 262144000,
+      "min_project_loop_bytes": 104857601,
+      "max_project_loop_bytes": 1073741824,
+      "meaning": "growth-study"
+    },
+    {
+      "id": "S3",
+      "min_event_rows": 100001,
+      "min_jsonl_bytes": 262144001,
+      "min_project_loop_bytes": 1073741825,
+      "meaning": "review-trigger"
+    }
+  ],
+  "workloads": [
+    {
+      "id": "smoke-1k",
+      "event_rows": 1000,
+      "expected_band": "S0",
+      "payload_multiplier": 1,
+      "commands": ["pcl validate --strict --json", "pcl render --json", "pcl audit check --json"]
+    },
+    {
+      "id": "maintainer-10k",
+      "event_rows": 10000,
+      "expected_band": "S1",
+      "payload_multiplier": 1,
+      "commands": ["pcl validate --strict --json", "pcl render --json", "pcl audit check --json"]
+    },
+    {
+      "id": "growth-100k",
+      "event_rows": 100000,
+      "expected_band": "S2",
+      "payload_multiplier": 1,
+      "commands": ["pcl validate --strict --json", "pcl render --json", "pcl audit check --json"]
+    }
+  ],
+  "event_type_mix": {
+    "adhoc_evidence_recorded": 113,
+    "agent_job_completed": 8,
+    "agent_job_created": 25,
+    "agent_output_ingested": 17,
+    "checkpoint_recorded": 8,
+    "code_index_built": 5,
+    "completion_packet_created": 42,
+    "context_pack_generated": 1,
+    "context_receipt_recorded": 10,
+    "decision_opened": 6,
+    "decision_resolved": 6,
+    "defect_closed": 7,
+    "defect_fixed": 7,
+    "defect_opened": 7,
+    "defect_started": 7,
+    "defect_triaged": 7,
+    "defect_verified": 7,
+    "evidence_link_added": 35,
+    "evidence_set_recorded": 23,
+    "evidence_superseded": 1,
+    "feature_added": 38,
+    "feature_status_updated": 154,
+    "goal_closed": 37,
+    "goal_created": 38,
+    "migration_applied": 8,
+    "profile_output_ingested": 3,
+    "project_initialized": 1,
+    "route_recommendation_recorded": 2,
+    "task_created": 61,
+    "task_dependency_added": 9,
+    "task_feature_linked": 5,
+    "task_status_changed": 112,
+    "test_case_failed": 6,
+    "test_case_marked_missing": 17,
+    "test_case_passed": 101,
+    "test_case_planned": 101,
+    "test_case_reverified": 22,
+    "test_links_repaired": 3,
+    "user_story_approved": 33,
+    "user_story_drafted": 36,
+    "user_story_reviewed": 13,
+    "verification_feedback_recorded": 2,
+    "verification_recorded": 9,
+    "work_brief_approved": 2,
+    "work_brief_recorded": 2,
+    "work_started": 28,
+    "workflow_run_completed": 9,
+    "workflow_run_created": 9,
+    "workflow_run_started": 4
+  },
+  "policy": {
+    "automatic_rotation": false,
+    "automatic_compaction": false,
+    "runtime_enforcement": false,
+    "telemetry": false,
+    "authoritative_store": "sqlite",
+    "projection": "events.jsonl",
+    "future_review_trigger": "S3"
+  }
+}

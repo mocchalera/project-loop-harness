@@ -1,0 +1,74 @@
+{
+  "contract_version": "trace-resume-evaluation-cohort/v1",
+  "cohort_id": "TRC-20260715-01",
+  "frozen_at": "2026-07-15T06:33:00Z",
+  "status": "prepared_pending_independent_session_authorization",
+  "fixture": {
+    "path": "tests/fixtures/trace_binding_v0/trace-resume-evaluation-fixture.json",
+    "sha256": "2905aef978180b01b3f8dc5bd3e7a8a88c8841465485fe71d3aae56a10615a44"
+  },
+  "thresholds": {
+    "resume_success_rate": 0.8,
+    "broken_binding_safe_stop_rate": 1.0,
+    "critical_trust_boundary_violations": 0
+  },
+  "consumer_boundary": {
+    "allowed": ["frozen handoff packet", "packet-referenced copied Evidence artifacts", "repository state"],
+    "forbidden": ["full transcript", "originating-session explanation", "unrecorded operator hint"],
+    "claim_trust": "unverified_until_source_lines_are_checked"
+  },
+  "execution_authorization": {
+    "independent_agent_sessions": false,
+    "network_model_provider_runs": false,
+    "paid_runs": false,
+    "cross_runtime_or_model_cases_planned": 5,
+    "note": "Preparation and local CLI packet generation are authorized. Independent model-backed consumer sessions require a separate scope, data-class, budget, and expiry decision."
+  },
+  "repository_slots": {
+    "A": {
+      "name": "project-loop-harness",
+      "root_hint": ".",
+      "observed_revision": "e40168577a63514fb39170c343b91e9e68bd31d0",
+      "worktree_policy": "read_only_for_consumer",
+      "verification_command": "PYTHONPATH=src pytest -q tests/test_trace_contract_fixtures.py",
+      "trace_evidence_id": "E-0409",
+      "full_trace_size_bytes": 644
+    },
+    "B": {
+      "name": "video-os-v2-spec",
+      "root_hint": "../video-os-v2-spec",
+      "observed_revision": "ff6229f841307466cbcd2a6efa280e8c9e556318",
+      "worktree_policy": "read_only_for_consumer",
+      "verification_command": "npm exec vitest run tests/validate.test.ts",
+      "trace_evidence_id": "E-0410",
+      "full_trace_size_bytes": 619
+    }
+  },
+  "cases": [
+    {"id": "TRE-001", "task_id": "T-0077", "repository_slot": "A", "binding_mode": "valid", "expected_outcome": "resume", "source_session_id": "source-A1", "resume_session_id": "resume-1", "source_runtime": "runtime-a", "resume_runtime": "runtime-a", "source_model": "model-a", "resume_model": "model-a", "packet_path": "docs/evaluation/v0.5.1-trace-resume-packets/TRE-001.json", "packet_sha256": "145c0de15a60cda95428ec8ef427f3a57bdf72b991071e75d578c6dcb26a6224"},
+    {"id": "TRE-002", "task_id": "T-0078", "repository_slot": "A", "binding_mode": "valid", "expected_outcome": "resume", "source_session_id": "source-A2", "resume_session_id": "resume-2", "source_runtime": "runtime-a", "resume_runtime": "runtime-b", "source_model": "model-a", "resume_model": "model-b", "packet_path": "docs/evaluation/v0.5.1-trace-resume-packets/TRE-002.json", "packet_sha256": "f43bdb09411f42a2c910a79c2d919b07e87c7eb1c56a6660e6184c31f95c0470"},
+    {"id": "TRE-003", "task_id": "T-0079", "repository_slot": "A", "binding_mode": "hash_mismatch", "expected_outcome": "safe_stop", "source_session_id": "source-A3", "resume_session_id": "resume-1", "source_runtime": "runtime-a", "resume_runtime": "runtime-b", "source_model": "model-a", "resume_model": "model-b", "packet_path": "docs/evaluation/v0.5.1-trace-resume-packets/TRE-003.json", "packet_sha256": "2174ad030c6e881c94bf35e5a703559895456728a27ae02d6d59f190041173d8"},
+    {"id": "TRE-004", "task_id": "T-0080", "repository_slot": "A", "binding_mode": "valid", "expected_outcome": "resume", "source_session_id": "source-A4", "resume_session_id": "resume-2", "source_runtime": "runtime-a", "resume_runtime": "runtime-a", "source_model": "model-a", "resume_model": "model-a", "packet_path": "docs/evaluation/v0.5.1-trace-resume-packets/TRE-004.json", "packet_sha256": "ede25cc37e50e397f64357bbdb8d7aaab520f57a4f85265b499a1e097e980826"},
+    {"id": "TRE-005", "task_id": "T-0081", "repository_slot": "A", "binding_mode": "line_range_invalid", "expected_outcome": "safe_stop", "source_session_id": "source-A5", "resume_session_id": "resume-1", "source_runtime": "runtime-a", "resume_runtime": "runtime-b", "source_model": "model-a", "resume_model": "model-b", "packet_path": "docs/evaluation/v0.5.1-trace-resume-packets/TRE-005.json", "packet_sha256": "d95356613f5d5c01668a6714010f0c218e7ef018c865c767c544830e3d1bb729"},
+    {"id": "TRE-006", "task_id": "T-0082", "repository_slot": "B", "binding_mode": "valid", "expected_outcome": "resume", "source_session_id": "source-B1", "resume_session_id": "resume-2", "source_runtime": "runtime-b", "resume_runtime": "runtime-a", "source_model": "model-b", "resume_model": "model-a", "packet_path": "docs/evaluation/v0.5.1-trace-resume-packets/TRE-006.json", "packet_sha256": "75362e53c959e9db36dcca7526c4f9d1decd9e74449d2818503413fe66f7c58a"},
+    {"id": "TRE-007", "task_id": "T-0083", "repository_slot": "B", "binding_mode": "evidence_mismatch", "expected_outcome": "safe_stop", "source_session_id": "source-B2", "resume_session_id": "resume-1", "source_runtime": "runtime-b", "resume_runtime": "runtime-b", "source_model": "model-b", "resume_model": "model-b", "packet_path": "docs/evaluation/v0.5.1-trace-resume-packets/TRE-007.json", "packet_sha256": "c9f559b2caaf64e0ef21e4827c141578bbfc42f90336bbc3589643f2c9cb80b6"},
+    {"id": "TRE-008", "task_id": "T-0084", "repository_slot": "B", "binding_mode": "valid", "expected_outcome": "resume", "source_session_id": "source-B3", "resume_session_id": "resume-2", "source_runtime": "runtime-b", "resume_runtime": "runtime-a", "source_model": "model-b", "resume_model": "model-a", "packet_path": "docs/evaluation/v0.5.1-trace-resume-packets/TRE-008.json", "packet_sha256": "1de420a372f1390d2d43d87bed2de4cb124c251b2ce0dada46c684a2cafc6794"},
+    {"id": "TRE-009", "task_id": "T-0085", "repository_slot": "B", "binding_mode": "path_mismatch", "expected_outcome": "safe_stop", "source_session_id": "source-B4", "resume_session_id": "resume-1", "source_runtime": "runtime-b", "resume_runtime": "runtime-b", "source_model": "model-b", "resume_model": "model-b", "packet_path": "docs/evaluation/v0.5.1-trace-resume-packets/TRE-009.json", "packet_sha256": "a54f093a4038d8c03cd412d59c921f71f739ff0fc250df261c64a0a1b0f450ff"},
+    {"id": "TRE-010", "task_id": "T-0086", "repository_slot": "B", "binding_mode": "valid", "expected_outcome": "resume", "source_session_id": "source-B5", "resume_session_id": "resume-2", "source_runtime": "runtime-b", "resume_runtime": "runtime-b", "source_model": "model-b", "resume_model": "model-b", "packet_path": "docs/evaluation/v0.5.1-trace-resume-packets/TRE-010.json", "packet_sha256": "ceb4ef5d3d1d133ea54f487af1e97acfedf5ca6f6e4f3d37a650fd38352b35d0"}
+  ],
+  "no_index_compatibility_checks": [
+    {
+      "id": "NIC-001",
+      "kind": "live_packet_shape",
+      "packet_path": "docs/evaluation/v0.5.1-trace-resume-packets/NO-INDEX-T-0066.json",
+      "packet_sha256": "75a62c9783c37eff8ad76b0223c48b221c79c3beafe8bc34a5669dd7fddd3d6e",
+      "expected": "trace claim fields are absent and the existing packet remains valid"
+    },
+    {
+      "id": "NIC-002",
+      "kind": "regression_test",
+      "command": "PYTHONPATH=src pytest -q tests/test_resume.py::test_resume_active_target_is_valid_read_only_and_replayable tests/test_trace_resume_evaluation_cohort.py::test_no_index_compatibility_packet_keeps_existing_shape",
+      "expected": "existing no-index resume behavior stays compatible"
+    }
+  ]
+}

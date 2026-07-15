@@ -136,6 +136,43 @@ An evidence ID proves that PLH recorded an artifact. A copied-file hash proves
 which bytes were recorded. Neither proves that an index interpretation is
 correct or complete.
 
+## v0.5.1 source-binding freeze
+
+The v0.5.1 work separates three claims that must not be collapsed:
+
+1. **Artifact identity** checks that the index names the recorded Evidence ID,
+   manifest path, copied `stored_path`, and SHA-256 for one immutable trace.
+2. **Source-address validity** checks unique item IDs, non-empty source refs,
+   the same Evidence ID and copied path, and positive one-based inclusive line
+   ranges inside the copied trace.
+3. **Semantic correctness** asks whether a model claim is actually supported
+   by those lines in context. Structural/source binding does not answer this
+   question, and v0 never promotes the claim to verified state.
+
+The frozen characterization fixtures live under
+`tests/fixtures/trace_binding_v0/`. They contain one valid binding and separate
+hash, Evidence, manifest-path, copied-path, contract-version, duplicate-ID,
+empty-ref, reversed-range, and out-of-bounds failures. Task 0179 implements the
+standard-library validator and read-only task preflight against those frozen
+classifications. Task 0180 adds bounded claim references to context/resume only
+after this validation succeeds.
+
+### Additive claim-reference fields
+
+`trace_claim_refs` is an optional `handoff-packet/v1` and master-trace context
+field. Each entry carries the intent-index Evidence ref,
+item ID, kind, model claim, the literal trust label `unverified`, and bounded
+source refs. Entries are ordered by intent-index ref and item ID. Raw trace text
+and resolved source-line text are never fields.
+
+Selection is deterministic and complete-item only: at most 8 items and 4096
+canonical UTF-8 JSON bytes. `trace_claim_ref_budget` records the limits and
+included counts/bytes. `trace_claim_ref_omissions` records item IDs excluded as
+`packet_budget`. The fields are omitted when no trace/index feature is present,
+preserving older packet bytes; invalid or ambiguous pairs emit no claim refs
+and retain a typed omission/status. Existing packets without these optional
+fields remain valid.
+
 ## Current command sequence
 
 The recommended current flow assumes the target task already exists. It uses
@@ -172,12 +209,26 @@ PYTHONPATH=src python -m pcl evidence add \
 Run the read-only preflight and build the opt-in task context pack:
 
 ```bash
+PYTHONPATH=src python -m pcl contract validate \
+  --type intent-index/v0 .work/intent-index-2026-07-10.json --json
 PYTHONPATH=src python -m pcl context check --task T-0042 --json
 PYTHONPATH=src python -m pcl context pack \
   --task T-0042 \
   --master-trace-context \
   --json
 ```
+
+The standalone contract command checks JSON structure, item identity, non-empty
+refs, and positive ordered ranges. It is project-state independent and reports
+`evidence_binding_checked: false`; a structurally valid file is not yet proven
+to name recorded Evidence.
+
+`pcl context check --task` resolves the linked copied pair and additionally
+checks the exact Evidence ID, manifest/member/copied paths, recorded and actual
+SHA-256, and trace line bounds. A valid pair reports `binding.status: valid`.
+Broken pairs report `status: invalid_binding` with stable diagnostics before
+claim selection. Neither result performs semantic validation, and the command
+does not mutate state.
 
 The task pack exposes linked-evidence metadata and paths. With the opt-in flag,
 it also emits `master_trace_context` after resolving the trace and index from
@@ -201,8 +252,9 @@ runs should select the task first and use `--task T-XXXX --copy` for both
 artifacts.
 
 `pcl context check` also reports code-context receipt state when applicable.
-Master-trace source-ref verification remains the worker's responsibility; the
-preflight does not validate the index's meaning.
+Structural/source binding is performed by the preflight. Comparing a claim's
+meaning with referenced lines and surrounding context remains the worker's
+responsibility.
 
 ## Optional `master-trace-context/v0`
 
@@ -264,8 +316,9 @@ single candidate pair exists but a copied member path cannot be resolved, it
 reports `status: "unavailable"` and the unresolved member references.
 
 `pcl context check --task T-XXXX` reports the same factual preflight under
-`master_trace_context`. The preflight reads evidence rows, manifests, and local
-artifact contract markers; it does not score or interpret intent-index claims.
+`master_trace_context`. The preflight reads evidence rows, manifests, and copied
+artifacts; it validates identity and addressability but does not score or
+interpret intent-index claims.
 
 ## Future promotion gates
 

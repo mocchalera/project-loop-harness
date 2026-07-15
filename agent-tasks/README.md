@@ -91,6 +91,15 @@ implement from the spec file, not from prompt summaries.
 | 0172 | Composite PCL result status | v0.5.0 Adoption / Distribution | P0 | done |
 | 0173 | v0.5.0 local release preparation | v0.5.0 Adoption / Distribution | P0 | done (local RC; not published) |
 | 0174 | v0.5.0 publication closeout | v0.5.0 Adoption / Distribution | P0 | done (public Release/Actions/PyPI verified) |
+| 0175 | Maintainer entry hardening | post-v0.5.0 maintainability | P1 | done (main 67cb421) |
+| 0176 | Scale baseline and event-log policy | post-v0.5.0 maintainability | P2 | done (docs/fixture only) |
+| 0177 | Advisory checkpoint routing | v0.5.1 Operator Friction | P0 | done |
+| 0178 | Trace contract and fixture freeze | v0.5.1 Trace & Efficient Handoff | P0 | done |
+| 0179 | Intent-index source-binding validation | v0.5.1 Trace & Efficient Handoff | P0 | done |
+| 0180 | Claim-bound context and resume | v0.5.1 Trace & Efficient Handoff | P0 | done |
+| 0181 | Controlled Trace resume evaluation | v0.5.1 Trace & Efficient Handoff | P0 | done (`continue`) |
+| 0182 | v0.5.1 local release preparation | v0.5.1 Trace & Efficient Handoff | P1 | done; local RC approved |
+| 0183 | v0.5.1 publication closeout | v0.5.1 Trace & Efficient Handoff | P1 | in progress; publication authorized |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
@@ -151,9 +160,18 @@ contract + stability policy + release-suite repair → **0164** guided Japanese
 dashboard review experience → **0173** local v0.5.0 RC and independent review →
 **0174** read-only verification of the public Release, Actions run, and PyPI
 artifacts → **0175** source-checkout runtime diagnostics and a frozen CLI split
-contract. The first Zenn launch is complete; additional launch posts,
+contract → **0176** scale baseline and event-log policy → **0177** advisory
+checkpoint routing. The first Zenn launch is complete; additional launch posts,
 real-provider Council runs, and telemetry remain human-gated. See
 `docs/roadmap/priority-reset-2026-07-13.md`.
+
+v0.5.1 Trace dispatch order: **0178** current-contract characterization plus
+source-binding/claim-ref/evaluation fixture freeze → **0179** read-only
+Evidence/hash/path/line-range validation → **0180** bounded unverified claim
+refs in context/resume → **0181** frozen two-repository cross-session/runtime
+dogfood → **0182** local RC → separate human publication decision → **0183**
+public closeout. The milestone does not wait for three external participants;
+their study remains later Adoption evidence. See `docs/plan-v0.5.1.md`.
 
 ## Planned next (see growth plan for scope)
 
@@ -166,7 +184,8 @@ real-provider Council runs, and telemetry remain human-gated. See
 | v0.4.2 | Adaptive Entry: local RC prepared; immutable brief, deterministic route, multi-axis explain/override |
 | v0.4.3 | Evidence Completeness: local RC prepared; complete evidence sets, external verdict policy, approval provenance, cross-skill dogfood |
 | v0.5.0 | Published and independently verified; first Zenn launch complete; Council remains opt-in with `continue experiment` |
-| post-v0.5.0 | 0175 maintainer entry hardening before scale policy or v0.5.1 Trace |
+| post-v0.5.0 | 0175 maintainer entry hardening → 0176 scale baseline → 0177 checkpoint friction before v0.5.1 Trace |
+| v0.5.1 | Trace & Efficient Handoff: source-bound claims-not-facts handoff plus controlled cross-session/runtime resume evidence |
 
 Everything with an ID below 0102 is completed design history; see `TASKS.md`
 for the one-line summary of each.

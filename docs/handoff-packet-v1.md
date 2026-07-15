@@ -103,3 +103,19 @@ The authoritative packaged schema is
 `intent_index_ref`, `budget_remaining`, and `restart_context` are optional.
 Markdown wording and layout are presentation behavior, not a second versioned
 artifact contract.
+
+## Frozen Trace extension boundary
+
+Task 0180 implements `trace_claim_refs` as an optional additive field for
+bounded `intent-index/v0` items after Task 0179 source-binding validation. The
+fixture contract is
+`tests/fixtures/trace_binding_v0/trace-binding-fixtures.json`.
+
+Every entry remains model-derived and explicitly `unverified`. A source-bound
+claim is not a member of `verified`, and source
+binding alone is not semantic verification. Entries carry line coordinates and
+copied artifact references, never raw trace or resolved source-line text.
+`trace_claim_ref_budget` freezes the 8-item/4096-byte complete-item cap, while
+`trace_claim_ref_omissions` records excluded item IDs and reasons. All three
+fields appear together only for a valid binding. Packets that omit them remain
+valid v1 packets.
