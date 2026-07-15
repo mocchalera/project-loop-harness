@@ -5,6 +5,7 @@ import hashlib
 import json
 from json import JSONDecodeError
 from pathlib import Path
+import re
 import shlex
 import sqlite3
 from typing import Any
@@ -352,6 +353,8 @@ def validate_project(
             )
         elif include_config_advice:
             _validate_pcl_yaml_advice(paths, result)
+        if include_config_advice:
+            _validate_development_runtime_source(paths, result)
         skill_path = paths.agents_skill_dir.joinpath("SKILL.md")
         if not skill_path.exists():
             result.add_warning(
@@ -477,6 +480,57 @@ def _validate_pcl_yaml_advice(paths: ProjectPaths, result: ValidationResult) -> 
             repair_class="human_review",
             requires_human=True,
         )
+
+
+def _runtime_package_root() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def _project_loop_source_package_root(paths: ProjectPaths) -> Path | None:
+    pyproject = paths.root / "pyproject.toml"
+    expected = paths.root / "src" / "pcl"
+    if not pyproject.is_file() or not expected.is_dir():
+        return None
+    try:
+        text = pyproject.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    if re.search(
+        r"(?m)^\s*name\s*=\s*['\"]project-loop-harness['\"]\s*$",
+        text,
+    ) is None:
+        return None
+    return expected.resolve()
+
+
+def _validate_development_runtime_source(
+    paths: ProjectPaths,
+    result: ValidationResult,
+) -> None:
+    expected = _project_loop_source_package_root(paths)
+    if expected is None:
+        return
+    running = _runtime_package_root().resolve()
+    if running == expected:
+        return
+    source_root = paths.root / "src"
+    retry = (
+        f"PYTHONPATH={shlex.quote(str(source_root))} python -m pcl "
+        f"--root {shlex.quote(str(paths.root))} --json doctor"
+    )
+    result.add_warning(
+        "pcl doctor is running from "
+        f"{running}, but this source checkout expects {expected}; "
+        "the current process may be validating stale or wrong-worktree code.",
+        code="development_runtime_source_mismatch",
+        entity={"type": "project", "id": str(paths.root)},
+        related=[
+            {"type": "running_package_root", "id": str(running)},
+            {"type": "expected_package_root", "id": str(expected)},
+        ],
+        repair_class="inspect",
+        suggested_commands=[retry],
+    )
 
 
 def _simple_yaml_section(lines: list[str], section_name: str) -> dict[str, str]:

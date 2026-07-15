@@ -389,6 +389,78 @@ def test_doctor_warns_for_placeholder_project_config(tmp_path: Path, capsys) -> 
     assert validate["warnings"] == []
 
 
+def test_doctor_warns_when_source_checkout_uses_another_runtime(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    capsys.readouterr()
+    (tmp_path / "pyproject.toml").write_text(
+        '[project]\nname = "project-loop-harness"\n',
+        encoding="utf-8",
+    )
+    expected = tmp_path / "src" / "pcl"
+    expected.mkdir(parents=True)
+    running = tmp_path / "stale-worktree" / "src" / "pcl"
+    monkeypatch.setattr("pcl.validators._runtime_package_root", lambda: running)
+
+    assert main(["--root", str(tmp_path), "doctor", "--json"]) == 0
+    doctor = _json_output(capsys)
+
+    finding = next(
+        item
+        for item in doctor["findings"]
+        if item["code"] == "development_runtime_source_mismatch"
+    )
+    assert finding["severity"] == "warning"
+    assert str(running) in finding["message"]
+    assert str(expected) in finding["message"]
+    assert finding["requires_human"] is False
+    assert finding["suggested_commands"] == [
+        f"PYTHONPATH={tmp_path / 'src'} python -m pcl --root {tmp_path} --json doctor"
+    ]
+
+
+def test_doctor_runtime_source_check_is_quiet_for_matching_or_ordinary_projects(
+    monkeypatch,
+    tmp_path: Path,
+    capsys,
+) -> None:
+    source_checkout = tmp_path / "source-checkout"
+    assert main(["init", "--target", str(source_checkout)]) == 0
+    capsys.readouterr()
+    (source_checkout / "pyproject.toml").write_text(
+        '[project]\nname = "project-loop-harness"\n',
+        encoding="utf-8",
+    )
+    expected = source_checkout / "src" / "pcl"
+    expected.mkdir(parents=True)
+    monkeypatch.setattr("pcl.validators._runtime_package_root", lambda: expected)
+
+    assert main(["--root", str(source_checkout), "doctor", "--json"]) == 0
+    matching = _json_output(capsys)
+    assert not any(
+        item["code"] == "development_runtime_source_mismatch"
+        for item in matching["findings"]
+    )
+
+    ordinary = tmp_path / "ordinary-project"
+    assert main(["init", "--target", str(ordinary)]) == 0
+    capsys.readouterr()
+    monkeypatch.setattr(
+        "pcl.validators._runtime_package_root",
+        lambda: tmp_path / "unrelated-install" / "pcl",
+    )
+
+    assert main(["--root", str(ordinary), "doctor", "--json"]) == 0
+    adopted = _json_output(capsys)
+    assert not any(
+        item["code"] == "development_runtime_source_mismatch"
+        for item in adopted["findings"]
+    )
+
+
 def test_json_outputs_for_current_commands(tmp_path: Path, capsys) -> None:
     assert main(["init", "--target", str(tmp_path), "--json"]) == 0
     assert _json_output(capsys)["created"] is True

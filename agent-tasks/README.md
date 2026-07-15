@@ -150,8 +150,10 @@ v0.5.1 feature work: **0163** 30-second README + five-minute setup + coexistence
 contract + stability policy + release-suite repair → **0164** guided Japanese
 dashboard review experience → **0173** local v0.5.0 RC and independent review →
 **0174** read-only verification of the public Release, Actions run, and PyPI
-artifacts. Public launch posts, real-provider Council runs, and telemetry remain
-human-gated. See `docs/roadmap/priority-reset-2026-07-13.md`.
+artifacts → **0175** source-checkout runtime diagnostics and a frozen CLI split
+contract. The first Zenn launch is complete; additional launch posts,
+real-provider Council runs, and telemetry remain human-gated. See
+`docs/roadmap/priority-reset-2026-07-13.md`.
 
 ## Planned next (see growth plan for scope)
 
@@ -163,7 +165,8 @@ human-gated. See `docs/roadmap/priority-reset-2026-07-13.md`.
 | v0.4.1 | Integrity migration: idle routing, lifecycle repair/link commands, diagnostics, Skill provenance |
 | v0.4.2 | Adaptive Entry: local RC prepared; immutable brief, deterministic route, multi-axis explain/override |
 | v0.4.3 | Evidence Completeness: local RC prepared; complete evidence sets, external verdict policy, approval provenance, cross-skill dogfood |
-| v0.5.0 | Published and independently verified; Council remains opt-in with `continue experiment`, and external launch work is next |
+| v0.5.0 | Published and independently verified; first Zenn launch complete; Council remains opt-in with `continue experiment` |
+| post-v0.5.0 | 0175 maintainer entry hardening before scale policy or v0.5.1 Trace |
 
 Everything with an ID below 0102 is completed design history; see `TASKS.md`
 for the one-line summary of each.

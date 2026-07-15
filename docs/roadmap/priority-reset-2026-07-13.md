@@ -19,9 +19,9 @@ the offline Council adoption outcome.
 | 2 | P0 done | 0164 Guided dashboard review experience | agents present a localized simple view at meaningful milestones and explain what the operator should inspect |
 | 3 | P0 done | 0173 v0.5.0 local release candidate | version/docs/package surfaces agree; source, wheel, and sdist smokes pass; independent review complete |
 | 4 | P0 done | 0174 v0.5.0 publication closeout | public Release, release-triggered Actions run, PyPI artifacts, and clean public install are independently verified |
-| 5 | P1 next | External-feedback launch packet | demo and Japanese/English post drafts are reviewable; posting remains human-approved |
-| 6 | P1 | Maintainer entry hardening | dev environment can identify stale editable installs; CLI split plan freezes behavior before refactor |
-| 7 | P2 | Scale baseline and event-log policy | documented file/event ranges, benchmark fixture, rotation/compaction design note; no premature implementation |
+| 5 | P1 done | External-feedback launch packet | Zenn first-channel publication is verified; HN was explicitly skipped; later channels remain separately human-approved |
+| 6 | P1 done | 0175 Maintainer entry hardening | dev environment identifies stale editable installs; CLI split plan freezes behavior before refactor |
+| 7 | P2 next | Scale baseline and event-log policy | documented file/event ranges, benchmark fixture, rotation/compaction design note; no premature implementation |
 | 8 | P2 | v0.5.1 Trace & Efficient Handoff | claim-bound handoff and cross-session resume are measured after Adoption evidence exists |
 
 ## Council disposition
