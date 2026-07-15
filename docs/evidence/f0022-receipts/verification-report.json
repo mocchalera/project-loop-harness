@@ -1,0 +1,42 @@
+{
+  "commit": "c284fa6bb9324180f7fe6f2436f8f3ccda683152",
+  "recorded_at": "2026-07-15T09:51:19+09:00",
+  "findings": [],
+  "results": [
+    {
+      "command": "ruff check .",
+      "result": "All checks passed!",
+      "status": "pass"
+    },
+    {
+      "command": "pytest",
+      "result": "1004 passed, 1 skipped in 361.37s",
+      "status": "pass"
+    }
+  ],
+  "scope": {
+    "feature_id": "F-0022",
+    "story_id": "US-0020",
+    "test_case_ids": [
+      "TC-0039",
+      "TC-0040",
+      "TC-0041",
+      "TC-0042",
+      "TC-0043",
+      "TC-0044",
+      "TC-0045",
+      "TC-0046",
+      "TC-0047",
+      "TC-0048",
+      "TC-0049",
+      "TC-0050",
+      "TC-0051",
+      "TC-0052",
+      "TC-0053",
+      "TC-0054",
+      "TC-0055",
+      "TC-0056"
+    ]
+  },
+  "status": "pass"
+}
