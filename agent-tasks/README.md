@@ -101,6 +101,7 @@ implement from the spec file, not from prompt summaries.
 | 0182 | v0.5.1 local release preparation | v0.5.1 Trace & Efficient Handoff | P1 | done; local RC approved |
 | 0183 | v0.5.1 publication closeout | v0.5.1 Trace & Efficient Handoff | P1 | done; published and independently verified |
 | 0184 | CLI Stage 1 presentation extraction | post-v0.5.1 maintainability | P1 | done |
+| 0185 | CLI Stage 2 guide handler extraction | post-v0.5.1 maintainability | P1 | done |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the

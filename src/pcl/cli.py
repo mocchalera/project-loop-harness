@@ -25,7 +25,6 @@ from .agents import (
 )
 from .adaptive_policy import render_policy_explanation, resolve_policy_for_target
 from .checkpoints import checkpoint_status, record_checkpoint
-from .command_guide import command_guide, render_command_guide
 from .code_index import (
     GIT_DIFF_SENTINEL,
     analyze_impact,
@@ -212,6 +211,7 @@ from .profile_fixture_runner import run_profile_fixture
 from .profile_prepare import prepare_profile_request
 from .renderer import render_dashboard
 from .receipt_show import receipt_summary_for_ref
+from .read_handlers import handle_guide
 from .registry import (
     AGENT_STATUSES,
     list_agents,
@@ -2098,12 +2098,7 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         if args.command == "guide":
-            result = command_guide(args.topic)
-            if json_output:
-                _print_json(result)
-            else:
-                print(render_command_guide(result), end="")
-            return 0
+            return handle_guide(args.topic, json_output=json_output, output=sys.stdout)
 
         if args.command == "profile" and args.profile_command == "list":
             result = list_profiles()

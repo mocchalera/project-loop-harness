@@ -1,6 +1,6 @@
 # Post-v0.5.1 maintainability plan
 
-- **Status:** Active; Stage 1 complete
+- **Status:** Active; first Stage 2 family complete
 - **Activated:** 2026-07-15
 - **Decision source:** owner instruction to continue after verified v0.5.1 publication
 - **Release label:** unassigned; completing a slice does not imply a new release
@@ -28,16 +28,17 @@ source of product-friction evidence.
 1. **0184 — Stage 1 presentation extraction (done).** Move state-free JSON/text
    formatting into a narrow module, retain compatibility imports, and freeze
    representative output with direct tests.
-2. **Stage 2 read-only handler extraction.** Start with one bounded family after
-   0184 evidence is reviewed; keep parser definitions unchanged.
+2. **Stage 2 read-only handler extraction (first family done).** 0185 extracts
+   the bounded `pcl guide` family; keep parser definitions unchanged for later
+   families.
 3. **Stage 3 lifecycle handler extraction.** Move one mutating family at a time
    without moving transactions or event ownership.
 4. **Stage 4 parser construction.** Split parser builders last while preserving
    the existing top-level entry point and complete help matrix.
 
-Only 0184 is activated now. Later stages receive numbered task files when the
-preceding slice is green; this avoids reserving scope before dogfood and review
-show the next safest boundary.
+0185 is complete. Later command families receive numbered task files only when
+activated; this avoids reserving scope before dogfood and review show the next
+safest boundary.
 
 ## Invariants
 
