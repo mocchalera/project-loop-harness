@@ -17,6 +17,23 @@ def _init(root: Path, capsys) -> None:
     capsys.readouterr()
 
 
+def _set_checkpoint_config(root: Path, *, mode: str, feature_interval: int = 5) -> None:
+    config_path = root / "pcl.yaml"
+    text = config_path.read_text(encoding="utf-8")
+    start = text.index("checkpoint:\n")
+    end = text.find("\n\n", start)
+    replacement = (
+        "checkpoint:\n"
+        f"  mode: {mode}\n"
+        f"  feature_interval: {feature_interval}"
+    )
+    if end == -1:
+        text = text[:start] + replacement + "\n"
+    else:
+        text = text[:start] + replacement + text[end:]
+    config_path.write_text(text, encoding="utf-8")
+
+
 def _add_done_feature(root: Path, capsys, index: int) -> str:
     assert main([
         "--root",
@@ -82,7 +99,10 @@ def test_checkpoint_status_and_record_are_event_backed(tmp_path: Path, capsys) -
     assert main(["--root", str(tmp_path), "checkpoint", "status", "--json"]) == 0
     status = _json_output(capsys)
     assert status["checkpoint_recommended"] is True
+    assert status["checkpoint_requires_human"] is False
+    assert status["mode"] == "advisory"
     assert status["threshold"] == 5
+    assert status["threshold_reached"] is True
     assert status["completed_features_since_checkpoint"] == 5
     assert status["completed_feature_ids_since_checkpoint"] == feature_ids
     assert status["feature_status_counts"]["done"] == 5
@@ -137,6 +157,55 @@ def test_checkpoint_status_and_record_are_event_backed(tmp_path: Path, capsys) -
     assert payload["summary"] == "Reviewed commit boundary and UX checklist"
     assert payload["evidence_id"] == "E-0006"
     assert payload["review_type"] == "ux"
+
+
+def test_checkpoint_configuration_supports_blocking_off_and_custom_interval(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    _set_checkpoint_config(tmp_path, mode="blocking", feature_interval=2)
+    _add_done_feature(tmp_path, capsys, 1)
+    _add_done_feature(tmp_path, capsys, 2)
+
+    assert main(["--root", str(tmp_path), "checkpoint", "status", "--json"]) == 0
+    blocking = _json_output(capsys)
+    assert blocking["mode"] == "blocking"
+    assert blocking["threshold"] == 2
+    assert blocking["checkpoint_recommended"] is True
+    assert blocking["checkpoint_requires_human"] is True
+
+    _set_checkpoint_config(tmp_path, mode="off", feature_interval=2)
+    assert main(["--root", str(tmp_path), "checkpoint", "status", "--json"]) == 0
+    off = _json_output(capsys)
+    assert off["mode"] == "off"
+    assert off["threshold_reached"] is True
+    assert off["checkpoint_recommended"] is False
+    assert off["checkpoint_requires_human"] is False
+
+
+def test_checkpoint_configuration_rejects_invalid_values(tmp_path: Path, capsys) -> None:
+    _init(tmp_path, capsys)
+    _set_checkpoint_config(tmp_path, mode="sometimes")
+
+    assert main(["--root", str(tmp_path), "checkpoint", "status", "--json"]) == 2
+    invalid_mode = _json_output(capsys)
+    assert invalid_mode["error"]["details"]["field"] == "checkpoint.mode"
+
+    _set_checkpoint_config(tmp_path, mode="advisory", feature_interval=0)
+    assert main(["--root", str(tmp_path), "checkpoint", "status", "--json"]) == 2
+    invalid_interval = _json_output(capsys)
+    assert invalid_interval["error"]["details"] == {
+        "field": "checkpoint.feature_interval",
+        "minimum": 1,
+        "value": "0",
+    }
+
+    assert main(["--root", str(tmp_path), "validate", "--json"]) == 1
+    validation = _json_output(capsys)
+    assert "config_checkpoint_invalid" in {
+        finding["code"] for finding in validation["findings"]
+    }
 
 
 def test_checkpoint_record_requires_evidence_as_typed_json(tmp_path: Path, capsys) -> None:

@@ -5,7 +5,7 @@ from pathlib import Path
 
 from pcl.cli import main
 from pcl.locales import dashboard_strings
-from pcl.renderer import _operator_summary_block
+from pcl.renderer import _operator_summary_block, _risk_summary
 
 
 def _read_dashboard(root: Path) -> str:
@@ -473,6 +473,47 @@ def test_operator_summary_localizes_checkpoint_decision_preview() -> None:
     assert "review the larger product direction" in en_html
     assert "Approve / Reject / Hold / Request more evidence" in en_html
     assert "pcl checkpoint record" not in en_html
+
+
+def test_dashboard_risk_summary_treats_advisory_checkpoint_as_non_human_attention() -> None:
+    summary = _risk_summary(
+        {
+            "validation": {"errors": [], "warnings": []},
+            "next_action": {"type": "work_on_task"},
+            "checkpoint": {
+                "checkpoint_recommended": True,
+                "mode": "advisory",
+                "completed_features_since_checkpoint": 5,
+                "threshold": 5,
+            },
+            "workflow_proposals": [],
+        },
+        {
+            "decisions": [],
+            "escalations": [],
+            "defects": [],
+            "workflow_runs": [],
+            "agent_jobs": [],
+        },
+    )
+
+    assert summary["blocking"] is False
+    assert summary["highest_severity"] == "low"
+    assert summary["items"] == [
+        {
+            "type": "checkpoint_advisory",
+            "severity": "low",
+            "blocking": False,
+            "requires_human": False,
+            "summary": (
+                "5 features have completed since the last checkpoint (review interval: 5); "
+                "review the larger product direction at the next natural boundary."
+            ),
+            "command": "pcl checkpoint status --json",
+            "target": {"type": "checkpoint", "id": ""},
+            "count": 1,
+        }
+    ]
 
 
 def test_dashboard_operator_summary_distinguishes_idle_manual_and_agent_safe(

@@ -17,6 +17,7 @@ The top-level object must contain:
 - `source_db`
 - `validation`
 - `next_action`
+- `checkpoint`
 - `human_decisions`
 - `risk_summary`
 - `counts`
@@ -60,6 +61,28 @@ The top-level object must contain:
 - `human_guidance`
 - `expected_after`
 - `target`
+
+`checkpoint`:
+
+- `ok`
+- `checkpoint_recommended`
+- `checkpoint_requires_human`
+- `mode`
+- `threshold`
+- `threshold_reached`
+- `completed_features_since_checkpoint`
+- `completed_feature_ids_since_checkpoint`
+- `passed_workflow_runs_since_checkpoint`
+- `feature_status_counts`
+- `open_goal_count`
+- `latest_checkpoint`
+- `git`
+
+The default `mode` is `advisory`. An advisory recommendation may appear as a
+non-blocking `checkpoint_advisory` item in `risk_summary.items`, but it is not
+included in `human_decisions` and does not replace normal `next_action` routing.
+Only `mode: blocking` sets `checkpoint_requires_human` and routes the legacy
+human-gated `checkpoint_review` action.
 
 When `next_action.requires_human` is true, `next_action` may also include the
 same cockpit fields used by `human_decisions.items`:

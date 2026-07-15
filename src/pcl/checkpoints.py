@@ -10,13 +10,14 @@ from .events import append_event
 from .errors import InvalidInputError
 from .guards import require_initialized
 from .paths import ProjectPaths
+from .project_config import checkpoint_configuration
 
 
-CHECKPOINT_FEATURE_THRESHOLD = 5
 CHECKPOINT_REVIEW_TYPES = {"integration", "commit", "ux", "release", "package"}
 
 
 def checkpoint_status(paths: ProjectPaths) -> dict[str, Any]:
+    configuration = checkpoint_configuration(paths.root)
     require_initialized(paths)
 
     conn = connect(paths.db_path)
@@ -76,11 +77,16 @@ def checkpoint_status(paths: ProjectPaths) -> dict[str, Any]:
         )
         done_feature_ids = _done_feature_ids(feature_events_since_checkpoint)
         git_state = _git_status(paths)
-        recommended = len(done_feature_ids) >= CHECKPOINT_FEATURE_THRESHOLD
+        threshold = int(configuration["feature_interval"])
+        threshold_reached = len(done_feature_ids) >= threshold
+        recommended = threshold_reached and configuration["mode"] != "off"
         return {
             "ok": True,
             "checkpoint_recommended": recommended,
-            "threshold": CHECKPOINT_FEATURE_THRESHOLD,
+            "checkpoint_requires_human": recommended and configuration["mode"] == "blocking",
+            "mode": configuration["mode"],
+            "threshold": threshold,
+            "threshold_reached": threshold_reached,
             "completed_features_since_checkpoint": len(done_feature_ids),
             "completed_feature_ids_since_checkpoint": done_feature_ids,
             "passed_workflow_runs_since_checkpoint": passed_runs_since,

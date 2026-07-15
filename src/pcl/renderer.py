@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from .approval_provenance import provenance_from_event_payload
+from .checkpoints import checkpoint_status
 from .commands import decision_options, escalation_options, generic_human_options, next_action, verification_options
 from .db import connect, count_rows
 from .guards import require_initialized
@@ -278,6 +279,7 @@ def render_dashboard(paths: ProjectPaths, *, locale: str | None = None) -> None:
         active_run_id = active_workflow["id"] if active_workflow else None
         risk_rows = _risk_source_rows(conn)
         action = next_action(paths)
+        checkpoint = checkpoint_status(paths)
         all_decision_link_rows = _rows(
             conn,
             """
@@ -297,6 +299,7 @@ def render_dashboard(paths: ProjectPaths, *, locale: str | None = None) -> None:
             "source_db": str(paths.db_path),
             "validation": validation.to_dict(),
             "next_action": action,
+            "checkpoint": checkpoint,
             "counts": {
                 "features": count_rows(conn, "features"),
                 "user_stories": count_rows(conn, "user_stories"),
@@ -1053,6 +1056,32 @@ def _risk_summary(data: dict[str, Any], risk_rows: dict[str, list[dict[str, Any]
                 target_type="validation",
                 target_id="",
                 count=len(warnings),
+            )
+        )
+
+    checkpoint = data.get("checkpoint", {})
+    if (
+        isinstance(checkpoint, dict)
+        and checkpoint.get("checkpoint_recommended") is True
+        and checkpoint.get("mode") == "advisory"
+    ):
+        completed = int(checkpoint.get("completed_features_since_checkpoint") or 0)
+        threshold = int(checkpoint.get("threshold") or 0)
+        items.append(
+            _risk_item(
+                item_type="checkpoint_advisory",
+                severity="low",
+                blocking=False,
+                requires_human=False,
+                summary=(
+                    f"{completed} features have completed since the last checkpoint "
+                    f"(review interval: {threshold}); review the larger product direction "
+                    "at the next natural boundary."
+                ),
+                command="pcl checkpoint status --json",
+                target_type="checkpoint",
+                target_id="",
+                count=1,
             )
         )
 

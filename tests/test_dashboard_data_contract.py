@@ -12,6 +12,7 @@ TOP_LEVEL_KEYS = {
     "source_db",
     "validation",
     "next_action",
+    "checkpoint",
     "human_decisions",
     "risk_summary",
     "counts",
@@ -61,6 +62,21 @@ NEXT_ACTION_KEYS = {
     "target",
 }
 RISK_SUMMARY_KEYS = {"blocking", "highest_severity", "items"}
+CHECKPOINT_KEYS = {
+    "ok",
+    "checkpoint_recommended",
+    "checkpoint_requires_human",
+    "mode",
+    "threshold",
+    "threshold_reached",
+    "completed_features_since_checkpoint",
+    "completed_feature_ids_since_checkpoint",
+    "passed_workflow_runs_since_checkpoint",
+    "feature_status_counts",
+    "open_goal_count",
+    "latest_checkpoint",
+    "git",
+}
 RISK_ITEM_KEYS = {
     "type",
     "severity",
@@ -237,6 +253,9 @@ def test_dashboard_data_contract_shape_for_active_loop(tmp_path: Path) -> None:
     assert data["counts"]["user_stories"] == 0
     assert data["counts"]["test_cases"] == 0
     assert set(data["next_action"]) == NEXT_ACTION_KEYS
+    assert set(data["checkpoint"]) == CHECKPOINT_KEYS
+    assert data["checkpoint"]["mode"] == "advisory"
+    assert data["checkpoint"]["checkpoint_requires_human"] is False
     assert set(data["human_decisions"]) == HUMAN_DECISIONS_KEYS
     assert data["human_decisions"] == {"count": 0, "items": []}
     assert set(data["risk_summary"]) == RISK_SUMMARY_KEYS
@@ -284,6 +303,8 @@ def test_dashboard_data_contract_is_documented() -> None:
         "dashboard-data/v1",
         "contract_version",
         "next_action",
+        "checkpoint",
+        "checkpoint_requires_human",
         "risk_summary",
         "human_decisions",
         "Needs Your Decision",

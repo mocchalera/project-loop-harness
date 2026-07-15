@@ -1661,7 +1661,7 @@ def _workflow_proposal_review_next_action(paths: ProjectPaths) -> dict | None:
 
 def _checkpoint_review_next_action(paths: ProjectPaths) -> dict | None:
     status = checkpoint_status(paths)
-    if not status["checkpoint_recommended"]:
+    if not status["checkpoint_requires_human"]:
         return None
     completed = status["completed_features_since_checkpoint"]
     threshold = status["threshold"]

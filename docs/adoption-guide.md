@@ -244,8 +244,8 @@ HTML disclosure labeled **Detailed Project Loop information**. Dashboard HTML
 is still a human-only view; agents prepare their explanation from `pcl` JSON
 state rather than parsing the page.
 
-After several small features, let `pcl next` stop the loop for a checkpoint
-instead of blindly starting another feature coverage run:
+After several small features, use the checkpoint reminder to review the larger
+product direction without stopping normal work by default:
 
 ```bash
 pcl checkpoint status --json
@@ -258,6 +258,12 @@ pcl checkpoint record \
 Use this checkpoint to decide commit/package boundaries, refresh any hands-on UX
 checklist, and choose the next feature by contribution to the larger product
 goal rather than simply taking the next small item.
+
+The generated configuration defaults to `checkpoint.mode: advisory`, so
+`pcl next` continues normal Task and Goal routing while the dashboard shows the
+reminder under risks/attention. Set the mode to `blocking` only for projects
+that intentionally require a human checkpoint at the configured
+`feature_interval`, or set it to `off` to disable cadence reminders.
 
 For test-first work, keep behavior in harness state instead of only in prose:
 

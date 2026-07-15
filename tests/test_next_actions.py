@@ -75,6 +75,13 @@ def _json_output(capsys) -> dict:
     return json.loads(captured.out)
 
 
+def _set_checkpoint_mode(root: Path, mode: str) -> None:
+    config_path = root / "pcl.yaml"
+    text = config_path.read_text(encoding="utf-8")
+    text = text.replace("checkpoint:\n  mode: advisory", f"checkpoint:\n  mode: {mode}", 1)
+    config_path.write_text(text, encoding="utf-8")
+
+
 def _assert_guided_action(action: dict) -> None:
     assert GUIDED_ACTION_KEYS.issubset(action)
     assert isinstance(action["type"], str)
@@ -268,7 +275,7 @@ def test_next_routes_passing_unfinished_feature_with_completion_blocker(
     assert "Evidence Set completion-policy receipt" in action["reason"]
 
 
-def test_next_routes_checkpoint_review_before_more_goal_continuation(tmp_path: Path, capsys) -> None:
+def test_next_keeps_goal_continuation_ahead_of_advisory_checkpoint(tmp_path: Path, capsys) -> None:
     assert main(["init", "--target", str(tmp_path)]) == 0
     assert main(["--root", str(tmp_path), "goal", "create", "--title", "Improve UX"]) == 0
     for index in range(1, 6):
@@ -278,13 +285,16 @@ def test_next_routes_checkpoint_review_before_more_goal_continuation(tmp_path: P
     assert main(["--root", str(tmp_path), "next", "--json"]) == 0
     action = _json_output(capsys)
     _assert_guided_action(action)
-    assert action["type"] == "checkpoint_review"
-    assert action["priority"] == 58
-    assert action["requires_human"] is True
+    assert action["type"] == "continue_goal"
+    assert action["requires_human"] is False
     assert action["safe_to_run"] is False
-    assert action["run_policy"] == "human_decision"
-    assert action["target"]["completed_features_since_checkpoint"] == 5
-    assert action["target"]["checkpoint_recommended"] is True
+    assert action["run_policy"] == "manual_state_transition"
+
+    assert main(["--root", str(tmp_path), "checkpoint", "status", "--json"]) == 0
+    checkpoint = _json_output(capsys)
+    assert checkpoint["mode"] == "advisory"
+    assert checkpoint["checkpoint_recommended"] is True
+    assert checkpoint["checkpoint_requires_human"] is False
 
     assert main([
         "--root",
@@ -348,7 +358,7 @@ def test_next_routes_goal_linked_ready_task_before_goal_continuation(tmp_path: P
     assert "highest-priority ready task" in action["reason"]
 
 
-def test_next_routes_checkpoint_review_before_ready_task(tmp_path: Path, capsys) -> None:
+def test_next_routes_ready_task_before_advisory_checkpoint(tmp_path: Path, capsys) -> None:
     assert main(["init", "--target", str(tmp_path)]) == 0
     assert main(["--root", str(tmp_path), "goal", "create", "--title", "Checkpoint beats tasks"]) == 0
     assert main([
@@ -380,8 +390,38 @@ def test_next_routes_checkpoint_review_before_ready_task(tmp_path: Path, capsys)
     assert main(["--root", str(tmp_path), "next", "--json"]) == 0
     action = _json_output(capsys)
     _assert_guided_action(action)
+    assert action["type"] == "work_on_task"
+    assert action["priority"] == 59
+    assert action["requires_human"] is False
+    assert action["run_policy"] == "agent_safe"
+
+
+def test_next_preserves_opt_in_blocking_checkpoint_before_ready_task(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    _set_checkpoint_mode(tmp_path, "blocking")
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Strict checkpoint"]) == 0
+    assert main([
+        "--root", str(tmp_path), "task", "create", "--title", "Ready task",
+        "--priority", "10", "--goal", "G-0001",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "task", "status", "T-0001", "ready",
+        "--reason", "Ready for routing",
+    ]) == 0
+    for index in range(1, 6):
+        _add_done_feature(tmp_path, capsys, index)
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    action = _json_output(capsys)
     assert action["type"] == "checkpoint_review"
     assert action["priority"] == 58
+    assert action["requires_human"] is True
+    assert action["run_policy"] == "human_decision"
+    assert action["target"]["mode"] == "blocking"
 
 
 def test_next_prefers_in_progress_task_over_ready_task(tmp_path: Path, capsys) -> None:

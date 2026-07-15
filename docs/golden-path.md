@@ -214,6 +214,13 @@ pcl checkpoint record --root /tmp/pcl-demo \
 ```
 
 When five features have been marked `done` since the latest checkpoint,
-`pcl next --json` returns `checkpoint_review` before it recommends another
-feature coverage run. Recording the checkpoint stores `checkpoint_review`
-evidence and a `checkpoint_recorded` event, then normal routing resumes.
+`pcl checkpoint status --json` recommends an integration review. The default
+`checkpoint.mode: advisory` keeps normal Task and Goal routing active while the
+dashboard shows a low-severity reminder. Set `checkpoint.mode: blocking` when a
+project intentionally wants `pcl next --json` to return a human-gated
+`checkpoint_review` first, or `checkpoint.mode: off` to suppress cadence-based
+recommendations. `checkpoint.feature_interval` controls the cadence.
+
+Recording the checkpoint stores `checkpoint_review` evidence and a
+`checkpoint_recorded` event, then resets the completed-Feature count for every
+mode.

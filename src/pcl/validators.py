@@ -18,7 +18,12 @@ from .evidence import ADHOC_EVIDENCE_TYPES, assess_adhoc_evidence, superseding_e
 from .errors import DataStoreError, InvalidInputError
 from .migrations import migration_status
 from .paths import ProjectPaths
-from .project_config import finish_check_configuration, finish_check_configuration_warning, project_command_specs
+from .project_config import (
+    checkpoint_configuration,
+    finish_check_configuration,
+    finish_check_configuration_warning,
+    project_command_specs,
+)
 from .rubric import claims_rubric_v1, evidence_ids_in_rubric, validate_rubric
 from .timeutil import utc_now_iso
 from .workflow_proposal_validation import PROPOSAL_ID_RE, validate_workflow_proposal_text
@@ -351,8 +356,10 @@ def validate_project(
                 entity={"type": "project", "id": str(paths.root)},
                 repair_class="unsupported",
             )
-        elif include_config_advice:
-            _validate_pcl_yaml_advice(paths, result)
+        else:
+            _validate_checkpoint_configuration(paths, result)
+            if include_config_advice:
+                _validate_pcl_yaml_advice(paths, result)
         if include_config_advice:
             _validate_development_runtime_source(paths, result)
         skill_path = paths.agents_skill_dir.joinpath("SKILL.md")
@@ -477,6 +484,22 @@ def _validate_pcl_yaml_advice(paths: ProjectPaths, result: ValidationResult) -> 
                 {"type": "config_command", "id": key}
                 for key in configuration["required_any_of"]
             ],
+            repair_class="human_review",
+            requires_human=True,
+        )
+
+
+def _validate_checkpoint_configuration(
+    paths: ProjectPaths,
+    result: ValidationResult,
+) -> None:
+    try:
+        checkpoint_configuration(paths.root)
+    except InvalidInputError as exc:
+        result.add_error(
+            exc.message,
+            code="config_checkpoint_invalid",
+            entity={"type": "project", "id": str(paths.root)},
             repair_class="human_review",
             requires_human=True,
         )

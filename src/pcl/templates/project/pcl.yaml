@@ -47,6 +47,10 @@ loop:
   require_human_after_repeated_failure: true
   stop_if_same_failure_repeats: true
 
+checkpoint:
+  mode: advisory
+  feature_interval: 5
+
 validation:
   lifecycle_integrity: enforced
 
