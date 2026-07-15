@@ -65,6 +65,7 @@ Evidence. It must not be hidden inside a module move.
 - Preserve imports through narrow compatibility re-exports when tests or
   internal callers rely on them.
 - Gate: formatter tests, CLI JSON snapshots, help/parser tests, then full suite.
+- Implementation task: `agent-tasks/0184-cli-stage1-presentation-extraction.md`.
 
 ### Stage 2 — Read-only command handlers
 

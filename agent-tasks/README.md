@@ -100,6 +100,7 @@ implement from the spec file, not from prompt summaries.
 | 0181 | Controlled Trace resume evaluation | v0.5.1 Trace & Efficient Handoff | P0 | done (`continue`) |
 | 0182 | v0.5.1 local release preparation | v0.5.1 Trace & Efficient Handoff | P1 | done; local RC approved |
 | 0183 | v0.5.1 publication closeout | v0.5.1 Trace & Efficient Handoff | P1 | done; published and independently verified |
+| 0184 | CLI Stage 1 presentation extraction | post-v0.5.1 maintainability | P1 | done |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
@@ -186,6 +187,7 @@ their study remains later Adoption evidence. See `docs/plan-v0.5.1.md`.
 | v0.5.0 | Published and independently verified; first Zenn launch complete; Council remains opt-in with `continue experiment` |
 | post-v0.5.0 | 0175 maintainer entry hardening → 0176 scale baseline → 0177 checkpoint friction before v0.5.1 Trace |
 | v0.5.1 | Trace & Efficient Handoff: source-bound claims-not-facts handoff plus controlled cross-session/runtime resume evidence |
+| post-v0.5.1 | Behavior-preserving staged CLI split; 0184 pure presentation extraction first |
 
 Everything with an ID below 0102 is completed design history; see `TASKS.md`
 for the one-line summary of each.

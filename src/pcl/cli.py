@@ -192,6 +192,13 @@ from .relationship_repair import add_evidence_link, repair_test_links
 from .migrations import apply_migrations, migration_status
 from .outbox import project_pending_events
 from .paths import resolve_paths
+from .presentation import (
+    format_context_check_summary as _format_context_check_summary,
+    format_finish_summary as _format_finish_summary,
+    format_next_explanation as _format_next_explanation,
+    format_start_summary as _format_start_summary,
+    impact_text_payload as _impact_text_payload,
+)
 from .profiles import list_profiles, show_profile, validate_profile
 from .profile_ingest import plan_profile_ingest
 from .profile_bundle_store import ingest_profile_bundle
@@ -1913,115 +1920,6 @@ def _validate_contract_file(
     return 0 if result.ok else 1
 
 
-def _impact_text_payload(impact: dict) -> tuple[dict, str | None]:
-    display = dict(impact)
-    excluded = display.pop("excluded_changed_files", [])
-    display["excluded_changed_file_count"] = len(excluded)
-    if not excluded:
-        return display, None
-    paths = [str(item.get("path", "")) for item in excluded if item.get("path")]
-    visible = ", ".join(paths[:5])
-    if len(paths) > 5:
-        visible += f", ... (+{len(paths) - 5} more)"
-    return display, f"Excluded changed files: {len(excluded)} ({visible})"
-
-
-def _print_context_check_summary(payload: dict) -> None:
-    target = payload["target"]
-    bound = payload["target_bound_code_context"]
-    print(f"Context check: {target['type']} {target['id']}")
-    print(f"Target-bound code context: {bound['status']}")
-    receipt_ref = bound.get("receipt_ref")
-    if isinstance(receipt_ref, dict):
-        print(
-            f"Receipt: {receipt_ref.get('evidence_id', '')} ({receipt_ref.get('created_at', '')})"
-        )
-    print(f"Supporting evidence: {payload['supporting_evidence_count']}")
-    master_trace_context = payload.get("master_trace_context")
-    if isinstance(master_trace_context, dict):
-        print(f"Master trace context: {master_trace_context.get('status', '')}")
-    print(f"Canonical pack command: {payload['canonical_context_pack_command']}")
-    refresh_command = payload.get("recommended_refresh_command")
-    if refresh_command:
-        print(f"Recommended refresh command: {refresh_command}")
-    for warning in payload.get("warnings", []):
-        print(f"WARNING: {warning}")
-
-
-def _format_next_explanation(action: dict) -> str:
-    command = action.get("command") or "-"
-    lines = [
-        f"Next action: {action.get('type', '')}",
-        f"Priority: {action.get('priority', '')}",
-        f"Blocking: {_yes_no(bool(action.get('blocking')))}",
-        f"Requires human: {_yes_no(bool(action.get('requires_human')))}",
-        f"Safe to run: {_yes_no(bool(action.get('safe_to_run')))}",
-        f"Run policy: {action.get('run_policy', '')}",
-        f"Human guidance: {action.get('human_guidance', '')}",
-        f"Reason: {action.get('reason', '')}",
-        f"Command: {command}",
-        f"Expected after: {action.get('expected_after', '')}",
-    ]
-    target = action.get("target")
-    if isinstance(target, dict) and target.get("id"):
-        lines.append(f"Target: {target['id']}")
-    return "\n".join(lines)
-
-
-def _format_finish_summary(payload: dict) -> str:
-    target = payload["target"]
-    lines = [
-        f"Finish target: run={target['run'] or '-'} goal={target['goal'] or '-'}",
-        f"Finished: {_yes_no(bool(payload['finished']))}",
-    ]
-    steps = payload["remaining_steps"]
-    if steps:
-        lines.append("Remaining steps:")
-        for index, step in enumerate(steps, start=1):
-            lines.append(
-                f"{index}. {step['command']} "
-                f"(requires_human={_yes_no(bool(step['requires_human']))}, "
-                f"safe_to_run={_yes_no(bool(step['safe_to_run']))})"
-            )
-    else:
-        lines.append("Remaining steps: none")
-    if "executed" in payload:
-        executed = payload["executed"]
-        if executed:
-            lines.append("Executed:")
-            for item in executed:
-                lines.append(f"- {item['command']}: {'ok' if item['ok'] else 'failed'}")
-        else:
-            lines.append("Executed: none")
-        lines.append(f"Changed: {_yes_no(bool(payload['changed']))}")
-    return "\n".join(lines)
-
-
-def _format_start_summary(payload: dict) -> str:
-    result = payload["result"]
-    lines = [
-        f"Start status: {payload['status']}",
-        f"Mutated: {_yes_no(bool(payload['mutated']))}",
-        f"Intent: {result['intent']}",
-    ]
-    target = result.get("target")
-    if isinstance(target, dict) and target.get("id"):
-        lines.append(f"Target: {target['type']} {target['id']}")
-    initialization = result.get("initialization")
-    if isinstance(initialization, dict):
-        lines.append("Initialization plan:")
-        for change in initialization.get("changes", []):
-            lines.append(f"- {change['action']}: {change['path']} ({change['reason']})")
-    for warning in payload["warnings"]:
-        lines.append(f"WARNING: {warning}")
-    if payload["next_actions"]:
-        action = payload["next_actions"][0]
-        lines.append(f"Next: {action['text']}")
-        if action["command"]:
-            lines.append(f"Run: {action['command']}")
-    return "\n".join(lines)
-
-
 def _run_finish_tail(paths) -> list[dict]:
     executed: list[dict] = []
     strict = validate_project(paths, strict=True)
@@ -2037,10 +1935,6 @@ def _run_finish_tail(paths) -> list[dict]:
     render_dashboard(paths)
     executed.append({"command": "pcl render", "ok": True})
     return executed
-
-
-def _yes_no(value: bool) -> str:
-    return "yes" if value else "no"
 
 
 def _print_validation(result, *, json_output: bool = False) -> int:
@@ -3757,7 +3651,7 @@ def main(argv: list[str] | None = None) -> int:
             if json_output:
                 _print_json({"ok": True, "context_check": payload})
             else:
-                _print_context_check_summary(payload)
+                print(_format_context_check_summary(payload))
             return 0
 
         if args.command == "receipt" and args.receipt_command == "show":

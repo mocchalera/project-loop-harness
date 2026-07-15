@@ -25,6 +25,7 @@ from .lifecycle import ACTIVE_JOB_STATUSES, ACTIVE_RUN_STATUSES, TERMINAL_JOB_ST
 from .links import linked_decisions_for_escalation
 from .locales import HUMAN_GATE_JA
 from .paths import ProjectPaths
+from .presentation import to_pretty_json as to_pretty_json
 from .project_config import finish_check_configuration
 from .timeutil import utc_now_iso
 from .workflow_proposals import next_reviewable_workflow_proposal
@@ -2067,10 +2068,6 @@ def _job_status_counts(conn, workflow_run_id: str) -> dict[str, int]:
         (workflow_run_id,),
     ).fetchall()
     return {str(row["status"]): int(row["count"]) for row in rows}
-
-
-def to_pretty_json(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
 
 
 def _require_feature_status(status: str) -> None:
