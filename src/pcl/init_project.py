@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import configparser
 import json
 from pathlib import Path
+import re
 import shlex
 from typing import Any
 
@@ -31,7 +33,8 @@ DEFAULT_DIRS = [
     "cache",
 ]
 
-NODE_COMMAND_KEYS = ("lint", "typecheck", "test", "e2e", "build")
+VERIFICATION_COMMAND_KEYS = ("lint", "typecheck", "test", "e2e", "build")
+CONFIG_COMMAND_KEYS = ("install", *VERIFICATION_COMMAND_KEYS)
 SAFE_NODE_SCRIPT_EXECUTABLES = {
     "ava",
     "biome",
@@ -169,19 +172,19 @@ def plan_init_project(paths: ProjectPaths, *, overwrite: bool = False, with_clau
                 reason="create append-only audit log",
             )
         )
-    _, detected_node = _project_config_text(paths.root)
+    _, detected_project = _project_config_text(paths.root)
     config_create_reason = "install project-loop configuration template"
     config_overwrite_reason = "would overwrite pcl.yaml from template"
-    if detected_node is not None:
-        detected_commands = ", ".join(detected_node["commands"])
+    if detected_project is not None:
+        detected_commands = ", ".join(detected_project["commands"])
         command_suffix = f" with commands: {detected_commands}" if detected_commands else ""
         config_create_reason = (
-            "install project-loop configuration for detected Node project "
-            f"{detected_node['name']}{command_suffix}"
+            "install project-loop configuration for detected "
+            f"{detected_project['label']} project {detected_project['name']}{command_suffix}"
         )
         config_overwrite_reason = (
-            "would overwrite pcl.yaml for detected Node project "
-            f"{detected_node['name']}{command_suffix}"
+            "would overwrite pcl.yaml for detected "
+            f"{detected_project['label']} project {detected_project['name']}{command_suffix}"
         )
     _plan_file(
         changes,
@@ -347,32 +350,172 @@ def init_project(paths: ProjectPaths, *, overwrite: bool = False, with_claude: b
 def _project_config_text(root: Path) -> tuple[str, dict[str, Any] | None]:
     template = read_text_resource("templates/project/pcl.yaml")
     package = _read_package_json(root / "package.json")
-    if package is None:
-        return template, None
-
-    raw_name = package.get("name")
-    name = raw_name.strip() if isinstance(raw_name, str) else ""
-    if not name:
-        name = root.name or "CHANGE_ME"
-    scripts = package.get("scripts")
-    scripts = scripts if isinstance(scripts, dict) else {}
-    command_keys = [
-        key
-        for key in NODE_COMMAND_KEYS
-        if isinstance(scripts.get(key), str)
-        and _is_supported_node_verification_script(scripts[key])
-    ]
-    package_runner = _node_package_runner(root, package)
-
-    config = template.replace('  name: "CHANGE_ME"', f"  name: {_yaml_string(name)}", 1)
-    config = config.replace('  type: "generic"', '  type: "node"', 1)
-    for key in command_keys:
-        config = config.replace(
-            f'  {key}: ""',
-            f"  {key}: {_yaml_string(f'{package_runner} run {key}')}",
-            1,
+    if package is not None:
+        raw_name = package.get("name")
+        name = raw_name.strip() if isinstance(raw_name, str) else ""
+        if not name:
+            name = root.name or "CHANGE_ME"
+        scripts = package.get("scripts")
+        scripts = scripts if isinstance(scripts, dict) else {}
+        command_keys = [
+            key
+            for key in VERIFICATION_COMMAND_KEYS
+            if isinstance(scripts.get(key), str)
+            and _is_supported_node_verification_script(scripts[key])
+        ]
+        package_runner = _node_package_runner(root, package)
+        commands = {key: f"{package_runner} run {key}" for key in command_keys}
+        config = _detected_config_text(
+            template,
+            name=name,
+            project_type="node",
+            commands=commands,
         )
-    return config, {"name": name, "commands": command_keys, "runner": package_runner}
+        return config, {
+            "name": name,
+            "label": "Node",
+            "commands": command_keys,
+            "runner": package_runner,
+        }
+
+    python_project = _detect_python_project(root)
+    if python_project is None:
+        return template, None
+    config = _detected_config_text(
+        template,
+        name=python_project["name"],
+        project_type="python",
+        commands=python_project["commands"],
+    )
+    return config, {
+        "name": python_project["name"],
+        "label": "Python",
+        "commands": [
+            key for key in VERIFICATION_COMMAND_KEYS if key in python_project["commands"]
+        ],
+    }
+
+
+def _detected_config_text(
+    template: str,
+    *,
+    name: str,
+    project_type: str,
+    commands: dict[str, str],
+) -> str:
+    config = template.replace('  name: "CHANGE_ME"', f"  name: {_yaml_string(name)}", 1)
+    config = config.replace('  type: "generic"', f"  type: {_yaml_string(project_type)}", 1)
+    for key in CONFIG_COMMAND_KEYS:
+        config = config.replace(f'  {key}: ""', f"  {key}: null", 1)
+    for key, command in commands.items():
+        config = config.replace(f"  {key}: null", f"  {key}: {_yaml_string(command)}", 1)
+    return config
+
+
+def _detect_python_project(root: Path) -> dict[str, Any] | None:
+    markers = (
+        "pyproject.toml",
+        "setup.py",
+        "setup.cfg",
+        "requirements.txt",
+    )
+    if not any((root / marker).is_file() for marker in markers):
+        return None
+
+    pyproject_text = _read_text(root / "pyproject.toml")
+    name = (
+        _toml_section_string(pyproject_text, "project", "name")
+        or _toml_section_string(pyproject_text, "tool.poetry", "name")
+        or _setup_cfg_name(root / "setup.cfg")
+        or root.name
+        or "CHANGE_ME"
+    )
+
+    commands: dict[str, str] = {}
+    if _python_tool_declared(root, pyproject_text, "ruff"):
+        commands["lint"] = "ruff check ."
+    if _python_tool_declared(root, pyproject_text, "mypy"):
+        commands["typecheck"] = "python -m mypy ."
+    if _python_tool_declared(root, pyproject_text, "pytest"):
+        commands["test"] = "python -m pytest"
+    return {"name": name, "commands": commands}
+
+
+def _read_text(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return ""
+
+
+def _toml_section_string(text: str, section: str, key: str) -> str:
+    current_section = ""
+    section_pattern = re.compile(r"^\s*\[([^]]+)]\s*(?:#.*)?$")
+    value_pattern = re.compile(
+        rf"^\s*{re.escape(key)}\s*=\s*([\"'])(.*?)\1\s*(?:#.*)?$"
+    )
+    for line in text.splitlines():
+        section_match = section_pattern.match(line)
+        if section_match:
+            current_section = section_match.group(1).strip()
+            continue
+        if current_section != section:
+            continue
+        value_match = value_pattern.match(line)
+        if value_match:
+            return value_match.group(2).strip()
+    return ""
+
+
+def _setup_cfg_name(path: Path) -> str:
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        with path.open(encoding="utf-8") as file:
+            parser.read_file(file)
+    except (OSError, UnicodeError, configparser.Error):
+        return ""
+    return parser.get("metadata", "name", fallback="").strip()
+
+
+def _python_tool_declared(root: Path, pyproject_text: str, tool: str) -> bool:
+    section_prefixes = {
+        "ruff": ("[tool.ruff",),
+        "mypy": ("[tool.mypy",),
+        "pytest": ("[tool.pytest",),
+    }
+    lowered = pyproject_text.lower()
+    if any(prefix in lowered for prefix in section_prefixes[tool]):
+        return True
+    dependency_pattern = re.compile(
+        r'''["']'''
+        + re.escape(tool)
+        + r'''(?:\[[^"']*])?(?:[<>=!~][^"']*)?["']''',
+        re.IGNORECASE,
+    )
+    if dependency_pattern.search(pyproject_text):
+        return True
+
+    config_files = {
+        "ruff": ("ruff.toml", ".ruff.toml"),
+        "mypy": ("mypy.ini", ".mypy.ini"),
+        "pytest": ("pytest.ini", "conftest.py"),
+    }
+    if any((root / filename).is_file() for filename in config_files[tool]):
+        return True
+    return any(_requirements_declares_tool(path, tool) for path in root.glob("requirements*.txt"))
+
+
+def _requirements_declares_tool(path: Path, tool: str) -> bool:
+    text = _read_text(path)
+    pattern = re.compile(
+        rf"^{re.escape(tool)}(?:\[[^]]+])?(?:\s*[<>=!~].*)?$",
+        re.IGNORECASE,
+    )
+    for raw_line in text.splitlines():
+        line = raw_line.partition("#")[0].partition(";")[0].strip()
+        if pattern.fullmatch(line):
+            return True
+    return False
 
 
 def _read_package_json(path: Path) -> dict[str, Any] | None:

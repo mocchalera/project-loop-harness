@@ -102,7 +102,7 @@ def test_init_detects_node_project_configuration_from_package_json(
     config = (tmp_path / "pcl.yaml").read_text(encoding="utf-8")
     assert 'name: "strange-puzzle"' in config
     assert 'type: "node"' in config
-    assert 'install: ""' in config
+    assert 'install: null' in config
     assert 'lint: "pnpm run lint"' in config
     assert 'typecheck: "pnpm run typecheck"' in config
     assert 'test: "pnpm run test"' in config
@@ -171,11 +171,93 @@ def test_init_does_not_adopt_dangerous_or_arbitrary_named_verification_scripts(
 
     assert main(["init", "--target", str(tmp_path)]) == 0
     config = (tmp_path / "pcl.yaml").read_text(encoding="utf-8")
-    assert 'lint: ""' in config
-    assert 'typecheck: ""' in config
+    assert 'lint: null' in config
+    assert 'typecheck: null' in config
     assert 'test: "npm run test"' in config
     assert 'e2e: "npm run e2e"' in config
-    assert 'build: ""' in config
+    assert 'build: null' in config
+
+
+def test_init_detects_python_project_and_safe_verification_commands(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        """\
+[project]
+name = "careful-service"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_smoke.py").write_text(
+        "def test_smoke():\n    assert True\n",
+        encoding="utf-8",
+    )
+
+    assert main(["init", "--target", str(tmp_path), "--dry-run", "--json"]) == 0
+    plan = _json_output(capsys)
+    config_change = next(change for change in plan["changes"] if change["path"] == "pcl.yaml")
+    assert config_change == {
+        "action": "create",
+        "path": "pcl.yaml",
+        "reason": (
+            "install project-loop configuration for detected Python project "
+            "careful-service with commands: lint, test"
+        ),
+    }
+    assert not (tmp_path / "pcl.yaml").exists()
+
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    config = (tmp_path / "pcl.yaml").read_text(encoding="utf-8")
+    assert 'name: "careful-service"' in config
+    assert 'type: "python"' in config
+    assert 'install: null' in config
+    assert 'lint: "ruff check ."' in config
+    assert 'typecheck: null' in config
+    assert 'test: "python -m pytest"' in config
+    assert 'e2e: null' in config
+    assert 'build: null' in config
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "doctor", "--strict", "--json"]) == 0
+    doctor = _json_output(capsys)
+    config_findings = [
+        item for item in doctor["findings"] if item["code"].startswith("config_")
+    ]
+    assert config_findings == []
+
+
+def test_init_python_detection_uses_directory_name_without_executing_project_code(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "fallback-python"
+    project.mkdir()
+    (project / "setup.py").write_text(
+        'raise RuntimeError("must never execute")\n',
+        encoding="utf-8",
+    )
+    (project / "requirements.txt").write_text(
+        "requests\ncustom-pytest-publisher\n",
+        encoding="utf-8",
+    )
+
+    assert main(["init", "--target", str(project)]) == 0
+    config = (project / "pcl.yaml").read_text(encoding="utf-8")
+    assert 'name: "fallback-python"' in config
+    assert 'type: "python"' in config
+    assert 'test: null' in config
+    assert "RuntimeError" not in config
 
 
 def test_init_dry_run_force_does_not_claim_database_overwrite(tmp_path: Path, capsys) -> None:

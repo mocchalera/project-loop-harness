@@ -1,6 +1,6 @@
 # Post-v0.5.1 maintainability plan
 
-- **Status:** Active; four Stage 2 families complete
+- **Status:** Paused after four Stage 2 families; v0.5.2 Adoption Proof takes priority
 - **Activated:** 2026-07-15
 - **Decision source:** owner instruction to continue after verified v0.5.1 publication
 - **Release label:** unassigned; completing a slice does not imply a new release
@@ -42,6 +42,10 @@ source of product-friction evidence.
 0188 is complete. Later command families receive numbered task files only when
 activated; this avoids reserving scope before dogfood and review show the next
 safest boundary.
+
+On 2026-07-16, the owner activated `docs/plan-v0.5.2-adoption-proof.md`.
+Additional extraction remains valid maintenance work, but it does not outrank
+config-ready first use or external outcome evidence.
 
 ## Invariants
 

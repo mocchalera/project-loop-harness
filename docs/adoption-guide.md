@@ -59,6 +59,13 @@ pcl --version
 pcl --help
 ```
 
+`uv` users can install the same isolated CLI with:
+
+```bash
+uv tool install project-loop-harness
+pcl --version
+```
+
 To check for updates later, run:
 
 ```bash
@@ -160,9 +167,21 @@ projects. It lists the files and directories that would be created, updated,
 skipped, or overwritten without touching local state. Only use `pcl init
 --force` after a human has reviewed and approved template replacement.
 
-### 3. Tune `pcl.yaml`
+### 3. Confirm `pcl.yaml`
 
-Edit `pcl.yaml` before asking agents to do real work:
+For common Node and Python repositories, `pcl init` detects the project name and
+safe verification commands. Detection reads configuration as data; it never
+executes `package.json`, `pyproject.toml`, `setup.py`, or project commands.
+Unknown commands are written as `null` so they are explicitly disabled rather
+than ambiguous empty placeholders.
+
+Run:
+
+```bash
+pcl doctor --strict
+```
+
+Only edit `pcl.yaml` where the detected plan is incomplete or wrong:
 
 - set `project.name` and `project.type`;
 - fill `commands.install`, `commands.lint`, `commands.test`, and other known
@@ -176,7 +195,7 @@ Edit `pcl.yaml` before asking agents to do real work:
   the default remains English and `pcl render --locale ...` overrides it for a
   single render.
 
-Then rerun:
+Then rerun health checks:
 
 ```bash
 pcl validate --strict
