@@ -96,20 +96,26 @@ def _operator_summary(conn, data: dict[str, Any]) -> dict[str, Any]:
         "now": {
             "goal_id": str(current_goal.get("id") or "") if isinstance(current_goal, dict) else "",
             "goal_title": str(current_goal.get("title") or "") if isinstance(current_goal, dict) else "",
+            "goal": dict(current_goal) if isinstance(current_goal, dict) else {},
             "task_id": str(current_task.get("id") or "") if isinstance(current_task, dict) else "",
             "task_title": str(current_task.get("title") or "") if isinstance(current_task, dict) else "",
+            "task": dict(current_task) if isinstance(current_task, dict) else {},
         },
         "done": _evidence_backed_done_items(conn),
         "next_state": next_state,
+        "next_action": dict(action) if isinstance(action, dict) else {},
         "human_count": human_count,
         "human_items": summary_human_items,
         "human_action_target": action.get("target", {}),
         "risk_count": len(risk_items) if isinstance(risk_items, list) else 0,
         "risk_severity": str(risk_summary.get("highest_severity") or "none"),
+        "risk_items": [dict(item) for item in risk_items if isinstance(item, dict)]
+        if isinstance(risk_items, list)
+        else [],
     }
 
 
-def _evidence_backed_done_items(conn, *, limit: int = 3) -> list[dict[str, str]]:
+def _evidence_backed_done_items(conn, *, limit: int = 3) -> list[dict[str, Any]]:
     current_terminal_ids = {
         "feature": {
             str(row["id"])
@@ -185,11 +191,53 @@ def _evidence_backed_done_items(conn, *, limit: int = 3) -> list[dict[str, str]]
                 "id": entity_id,
                 "proof_id": proof_id,
                 "created_at": str(row["created_at"] or ""),
+                "detail": _operator_terminal_detail(conn, kind=kind, entity_id=entity_id),
+                "proof": _operator_proof_detail(conn, proof_id=proof_id),
             }
         )
         if len(items) >= limit:
             break
     return items
+
+
+def _operator_terminal_detail(conn, *, kind: str, entity_id: str) -> dict[str, Any]:
+    queries = {
+        "feature": (
+            "SELECT id, name, surface, description, status, confidence, updated_at "
+            "FROM features WHERE id = ?"
+        ),
+        "test": (
+            "SELECT id, feature_id, story_id, type, scenario, expected, status, "
+            "evidence_id, updated_at FROM test_cases WHERE id = ?"
+        ),
+        "goal": "SELECT id, title, status, updated_at FROM goals WHERE id = ?",
+        "verification": (
+            "SELECT id, workflow_run_id, target_job_id, verifier_role, result, "
+            "reasons_json, created_at FROM verifications WHERE id = ?"
+        ),
+    }
+    query = queries.get(kind)
+    if query is None:
+        return {}
+    row = conn.execute(query, (entity_id,)).fetchone()
+    return dict(row) if row is not None else {}
+
+
+def _operator_proof_detail(conn, *, proof_id: str) -> dict[str, Any]:
+    if proof_id.startswith("E-"):
+        row = conn.execute(
+            "SELECT id, type, path, summary, created_at FROM evidence WHERE id = ?",
+            (proof_id,),
+        ).fetchone()
+    elif proof_id.startswith("V-"):
+        row = conn.execute(
+            "SELECT id, workflow_run_id, target_job_id, verifier_role, result, "
+            "reasons_json, created_at FROM verifications WHERE id = ?",
+            (proof_id,),
+        ).fetchone()
+    else:
+        row = None
+    return dict(row) if row is not None else {}
 
 
 def _approval_provenance_rows(conn) -> list[dict[str, Any]]:
@@ -1419,17 +1467,21 @@ def _operator_summary_block(summary: dict[str, Any], strings: dict[str, str]) ->
             kind = str(item.get("kind") or "")
             kind_label = strings.get(f"operator.done.kind.{kind}", kind)
             rendered_done.append(
-                "<li>"
+                '<span class="operator-preview-item">'
                 + strings["operator.done.item"].format(
                     kind=html.escape(kind_label),
                     entity_id=html.escape(str(item.get("id") or "")),
                     proof_id=html.escape(str(item.get("proof_id") or "")),
                 )
-                + "</li>"
+                + "</span>"
             )
-        done_text = "<ul>" + "".join(rendered_done) + "</ul>"
+        done_text = '<span class="operator-preview-list">' + "".join(rendered_done) + "</span>"
     else:
-        done_text = f"<p>{html.escape(strings['operator.done.none'])}</p>"
+        done_text = (
+            '<span class="operator-preview-line">'
+            + html.escape(strings["operator.done.none"])
+            + "</span>"
+        )
 
     next_state = str(summary.get("next_state") or "waiting")
     next_text = html.escape(strings.get(f"operator.next.{next_state}", strings["operator.next.waiting"]))
@@ -1445,28 +1497,290 @@ def _operator_summary_block(summary: dict[str, Any], strings: dict[str, str]) ->
         risk_text = strings["operator.risks.none"]
 
     cards = [
-        ("operator.label.now", f"<p>{now_text}</p>"),
-        ("operator.label.done", done_text),
-        ("operator.label.next", f"<p>{next_text}</p>"),
-        ("operator.label.human", human_content),
-        ("operator.label.risks", f"<p>{risk_text}</p>"),
+        (
+            "now",
+            "operator.label.now",
+            f'<span class="operator-preview-line">{now_text}</span>',
+            _operator_now_detail(now, strings),
+        ),
+        (
+            "done",
+            "operator.label.done",
+            done_text,
+            _operator_done_detail(done_items, strings),
+        ),
+        (
+            "next",
+            "operator.label.next",
+            f'<span class="operator-preview-line">{next_text}</span>',
+            _operator_next_detail(summary.get("next_action", {}), strings),
+        ),
+        (
+            "human",
+            "operator.label.human",
+            human_content,
+            _operator_human_detail(summary, strings),
+        ),
+        (
+            "risks",
+            "operator.label.risks",
+            '<span class="operator-preview-line">' + html.escape(risk_text) + "</span>",
+            _operator_risks_detail(summary.get("risk_items", []), strings),
+        ),
     ]
     return "".join(
-        '<article class="operator-card">'
-        f"<h3>{html.escape(strings[label_key])}</h3>{content}</article>"
-        for label_key, content in cards
+        _operator_card(
+            card_key=card_key,
+            label=strings[label_key],
+            preview=preview,
+            detail=detail,
+            strings=strings,
+        )
+        for card_key, label_key, preview, detail in cards
     )
+
+
+def _operator_card(
+    *,
+    card_key: str,
+    label: str,
+    preview: str,
+    detail: str,
+    strings: dict[str, str],
+) -> str:
+    return (
+        f'<details class="operator-card" data-operator-card="{html.escape(card_key, quote=True)}">'
+        '<summary class="operator-card-summary">'
+        f'<span class="operator-card-heading">{html.escape(label)}</span>'
+        f'<span class="operator-card-preview">{preview}</span>'
+        f'<span class="operator-card-toggle">{html.escape(strings["operator.card.toggle"])}</span>'
+        "</summary>"
+        f'<div class="operator-card-detail">{detail}</div>'
+        "</details>"
+    )
+
+
+def _operator_now_detail(now: dict[str, Any], strings: dict[str, str]) -> str:
+    parts = []
+    goal = now.get("goal", {})
+    task = now.get("task", {})
+    if isinstance(goal, dict) and goal:
+        parts.append(
+            _operator_detail_panel(
+                strings["operator.detail.goal"],
+                goal,
+                ["id", "title", "status", "updated_at"],
+                strings,
+            )
+        )
+    if isinstance(task, dict) and task:
+        parts.append(
+            _operator_detail_panel(
+                strings["operator.detail.task"],
+                task,
+                ["id", "title", "status", "priority", "owner", "risk", "updated_at"],
+                strings,
+            )
+        )
+    return "".join(parts) or _operator_no_detail(strings)
+
+
+def _operator_done_detail(items: object, strings: dict[str, str]) -> str:
+    if not isinstance(items, list) or not items:
+        return _operator_no_detail(strings)
+    parts = []
+    detail_fields = {
+        "feature": ["id", "name", "surface", "description", "status", "confidence", "updated_at"],
+        "test": [
+            "id",
+            "feature_id",
+            "story_id",
+            "type",
+            "scenario",
+            "expected",
+            "status",
+            "evidence_id",
+            "updated_at",
+        ],
+        "goal": ["id", "title", "status", "updated_at"],
+        "verification": [
+            "id",
+            "workflow_run_id",
+            "target_job_id",
+            "verifier_role",
+            "result",
+            "reasons_json",
+            "created_at",
+        ],
+    }
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind") or "")
+        detail = item.get("detail", {})
+        proof = item.get("proof", {})
+        entity_id = str(item.get("id") or "")
+        kind_label = strings.get(f"operator.done.kind.{kind}", kind)
+        if isinstance(detail, dict) and detail:
+            parts.append(
+                _operator_detail_panel(
+                    f"{kind_label} {entity_id}",
+                    detail,
+                    detail_fields.get(kind, list(detail)),
+                    strings,
+                )
+            )
+        if isinstance(proof, dict) and proof:
+            proof_fields = (
+                ["id", "type", "summary", "path", "created_at"]
+                if str(proof.get("id") or "").startswith("E-")
+                else [
+                    "id",
+                    "workflow_run_id",
+                    "target_job_id",
+                    "verifier_role",
+                    "result",
+                    "reasons_json",
+                    "created_at",
+                ]
+            )
+            parts.append(
+                _operator_detail_panel(
+                    strings["operator.detail.proof"],
+                    proof,
+                    proof_fields,
+                    strings,
+                )
+            )
+    return "".join(parts) or _operator_no_detail(strings)
+
+
+def _operator_next_detail(action: object, strings: dict[str, str]) -> str:
+    if not isinstance(action, dict) or not action:
+        return _operator_no_detail(strings)
+    target = action.get("target", {})
+    target_text = _operator_target_text(target)
+    rows = [
+        (strings["operator.detail.next_type"], action.get("type", "")),
+        (strings["operator.detail.target"], target_text),
+        (strings["next_action.requires_human"], _yes_no(bool(action.get("requires_human")), strings)),
+        (strings["next_action.safe_to_run"], _yes_no(bool(action.get("safe_to_run")), strings)),
+        (strings["next_action.run_policy"], action.get("run_policy", "")),
+    ]
+    return _operator_detail_rows(rows)
+
+
+def _operator_human_detail(summary: dict[str, Any], strings: dict[str, str]) -> str:
+    items = summary.get("human_items", [])
+    if not isinstance(items, list) or not items:
+        return _operator_no_detail(strings)
+    parts = []
+    for item in items[:3]:
+        if not isinstance(item, dict):
+            continue
+        options = item.get("options", [])
+        option_labels = []
+        if isinstance(options, list):
+            option_labels = [
+                strings.get(
+                    f"operator.human.option.{str(option.get('label') or '')}",
+                    str(option.get("label") or ""),
+                )
+                for option in options
+                if isinstance(option, dict) and str(option.get("label") or "")
+            ]
+        rows = [
+            (_column_label("id", strings), item.get("id", "")),
+            (_column_label("type", strings), item.get("kind") or item.get("type", "")),
+            (strings["human_decision.question"], item.get("question", "")),
+            (strings["human_decision.recommendation"], item.get("recommendation", "")),
+            (strings["human_decision.options"], " / ".join(option_labels)),
+            (strings["human_decision.severity"], item.get("severity", "")),
+        ]
+        parts.append(_operator_detail_rows(rows))
+    return "".join(parts) or _operator_no_detail(strings)
+
+
+def _operator_risks_detail(items: object, strings: dict[str, str]) -> str:
+    if not isinstance(items, list) or not items:
+        return _operator_no_detail(strings)
+    parts = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        rows = [
+            (_column_label("type", strings), item.get("type", "")),
+            (_column_label("severity", strings), item.get("severity", "")),
+            (strings["operator.detail.target"], _operator_target_text(item.get("target", {}))),
+            (
+                _column_label("summary", strings),
+                strings["operator.detail.risk_review"].format(
+                    type=str(item.get("type") or ""),
+                    count=int(item.get("count") or 1),
+                ),
+            ),
+        ]
+        parts.append(_operator_detail_rows(rows))
+    return "".join(parts) or _operator_no_detail(strings)
+
+
+def _operator_detail_panel(
+    title: str,
+    row: dict[str, Any],
+    fields: list[str],
+    strings: dict[str, str],
+) -> str:
+    rows = [(_column_label(field, strings), row.get(field, "")) for field in fields]
+    return (
+        '<div class="operator-detail-group">'
+        f"<h4>{html.escape(title)}</h4>"
+        + _operator_detail_rows(rows)
+        + "</div>"
+    )
+
+
+def _operator_detail_rows(rows: list[tuple[str, object]]) -> str:
+    items = []
+    for label, value in rows:
+        if value in (None, "", [], {}):
+            continue
+        if isinstance(value, (dict, list)):
+            value = json.dumps(value, ensure_ascii=False, sort_keys=True)
+        items.append(f"<dt>{html.escape(str(label))}</dt><dd>{html.escape(str(value))}</dd>")
+    return '<dl class="operator-detail-list">' + "".join(items) + "</dl>"
+
+
+def _operator_target_text(target: object) -> str:
+    if not isinstance(target, dict):
+        return str(target or "")
+    values = [str(target.get("type") or ""), str(target.get("id") or "")]
+    label = " ".join(value for value in values if value)
+    title = str(target.get("title") or "")
+    status = str(target.get("status") or "")
+    if title:
+        label += f": {title}"
+    if status:
+        label += f" ({status})"
+    return label
+
+
+def _operator_no_detail(strings: dict[str, str]) -> str:
+    return f'<p class="muted">{html.escape(strings["operator.detail.none"])}</p>'
 
 
 def _operator_human_content(summary: dict[str, Any], strings: dict[str, str]) -> str:
     human_count = int(summary.get("human_count") or 0)
     if not human_count:
-        return f"<p>{html.escape(strings['operator.human.none'])}</p>"
+        return (
+            '<span class="operator-preview-line">'
+            + html.escape(strings["operator.human.none"])
+            + "</span>"
+        )
 
     parts = [
-        "<p>"
+        '<span class="operator-preview-line">'
         + html.escape(strings["operator.human.count"].format(count=human_count))
-        + "</p>"
+        + "</span>"
     ]
     items = summary.get("human_items", [])
     if not isinstance(items, list):
@@ -1480,11 +1794,11 @@ def _operator_human_content(summary: dict[str, Any], strings: dict[str, str]) ->
         preview = _operator_human_preview(item, target, strings)
         if preview:
             parts.append(
-                '<p class="operator-decision-preview"><strong>'
+                '<span class="operator-preview-line operator-decision-preview"><strong>'
                 + html.escape(strings["operator.human.what"])
                 + ":</strong> "
                 + html.escape(preview)
-                + "</p>"
+                + "</span>"
             )
 
         options = item.get("options", [])
@@ -1499,19 +1813,19 @@ def _operator_human_content(summary: dict[str, Any], strings: dict[str, str]) ->
             ]
             if labels:
                 parts.append(
-                    '<p class="operator-decision-options"><strong>'
+                    '<span class="operator-preview-line operator-decision-options"><strong>'
                     + html.escape(strings["operator.human.options"])
                     + ":</strong> "
                     + html.escape(" / ".join(labels))
-                    + "</p>"
+                    + "</span>"
                 )
 
     hidden_count = max(human_count - len(visible_items), 0)
     if hidden_count:
         parts.append(
-            "<p>"
+            '<span class="operator-preview-line">'
             + html.escape(strings["operator.human.more"].format(count=hidden_count))
-            + "</p>"
+            + "</span>"
         )
     return "".join(parts)
 

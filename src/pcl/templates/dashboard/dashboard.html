@@ -20,8 +20,24 @@
     .panel-box { border: 1px solid #9994; border-radius: 8px; padding: 14px; }
     .operator-summary { margin: 20px 0; padding: 20px; border: 2px solid #5a78; border-radius: 12px; background: #5a710; }
     .operator-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; }
-    .operator-card { border: 1px solid #9994; border-radius: 8px; padding: 12px; background: Canvas; }
-    .operator-card p, .operator-card ul { margin: 6px 0 0; }
+    .operator-card { border: 1px solid #9994; border-radius: 8px; background: Canvas; overflow: hidden; }
+    .operator-card-summary { cursor: pointer; display: block; min-height: 100%; padding: 12px 38px 12px 12px; position: relative; }
+    .operator-card-summary::-webkit-details-marker { display: none; }
+    .operator-card-summary::after { content: "＋"; font-size: 18px; line-height: 1; position: absolute; right: 12px; top: 14px; }
+    .operator-card[open] { grid-column: 1 / -1; }
+    .operator-card[open] > .operator-card-summary { border-bottom: 1px solid #9994; min-height: auto; }
+    .operator-card[open] > .operator-card-summary::after { content: "−"; }
+    .operator-card-summary:focus-visible { outline: 2px solid LinkText; outline-offset: -3px; }
+    .operator-card-heading { display: block; font-size: 15px; font-weight: 700; margin-bottom: 6px; }
+    .operator-card-preview, .operator-preview-line, .operator-preview-item { display: block; }
+    .operator-preview-item + .operator-preview-item { margin-top: 4px; }
+    .operator-card-toggle { color: #777; display: block; font-size: 12px; margin-top: 8px; }
+    .operator-card-detail { padding: 12px; }
+    .operator-card[open] > .operator-card-detail { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+    .operator-detail-group + .operator-detail-group, .operator-detail-list + .operator-detail-list { border-top: 1px solid #9994; margin-top: 12px; padding-top: 12px; }
+    .operator-card[open] > .operator-card-detail > .operator-detail-group, .operator-card[open] > .operator-card-detail > .operator-detail-list { border-top: 0; margin-top: 0; padding-top: 0; }
+    .operator-detail-group h4 { font-size: 14px; margin: 0 0 8px; }
+    .operator-detail-list { grid-template-columns: minmax(82px, 120px) 1fr; }
     .advanced-details { margin-top: 24px; border-top: 1px solid #9994; padding-top: 14px; }
     .advanced-details > summary { cursor: pointer; font-size: 17px; font-weight: 700; padding: 10px 0; }
     .advanced-content { padding-top: 6px; }

@@ -404,6 +404,163 @@ def test_dashboard_operator_summary_precedes_advanced_details_in_japanese(
     assert "<script" not in dashboard
 
 
+def test_dashboard_operator_cards_expand_referenced_details_in_place(
+    tmp_path: Path,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "goal",
+        "create",
+        "--title",
+        "カード内で進行状況を確認する",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "feature",
+        "add",
+        "--name",
+        "インライン詳細",
+        "--surface",
+        "dashboard",
+        "--description",
+        "参照項目を同じカード内に表示する",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "story",
+        "draft",
+        "--feature",
+        "F-0001",
+        "--actor",
+        "operator",
+        "--goal",
+        "inspect details in place",
+        "--expected-behavior",
+        "expand the card without navigation",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "story",
+        "approve",
+        "US-0001",
+        "--summary",
+        "Approved inline detail behavior",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "test",
+        "plan",
+        "--feature",
+        "F-0001",
+        "--story",
+        "US-0001",
+        "--type",
+        "acceptance",
+        "--scenario",
+        "カードを開いて関連内容を確認する",
+        "--expected",
+        "カード内に詳細が表示される",
+    ]) == 0
+    artifact = tmp_path / "inline-details.txt"
+    artifact.write_text("inline details acceptance passed\n", encoding="utf-8")
+    assert main([
+        "--root",
+        str(tmp_path),
+        "evidence",
+        "add",
+        "--file",
+        "inline-details.txt",
+        "--summary",
+        "カード内詳細の受け入れ証跡",
+        "--command",
+        "pytest tests/test_dashboard.py",
+        "--copy",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "test",
+        "pass",
+        "TC-0001",
+        "--summary",
+        "Inline detail acceptance passed",
+        "--evidence-id",
+        "E-0001",
+    ]) == 0
+    assert main([
+        "--root",
+        str(tmp_path),
+        "decision",
+        "open",
+        "--question",
+        "カード内の判断内容を確認しますか？",
+        "--recommendation",
+        "カード内で確認する",
+    ]) == 0
+
+    assert main(["--root", str(tmp_path), "render", "--locale", "ja"]) == 0
+
+    dashboard = _read_dashboard(tmp_path)
+    summary_start = dashboard.index('id="operator-summary"')
+    summary_html = dashboard[summary_start : dashboard.index("</section>", summary_start)]
+
+    assert summary_html.count('<details class="operator-card"') == 5
+    assert summary_html.count('<summary class="operator-card-summary">') == 5
+    assert summary_html.count('class="operator-card-detail"') == 5
+    assert 'data-operator-card="now"' in summary_html
+    assert 'data-operator-card="done"' in summary_html
+    assert 'data-operator-card="next"' in summary_html
+    assert 'data-operator-card="human"' in summary_html
+    assert 'data-operator-card="risks"' in summary_html
+
+    now_card = summary_html[
+        summary_html.index('data-operator-card="now"') :
+        summary_html.index('data-operator-card="done"')
+    ]
+    assert "G-0001" in now_card
+    assert "カード内で進行状況を確認する" in now_card
+    assert "状態" in now_card
+    assert "open" in now_card
+
+    done_card = summary_html[
+        summary_html.index('data-operator-card="done"') :
+        summary_html.index('data-operator-card="next"')
+    ]
+    assert "TC-0001" in done_card
+    assert "カードを開いて関連内容を確認する" in done_card
+    assert "カード内に詳細が表示される" in done_card
+    assert "E-0001" in done_card
+    assert "カード内詳細の受け入れ証跡" in done_card
+
+    next_card = summary_html[
+        summary_html.index('data-operator-card="next"') :
+        summary_html.index('data-operator-card="human"')
+    ]
+    assert "次のアクション種別" in next_card
+    assert "resolve_decision" in next_card
+    assert "DEC-0001" in next_card
+
+    human_card = summary_html[
+        summary_html.index('data-operator-card="human"') :
+        summary_html.index('data-operator-card="risks"')
+    ]
+    assert "カード内の判断内容を確認しますか？" in human_card
+    assert "カード内で確認する" in human_card
+
+    risks_card = summary_html[summary_html.index('data-operator-card="risks"') :]
+    assert "open_decision" in risks_card
+    assert "DEC-0001" in risks_card
+
+    assert 'href="#row-' not in summary_html
+    assert "<script" not in dashboard
+
+
 def test_dashboard_operator_summary_localizes_human_gate_without_english_reason(
     tmp_path: Path,
 ) -> None:
@@ -753,7 +910,7 @@ def test_dashboard_operator_done_reconciles_current_state_without_event_window_l
 
     assert "TC-0001" in summary_html
     assert "TC-0002" not in summary_html
-    assert "F-0001" not in summary_html
+    assert "機能 F-0001 — 証跡付きで完了記録済み" not in summary_html
 
 
 def test_dashboard_operator_done_covers_goal_verification_and_excludes_tasks(

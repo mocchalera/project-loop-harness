@@ -31,6 +31,8 @@ Milestone 2:
 
 Current additive panels:
 
+- five operator-summary cards with native, in-place detail disclosure for their
+  referenced Goal, Task, Feature, Test, Evidence, Decision, and risk context;
 - needs-your-decision queue from `human_decisions`;
 - story coverage and test coverage tables;
 - task backlog with dependency and dependent ids;
@@ -45,3 +47,6 @@ Current additive panels:
 - Dashboard must link to evidence paths where possible.
 - Dashboard must warn if validation fails.
 - Dashboard must never become the source of truth.
+- Operator-card details must be derived while rendering HTML, remain
+  script-free, and must not require fragment navigation to inspect the
+  referenced content.
