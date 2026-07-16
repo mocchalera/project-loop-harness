@@ -56,6 +56,7 @@ class InitResult:
     root: Path
     created: bool
     event_appended: bool
+    repaired_config_commands: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -101,9 +102,17 @@ def append_block_once(path: Path, marker: str, block: str) -> None:
     path.write_text(existing + "\n" + block.strip() + "\n", encoding="utf-8")
 
 
-def plan_init_project(paths: ProjectPaths, *, overwrite: bool = False, with_claude: bool = True) -> InitPlan:
+def plan_init_project(
+    paths: ProjectPaths,
+    *,
+    overwrite: bool = False,
+    with_claude: bool = True,
+    repair_config: bool = False,
+) -> InitPlan:
     changes: list[InitPlanEntry] = []
     errors: list[str] = []
+    config_path = paths.root / "pcl.yaml"
+    repair_commands = _legacy_empty_config_commands(config_path) if repair_config else []
 
     if not _plan_dir(changes, errors, paths.root, paths.root, "target project root"):
         return InitPlan(root=paths.root, changes=changes, errors=errors)
@@ -154,6 +163,8 @@ def plan_init_project(paths: ProjectPaths, *, overwrite: bool = False, with_clau
         event_update_reasons.append(f"would append migration events for: {', '.join(pending_migration_ids)}")
     if overwrite:
         event_update_reasons.append("would append project_initialized event")
+    elif repair_commands:
+        event_update_reasons.append("would append project_config_repaired event")
     if paths.events_path.exists() and paths.events_path.is_dir():
         _plan_error(changes, errors, paths.root, paths.events_path, "expected append-only audit log file but found a directory")
     elif paths.events_path.exists():
@@ -186,16 +197,32 @@ def plan_init_project(paths: ProjectPaths, *, overwrite: bool = False, with_clau
             "would overwrite pcl.yaml for detected "
             f"{detected_project['label']} project {detected_project['name']}{command_suffix}"
         )
-    _plan_file(
-        changes,
-        errors,
-        paths.root,
-        paths.root / "pcl.yaml",
-        overwrite=overwrite,
-        create_reason=config_create_reason,
-        skip_reason="pcl.yaml already exists",
-        overwrite_reason=config_overwrite_reason,
-    )
+    if repair_commands:
+        changes.append(
+            InitPlanEntry(
+                action="update",
+                path="pcl.yaml",
+                reason=(
+                    "normalize legacy empty command values to null: "
+                    + ", ".join(repair_commands)
+                ),
+            )
+        )
+    else:
+        _plan_file(
+            changes,
+            errors,
+            paths.root,
+            config_path,
+            overwrite=overwrite,
+            create_reason=config_create_reason,
+            skip_reason=(
+                "pcl.yaml has no legacy empty command values to repair"
+                if repair_config and config_path.exists()
+                else "pcl.yaml already exists"
+            ),
+            overwrite_reason=config_overwrite_reason,
+        )
 
     _plan_resource_tree(
         changes,
@@ -276,9 +303,17 @@ def plan_init_project(paths: ProjectPaths, *, overwrite: bool = False, with_clau
     return InitPlan(root=paths.root, changes=changes, errors=errors)
 
 
-def init_project(paths: ProjectPaths, *, overwrite: bool = False, with_claude: bool = True) -> InitResult:
+def init_project(
+    paths: ProjectPaths,
+    *,
+    overwrite: bool = False,
+    with_claude: bool = True,
+    repair_config: bool = False,
+) -> InitResult:
     was_initialized = paths.db_path.exists()
     events_existed = paths.events_path.exists()
+    pcl_yaml = paths.root / "pcl.yaml"
+    repair_existing_config = repair_config and pcl_yaml.is_file()
 
     paths.root.mkdir(parents=True, exist_ok=True)
     paths.loop_dir.mkdir(parents=True, exist_ok=True)
@@ -290,10 +325,12 @@ def init_project(paths: ProjectPaths, *, overwrite: bool = False, with_claude: b
         paths.events_path.write_text("", encoding="utf-8")
 
     # Project config and templates
-    pcl_yaml = paths.root / "pcl.yaml"
     if overwrite or not pcl_yaml.exists():
         config_text, _ = _project_config_text(paths.root)
         pcl_yaml.write_text(config_text, encoding="utf-8")
+    repaired_config_commands: list[str] = []
+    if repair_existing_config:
+        repaired_config_commands = _repair_legacy_empty_config_commands(pcl_yaml)
 
     copy_tree_resource("templates/workflows", paths.workflows_dir, overwrite=overwrite)
     copy_tree_resource("templates/skills/project-control-loop", paths.agents_skill_dir, overwrite=overwrite)
@@ -324,27 +361,80 @@ def init_project(paths: ProjectPaths, *, overwrite: bool = False, with_claude: b
         read_text_resource("templates/project/gitignore.fragment"),
     )
 
-    event_appended = (not was_initialized) or overwrite or (not events_existed)
+    initialization_event = (not was_initialized) or overwrite or (not events_existed)
+    event_appended = initialization_event or bool(repaired_config_commands)
     if event_appended:
         conn = connect_mutation(paths)
         try:
             append_event(
                 conn=conn,
                 events_path=paths.events_path,
-                event_type="project_initialized",
+                event_type=(
+                    "project_initialized" if initialization_event else "project_config_repaired"
+                ),
                 entity_type="project",
                 entity_id="project",
                 payload={
                     "root": str(paths.root),
                     "created": not was_initialized,
                     "force": overwrite,
+                    "repaired_config_commands": repaired_config_commands,
                 },
             )
             conn.commit()
         finally:
             conn.close()
 
-    return InitResult(root=paths.root, created=not was_initialized, event_appended=event_appended)
+    return InitResult(
+        root=paths.root,
+        created=not was_initialized,
+        event_appended=event_appended,
+        repaired_config_commands=tuple(repaired_config_commands),
+    )
+
+
+def _legacy_empty_config_commands(path: Path) -> list[str]:
+    if not path.is_file():
+        return []
+    _, commands = _normalized_legacy_config(path.read_bytes())
+    return commands
+
+
+def _repair_legacy_empty_config_commands(path: Path) -> list[str]:
+    original = path.read_bytes()
+    repaired, commands = _normalized_legacy_config(original)
+    if commands:
+        path.write_bytes(repaired)
+    return commands
+
+
+def _normalized_legacy_config(content: bytes) -> tuple[bytes, list[str]]:
+    text = content.decode("utf-8")
+    lines = text.splitlines(keepends=True)
+    repaired_commands: list[str] = []
+    in_commands = False
+    command_pattern = re.compile(
+        r"^(?P<prefix>  (?P<key>install|lint|typecheck|test|e2e|build)\s*:\s*)"
+        r"(?P<empty>\"\"|'')(?P<suffix>\s*(?:#.*)?)(?P<newline>\r?\n)?$"
+    )
+    for index, line in enumerate(lines):
+        without_newline = line.rstrip("\r\n")
+        if without_newline == "commands:":
+            in_commands = True
+            continue
+        if in_commands and without_newline and not without_newline.startswith((" ", "\t")):
+            in_commands = False
+        if not in_commands:
+            continue
+        match = command_pattern.fullmatch(line)
+        if match is None:
+            continue
+        lines[index] = (
+            f"{match.group('prefix')}null{match.group('suffix')}"
+            f"{match.group('newline') or ''}"
+        )
+        repaired_commands.append(match.group("key"))
+    return "".join(lines).encode("utf-8"), repaired_commands
 
 
 def _project_config_text(root: Path) -> tuple[str, dict[str, Any] | None]:

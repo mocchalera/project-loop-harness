@@ -78,6 +78,22 @@ latest version for 24 hours, and does not upgrade the environment. The companion
 `pcl update command` prints the manual upgrade command for the detected install
 shape, such as `pipx upgrade project-loop-harness` for pipx installs.
 
+Projects initialized by v0.5.1 may still have unused `commands` values written
+as empty quoted strings. After upgrading the runtime, inspect and apply the
+bounded compatibility repair:
+
+```bash
+pcl init --repair-config --dry-run --json
+pcl init --repair-config
+pcl doctor --strict
+```
+
+The repair changes only the six legacy command keys (`install`, `lint`,
+`typecheck`, `test`, `e2e`, and `build`) when their direct value is `""` or
+`''`. It converts those values to explicit `null`, preserves other configuration
+and comments, and appends a `project_config_repaired` audit event. It is
+idempotent and cannot be combined with `--force`.
+
 Use `python -m pip install project-loop-harness` when installing inside a
 project-specific virtual environment or CI job instead of exposing the command
 globally.

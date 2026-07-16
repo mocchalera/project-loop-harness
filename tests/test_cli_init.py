@@ -133,6 +133,141 @@ def test_init_node_detection_uses_lockfile_and_preserves_existing_config(
     assert (tmp_path / "pcl.yaml").read_text(encoding="utf-8") == existing
 
 
+def test_init_repair_config_normalizes_legacy_empty_commands_without_overwriting(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    (tmp_path / "package.json").write_text(
+        json.dumps({"name": "legacy-app", "scripts": {"test": "node --test"}}),
+        encoding="utf-8",
+    )
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    capsys.readouterr()
+
+    config_path = tmp_path / "pcl.yaml"
+    config_path.write_text(
+        """\
+project_loop:
+  version: "0.1.0"
+project:
+  name: "legacy-app"
+  type: "node"
+commands:
+  install: ""
+  lint: '' # legacy placeholder
+  typecheck: ""
+  test: "npm run test"
+  e2e: ""
+  build: ""
+  custom: "printf custom"
+checkpoint:
+  note: ""
+""",
+        encoding="utf-8",
+    )
+    original_config = config_path.read_bytes()
+    events_path = tmp_path / ".project-loop" / "events.jsonl"
+    original_events = events_path.read_bytes()
+    db_path = tmp_path / ".project-loop" / "project.db"
+    original_db = db_path.read_bytes()
+
+    assert (
+        main(
+            [
+                "init",
+                "--target",
+                str(tmp_path),
+                "--repair-config",
+                "--dry-run",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    plan = _json_output(capsys)
+    changes = {change["path"]: change for change in plan["changes"]}
+    assert changes["pcl.yaml"] == {
+        "action": "update",
+        "path": "pcl.yaml",
+        "reason": (
+            "normalize legacy empty command values to null: "
+            "install, lint, typecheck, e2e, build"
+        ),
+    }
+    assert changes[".project-loop/events.jsonl"]["action"] == "update"
+    assert "project_config_repaired" in changes[".project-loop/events.jsonl"]["reason"]
+    assert config_path.read_bytes() == original_config
+    assert events_path.read_bytes() == original_events
+    assert db_path.read_bytes() == original_db
+
+    assert (
+        main(
+            [
+                "init",
+                "--target",
+                str(tmp_path),
+                "--repair-config",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    result = _json_output(capsys)
+    assert result["created"] is False
+    assert result["event_appended"] is True
+    assert result["repaired_config_commands"] == [
+        "install",
+        "lint",
+        "typecheck",
+        "e2e",
+        "build",
+    ]
+
+    repaired_config = config_path.read_text(encoding="utf-8")
+    assert "  install: null\n" in repaired_config
+    assert "  lint: null # legacy placeholder\n" in repaired_config
+    assert "  typecheck: null\n" in repaired_config
+    assert '  test: "npm run test"\n' in repaired_config
+    assert "  e2e: null\n" in repaired_config
+    assert "  build: null\n" in repaired_config
+    assert '  custom: "printf custom"\n' in repaired_config
+    assert '  note: ""\n' in repaired_config
+    repaired_events = events_path.read_text(encoding="utf-8")
+    assert repaired_events.startswith(original_events.decode("utf-8"))
+    assert repaired_events.count('"event_type":"project_config_repaired"') == 1
+
+    assert main(["--root", str(tmp_path), "doctor", "--strict", "--json"]) == 0
+    doctor = _json_output(capsys)
+    assert not any(item["code"] == "config_commands_empty" for item in doctor["findings"])
+
+    events_after_first_repair = events_path.read_bytes()
+    assert (
+        main(
+            [
+                "init",
+                "--target",
+                str(tmp_path),
+                "--repair-config",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    repeated = _json_output(capsys)
+    assert repeated["event_appended"] is False
+    assert repeated["repaired_config_commands"] == []
+    assert events_path.read_bytes() == events_after_first_repair
+
+
+def test_init_rejects_force_with_repair_config() -> None:
+    try:
+        main(["init", "--force", "--repair-config"])
+    except SystemExit as exc:
+        assert exc.code == 2
+    else:
+        raise AssertionError("expected argparse to reject incompatible init modes")
+
+
 def test_init_malformed_package_json_falls_back_to_generic_template(
     tmp_path: Path,
     capsys,

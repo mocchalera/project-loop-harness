@@ -23,6 +23,8 @@ publication or internal dogfood as adoption.
 4. Freeze a privacy-preserving five-person observation protocol across at least
    three real repository types.
 5. Fix only the top observed activation blockers before release preparation.
+6. Provide an explicit, non-overwriting repair for v0.5.1 empty command
+   placeholders discovered by the local upgrade rehearsal.
 
 ## Invariants
 
@@ -44,6 +46,9 @@ publication or internal dogfood as adoption.
    interventions, safety violations, and seven-day reuse.
 5. Targeted tests, full Ruff, full pytest, fresh-project smoke, strict PCL
    validation, render, and diff check pass.
+6. `pcl init --repair-config` previews and normalizes only legacy empty command
+   placeholders, preserves existing configuration and state, and restores
+   strict doctor health when a real verification command is already configured.
 
 ## Completion evidence
 

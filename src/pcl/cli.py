@@ -303,7 +303,15 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_init = sub.add_parser("init", help="Initialize Project Loop Harness in a target project")
     p_init.add_argument("--target", default=None, help="Target project root. Overrides --root.")
-    p_init.add_argument("--force", action="store_true", help="Overwrite template files where safe")
+    init_write_mode = p_init.add_mutually_exclusive_group()
+    init_write_mode.add_argument(
+        "--force", action="store_true", help="Overwrite template files where safe"
+    )
+    init_write_mode.add_argument(
+        "--repair-config",
+        action="store_true",
+        help="Normalize legacy empty command placeholders to null without overwriting pcl.yaml",
+    )
     p_init.add_argument("--no-claude", action="store_true", help="Do not create/update CLAUDE.md")
     p_init.add_argument(
         "--dry-run", action="store_true", help="Inspect the init plan without writing files"
@@ -2470,21 +2478,37 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "init":
             if args.dry_run:
                 plan = plan_init_project(
-                    paths, overwrite=args.force, with_claude=not args.no_claude
+                    paths,
+                    overwrite=args.force,
+                    with_claude=not args.no_claude,
+                    repair_config=args.repair_config,
                 )
                 return _print_init_plan(plan, json_output=json_output)
-            result = init_project(paths, overwrite=args.force, with_claude=not args.no_claude)
+            result = init_project(
+                paths,
+                overwrite=args.force,
+                with_claude=not args.no_claude,
+                repair_config=args.repair_config,
+            )
             if json_output:
-                _print_json(
-                    {
-                        "ok": True,
-                        "root": str(result.root),
-                        "created": result.created,
-                        "event_appended": result.event_appended,
-                    }
-                )
+                payload = {
+                    "ok": True,
+                    "root": str(result.root),
+                    "created": result.created,
+                    "event_appended": result.event_appended,
+                }
+                if args.repair_config:
+                    payload["repaired_config_commands"] = list(
+                        result.repaired_config_commands
+                    )
+                _print_json(payload)
             else:
                 print(f"Initialized Project Loop Harness at {paths.root}")
+                if result.repaired_config_commands:
+                    print(
+                        "Repaired legacy empty commands: "
+                        + ", ".join(result.repaired_config_commands)
+                    )
             return 0
 
         if args.command == "start":
