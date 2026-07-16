@@ -190,7 +190,7 @@ their study remains later Adoption evidence. See `docs/plan-v0.5.1.md`.
 | post-v0.5.0 | 0175 maintainer entry hardening → 0176 scale baseline → 0177 checkpoint friction before v0.5.1 Trace |
 | v0.5.1 | Trace & Efficient Handoff: source-bound claims-not-facts handoff plus controlled cross-session/runtime resume evidence |
 | post-v0.5.1 | Behavior-preserving staged CLI split; 0184 presentation, then 0185 guide, 0186 loop status, 0187 doctor, and 0188 report-artifact handlers |
-| v0.5.2 | 0189 Adoption Proof: config-ready init, compressed public entry, five-user outcome cohort, then observed-friction repair |
+| v0.5.2 | 0189 config-ready adoption and frozen cohort → 0190 participant kit and deterministic proof evaluator → five-user outcome cohort → observed-friction repair |
 
 Everything with an ID below 0102 is completed design history; see `TASKS.md`
 for the one-line summary of each.

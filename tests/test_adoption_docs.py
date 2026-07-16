@@ -44,6 +44,7 @@ def test_adoption_guide_freezes_inspect_first_coexistence_boundary() -> None:
 
 def test_v052_adoption_proof_freezes_external_outcome_thresholds() -> None:
     proof = _read("docs/adoption-proof-v0.5.2.md")
+    kit = _read("docs/adoption-proof-v0.5.2-participant-kit.md")
 
     for required in (
         "five participants",
@@ -55,8 +56,21 @@ def test_v052_adoption_proof_freezes_external_outcome_thresholds() -> None:
         "at most 1 per participant",
         "do not count toward these thresholds",
         "external participant outcomes not yet collected",
+        "adoption-observation/v1",
+        "evaluate_adoption_proof.py",
+        "same candidate ID and candidate wheel SHA-256",
     ):
         assert required in proof
+
+    for required in (
+        "never your name, repository URL, source code",
+        "supplying a routine command",
+        "counts as a maintainer intervention",
+        "requires a separate human action",
+        "exit 0: every frozen gate passes",
+        "exit 2: a record is invalid",
+    ):
+        assert required in kit
 
 
 def test_stability_policy_names_protected_and_internal_surfaces() -> None:

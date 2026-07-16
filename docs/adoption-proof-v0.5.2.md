@@ -10,6 +10,9 @@ This is an external first-use study, not telemetry and not a growth dashboard.
 The repository is local-only; participants decide what sanitized evidence they
 share.
 
+Use the [participant kit](adoption-proof-v0.5.2-participant-kit.md) for the
+invitation, candidate handoff, session boundary, and seven-day follow-up.
+
 ## Cohort
 
 - five participants who are not the Project Loop Harness maintainer;
@@ -62,31 +65,58 @@ seeing results without clearly labeling a new experiment.
 
 ## Observation record
 
-Create one sanitized record per participant. Do not store names, repository
+Create one sanitized JSON record per participant. Do not store names, repository
 URLs, source code, prompts containing secrets, full transcripts, or credentials.
+All five records must name the same candidate ID and candidate wheel SHA-256.
 
-```markdown
-# AP-00X
-
-- date:
-- repository type:
-- OS / Python / install tool:
-- coding agent:
-- install start:
-- healthy setup:
-- verified completion or stop reason:
-- completion outcome:
-- maintainer interventions (count and reason):
-- safety violations:
-- participant confusion, in their words:
-- observer notes (facts only):
-- voluntary reuse by day 7: yes / no / unknown
-- participant-approved sanitized artifacts:
+```json
+{
+  "contract_version": "adoption-observation/v1",
+  "participant_id": "AP-001",
+  "observed_on": "2026-07-20",
+  "candidate_id": "v0.5.2-candidate-1",
+  "candidate_sha256": "<64 lowercase hex characters>",
+  "repository_family": "python",
+  "install_method": "pipx",
+  "first_time_user": true,
+  "install_to_healthy_seconds": 180,
+  "verified_completion": true,
+  "completion_seconds": 900,
+  "completion_outcome": "COMPLETED_VERIFIED",
+  "maintainer_interventions": 0,
+  "safety_violations": 0,
+  "voluntary_reuse_day_7": null,
+  "stop_reason": "none",
+  "confusion_codes": []
+}
 ```
 
 Store approved records under `docs/evidence/adoption-proof-v0.5.2/`. A
 participant may provide no artifacts; the outcome can still be counted as an
 observer record, clearly labeled as such.
+
+Allowed values are intentionally coarse:
+
+- `repository_family`: `python`, `node`, `mixed`, `go`, `rust`, `other`;
+- `install_method`: `pipx`, `uv-tool`, `venv-pip`, `other`;
+- incomplete `completion_outcome`: `not_reached`, `blocked_human`,
+  `setup_failed`, `completion_failed`, `participant_stopped`;
+- `stop_reason`: `none`, `timeout`, `human_decision`, `setup_failure`,
+  `completion_failure`, `participant_stop`;
+- `confusion_codes`: `install`, `dry_run`, `config`, `agent_prompt`,
+  `pcl_command`, `evidence`, `finish`, `human_gate`, `dashboard`, `other`.
+
+Evaluate records without network access:
+
+```bash
+python scripts/evaluate_adoption_proof.py \
+  --records-dir docs/evidence/adoption-proof-v0.5.2
+```
+
+Exit 0 means every frozen gate passes. Exit 1 means valid evidence is incomplete
+or misses a threshold. Exit 2 means evidence is invalid and cannot be evaluated.
+The evaluator requires all five healthy-setup durations before calculating the
+median and refuses mixed candidate IDs or hashes.
 
 ## Result report
 
@@ -103,5 +133,6 @@ and do not count toward these thresholds.
 
 ## Current status
 
-Protocol ready; external participant outcomes not yet collected. Therefore the
-repository currently makes no claim that adoption has been proven.
+Protocol, participant kit, and deterministic evaluator are ready. Status:
+external participant outcomes not yet collected. Therefore the repository
+currently makes no claim that adoption has been proven.

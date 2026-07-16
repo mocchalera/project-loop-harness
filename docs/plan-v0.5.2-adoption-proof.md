@@ -21,6 +21,8 @@ loop for them. The project can show observed outcomes, not proxy activity.
    moments. Move reference depth to curated docs.
 3. **External first-use cohort.** Observe five users across at least three real
    repository types with the frozen protocol in `docs/adoption-proof-v0.5.2.md`.
+   Use `adoption-observation/v1` records bound to one candidate SHA-256 and the
+   dependency-free evaluator; do not reinterpret outcomes by hand.
 4. **Friction repair.** Rank observed blockers by failed activation, frequency,
    and severity. Fix the top three; do not substitute feature expansion.
 5. **Release decision.** Prepare v0.5.2 only if code quality is green and the
