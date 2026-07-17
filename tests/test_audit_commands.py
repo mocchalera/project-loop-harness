@@ -439,6 +439,72 @@ def test_audit_check_reports_evidence_missing_hash_mismatch_and_orphan_temp(
     }
 
 
+def test_audit_check_classifies_evidence_mismatch_impact_without_mutation(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+
+    def add_copy(name: str, content: str) -> dict:
+        path = tmp_path / name
+        path.write_text(content, encoding="utf-8")
+        assert main([
+            "--root", str(tmp_path), "evidence", "add", "--file", name,
+            "--summary", name, "--copy", "--json",
+        ]) == 0
+        return _json_output(capsys)["evidence"]
+
+    historical = add_copy("historical.txt", "historical\n")
+    replacement = add_copy("replacement.txt", "replacement\n")
+    (tmp_path / "historical.txt").write_text("rewritten historical\n", encoding="utf-8")
+    assert main([
+        "--root", str(tmp_path), "evidence", "supersede", historical["id"],
+        "--with", replacement["id"], "--summary", "new proof", "--json",
+    ]) == 0
+    _json_output(capsys)
+
+    source_drift = add_copy("source-drift.txt", "source\n")
+    (tmp_path / "source-drift.txt").write_text("rewritten source\n", encoding="utf-8")
+
+    copy_corruption = add_copy("copy-corruption.txt", "copy\n")
+    stored_copy = tmp_path / copy_corruption["members"][0]["stored_path"]
+    stored_copy.write_text("damaged copy\n", encoding="utf-8")
+
+    db_path = tmp_path / ".project-loop" / "project.db"
+    events_path = tmp_path / ".project-loop" / "events.jsonl"
+    before_hashes = (_sha256(db_path), _sha256(events_path))
+
+    assert main(["--root", str(tmp_path), "audit", "check", "--json"]) == 6
+    report = _json_output(capsys)
+
+    assert (_sha256(db_path), _sha256(events_path)) == before_hashes
+    mismatches = {
+        item["details"]["evidence_id"]: item["details"]
+        for item in report["anomalies"]["human_review"]
+        if item["type"] == "evidence_metadata_file_mismatch"
+    }
+    assert mismatches[historical["id"]]["evidence_impact"] == (
+        "superseded_historical_drift"
+    )
+    assert mismatches[historical["id"]]["superseded_by"] == replacement["id"]
+    assert mismatches[historical["id"]]["durable_copy_healthy"] is True
+    assert mismatches[source_drift["id"]]["evidence_impact"] == (
+        "current_source_drift_with_healthy_copy"
+    )
+    assert mismatches[source_drift["id"]]["superseded_by"] is None
+    assert mismatches[source_drift["id"]]["durable_copy_healthy"] is True
+    assert mismatches[copy_corruption["id"]]["evidence_impact"] == (
+        "current_durable_copy_corruption"
+    )
+    assert mismatches[copy_corruption["id"]]["durable_copy_healthy"] is False
+    assert report["counts"]["evidence_mismatches_by_impact"] == {
+        "current_durable_copy_corruption": 1,
+        "current_evidence_corruption": 0,
+        "current_source_drift_with_healthy_copy": 1,
+        "superseded_historical_drift": 1,
+    }
+
+
 def test_audit_internal_failure_uses_exit_8_and_json_stdout(
     tmp_path: Path,
     capsys,

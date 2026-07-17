@@ -12,7 +12,12 @@ from typing import Any, Callable
 from .db import connect_mutation, table_exists
 from .errors import PclError, ProjectionPendingError, ProjectNotInitializedError
 from .events import append_event
-from .evidence import ADHOC_EVIDENCE_TYPES, assess_adhoc_evidence
+from .evidence import (
+    ADHOC_EVIDENCE_TYPES,
+    EVIDENCE_SUPERSEDES_ROLE,
+    EVIDENCE_SUPERSEDES_TARGET,
+    assess_adhoc_evidence,
+)
 from .locks import jsonl_projector_lock, project_operation_lock
 from .outbox import canonical_event_bytes, canonical_event_record, project_pending_events
 from .paths import ProjectPaths
@@ -25,6 +30,13 @@ AUDIT_REBUILD_CONTRACT_VERSION = "audit-rebuild-jsonl/v1"
 EXIT_AUDIT_ISSUES = 6
 EXIT_AUDIT_UNSUPPORTED = 7
 EXIT_AUDIT_INTERNAL = 8
+EVIDENCE_IMPACT_TYPES = (
+    "current_durable_copy_corruption",
+    "current_evidence_corruption",
+    "current_source_drift_with_healthy_copy",
+    "superseded_historical_drift",
+)
+EVIDENCE_DURABLE_COPY_FINDINGS = {"copy_missing", "copy_hash_mismatch"}
 
 
 class AuditCommandError(PclError):
@@ -349,12 +361,27 @@ def _read_outbox(conn: sqlite3.Connection) -> list[dict[str, Any]]:
 def _read_evidence(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     if not table_exists(conn, "evidence"):
         return []
-    return [
+    rows = [
         dict(row)
         for row in conn.execute(
             "SELECT id, type, path FROM evidence ORDER BY created_at, id"
         ).fetchall()
     ]
+    superseders: dict[str, str] = {}
+    if table_exists(conn, "evidence_links"):
+        for row in conn.execute(
+            """
+            SELECT target_id, evidence_id
+            FROM evidence_links
+            WHERE target_type = ? AND link_role = ?
+            ORDER BY created_at, evidence_id
+            """,
+            (EVIDENCE_SUPERSEDES_TARGET, EVIDENCE_SUPERSEDES_ROLE),
+        ).fetchall():
+            superseders[str(row["target_id"])] = str(row["evidence_id"])
+    for row in rows:
+        row["superseded_by"] = superseders.get(str(row["id"]))
+    return rows
 
 
 def _scan_jsonl(path: Path) -> dict[str, Any]:
@@ -605,11 +632,12 @@ def _check_evidence(
     evidence_rows: list[dict[str, Any]],
     db_events: list[dict[str, Any]],
     anomalies: dict[str, list[dict[str, Any]]],
-) -> dict[str, int]:
+) -> dict[str, Any]:
     referenced: set[Path] = set()
     referenced_profile_directories: set[Path] = set()
     missing_count = 0
     mismatch_count = 0
+    impact_counts = {impact: 0 for impact in EVIDENCE_IMPACT_TYPES}
     for row in evidence_rows:
         value = str(row["path"] or "").strip()
         if _is_virtual_or_external(value):
@@ -623,6 +651,7 @@ def _check_evidence(
             referenced_profile_directories.add(artifact.parent)
         if not artifact.exists() or not artifact.is_file():
             missing_count += 1
+            impact = _evidence_impact(row, findings=[])
             _add_anomaly(
                 anomalies,
                 "human_review",
@@ -631,6 +660,9 @@ def _check_evidence(
                 "report_only",
                 evidence_id=row["id"],
                 path=value,
+                evidence_impact=impact,
+                superseded_by=row.get("superseded_by"),
+                durable_copy_healthy=None,
             )
             continue
         if row["type"] in ADHOC_EVIDENCE_TYPES:
@@ -641,8 +673,11 @@ def _check_evidence(
                 manifest_path_value=value,
                 validate_optional_fields=True,
             )
+            impact = _evidence_impact(row, findings=assessment["findings"])
+            durable_copy_healthy = _durable_copy_healthy(assessment["findings"])
             for finding in assessment["findings"]:
                 mismatch_count += 1
+                impact_counts[impact] += 1
                 code = str(finding.get("code"))
                 classification = (
                     "unsupported" if code == "contract_version_unsupported" else "human_review"
@@ -655,6 +690,9 @@ def _check_evidence(
                     "report_only",
                     evidence_id=row["id"],
                     finding=finding,
+                    evidence_impact=impact,
+                    superseded_by=row.get("superseded_by"),
+                    durable_copy_healthy=durable_copy_healthy,
                 )
         elif row["type"] == "profile_output_bundle":
             assessment = assess_profile_output_evidence(
@@ -662,8 +700,10 @@ def _check_evidence(
                 evidence_id=str(row["id"]),
                 manifest_path_value=value,
             )
+            impact = _evidence_impact(row, findings=assessment["findings"])
             for finding in assessment["findings"]:
                 mismatch_count += 1
+                impact_counts[impact] += 1
                 _add_anomaly(
                     anomalies,
                     "human_review",
@@ -672,6 +712,9 @@ def _check_evidence(
                     "report_only",
                     evidence_id=row["id"],
                     finding=finding,
+                    evidence_impact=impact,
+                    superseded_by=row.get("superseded_by"),
+                    durable_copy_healthy=None,
                 )
         elif row["type"] == "profile_run_candidate":
             event = next(
@@ -692,6 +735,8 @@ def _check_evidence(
             actual_hash = _sha256_file(artifact)
             if event is None or expected_hash != actual_hash:
                 mismatch_count += 1
+                impact = _evidence_impact(row, findings=[])
+                impact_counts[impact] += 1
                 _add_anomaly(
                     anomalies,
                     "human_review",
@@ -701,6 +746,9 @@ def _check_evidence(
                     evidence_id=row["id"],
                     expected_sha256=expected_hash,
                     actual_sha256=actual_hash,
+                    evidence_impact=impact,
+                    superseded_by=row.get("superseded_by"),
+                    durable_copy_healthy=None,
                 )
 
     orphan_temp_count = 0
@@ -777,12 +825,37 @@ def _check_evidence(
     return {
         "evidence_missing_files": missing_count,
         "evidence_mismatches": mismatch_count,
+        "evidence_mismatches_by_impact": impact_counts,
         "orphan_temp_evidence": orphan_temp_count,
         "orphan_evidence_manifests": orphan_manifest_count,
         "orphan_completion_packets": orphan_completion_packet_count,
         "orphan_profile_bundle_staging": orphan_profile_temp_count,
         "orphan_profile_bundle_directories": orphan_profile_bundle_count,
     }
+
+
+def _evidence_impact(
+    row: dict[str, Any],
+    *,
+    findings: list[dict[str, Any]],
+) -> str:
+    if row.get("superseded_by"):
+        return "superseded_historical_drift"
+    finding_codes = {str(finding.get("code")) for finding in findings}
+    if finding_codes & EVIDENCE_DURABLE_COPY_FINDINGS:
+        return "current_durable_copy_corruption"
+    if finding_codes and finding_codes <= {"source_drifted"}:
+        return "current_source_drift_with_healthy_copy"
+    return "current_evidence_corruption"
+
+
+def _durable_copy_healthy(findings: list[dict[str, Any]]) -> bool | None:
+    finding_codes = {str(finding.get("code")) for finding in findings}
+    if finding_codes & EVIDENCE_DURABLE_COPY_FINDINGS:
+        return False
+    if "source_drifted" in finding_codes:
+        return True
+    return None
 
 
 def _add_anomaly(
