@@ -1,6 +1,6 @@
 # 0192: Audit Evidence Impact Classification
 
-- **Status:** Implemented; awaiting Story approval
+- **Status:** Complete
 - **Milestone:** v0.5.2 Dogfood Hardening
 - **Priority:** P0
 - **Size:** S
