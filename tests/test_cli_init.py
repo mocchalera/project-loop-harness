@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 from pathlib import Path
 
@@ -60,6 +61,135 @@ def test_init_dry_run_reports_plan_without_writing(tmp_path: Path, capsys) -> No
         and change["path"] == ".agents/skills/project-control-loop/SKILL.md"
         for change in changes
     )
+
+
+def test_doctor_reports_stale_installed_skill_with_targeted_refresh(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    capsys.readouterr()
+    skill_path = tmp_path / ".agents" / "skills" / "project-control-loop" / "SKILL.md"
+    skill_path.write_text("---\nname: project-control-loop\ndescription: stale\n---\n", encoding="utf-8")
+
+    assert main(["--root", str(tmp_path), "doctor", "--json"]) == 0
+    payload = _json_output(capsys)
+
+    finding = next(
+        item for item in payload["findings"] if item["code"] == "installation_skill_drift"
+    )
+    assert finding["severity"] == "warning"
+    assert finding["requires_human"] is False
+    assert finding["suggested_commands"] == [
+        f"pcl init --target {tmp_path} --refresh-skill --dry-run --json",
+        f"pcl init --target {tmp_path} --refresh-skill --json",
+    ]
+
+    assert main(["--root", str(tmp_path), "doctor", "--strict", "--json"]) == 1
+    strict = _json_output(capsys)
+    assert any(
+        item["code"] == "installation_skill_drift"
+        and item["severity"] == "warning"
+        for item in strict["findings"]
+    )
+
+
+def test_init_refresh_skill_is_targeted_backed_up_and_idempotent(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    capsys.readouterr()
+    skill_path = tmp_path / ".agents" / "skills" / "project-control-loop" / "SKILL.md"
+    stale_skill = b"---\nname: project-control-loop\ndescription: locally stale\n---\n"
+    skill_path.write_bytes(stale_skill)
+    config_path = tmp_path / "pcl.yaml"
+    workflow_path = tmp_path / ".project-loop" / "workflows" / "feature_coverage.yaml"
+    config_before = config_path.read_bytes()
+    workflow_before = workflow_path.read_bytes()
+    events_path = tmp_path / ".project-loop" / "events.jsonl"
+    events_before = events_path.read_bytes()
+    backup_rel = (
+        ".project-loop/reports/project-control-loop-skill-backups/"
+        f"{hashlib.sha256(stale_skill).hexdigest()}.md"
+    )
+
+    assert (
+        main(
+            [
+                "init",
+                "--target",
+                str(tmp_path),
+                "--refresh-skill",
+                "--dry-run",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    plan = _json_output(capsys)
+    changes = {change["path"]: change for change in plan["changes"]}
+    assert changes[".agents/skills/project-control-loop/SKILL.md"] == {
+        "action": "update",
+        "path": ".agents/skills/project-control-loop/SKILL.md",
+        "reason": "would refresh project-control-loop skill from bundled version",
+    }
+    assert changes[backup_rel] == {
+        "action": "create",
+        "path": backup_rel,
+        "reason": "preserve the replaced project-control-loop skill by SHA-256",
+    }
+    assert changes[".project-loop/events.jsonl"] == {
+        "action": "update",
+        "path": ".project-loop/events.jsonl",
+        "reason": "would append project_skill_refreshed event",
+    }
+    assert skill_path.read_bytes() == stale_skill
+    assert events_path.read_bytes() == events_before
+
+    assert (
+        main(
+            [
+                "init",
+                "--target",
+                str(tmp_path),
+                "--refresh-skill",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    refreshed = _json_output(capsys)
+    assert refreshed["skill_refreshed"] is True
+    assert refreshed["skill_backup_path"] == backup_rel
+    backup_path = tmp_path / backup_rel
+    assert backup_path.read_bytes() == stale_skill
+    assert config_path.read_bytes() == config_before
+    assert workflow_path.read_bytes() == workflow_before
+    events = [json.loads(line) for line in events_path.read_text(encoding="utf-8").splitlines()]
+    assert events[-1]["event_type"] == "project_skill_refreshed"
+    assert events[-1]["payload"]["before_sha256"] == hashlib.sha256(stale_skill).hexdigest()
+    assert events[-1]["payload"]["backup_path"] == backup_rel
+
+    refreshed_skill = skill_path.read_bytes()
+    events_after_refresh = events_path.read_bytes()
+    assert (
+        main(
+            [
+                "init",
+                "--target",
+                str(tmp_path),
+                "--refresh-skill",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    idempotent = _json_output(capsys)
+    assert idempotent["skill_refreshed"] is False
+    assert idempotent["skill_backup_path"] is None
+    assert skill_path.read_bytes() == refreshed_skill
+    assert events_path.read_bytes() == events_after_refresh
 
 
 def test_init_detects_node_project_configuration_from_package_json(
@@ -588,6 +718,14 @@ def test_init_installs_inspect_first_and_test_first_agent_guidance(tmp_path: Pat
     assert "pcl test plan" in skill
     assert "Agents should not" in skill
     assert "read or parse it for project state" in skill
+    assert "installation_skill_drift" in skill
+    assert 'pcl start --new "<literal intent>"' in skill
+    assert "registered evidence source path as write-once" in skill
+    assert 'pcl test waive TC-OLD --reason "..."' in skill
+    assert "review or audit only" in skill
+    assert "green command for another app" in skill
+    assert "new PCL Test for every local CSS value nudge" in skill
+    assert "pcl audit check --json" in skill
 
 
 def test_doctor_warns_for_placeholder_project_config(tmp_path: Path, capsys) -> None:

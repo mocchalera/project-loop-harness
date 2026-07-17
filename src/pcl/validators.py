@@ -18,6 +18,7 @@ from .evidence import ADHOC_EVIDENCE_TYPES, assess_adhoc_evidence, superseding_e
 from .errors import DataStoreError, InvalidInputError
 from .migrations import migration_status
 from .paths import ProjectPaths
+from .resources import read_text_resource
 from .project_config import (
     checkpoint_configuration,
     finish_check_configuration,
@@ -90,6 +91,7 @@ DECISION_BLOCK_TARGET_TABLES = {
 }
 ADHOC_DRIFT_WARNING_PREFIX = "Adhoc evidence "
 LIFECYCLE_ADVISORY_PREFIX = "Lifecycle integrity advisory: "
+SKILL_DRIFT_WARNING_PREFIX = "Installed project-control-loop Skill differs "
 
 
 def _pcl_json_command(*args: str, root: str | None = None) -> str:
@@ -207,6 +209,8 @@ class LifecycleFinding:
 
 def _strict_warning_remains_warning(warning: str) -> bool:
     if warning.startswith(LIFECYCLE_ADVISORY_PREFIX):
+        return True
+    if warning.startswith(SKILL_DRIFT_WARNING_PREFIX):
         return True
     return warning.startswith(ADHOC_DRIFT_WARNING_PREFIX) and (
         " drifted: " in warning or warning.endswith(" is outside the project root.")
@@ -370,6 +374,32 @@ def validate_project(
                 entity={"type": "project", "id": str(paths.root)},
                 repair_class="unsupported",
             )
+        elif include_config_advice and skill_path.is_file():
+            installed_skill = skill_path.read_bytes()
+            bundled_skill = read_text_resource(
+                "templates/skills/project-control-loop/SKILL.md"
+            ).encode("utf-8")
+            if installed_skill != bundled_skill:
+                refresh_base = [
+                    "pcl",
+                    "init",
+                    "--target",
+                    str(paths.root),
+                    "--refresh-skill",
+                ]
+                result.add_warning(
+                    (
+                        "Installed project-control-loop Skill differs from the bundled "
+                        "Skill for this pcl runtime. Review the targeted refresh plan."
+                    ),
+                    code="installation_skill_drift",
+                    entity={"type": "skill", "id": str(skill_path)},
+                    repair_class="structural",
+                    suggested_commands=[
+                        shlex.join([*refresh_base, "--dry-run", "--json"]),
+                        shlex.join([*refresh_base, "--json"]),
+                    ],
+                )
         if table_exists(conn, "tasks") and table_exists(conn, "task_dependencies"):
             _validate_task_invariants(conn, result)
         if table_exists(conn, "agents") and _agent_jobs_has_lease_columns(conn):

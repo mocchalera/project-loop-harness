@@ -94,6 +94,25 @@ The repair changes only the six legacy command keys (`install`, `lint`,
 and comments, and appends a `project_config_repaired` audit event. It is
 idempotent and cannot be combined with `--force`.
 
+The runtime also checks whether the project-local
+`.agents/skills/project-control-loop/SKILL.md` matches the Skill bundled with
+the installed `pcl`. When `pcl doctor` reports `installation_skill_drift`,
+review and apply the targeted update:
+
+```bash
+pcl init --refresh-skill --dry-run --json
+pcl init --refresh-skill --json
+pcl doctor --strict
+```
+
+This option changes only the project-control-loop Skill. Before replacement it
+stores the old bytes under
+`.project-loop/reports/project-control-loop-skill-backups/<sha256>.md` and
+appends a `project_skill_refreshed` audit event. Existing `pcl.yaml`, workflow
+templates, dashboards, and SQLite state are preserved. A second refresh is
+idempotent. Review the backup when the installed Skill contained deliberate
+local customization.
+
 Use `python -m pip install project-loop-harness` when installing inside a
 project-specific virtual environment or CI job instead of exposing the command
 globally.

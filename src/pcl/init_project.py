@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import configparser
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -57,6 +58,8 @@ class InitResult:
     created: bool
     event_appended: bool
     repaired_config_commands: tuple[str, ...]
+    skill_refreshed: bool
+    skill_backup_path: str | None
 
 
 @dataclass(frozen=True)
@@ -108,11 +111,13 @@ def plan_init_project(
     overwrite: bool = False,
     with_claude: bool = True,
     repair_config: bool = False,
+    refresh_skill: bool = False,
 ) -> InitPlan:
     changes: list[InitPlanEntry] = []
     errors: list[str] = []
     config_path = paths.root / "pcl.yaml"
     repair_commands = _legacy_empty_config_commands(config_path) if repair_config else []
+    skill_refresh_planned = refresh_skill and _skill_refresh_required(paths)
 
     if not _plan_dir(changes, errors, paths.root, paths.root, "target project root"):
         return InitPlan(root=paths.root, changes=changes, errors=errors)
@@ -165,6 +170,8 @@ def plan_init_project(
         event_update_reasons.append("would append project_initialized event")
     elif repair_commands:
         event_update_reasons.append("would append project_config_repaired event")
+    elif skill_refresh_planned and paths.db_path.exists():
+        event_update_reasons.append("would append project_skill_refreshed event")
     if paths.events_path.exists() and paths.events_path.is_dir():
         _plan_error(changes, errors, paths.root, paths.events_path, "expected append-only audit log file but found a directory")
     elif paths.events_path.exists():
@@ -235,17 +242,20 @@ def plan_init_project(
         skip_reason="workflow template already exists",
         overwrite_reason="would overwrite workflow template",
     )
-    _plan_resource_tree(
-        changes,
-        errors,
-        paths.root,
-        "templates/skills/project-control-loop",
-        paths.agents_skill_dir,
-        overwrite=overwrite,
-        create_reason="install project-control-loop skill",
-        skip_reason="project-control-loop skill file already exists",
-        overwrite_reason="would overwrite project-control-loop skill file",
-    )
+    if refresh_skill:
+        _plan_skill_refresh(changes, errors, paths)
+    else:
+        _plan_resource_tree(
+            changes,
+            errors,
+            paths.root,
+            "templates/skills/project-control-loop",
+            paths.agents_skill_dir,
+            overwrite=overwrite,
+            create_reason="install project-control-loop skill",
+            skip_reason="project-control-loop skill file already exists",
+            overwrite_reason="would overwrite project-control-loop skill file",
+        )
 
     _plan_file(
         changes,
@@ -309,6 +319,7 @@ def init_project(
     overwrite: bool = False,
     with_claude: bool = True,
     repair_config: bool = False,
+    refresh_skill: bool = False,
 ) -> InitResult:
     was_initialized = paths.db_path.exists()
     events_existed = paths.events_path.exists()
@@ -333,7 +344,22 @@ def init_project(
         repaired_config_commands = _repair_legacy_empty_config_commands(pcl_yaml)
 
     copy_tree_resource("templates/workflows", paths.workflows_dir, overwrite=overwrite)
-    copy_tree_resource("templates/skills/project-control-loop", paths.agents_skill_dir, overwrite=overwrite)
+    skill_path = paths.agents_skill_dir / "SKILL.md"
+    bundled_skill = _bundled_skill_bytes()
+    previous_skill = skill_path.read_bytes() if skill_path.is_file() else None
+    skill_refreshed = bool(refresh_skill and previous_skill != bundled_skill)
+    skill_backup_path: str | None = None
+    if skill_refreshed and previous_skill is not None:
+        backup = _skill_backup_path(paths, previous_skill)
+        backup.parent.mkdir(parents=True, exist_ok=True)
+        if not backup.exists():
+            backup.write_bytes(previous_skill)
+        skill_backup_path = _display_path(paths.root, backup)
+    copy_tree_resource(
+        "templates/skills/project-control-loop",
+        paths.agents_skill_dir,
+        overwrite=overwrite or refresh_skill,
+    )
 
     # Initial dashboard files
     if overwrite or not paths.dashboard_html.exists():
@@ -362,24 +388,47 @@ def init_project(
     )
 
     initialization_event = (not was_initialized) or overwrite or (not events_existed)
-    event_appended = initialization_event or bool(repaired_config_commands)
+    event_appended = initialization_event or bool(repaired_config_commands) or skill_refreshed
     if event_appended:
         conn = connect_mutation(paths)
         try:
-            append_event(
-                conn=conn,
-                events_path=paths.events_path,
-                event_type=(
-                    "project_initialized" if initialization_event else "project_config_repaired"
-                ),
-                entity_type="project",
-                entity_id="project",
-                payload={
+            if initialization_event:
+                event_type = "project_initialized"
+                payload = {
                     "root": str(paths.root),
                     "created": not was_initialized,
                     "force": overwrite,
                     "repaired_config_commands": repaired_config_commands,
-                },
+                    "skill_refreshed": skill_refreshed,
+                    "skill_backup_path": skill_backup_path,
+                }
+            elif repaired_config_commands:
+                event_type = "project_config_repaired"
+                payload = {
+                    "root": str(paths.root),
+                    "created": False,
+                    "force": False,
+                    "repaired_config_commands": repaired_config_commands,
+                }
+            else:
+                event_type = "project_skill_refreshed"
+                payload = {
+                    "root": str(paths.root),
+                    "before_sha256": (
+                        hashlib.sha256(previous_skill).hexdigest()
+                        if previous_skill is not None
+                        else None
+                    ),
+                    "after_sha256": hashlib.sha256(bundled_skill).hexdigest(),
+                    "backup_path": skill_backup_path,
+                }
+            append_event(
+                conn=conn,
+                events_path=paths.events_path,
+                event_type=event_type,
+                entity_type="project",
+                entity_id="project",
+                payload=payload,
             )
             conn.commit()
         finally:
@@ -390,6 +439,90 @@ def init_project(
         created=not was_initialized,
         event_appended=event_appended,
         repaired_config_commands=tuple(repaired_config_commands),
+        skill_refreshed=skill_refreshed,
+        skill_backup_path=skill_backup_path,
+    )
+
+
+def _bundled_skill_bytes() -> bytes:
+    return read_text_resource("templates/skills/project-control-loop/SKILL.md").encode(
+        "utf-8"
+    )
+
+
+def _skill_refresh_required(paths: ProjectPaths) -> bool:
+    skill_path = paths.agents_skill_dir / "SKILL.md"
+    if skill_path.exists() and not skill_path.is_file():
+        return False
+    return not skill_path.exists() or skill_path.read_bytes() != _bundled_skill_bytes()
+
+
+def _skill_backup_path(paths: ProjectPaths, content: bytes) -> Path:
+    digest = hashlib.sha256(content).hexdigest()
+    return (
+        paths.reports_dir
+        / "project-control-loop-skill-backups"
+        / f"{digest}.md"
+    )
+
+
+def _plan_skill_refresh(
+    changes: list[InitPlanEntry],
+    errors: list[str],
+    paths: ProjectPaths,
+) -> None:
+    skill_path = paths.agents_skill_dir / "SKILL.md"
+    if skill_path.exists() and skill_path.is_dir():
+        _plan_error(
+            changes,
+            errors,
+            paths.root,
+            skill_path,
+            "expected file but found a directory",
+        )
+        return
+    if not skill_path.exists():
+        _plan_file(
+            changes,
+            errors,
+            paths.root,
+            skill_path,
+            overwrite=False,
+            create_reason="install project-control-loop skill",
+            skip_reason="project-control-loop skill matches bundled version",
+            overwrite_reason="would refresh project-control-loop skill from bundled version",
+        )
+        return
+
+    installed = skill_path.read_bytes()
+    if installed == _bundled_skill_bytes():
+        changes.append(
+            InitPlanEntry(
+                action="skip",
+                path=_display_path(paths.root, skill_path),
+                reason="project-control-loop skill matches bundled version",
+            )
+        )
+        return
+
+    backup = _skill_backup_path(paths, installed)
+    changes.append(
+        InitPlanEntry(
+            action="skip" if backup.exists() else "create",
+            path=_display_path(paths.root, backup),
+            reason=(
+                "replaced project-control-loop skill backup already exists"
+                if backup.exists()
+                else "preserve the replaced project-control-loop skill by SHA-256"
+            ),
+        )
+    )
+    changes.append(
+        InitPlanEntry(
+            action="update",
+            path=_display_path(paths.root, skill_path),
+            reason="would refresh project-control-loop skill from bundled version",
+        )
     )
 
 

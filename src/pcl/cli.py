@@ -312,6 +312,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Normalize legacy empty command placeholders to null without overwriting pcl.yaml",
     )
+    init_write_mode.add_argument(
+        "--refresh-skill",
+        action="store_true",
+        help=(
+            "Refresh only the bundled project-control-loop Skill, preserving the replaced "
+            "bytes in a hash-addressed backup"
+        ),
+    )
     p_init.add_argument("--no-claude", action="store_true", help="Do not create/update CLAUDE.md")
     p_init.add_argument(
         "--dry-run", action="store_true", help="Inspect the init plan without writing files"
@@ -2482,6 +2490,7 @@ def main(argv: list[str] | None = None) -> int:
                     overwrite=args.force,
                     with_claude=not args.no_claude,
                     repair_config=args.repair_config,
+                    refresh_skill=args.refresh_skill,
                 )
                 return _print_init_plan(plan, json_output=json_output)
             result = init_project(
@@ -2489,6 +2498,7 @@ def main(argv: list[str] | None = None) -> int:
                 overwrite=args.force,
                 with_claude=not args.no_claude,
                 repair_config=args.repair_config,
+                refresh_skill=args.refresh_skill,
             )
             if json_output:
                 payload = {
@@ -2501,6 +2511,9 @@ def main(argv: list[str] | None = None) -> int:
                     payload["repaired_config_commands"] = list(
                         result.repaired_config_commands
                     )
+                if args.refresh_skill:
+                    payload["skill_refreshed"] = result.skill_refreshed
+                    payload["skill_backup_path"] = result.skill_backup_path
                 _print_json(payload)
             else:
                 print(f"Initialized Project Loop Harness at {paths.root}")

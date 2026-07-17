@@ -22,6 +22,10 @@ Use the `pcl` CLI for state changes.
 When this skill is invoked:
 
 1. Read `AGENTS.md`, `CLAUDE.md` if present, and `pcl.yaml`.
+   When the user asked for review or audit only, keep the whole run read-only:
+   use inspection commands such as `doctor`, `validate`, `next`, `audit check`,
+   `feature read`, and `test list`; do not render, generate reports, or mutate
+   state unless explicitly requested. State in the handoff that nothing changed.
 2. Run `pcl doctor` or `pcl validate` if project-loop state may be stale.
 3. Use `pcl next` to determine the next harness action when ambiguous.
    When the lifecycle route or command syntax itself is unclear, run
@@ -29,6 +33,12 @@ When this skill is invoked:
    `direct`, `finish`, `dashboard`, or `recover`, before probing multiple help
    pages. Do not add a guide lookup to routine work whose route is already
    clear.
+   Before executing its command, compare the returned target and reason with
+   the user's current intent. If they refer to unrelated older work, do not
+   follow that route. Inspect `pcl loop status`; when the user explicitly
+   introduced separate new work, register the literal intent with
+   `pcl start --new "<literal intent>"`, then confirm routing targets the new
+   Goal or Task.
 4. When the user has already supplied explicit implementation intent and no
    active work exists, pass that intent literally to `pcl start`; do not create
    an extra human gate merely to register it.
@@ -41,7 +51,9 @@ When this skill is invoked:
 `pcl.yaml` `commands.*` values are arbitrary shell commands, not npm script
 names or make targets. Run the configured command string exactly as written;
 do not assume `npm run <key>` or another wrapper exists for a key like
-`lint` or `test`.
+`lint` or `test`. Before treating a configured command as acceptance proof,
+confirm that its paths and operands exercise the current Feature surface; a
+green command for another app or a missing-path `|| echo` fallback is not proof.
 
 ## Adoption and setup safety
 
@@ -59,6 +71,10 @@ discipline expected from a careful project setup:
    and human gates to the actual repository.
 6. Verify the installed harness with `pcl doctor --strict`, `pcl validate
    --strict`, and `pcl render`.
+7. Treat `installation_skill_drift` as an instruction/runtime compatibility
+   finding. Review `pcl init --refresh-skill --dry-run --json`, then apply the
+   targeted refresh only with operator authority; it preserves the replaced
+   Skill by hash and does not refresh config or workflow templates.
 
 Keep always-loaded files compact. Put procedures in skills, docs, workflow
 templates, or reports instead of duplicating long instructions across
@@ -79,10 +95,23 @@ For user-visible behavior changes:
 4. Prefer a red-green-refactor loop: reproduce the missing/failing behavior,
    record `pcl test fail`, `pcl test missing`, or `pcl test block` when useful,
    implement the smallest change, then record `pcl test pass` with evidence.
+   If the human corrects an acceptance condition, preserve the correction as
+   history: `pcl test waive TC-OLD --reason "..."`, then plan a replacement
+   Test. Never edit the old condition into a different meaning.
 5. Use explicit evidence: command output, artifact paths, screenshots, commits,
    reports, or verifier notes that another operator can inspect.
+   Treat every registered evidence source path as write-once. A rerun writes a
+   new uniquely named artifact, registers a new Evidence ID, and uses
+   `pcl test reverify` when a passing Test needs stronger proof. Never overwrite
+   a file already named by an Evidence manifest.
 6. Run `pcl validate --strict` after terminal test states and before calling the
    loop done.
+
+Record durable Stories and Tests for semantic corrections, reproducible
+failures, and cross-viewport or cross-environment contracts. Do not create a
+new PCL Test for every local CSS value nudge or equivalent implementation-only
+adjustment. When one run changes both a product and a reusable shared Skill,
+track them as distinct Features or Tasks and link each to its own evidence.
 
 ## Direct implementation loop (default)
 
@@ -159,13 +188,19 @@ preceding command; do not invent IDs.
    ```
 
 9. Close the direct-route Goal with the completed packet Evidence, then
-   validate and render:
+   audit, validate, and render:
 
    ```bash
    pcl goal close G-XXXX --summary "..." --evidence-id E-PACKET
+   pcl audit check --json
    pcl validate --strict
    pcl render
    ```
+
+   Do not ignore an `audit check` failure merely because validation passes.
+   Inspect whether the mismatch affects current completion proof, a healthy
+   copied artifact's mutable source, or superseded historical Evidence, and
+   report that distinction until the runtime classifies it directly.
 
 For a Workflow-backed route, close the Goal with an approved Verification:
 
