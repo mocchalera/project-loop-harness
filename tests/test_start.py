@@ -224,8 +224,16 @@ def test_start_is_idempotent_for_active_work_and_new_is_explicit(
     assert created["status"] == "started"
     assert created["result"]["created_ids"]["goal"] == "G-0002"
     assert created["result"]["created_ids"]["task"] == "T-0002"
+    assert created["next_actions"][0]["command"] == "pcl context pack --task T-0002 --json"
+    assert created["next_actions"][0]["target"] == {"type": "task", "id": "T-0002"}
     assert _counts(tmp_path)["goals"] == before["goals"] + 1
     assert _counts(tmp_path)["tasks"] == before["tasks"] + 1
+
+    assert main(["--root", str(tmp_path), "start", "Third intent", "--json"]) == 0
+    ambiguous = _json_output(capsys)
+    assert ambiguous["status"] == "active_work_exists"
+    assert ambiguous["next_actions"][0]["command"] is None
+    assert ambiguous["next_actions"][0]["target"] is None
 
 
 @pytest.mark.parametrize(

@@ -1,6 +1,6 @@
 # 0193: Target-Bound `pcl next` Routing
 
-- **Status:** Active
+- **Status:** Complete
 - **Milestone:** Post-v0.5.2 Harness Minimization
 - **Priority:** P0
 - **Size:** M

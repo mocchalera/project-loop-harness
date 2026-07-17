@@ -129,7 +129,7 @@ def start_work(
     goal_id = create_goal(paths, title=intent)
     task = create_task(paths, title=intent, goal_id=goal_id)
     task_id = str(task["id"])
-    action = next_action(paths)
+    action = next_action(paths, target=task_id)
     receipt = {
         "contract_version": START_RECEIPT_CONTRACT_VERSION,
         "generated_at": utc_now_iso(),
@@ -206,7 +206,7 @@ def _active_payload(*, intent: str, active: dict[str, Any]) -> dict[str, Any]:
         next_actions=[
             _next_action(
                 text="Resume the existing active work, or pass --new to start separate work explicitly.",
-                command=str(action["command"]),
+                command=action.get("command"),
                 target=target_ref,
             )
         ],

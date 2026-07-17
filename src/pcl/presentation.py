@@ -61,6 +61,18 @@ def format_next_explanation(action: dict) -> str:
     target = action.get("target")
     if isinstance(target, dict) and target.get("id"):
         lines.append(f"Target: {target['id']}")
+    if isinstance(target, dict) and isinstance(target.get("candidates"), list):
+        lines.append("Candidates:")
+        for candidate in target["candidates"]:
+            if isinstance(candidate, dict):
+                lines.append(
+                    "- "
+                    + " ".join(
+                        str(candidate.get(key, ""))
+                        for key in ("id", "status", "title")
+                        if candidate.get(key)
+                    )
+                )
     return "\n".join(lines)
 
 

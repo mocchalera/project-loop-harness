@@ -6,5 +6,5 @@
   ],
   "exit_code": 0,
   "stderr": "",
-  "stdout": "usage: pcl next [-h] [--strict] [--explain] options: -h, --help show this help message and exit --strict Route strict validation failures before normal next actions --explain Print a human-readable explanation of the next action"
+  "stdout": "usage: pcl next [-h] [--strict] [--explain] [--target NEXT_TARGET] options: -h, --help show this help message and exit --strict Route strict validation failures before normal next actions --explain Print a human-readable explanation of the next action --target NEXT_TARGET Bind routing to an existing Task or Goal ID"
 }

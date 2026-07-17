@@ -468,7 +468,7 @@ def loop_status(paths: ProjectPaths) -> dict:
 def build_next_action(
     *,
     action_type: str,
-    command: str,
+    command: str | None,
     reason: str,
     target,
     priority: int,
@@ -815,7 +815,10 @@ def _idle_next_action() -> dict:
     }
 
 
-def next_action(paths: ProjectPaths) -> dict:
+def next_action(paths: ProjectPaths, *, target: str | None = None) -> dict:
+    if target is not None:
+        return _targeted_next_action(paths, target_id=target)
+
     status = loop_status(paths)
     escalation = _open_escalation_next_action(paths)
     if escalation is not None:
@@ -850,6 +853,9 @@ def next_action(paths: ProjectPaths) -> dict:
     timeout_recovery = _finish_timeout_recovery_next_action(paths)
     if timeout_recovery is not None:
         return timeout_recovery
+    target_selection = _ambiguous_next_target_action(paths)
+    if target_selection is not None:
+        return target_selection
     task = _task_next_action(paths)
     if task is not None:
         return task
@@ -866,6 +872,267 @@ def next_action(paths: ProjectPaths) -> dict:
     if uncovered_feature is not None:
         return uncovered_feature
     return _idle_next_action()
+
+
+def _targeted_next_action(paths: ProjectPaths, *, target_id: str) -> dict:
+    target = _resolve_next_target(paths, target_id=target_id)
+    binding = {
+        "target_type": target["type"],
+        "target_id": target["id"],
+        "source": "explicit",
+    }
+
+    for detector in (
+        _open_escalation_next_action,
+        _open_decision_next_action,
+        _needs_human_escalation_next_action,
+    ):
+        action = detector(paths)
+        if action is not None:
+            return _bind_next_action(action, binding=binding, routing_scope="project_gate")
+
+    expired_leases = _expired_lease_next_action(paths)
+    if expired_leases is not None:
+        return _bind_next_action(
+            expired_leases,
+            binding=binding,
+            routing_scope="project_gate",
+        )
+
+    if target["status"] in {"done", "closed", "cancelled", "waived"}:
+        return _bind_next_action(
+            _terminal_next_target_action(target),
+            binding=binding,
+            routing_scope="target",
+        )
+
+    goal_id = target["id"] if target["type"] == "goal" else target.get("related_goal_id")
+    if goal_id:
+        unfinished_executor = _unfinished_executor_next_action(paths, goal_id=str(goal_id))
+        if unfinished_executor is not None:
+            return _bind_next_action(
+                unfinished_executor,
+                binding=binding,
+                routing_scope="target",
+            )
+
+    if goal_id:
+        active = _active_workflow_next_action(paths, goal_id=str(goal_id))
+        if active is not None:
+            return _bind_next_action(active, binding=binding, routing_scope="target")
+        retry = _failed_executor_retry_next_action(paths, goal_id=str(goal_id))
+        if retry is not None:
+            return _bind_next_action(retry, binding=binding, routing_scope="target")
+
+    if target["type"] == "task":
+        action = _explicit_task_next_action(paths, task=target)
+        return _bind_next_action(action, binding=binding, routing_scope="target")
+
+    terminal_goal = _terminal_direct_goal_next_action(paths, goal_id=target["id"])
+    if terminal_goal is not None:
+        return _bind_next_action(terminal_goal, binding=binding, routing_scope="target")
+    task = _task_next_action(paths, goal_id=target["id"])
+    if task is not None:
+        return _bind_next_action(task, binding=binding, routing_scope="target")
+    if target["status"] == "blocked":
+        action = build_next_action(
+            action_type="inspect_blocked_goal",
+            command=f"pcl task list --goal {target['id']} --json",
+            reason="The explicitly selected Goal is blocked; inspect its linked Tasks before continuing.",
+            target=target,
+            priority=59,
+            blocking=True,
+            requires_human=False,
+            safe_to_run=True,
+            expected_after="The blocking Task or missing prerequisite is identified.",
+        )
+    else:
+        action = _continue_goal_next_action(target)
+    return _bind_next_action(action, binding=binding, routing_scope="target")
+
+
+def _resolve_next_target(paths: ProjectPaths, *, target_id: str) -> dict[str, Any]:
+    require_initialized(paths)
+    if not target_id.startswith(("T-", "G-")):
+        raise InvalidInputError(
+            "--target must be a task or goal ID.",
+            details={"target": target_id, "accepted_prefixes": ["T-", "G-"]},
+        )
+
+    conn = connect(paths.db_path)
+    try:
+        if target_id.startswith("T-"):
+            row = conn.execute(
+                """
+                SELECT tasks.id, tasks.title, tasks.description, tasks.status, tasks.priority,
+                       tasks.owner, tasks.risk, tasks.effort, tasks.related_goal_id,
+                       tasks.related_feature_id, tasks.related_defect_id,
+                       tasks.created_at, tasks.updated_at,
+                       goals.status AS related_goal_status
+                FROM tasks
+                LEFT JOIN goals ON goals.id = tasks.related_goal_id
+                WHERE tasks.id = ?
+                """,
+                (target_id,),
+            ).fetchone()
+            target_type = "task"
+        else:
+            row = conn.execute(
+                "SELECT id, title, status, created_at, updated_at FROM goals WHERE id = ?",
+                (target_id,),
+            ).fetchone()
+            target_type = "goal"
+    finally:
+        conn.close()
+    if row is None:
+        raise InvalidInputError(
+            f"Next target does not exist: {target_id}",
+            details={"target": target_id, "target_type": target_type},
+        )
+    return {"type": target_type, **dict(row)}
+
+
+def _bind_next_action(action: dict, *, binding: dict, routing_scope: str) -> dict:
+    return {
+        **action,
+        "target_binding": dict(binding),
+        "routing_scope": routing_scope,
+    }
+
+
+def _terminal_next_target_action(target: dict) -> dict:
+    return build_next_action(
+        action_type="target_terminal",
+        command=None,
+        reason=(
+            f"The explicitly selected {target['type']} {target['id']} is already "
+            f"terminal ({target['status']})."
+        ),
+        target=target,
+        priority=70,
+        blocking=False,
+        requires_human=False,
+        safe_to_run=False,
+        expected_after="No state changes; start or select another target when new work is requested.",
+    )
+
+
+def _explicit_task_next_action(paths: ProjectPaths, *, task: dict) -> dict:
+    conn = connect(paths.db_path)
+    try:
+        enriched = _task_next_action_target(conn, dict(task))
+    finally:
+        conn.close()
+    task_id = str(enriched["id"])
+    if enriched["status"] == "blocked":
+        return build_next_action(
+            action_type="inspect_blocked_task",
+            command=f"pcl task read {task_id} --json",
+            reason="The explicitly selected Task is blocked; inspect its dependencies before continuing.",
+            target=enriched,
+            priority=59,
+            blocking=True,
+            requires_human=False,
+            safe_to_run=True,
+            expected_after=f"The blocker or unmet dependency for Task {task_id} is identified.",
+        )
+    reason = (
+        "The explicitly selected Task is already in progress."
+        if enriched["status"] == "in_progress"
+        else "The explicitly selected Task is ready for focused work."
+    )
+    return build_next_action(
+        action_type="work_on_task",
+        command=f"pcl context pack --task {task_id} --json",
+        reason=reason,
+        target=enriched,
+        priority=59,
+        blocking=False,
+        requires_human=False,
+        safe_to_run=True,
+        expected_after=f"The task context pack is reviewed and Task {task_id} advances toward done.",
+    )
+
+
+def _ambiguous_next_target_action(paths: ProjectPaths) -> dict | None:
+    candidates = _ambiguous_next_target_candidates(paths)
+    if not candidates:
+        return None
+    action = build_next_action(
+        action_type="select_target",
+        command=None,
+        reason=(
+            "Actionable work spans multiple Goals; select the Task or Goal that matches "
+            "the current intent instead of following an implicit database order."
+        ),
+        target={
+            "candidate_level": candidates[0]["type"],
+            "candidates": candidates,
+            "selection_command": "pcl next --target <T-XXXX|G-XXXX> --json",
+        },
+        priority=59,
+        blocking=False,
+        requires_human=False,
+        safe_to_run=False,
+        expected_after="A target-bound read-only next action is returned for the selected ID.",
+    )
+    action["run_policy"] = "target_selection"
+    action["human_guidance"] = (
+        "Choose the candidate that matches current intent, then rerun pcl next with --target."
+    )
+    return action
+
+
+def _ambiguous_next_target_candidates(paths: ProjectPaths) -> list[dict[str, Any]]:
+    conn = connect(paths.db_path)
+    try:
+        in_progress = _next_task_candidates(conn, statuses=("in_progress",))
+        if in_progress:
+            if len({row["related_goal_id"] for row in in_progress}) > 1:
+                return _one_next_candidate_per_goal(in_progress)
+            return []
+
+        actionable = _next_actionable_task_candidates(conn)
+        if len({row["related_goal_id"] for row in actionable}) > 1:
+            return _one_next_candidate_per_goal(actionable)
+
+        if actionable:
+            return []
+        goals = conn.execute(
+            """
+            SELECT id, title, status
+            FROM goals
+            WHERE status IN ('open', 'active', 'blocked')
+            ORDER BY created_at, id
+            """
+        ).fetchall()
+        if len(goals) > 1:
+            return [{"type": "goal", **dict(row)} for row in goals]
+        return []
+    finally:
+        conn.close()
+
+
+def _next_task_candidate(row) -> dict[str, Any]:
+    return {
+        "type": "task",
+        "id": str(row["id"]),
+        "title": str(row["title"]),
+        "status": str(row["status"]),
+        "related_goal_id": str(row["related_goal_id"]),
+    }
+
+
+def _one_next_candidate_per_goal(rows) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    seen_goal_ids: set[str] = set()
+    for row in rows:
+        goal_id = str(row["related_goal_id"])
+        if goal_id in seen_goal_ids:
+            continue
+        candidates.append(_next_task_candidate(row))
+        seen_goal_ids.add(goal_id)
+    return candidates
 
 
 def _finish_timeout_recovery_next_action(paths: ProjectPaths) -> dict | None:
@@ -939,14 +1206,20 @@ def _finish_timeout_recovery_next_action(paths: ProjectPaths) -> dict | None:
     return None
 
 
-def _terminal_direct_goal_next_action(paths: ProjectPaths) -> dict | None:
+def _terminal_direct_goal_next_action(
+    paths: ProjectPaths,
+    *,
+    goal_id: str | None = None,
+) -> dict | None:
     conn = connect(paths.db_path)
     try:
+        goal_filter = "AND goals.id = ?" if goal_id else ""
         goal = conn.execute(
-            """
+            f"""
             SELECT goals.id, goals.title, goals.status
             FROM goals
             WHERE goals.status IN ('open', 'active')
+              {goal_filter}
               AND EXISTS (SELECT 1 FROM tasks WHERE tasks.related_goal_id = goals.id)
               AND NOT EXISTS (
                 SELECT 1 FROM tasks
@@ -972,7 +1245,8 @@ def _terminal_direct_goal_next_action(paths: ProjectPaths) -> dict | None:
               )
             ORDER BY goals.created_at, goals.id
             LIMIT 1
-            """
+            """,
+            (goal_id,) if goal_id else (),
         ).fetchone()
     finally:
         conn.close()
@@ -1689,10 +1963,14 @@ def _checkpoint_review_next_action(paths: ProjectPaths) -> dict | None:
     )
 
 
-def _task_next_action(paths: ProjectPaths) -> dict | None:
+def _task_next_action(paths: ProjectPaths, *, goal_id: str | None = None) -> dict | None:
     conn = connect(paths.db_path)
     try:
-        in_progress = _next_considered_task(conn, statuses=("in_progress",))
+        in_progress = _next_considered_task(
+            conn,
+            statuses=("in_progress",),
+            goal_id=goal_id,
+        )
         if in_progress is not None:
             task = _task_next_action_target(conn, dict(in_progress))
             task_id = str(task["id"])
@@ -1711,7 +1989,7 @@ def _task_next_action(paths: ProjectPaths) -> dict | None:
                 expected_after=f"The task context pack is reviewed and task {task_id} advances toward done.",
             )
 
-        actionable = _next_actionable_task(conn)
+        actionable = _next_actionable_task(conn, goal_id=goal_id)
         if actionable is None:
             return None
         task = _task_next_action_target(conn, dict(actionable))
@@ -1734,8 +2012,29 @@ def _task_next_action(paths: ProjectPaths) -> dict | None:
         conn.close()
 
 
-def _next_considered_task(conn, *, statuses: tuple[str, ...]):
+def _next_considered_task(
+    conn,
+    *,
+    statuses: tuple[str, ...],
+    goal_id: str | None = None,
+):
+    rows = _next_task_candidates(conn, statuses=statuses, goal_id=goal_id, limit=1)
+    return rows[0] if rows else None
+
+
+def _next_task_candidates(
+    conn,
+    *,
+    statuses: tuple[str, ...],
+    goal_id: str | None = None,
+    limit: int | None = None,
+):
     placeholders = ", ".join("?" for _ in statuses)
+    goal_filter = "AND tasks.related_goal_id = ?" if goal_id else ""
+    limit_clause = "LIMIT 1" if limit == 1 else ""
+    params = list(statuses)
+    if goal_id:
+        params.append(goal_id)
     return conn.execute(
         f"""
         SELECT
@@ -1757,16 +2056,33 @@ def _next_considered_task(conn, *, statuses: tuple[str, ...]):
         JOIN goals ON goals.id = tasks.related_goal_id
         WHERE goals.status IN ('open', 'active')
           AND tasks.status IN ({placeholders})
+          {goal_filter}
         ORDER BY tasks.priority, tasks.id
-        LIMIT 1
+        {limit_clause}
         """,
-        tuple(statuses),
-    ).fetchone()
+        tuple(params),
+    ).fetchall()
 
 
-def _next_actionable_task(conn):
+def _next_actionable_task(conn, *, goal_id: str | None = None):
+    rows = _next_actionable_task_candidates(conn, goal_id=goal_id, limit=1)
+    return rows[0] if rows else None
+
+
+def _next_actionable_task_candidates(
+    conn,
+    *,
+    goal_id: str | None = None,
+    limit: int | None = None,
+):
     status_placeholders = ", ".join("?" for _ in TASK_ACTIONABLE_STATUSES)
     completed_placeholders = ", ".join("?" for _ in TASK_COMPLETED_DEPENDENCY_STATUSES)
+    goal_filter = "AND tasks.related_goal_id = ?" if goal_id else ""
+    limit_clause = "LIMIT 1" if limit == 1 else ""
+    params = list(sorted(TASK_ACTIONABLE_STATUSES))
+    params.extend(sorted(TASK_COMPLETED_DEPENDENCY_STATUSES))
+    if goal_id:
+        params.append(goal_id)
     return conn.execute(
         f"""
         SELECT
@@ -1796,11 +2112,12 @@ def _next_actionable_task(conn):
             WHERE task_dependencies.task_id = tasks.id
               AND dependency.status NOT IN ({completed_placeholders})
           )
+          {goal_filter}
         ORDER BY tasks.priority, tasks.id
-        LIMIT 1
+        {limit_clause}
         """,
-        tuple(sorted(TASK_ACTIONABLE_STATUSES)) + tuple(sorted(TASK_COMPLETED_DEPENDENCY_STATUSES)),
-    ).fetchone()
+        tuple(params),
+    ).fetchall()
 
 
 def _task_next_action_target(conn, task: dict) -> dict:
@@ -1827,18 +2144,27 @@ def _task_next_action_target(conn, task: dict) -> dict:
     return task
 
 
-def _unfinished_executor_next_action(paths: ProjectPaths) -> dict | None:
+def _unfinished_executor_next_action(
+    paths: ProjectPaths,
+    *,
+    goal_id: str | None = None,
+) -> dict | None:
     conn = connect(paths.db_path)
     try:
         placeholders = ", ".join("?" for _ in ACTIVE_RUN_STATUSES)
+        goal_filter = "AND goal_id = ?" if goal_id else ""
+        params = list(sorted(ACTIVE_RUN_STATUSES))
+        if goal_id:
+            params.append(goal_id)
         runs = conn.execute(
             f"""
             SELECT id, workflow_id, goal_id, status, iteration, started_at
             FROM workflow_runs
             WHERE status IN ({placeholders})
+              {goal_filter}
             ORDER BY started_at DESC, id DESC
             """,
-            tuple(sorted(ACTIVE_RUN_STATUSES)),
+            tuple(params),
         ).fetchall()
         for run in runs:
             latest_event = conn.execute(
@@ -1878,17 +2204,24 @@ def _unfinished_executor_next_action(paths: ProjectPaths) -> dict | None:
         conn.close()
 
 
-def _failed_executor_retry_next_action(paths: ProjectPaths) -> dict | None:
+def _failed_executor_retry_next_action(
+    paths: ProjectPaths,
+    *,
+    goal_id: str | None = None,
+) -> dict | None:
     conn = connect(paths.db_path)
     try:
         retried_run_ids = _retried_workflow_run_ids(conn)
+        goal_filter = "AND goal_id = ?" if goal_id else ""
         rows = conn.execute(
-            """
+            f"""
             SELECT id, workflow_id, goal_id, status, iteration, started_at, ended_at, summary
             FROM workflow_runs
             WHERE status = 'failed'
+              {goal_filter}
             ORDER BY ended_at DESC, started_at DESC, id DESC
-            """
+            """,
+            (goal_id,) if goal_id else (),
         ).fetchall()
         for row in rows:
             run_id = str(row["id"])
@@ -1957,19 +2290,28 @@ def _parse_event_payload(payload_json: str) -> dict:
     return payload if isinstance(payload, dict) else {}
 
 
-def _active_workflow_next_action(paths: ProjectPaths) -> dict | None:
+def _active_workflow_next_action(
+    paths: ProjectPaths,
+    *,
+    goal_id: str | None = None,
+) -> dict | None:
     conn = connect(paths.db_path)
     try:
         placeholders = ", ".join("?" for _ in ACTIVE_RUN_STATUSES)
+        goal_filter = "AND goal_id = ?" if goal_id else ""
+        params = list(sorted(ACTIVE_RUN_STATUSES))
+        if goal_id:
+            params.append(goal_id)
         run = conn.execute(
             f"""
             SELECT id, workflow_id, goal_id, status
             FROM workflow_runs
             WHERE status IN ({placeholders})
+              {goal_filter}
             ORDER BY started_at DESC, id DESC
             LIMIT 1
             """,
-            tuple(sorted(ACTIVE_RUN_STATUSES)),
+            tuple(params),
         ).fetchone()
         if run is None:
             return None

@@ -738,6 +738,195 @@ def test_next_routes_unretried_failed_executor_run_to_retry(tmp_path: Path, caps
     assert action["priority"] == 45
 
 
+def test_next_target_task_and_goal_exclude_unrelated_in_progress_work(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Older work"]) == 0
+    assert main([
+        "--root", str(tmp_path), "task", "create", "--title", "Older task",
+        "--goal", "G-0001", "--priority", "1",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "task", "status", "T-0001", "in_progress",
+        "--reason", "Already underway",
+    ]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Current work"]) == 0
+    assert main([
+        "--root", str(tmp_path), "task", "create", "--title", "Current task",
+        "--goal", "G-0002", "--priority", "20",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "task", "status", "T-0002", "ready",
+        "--reason", "Current intent",
+    ]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    unbound = _json_output(capsys)
+    assert unbound["type"] == "work_on_task"
+    assert unbound["target"]["id"] == "T-0001"
+
+    assert main(["--root", str(tmp_path), "next", "--target", "T-0002", "--json"]) == 0
+    task_action = _json_output(capsys)
+    _assert_guided_action(task_action)
+    assert task_action["type"] == "work_on_task"
+    assert task_action["target"]["id"] == "T-0002"
+    assert task_action["command"] == "pcl context pack --task T-0002 --json"
+    assert task_action["target_binding"] == {
+        "target_type": "task",
+        "target_id": "T-0002",
+        "source": "explicit",
+    }
+    assert task_action["routing_scope"] == "target"
+
+    assert main(["--root", str(tmp_path), "next", "--target", "G-0002", "--json"]) == 0
+    goal_action = _json_output(capsys)
+    assert goal_action["type"] == "work_on_task"
+    assert goal_action["target"]["id"] == "T-0002"
+    assert goal_action["target_binding"]["target_id"] == "G-0002"
+
+
+def test_next_unbound_cross_goal_tasks_selects_target_deterministically(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    for index in (1, 2):
+        assert main([
+            "--root", str(tmp_path), "goal", "create", "--title", f"Goal {index}",
+        ]) == 0
+        assert main([
+            "--root", str(tmp_path), "task", "create", "--title", f"Task {index}",
+            "--goal", f"G-{index:04d}", "--priority", str(index),
+        ]) == 0
+        assert main([
+            "--root", str(tmp_path), "task", "status", f"T-{index:04d}", "ready",
+            "--reason", "Ready",
+        ]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    first = _json_output(capsys)
+    _assert_guided_action(first)
+    assert first["type"] == "select_target"
+    assert first["command"] is None
+    assert first["run_policy"] == "target_selection"
+    assert first["target"]["selection_command"] == (
+        "pcl next --target <T-XXXX|G-XXXX> --json"
+    )
+    assert [candidate["id"] for candidate in first["target"]["candidates"]] == [
+        "T-0001",
+        "T-0002",
+    ]
+
+    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    assert _json_output(capsys) == first
+    assert main(["--root", str(tmp_path), "next", "--explain"]) == 0
+    explanation = capsys.readouterr().out
+    assert "Next action: select_target" in explanation
+    assert "Candidates:" in explanation
+    assert "T-0001 ready Task 1" in explanation
+    assert "T-0002 ready Task 2" in explanation
+
+
+def test_next_unbound_multiple_tasks_within_one_goal_keeps_priority_order(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "One goal"]) == 0
+    for task_id, priority in (("T-0001", "20"), ("T-0002", "10")):
+        assert main([
+            "--root", str(tmp_path), "task", "create", "--title", task_id,
+            "--goal", "G-0001", "--priority", priority,
+        ]) == 0
+        assert main([
+            "--root", str(tmp_path), "task", "status", task_id, "ready",
+            "--reason", "Ready",
+        ]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    action = _json_output(capsys)
+    assert action["type"] == "work_on_task"
+    assert action["target"]["id"] == "T-0002"
+
+
+def test_next_target_rejects_invalid_ids_and_returns_terminal_action(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Done work"]) == 0
+    assert main([
+        "--root", str(tmp_path), "task", "create", "--title", "Cancelled task",
+        "--goal", "G-0001",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "task", "status", "T-0001", "cancelled",
+        "--reason", "No longer needed",
+    ]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "next", "--target", "feature:F-0001", "--json"]) == 2
+    malformed = _json_output(capsys)
+    assert malformed["error"]["code"] == "invalid_input"
+    assert malformed["error"]["details"]["accepted_prefixes"] == ["T-", "G-"]
+
+    assert main(["--root", str(tmp_path), "next", "--target", "T-9999", "--json"]) == 2
+    missing = _json_output(capsys)
+    assert missing["error"]["code"] == "invalid_input"
+    assert missing["error"]["details"]["target"] == "T-9999"
+
+    assert main(["--root", str(tmp_path), "next", "--target", "T-0001", "--json"]) == 0
+    terminal = _json_output(capsys)
+    _assert_guided_action(terminal)
+    assert terminal["type"] == "target_terminal"
+    assert terminal["command"] is None
+    assert terminal["target"]["status"] == "cancelled"
+    assert terminal["target_binding"]["target_id"] == "T-0001"
+
+
+def test_next_target_keeps_project_wide_human_gate_precedence(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Current"]) == 0
+    assert main([
+        "--root", str(tmp_path), "task", "create", "--title", "Current task",
+        "--goal", "G-0001",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "decision", "open", "--question", "Choose safely",
+        "--recommendation", "Review the gate",
+    ]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "next", "--target", "T-0001", "--json"]) == 0
+    action = _json_output(capsys)
+    assert action["type"] == "resolve_decision"
+    assert action["routing_scope"] == "project_gate"
+    assert action["target_binding"]["target_id"] == "T-0001"
+
+
+def test_next_strict_validation_still_precedes_explicit_target(tmp_path: Path, capsys) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Coverage"]) == 0
+    assert main(["--root", str(tmp_path), "loop", "run", "feature_coverage", "--goal", "G-0001"]) == 0
+    assert main(["--root", str(tmp_path), "loop", "run", "regression_loop", "--goal", "G-0001"]) == 0
+    capsys.readouterr()
+
+    assert main([
+        "--root", str(tmp_path), "next", "--strict", "--target", "G-0001", "--json",
+    ]) == 0
+    action = _json_output(capsys)
+    assert action["type"] == "resolve_validation_errors"
+    assert action["priority"] == 1
+
+
 def test_next_explain_prints_guided_fields(tmp_path: Path, capsys) -> None:
     assert main(["init", "--target", str(tmp_path)]) == 0
     capsys.readouterr()

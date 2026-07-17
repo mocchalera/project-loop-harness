@@ -1724,6 +1724,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Print a human-readable explanation of the next action",
     )
+    p_next.add_argument(
+        "--target",
+        dest="next_target",
+        default=None,
+        help="Bind routing to an existing Task or Goal ID",
+    )
 
     p_finish = sub.add_parser("finish", help="Plan terminal loop close-out steps")
     p_finish.add_argument(
@@ -4004,9 +4010,9 @@ def main(argv: list[str] | None = None) -> int:
                         expected_after="Strict validation passes and normal next-action routing can resume.",
                     )
                 else:
-                    action = next_action(paths)
+                    action = next_action(paths, target=args.next_target)
             else:
-                action = next_action(paths)
+                action = next_action(paths, target=args.next_target)
             if json_output:
                 _print_json(action)
             elif args.explain:
