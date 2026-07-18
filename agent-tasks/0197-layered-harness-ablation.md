@@ -5,6 +5,7 @@
 - **Priority:** P0
 - **Size:** L
 - **Dependency:** 0193 through 0196 integrated and green
+- **Project Loop:** Goal `G-0055`, Tasks `T-0115` through `T-0117`, Feature `F-0061`, Story `US-0059`, Tests `TC-0129` through `TC-0131`
 - **DB schema:** remains 8
 
 ## Goal
@@ -17,7 +18,8 @@ safe-stopped cases in the denominator.
 ## Frozen comparison
 
 - Baseline: commit `7fa22b2`, immediately before target-bound runtime routing.
-- Treatment: the reviewed integration commit containing 0193 through 0196.
+- Treatment: reviewed integration commit `5ce17ec`, containing 0193 through
+  0196.
 - Eight paired cases, with one baseline and one treatment run per case:
   - three single-session routing/proof cases;
   - three resume/handoff cases;
@@ -90,4 +92,3 @@ not change after results are observed without a new cohort ID and full rerun.
   unrecordable human-gate bypass.
 - Do not implement Phase 5 when the aggregate is `modify` or `stop`.
 - Do not add telemetry, paid-service dependencies, or a new harness mode.
-

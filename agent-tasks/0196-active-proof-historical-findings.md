@@ -5,6 +5,7 @@
 - **Priority:** P0
 - **Size:** M
 - **Dependency:** 0192 audit evidence-impact classification; 0193 routing
+- **Project Loop:** Goal `G-0055`, Task `T-0114`, Feature `F-0060`, Story `US-0058`, Tests `TC-0126` through `TC-0128`
 - **DB schema:** remains 8 unless a separate human-approved design proves otherwise
 
 ## Problem

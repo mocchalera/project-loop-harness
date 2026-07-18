@@ -5,6 +5,7 @@
 - **Priority:** P1
 - **Size:** M
 - **Dependency:** 0197 aggregate recommendation is `proceed`
+- **Project Loop:** Goal `G-0055`, Task `T-0118`
 - **DB schema:** remains 8 unless separately approved
 
 ## Goal
@@ -45,4 +46,3 @@ human approvals, typed gates, and hash-pinned terminal Evidence.
   external write; each requires separate human approval.
 - Reject a reduction that improves cost while regressing acceptance, routing,
   resume, proof, or a human gate.
-
