@@ -152,6 +152,55 @@ def test_resume_explicit_goal_without_packet_is_valid(tmp_path: Path, capsys) ->
     assert packet["next_safe_action"]["command"] == "pcl next --json"
 
 
+def test_resume_explicit_target_error_surface_is_stable(tmp_path: Path, capsys) -> None:
+    _init(tmp_path, capsys)
+
+    cases = (
+        (
+            "feature:F-0001",
+            {
+                "ok": False,
+                "error": {
+                    "code": "invalid_input",
+                    "message": "--target must be a task or goal ID.",
+                    "details": {
+                        "target": "feature:F-0001",
+                        "accepted_prefixes": ["T-", "G-"],
+                    },
+                },
+            },
+        ),
+        (
+            "T-9999",
+            {
+                "ok": False,
+                "error": {
+                    "code": "invalid_input",
+                    "message": "Task does not exist: T-9999",
+                    "details": {"target": "T-9999"},
+                },
+            },
+        ),
+        (
+            "G-9999",
+            {
+                "ok": False,
+                "error": {
+                    "code": "invalid_input",
+                    "message": "Goal does not exist: G-9999",
+                    "details": {"target": "G-9999"},
+                },
+            },
+        ),
+    )
+
+    for target_id, expected in cases:
+        assert main([
+            "--root", str(tmp_path), "resume", "--target", target_id, "--json",
+        ]) == 2
+        assert _json_output(capsys) == expected
+
+
 def test_resume_completed_packet_preserves_verified_semantics_and_markdown(
     tmp_path: Path,
     capsys,

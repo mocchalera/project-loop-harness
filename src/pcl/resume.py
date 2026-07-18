@@ -22,6 +22,7 @@ from .db import connect
 from .errors import EXIT_USAGE, DataStoreError, InvalidInputError, PclError
 from .guards import require_initialized
 from .paths import ProjectPaths
+from .target_resolver import TaskGoalTargetNotFoundError, resolve_existing_task_goal
 from .timeutil import utc_now_iso
 from .work_briefs import current_approved_work_brief
 
@@ -223,14 +224,7 @@ def render_handoff_markdown(packet: dict[str, Any]) -> str:
 
 def _resolve_target(conn: sqlite3.Connection, *, target_id: str | None) -> dict[str, Any]:
     if target_id:
-        if target_id.startswith("T-"):
-            return _task_target(conn, target_id)
-        if target_id.startswith("G-"):
-            return _goal_target(conn, target_id)
-        raise InvalidInputError(
-            "--target must be a task or goal ID.",
-            details={"target": target_id, "accepted_prefixes": ["T-", "G-"]},
-        )
+        return _target_by_id(conn, target_id)
 
     tasks = _active_task_candidates(conn)
     if len(tasks) == 1:
@@ -309,18 +303,38 @@ def _latest_completion_packet_target(conn: sqlite3.Connection) -> dict[str, str]
 
 
 def _task_target(conn: sqlite3.Connection, target_id: str) -> dict[str, Any]:
-    row = conn.execute(
-        """
-        SELECT tasks.id, tasks.title, tasks.description, tasks.status, tasks.risk,
-               tasks.related_goal_id, goals.budget_json AS related_goal_budget_json
-        FROM tasks
-        LEFT JOIN goals ON goals.id = tasks.related_goal_id
-        WHERE tasks.id = ?
-        """,
-        (target_id,),
-    ).fetchone()
-    if row is None:
+    target = _target_by_id(conn, target_id)
+    if target["type"] != "task":
         raise InvalidInputError(f"Task does not exist: {target_id}", details={"target": target_id})
+    return target
+
+
+def _target_by_id(conn: sqlite3.Connection, target_id: str) -> dict[str, Any]:
+    try:
+        resolved = resolve_existing_task_goal(conn, target_id)
+    except TaskGoalTargetNotFoundError as exc:
+        label = "Task" if exc.target_type == "task" else "Goal"
+        raise InvalidInputError(
+            f"{label} does not exist: {target_id}",
+            details={"target": target_id},
+        ) from exc
+
+    row = resolved.row
+    if resolved.type == "goal":
+        return {
+            "type": "goal",
+            "id": str(row["id"]),
+            "intent": str(row["title"]),
+            "status": str(row["status"]),
+            "risk": None,
+            "goal_id": str(row["id"]),
+            "budget_json": str(row["budget_json"] or "{}"),
+        }
+
+    related_goal = conn.execute(
+        "SELECT budget_json FROM goals WHERE id = ?",
+        (row["related_goal_id"],),
+    ).fetchone()
     return {
         "type": "task",
         "id": str(row["id"]),
@@ -328,26 +342,15 @@ def _task_target(conn: sqlite3.Connection, target_id: str) -> dict[str, Any]:
         "status": str(row["status"]),
         "risk": row["risk"],
         "goal_id": row["related_goal_id"],
-        "budget_json": row["related_goal_budget_json"],
+        "budget_json": related_goal["budget_json"] if related_goal else None,
     }
 
 
 def _goal_target(conn: sqlite3.Connection, target_id: str) -> dict[str, Any]:
-    row = conn.execute(
-        "SELECT id, title, status, budget_json FROM goals WHERE id = ?",
-        (target_id,),
-    ).fetchone()
-    if row is None:
+    target = _target_by_id(conn, target_id)
+    if target["type"] != "goal":
         raise InvalidInputError(f"Goal does not exist: {target_id}", details={"target": target_id})
-    return {
-        "type": "goal",
-        "id": str(row["id"]),
-        "intent": str(row["title"]),
-        "status": str(row["status"]),
-        "risk": None,
-        "goal_id": str(row["id"]),
-        "budget_json": str(row["budget_json"] or "{}"),
-    }
+    return target
 
 
 def _latest_completion_packet(

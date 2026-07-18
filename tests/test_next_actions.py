@@ -872,13 +872,39 @@ def test_next_target_rejects_invalid_ids_and_returns_terminal_action(
 
     assert main(["--root", str(tmp_path), "next", "--target", "feature:F-0001", "--json"]) == 2
     malformed = _json_output(capsys)
-    assert malformed["error"]["code"] == "invalid_input"
-    assert malformed["error"]["details"]["accepted_prefixes"] == ["T-", "G-"]
+    assert malformed == {
+        "ok": False,
+        "error": {
+            "code": "invalid_input",
+            "message": "--target must be a task or goal ID.",
+            "details": {
+                "target": "feature:F-0001",
+                "accepted_prefixes": ["T-", "G-"],
+            },
+        },
+    }
 
     assert main(["--root", str(tmp_path), "next", "--target", "T-9999", "--json"]) == 2
     missing = _json_output(capsys)
-    assert missing["error"]["code"] == "invalid_input"
-    assert missing["error"]["details"]["target"] == "T-9999"
+    assert missing == {
+        "ok": False,
+        "error": {
+            "code": "invalid_input",
+            "message": "Next target does not exist: T-9999",
+            "details": {"target": "T-9999", "target_type": "task"},
+        },
+    }
+
+    assert main(["--root", str(tmp_path), "next", "--target", "G-9999", "--json"]) == 2
+    missing_goal = _json_output(capsys)
+    assert missing_goal == {
+        "ok": False,
+        "error": {
+            "code": "invalid_input",
+            "message": "Next target does not exist: G-9999",
+            "details": {"target": "G-9999", "target_type": "goal"},
+        },
+    }
 
     assert main(["--root", str(tmp_path), "next", "--target", "T-0001", "--json"]) == 0
     terminal = _json_output(capsys)

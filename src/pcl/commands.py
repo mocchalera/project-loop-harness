@@ -27,6 +27,7 @@ from .locales import HUMAN_GATE_JA
 from .paths import ProjectPaths
 from .presentation import to_pretty_json as to_pretty_json
 from .project_config import finish_check_configuration
+from .target_resolver import TaskGoalTargetNotFoundError, resolve_existing_task_goal
 from .timeutil import utc_now_iso
 from .workflow_proposals import next_reviewable_workflow_proposal
 
@@ -953,43 +954,53 @@ def _targeted_next_action(paths: ProjectPaths, *, target_id: str) -> dict:
 
 def _resolve_next_target(paths: ProjectPaths, *, target_id: str) -> dict[str, Any]:
     require_initialized(paths)
-    if not target_id.startswith(("T-", "G-")):
-        raise InvalidInputError(
-            "--target must be a task or goal ID.",
-            details={"target": target_id, "accepted_prefixes": ["T-", "G-"]},
-        )
-
     conn = connect(paths.db_path)
     try:
-        if target_id.startswith("T-"):
-            row = conn.execute(
-                """
-                SELECT tasks.id, tasks.title, tasks.description, tasks.status, tasks.priority,
-                       tasks.owner, tasks.risk, tasks.effort, tasks.related_goal_id,
-                       tasks.related_feature_id, tasks.related_defect_id,
-                       tasks.created_at, tasks.updated_at,
-                       goals.status AS related_goal_status
-                FROM tasks
-                LEFT JOIN goals ON goals.id = tasks.related_goal_id
-                WHERE tasks.id = ?
-                """,
-                (target_id,),
+        try:
+            resolved = resolve_existing_task_goal(conn, target_id)
+        except TaskGoalTargetNotFoundError as exc:
+            raise InvalidInputError(
+                f"Next target does not exist: {target_id}",
+                details={"target": target_id, "target_type": exc.target_type},
+            ) from exc
+
+        row = resolved.row
+        if resolved.type == "task":
+            related_goal = conn.execute(
+                "SELECT status FROM goals WHERE id = ?",
+                (row["related_goal_id"],),
             ).fetchone()
-            target_type = "task"
-        else:
-            row = conn.execute(
-                "SELECT id, title, status, created_at, updated_at FROM goals WHERE id = ?",
-                (target_id,),
-            ).fetchone()
-            target_type = "goal"
+            return {
+                "type": "task",
+                **{
+                    key: row[key]
+                    for key in (
+                        "id",
+                        "title",
+                        "description",
+                        "status",
+                        "priority",
+                        "owner",
+                        "risk",
+                        "effort",
+                        "related_goal_id",
+                        "related_feature_id",
+                        "related_defect_id",
+                        "created_at",
+                        "updated_at",
+                    )
+                },
+                "related_goal_status": related_goal["status"] if related_goal else None,
+            }
+        return {
+            "type": "goal",
+            **{
+                key: row[key]
+                for key in ("id", "title", "status", "created_at", "updated_at")
+            },
+        }
     finally:
         conn.close()
-    if row is None:
-        raise InvalidInputError(
-            f"Next target does not exist: {target_id}",
-            details={"target": target_id, "target_type": target_type},
-        )
-    return {"type": target_type, **dict(row)}
 
 
 def _bind_next_action(action: dict, *, binding: dict, routing_scope: str) -> dict:
