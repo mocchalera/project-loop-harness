@@ -1,6 +1,6 @@
 # 0198: Evidence-Gated Direct Flow Reduction
 
-- **Status:** Planned
+- **Status:** Complete (not implemented; 0197 gate returned `modify`)
 - **Milestone:** Harness Minimization Phase 5
 - **Priority:** P1
 - **Size:** M

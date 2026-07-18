@@ -1,6 +1,6 @@
 # 0197: Layered Harness Minimization Ablation
 
-- **Status:** Active
+- **Status:** Complete (`modify`; Phase 5 not authorized)
 - **Milestone:** Harness Minimization Phase 4
 - **Priority:** P0
 - **Size:** L
