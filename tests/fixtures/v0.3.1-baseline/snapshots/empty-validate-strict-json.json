@@ -11,6 +11,10 @@
   "stderr": "",
   "stdout": {
     "errors": [],
+    "finding_counts": {
+      "active": 0,
+      "historical": 0
+    },
     "findings": [],
     "ok": true,
     "warnings": []

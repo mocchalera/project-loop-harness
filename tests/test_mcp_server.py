@@ -109,7 +109,13 @@ def test_mcp_read_tools_return_project_state(tmp_path: Path) -> None:
     status = _tool_payload(server.handle(_tool_call("get_status")))
     assert status["root"] == str(tmp_path)
     assert status["approval_mode"] == "read-only"
-    assert status["validation"] == {"errors": [], "ok": True, "warnings": [], "findings": []}
+    assert status["validation"] == {
+        "errors": [],
+        "ok": True,
+        "warnings": [],
+        "findings": [],
+        "finding_counts": {"active": 0, "historical": 0},
+    }
     assert status["status"]["open_defects"][0]["id"] == "D-0001"
 
     features = _tool_payload(server.handle(_tool_call("list_features")))

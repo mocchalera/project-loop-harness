@@ -426,6 +426,7 @@ def test_lifecycle_validation_is_advisory_without_policy_and_enforced_with_polic
             f"pcl --json story read {story_id}",
             "pcl --json repair lifecycle --dry-run",
         ],
+        "proof_scope": "historical",
     }
 
     with config.open("a", encoding="utf-8") as handle:

@@ -1,6 +1,6 @@
 # 0196: Active Proof / Historical Findings Separation
 
-- **Status:** Active
+- **Status:** Complete
 - **Milestone:** Harness Minimization Phase 3
 - **Priority:** P0
 - **Size:** M
@@ -44,4 +44,3 @@ Before editing runtime code, produce a short responsibility map and prove that
 classification can be derived from durable entity state. If a finding family
 requires semantic inference from prose or user intent, leave it active and
 record that limitation rather than encoding a guess.
-

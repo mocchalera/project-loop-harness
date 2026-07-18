@@ -89,7 +89,13 @@ def test_strict_validate_accepts_normal_audit_log_flow(tmp_path: Path, capsys) -
     capsys.readouterr()
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
-    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": [], "findings": []}
+    assert _json_output(capsys) == {
+        "errors": [],
+        "ok": True,
+        "warnings": [],
+        "findings": [],
+        "finding_counts": {"active": 0, "historical": 0},
+    }
 
 
 def test_strict_validate_rejects_missing_events_jsonl(tmp_path: Path, capsys) -> None:

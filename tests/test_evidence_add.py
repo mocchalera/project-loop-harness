@@ -28,9 +28,14 @@ def _json_output(capsys) -> dict[str, Any]:
 
 def _assert_legacy_validation(payload: dict[str, Any], expected: dict[str, Any]) -> None:
     findings = payload.pop("findings")
+    finding_counts = payload.pop("finding_counts")
     assert payload == expected
     assert [item["message"] for item in findings if item["severity"] == "error"] == expected["errors"]
     assert [item["message"] for item in findings if item["severity"] == "warning"] == expected["warnings"]
+    assert finding_counts == {
+        "active": sum(item["proof_scope"] == "active" for item in findings),
+        "historical": sum(item["proof_scope"] == "historical" for item in findings),
+    }
 
 
 def _init(root: Path, capsys) -> None:
@@ -1389,7 +1394,13 @@ def test_strict_validate_checks_adhoc_manifest_and_warns_on_member_drift(
     evidence = _json_output(capsys)["evidence"]
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
-    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": [], "findings": []}
+    assert _json_output(capsys) == {
+        "errors": [],
+        "ok": True,
+        "warnings": [],
+        "findings": [],
+        "finding_counts": {"active": 0, "historical": 0},
+    }
 
     artifact.unlink()
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
@@ -1442,7 +1453,13 @@ def test_strict_validate_checks_copied_member_health_from_copy(
     stored_path = evidence["members"][0]["stored_path"]
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
-    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": [], "findings": []}
+    assert _json_output(capsys) == {
+        "errors": [],
+        "ok": True,
+        "warnings": [],
+        "findings": [],
+        "finding_counts": {"active": 0, "historical": 0},
+    }
     assert _assess_adhoc_evidence(tmp_path, evidence) == {
         "health": "ok",
         "findings": [],
@@ -1592,7 +1609,13 @@ def test_strict_validate_accepts_pre_0096_manifest_without_path_guard_fields(
     manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
-    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": [], "findings": []}
+    assert _json_output(capsys) == {
+        "errors": [],
+        "ok": True,
+        "warnings": [],
+        "findings": [],
+        "finding_counts": {"active": 0, "historical": 0},
+    }
 
 
 def test_strict_validate_warns_on_outside_project_member_path(
@@ -1729,7 +1752,13 @@ def test_evidence_add_preserves_strict_audit_log_integrity(tmp_path: Path, capsy
     evidence = _json_output(capsys)["evidence"]
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
-    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": [], "findings": []}
+    assert _json_output(capsys) == {
+        "errors": [],
+        "ok": True,
+        "warnings": [],
+        "findings": [],
+        "finding_counts": {"active": 0, "historical": 0},
+    }
 
     db_events = _db_rows(
         tmp_path,

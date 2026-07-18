@@ -61,6 +61,9 @@ is a regression, not an automatic regeneration result.
 
 ## Intended changes since v0.3.1 freeze
 
+- 2026-07-18 — `empty-validate-strict-json.json` and
+  `representative-validate-strict-json.json` regenerated for task 0196 to add
+  deterministic active/historical finding counts.
 - 2026-07-18 — `snapshots/next-help.json` regenerated for task 0193 to include
   the additive read-only `pcl next --target <T-XXXX|G-XXXX>` routing boundary.
 - 2026-07-15 — `snapshots/pcl-version.json` regenerated for the v0.5.1 local

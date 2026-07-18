@@ -92,6 +92,81 @@ DECISION_BLOCK_TARGET_TABLES = {
 ADHOC_DRIFT_WARNING_PREFIX = "Adhoc evidence "
 LIFECYCLE_ADVISORY_PREFIX = "Lifecycle integrity advisory: "
 SKILL_DRIFT_WARNING_PREFIX = "Installed project-control-loop Skill differs "
+FINDING_PROOF_SCOPES = ("active", "historical")
+
+# Only finding families whose responsibility is terminal proof history may be
+# classified from durable terminal state. Relationship contradictions, active
+# defects, configuration/schema health, and unknown codes deliberately remain
+# active even when their message happens to mention a terminal entity.
+HISTORICAL_GOAL_FINDING_CODES = {
+    "goal_close_verification_required",
+    "goal_closed_proof_missing",
+    "goal_closed_verification_missing",
+    "goal_closed_verification_not_approved",
+    "goal_closed_verification_target_mismatch",
+}
+HISTORICAL_FEATURE_FINDING_CODES = {
+    "feature_done_story_incomplete",
+    "feature_done_tests_incomplete",
+    "feature_done_evidence_required",
+}
+HISTORICAL_TEST_FINDING_CODES = {
+    "test_story_required",
+    "test_story_not_terminal",
+    "test_acceptance_evidence_required",
+    "test_terminal_evidence_missing",
+    "test_terminal_evidence_reference_missing",
+    "test_terminal_evidence_type_mismatch",
+    "test_transition_event_missing",
+    "test_transition_event_evidence_missing",
+    "test_transition_evidence_invalid",
+}
+HISTORICAL_DEFECT_FINDING_CODES = {
+    "defect_terminal_evidence_missing",
+    "defect_terminal_evidence_reference_missing",
+    "defect_terminal_evidence_type_mismatch",
+    "defect_terminal_verification_missing",
+    "defect_transition_event_missing",
+    "defect_transition_event_evidence_missing",
+    "defect_transition_evidence_invalid",
+}
+HISTORICAL_WORKFLOW_RUN_FINDING_CODES = {
+    "workflow_run_passed_jobs_incomplete",
+    "workflow_run_passed_verification_missing",
+}
+HISTORICAL_EVIDENCE_FINDING_CODES = {
+    "artifact_missing",
+    "artifact_not_file",
+    "artifact_path_empty",
+    "evidence_adhoc_contract_version_unsupported",
+    "evidence_adhoc_copy_hash_mismatch",
+    "evidence_adhoc_copy_missing",
+    "evidence_adhoc_evidence_id_mismatch",
+    "evidence_adhoc_evidence_type_mismatch",
+    "evidence_adhoc_manifest_corrupt",
+    "evidence_adhoc_manifest_missing",
+    "evidence_adhoc_manifest_not_file",
+    "evidence_adhoc_manifest_not_local",
+    "evidence_adhoc_member_entry_must_be_object",
+    "evidence_adhoc_member_entry_path_absolute",
+    "evidence_adhoc_member_entry_path_duplicated",
+    "evidence_adhoc_member_entry_path_invalid",
+    "evidence_adhoc_member_entry_path_scope_invalid",
+    "evidence_adhoc_member_entry_sensitive_pattern_invalid",
+    "evidence_adhoc_member_entry_sha256_invalid",
+    "evidence_adhoc_member_entry_size_bytes_invalid",
+    "evidence_adhoc_member_entry_storage_mode_invalid",
+    "evidence_adhoc_member_entry_stored_path_invalid",
+    "evidence_adhoc_member_hash_mismatch",
+    "evidence_adhoc_member_missing",
+    "evidence_adhoc_member_outside_project_root",
+    "evidence_adhoc_members_invalid",
+    "evidence_adhoc_sensitive_path_warning_count_invalid",
+    "evidence_set_artifact_unreadable",
+    "evidence_set_contract_invalid",
+    "evidence_set_target_link_count",
+    "evidence_set_target_mismatch",
+}
 
 
 def _pcl_json_command(*args: str, root: str | None = None) -> str:
@@ -117,6 +192,7 @@ class ValidationFinding:
     repair_class: str = "unsupported"
     requires_human: bool = False
     suggested_commands: list[str] = field(default_factory=list)
+    proof_scope: str = "active"
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -128,6 +204,7 @@ class ValidationFinding:
             "repair_class": self.repair_class,
             "requires_human": self.requires_human,
             "suggested_commands": self.suggested_commands,
+            "proof_scope": self.proof_scope,
         }
 
 
@@ -137,6 +214,12 @@ class ValidationResult:
     errors: list[str] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
     findings: list[ValidationFinding] = field(default_factory=list)
+
+    def finding_counts(self) -> dict[str, int]:
+        return {
+            scope: sum(finding.proof_scope == scope for finding in self.findings)
+            for scope in FINDING_PROOF_SCOPES
+        }
 
     def add_error(
         self,
@@ -195,6 +278,7 @@ class ValidationResult:
             "errors": self.errors,
             "warnings": self.warnings,
             "findings": [finding.to_dict() for finding in self.findings],
+            "finding_counts": self.finding_counts(),
         }
 
 
@@ -435,6 +519,7 @@ def validate_project(
                         suggested_commands=source.suggested_commands,
                     )
             result.warnings = kept_warnings
+        _classify_finding_proof_scopes(conn, result)
     except sqlite3.Error as exc:
         result.add_error(
             f"Cannot validate SQLite database at {paths.db_path}: {exc}",
@@ -446,6 +531,87 @@ def validate_project(
     finally:
         conn.close()
     return result
+
+
+def _classify_finding_proof_scopes(
+    conn: sqlite3.Connection,
+    result: ValidationResult,
+) -> None:
+    """Classify findings from codes plus durable state; unknowns fail active."""
+    for finding in result.findings:
+        finding.proof_scope = "active"
+        if _finding_is_historical(conn, finding):
+            finding.proof_scope = "historical"
+
+
+def _finding_is_historical(
+    conn: sqlite3.Connection,
+    finding: ValidationFinding,
+) -> bool:
+    entity = finding.entity
+    if not isinstance(entity, dict):
+        return False
+    entity_type = str(entity.get("type") or "")
+    entity_id = str(entity.get("id") or "")
+    if not entity_type or not entity_id:
+        return False
+
+    if entity_type == "evidence":
+        return (
+            finding.code in HISTORICAL_EVIDENCE_FINDING_CODES
+            and superseding_evidence_id(conn, entity_id) is not None
+        )
+    if finding.code in HISTORICAL_GOAL_FINDING_CODES and entity_type == "goal":
+        return _entity_has_status(conn, "goals", entity_id, {"closed", "cancelled"})
+    if finding.code in HISTORICAL_FEATURE_FINDING_CODES and entity_type == "feature":
+        return _entity_has_status(conn, "features", entity_id, {"done", "waived"})
+    if finding.code in HISTORICAL_DEFECT_FINDING_CODES and entity_type == "defect":
+        return _entity_has_status(conn, "defects", entity_id, {"closed", "waived"})
+    if finding.code in HISTORICAL_TEST_FINDING_CODES and entity_type == "test_case":
+        if not table_exists(conn, "test_cases") or not table_exists(conn, "features"):
+            return False
+        row = conn.execute(
+            """
+            SELECT test_cases.status AS test_status, features.status AS feature_status
+            FROM test_cases
+            JOIN features ON features.id = test_cases.feature_id
+            WHERE test_cases.id = ?
+            """,
+            (entity_id,),
+        ).fetchone()
+        return row is not None and (
+            str(row["test_status"]) == "waived"
+            or str(row["feature_status"]) in {"done", "waived"}
+        )
+    if (
+        finding.code in HISTORICAL_WORKFLOW_RUN_FINDING_CODES
+        and entity_type == "workflow_run"
+    ):
+        if not table_exists(conn, "workflow_runs") or not table_exists(conn, "goals"):
+            return False
+        row = conn.execute(
+            """
+            SELECT goals.status
+            FROM workflow_runs
+            JOIN goals ON goals.id = workflow_runs.goal_id
+            WHERE workflow_runs.id = ?
+            """,
+            (entity_id,),
+        ).fetchone()
+        return row is not None and str(row["status"]) in {"closed", "cancelled"}
+    return False
+
+
+def _entity_has_status(
+    conn: sqlite3.Connection,
+    table: str,
+    entity_id: str,
+    statuses: set[str],
+) -> bool:
+    if not table_exists(conn, table):
+        return False
+    row = conn.execute(f"SELECT status FROM {table} WHERE id = ?", (entity_id,)).fetchone()
+    return row is not None and str(row["status"]) in statuses
 
 
 def _validate_pcl_yaml_advice(paths: ProjectPaths, result: ValidationResult) -> None:

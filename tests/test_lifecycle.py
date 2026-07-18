@@ -373,7 +373,13 @@ def test_jobs_complete_with_evidence_regresses_ax1_empty_evidence_symptom(
     assert dashboard_job["latest_evidence_path"] == ".project-loop/evidence/adhoc/e-0001-adhoc-v0.json"
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
-    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": [], "findings": []}
+    assert _json_output(capsys) == {
+        "errors": [],
+        "ok": True,
+        "warnings": [],
+        "findings": [],
+        "finding_counts": {"active": 0, "historical": 0},
+    }
 
 
 def test_jobs_complete_rejects_unknown_evidence_without_mutation(

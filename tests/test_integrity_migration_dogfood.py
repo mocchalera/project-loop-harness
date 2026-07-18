@@ -160,6 +160,12 @@ def test_v030_schema7_integrity_migration_uses_explicit_semantic_commands(
     with config.open("a", encoding="utf-8") as handle:
         handle.write("\nvalidation:\n  lifecycle_integrity: enforced\n")
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
-    assert _json(capsys) == {"errors": [], "findings": [], "ok": True, "warnings": []}
+    assert _json(capsys) == {
+        "errors": [],
+        "findings": [],
+        "finding_counts": {"active": 0, "historical": 0},
+        "ok": True,
+        "warnings": [],
+    }
     assert main(["--root", str(tmp_path), "render", "--json"]) == 0
     assert _json(capsys)["ok"] is True

@@ -89,7 +89,7 @@ RISK_ITEM_KEYS = {
 }
 RISK_TARGET_KEYS = {"type", "id"}
 HUMAN_DECISIONS_KEYS = {"count", "items"}
-VALIDATION_KEYS = {"ok", "errors", "warnings", "findings"}
+VALIDATION_KEYS = {"ok", "errors", "warnings", "findings", "finding_counts"}
 CURRENT_GOAL_KEYS = {"id", "title", "status", "completion_json", "budget_json", "updated_at"}
 ACTIVE_WORKFLOW_KEYS = {
     "id",
@@ -265,7 +265,13 @@ def test_dashboard_data_contract_shape_for_active_loop(tmp_path: Path) -> None:
         "items": [],
     }
     assert set(data["validation"]) == VALIDATION_KEYS
-    assert data["validation"] == {"errors": [], "ok": True, "warnings": [], "findings": []}
+    assert data["validation"] == {
+        "errors": [],
+        "ok": True,
+        "warnings": [],
+        "findings": [],
+        "finding_counts": {"active": 0, "historical": 0},
+    }
     assert CURRENT_GOAL_KEYS <= set(data["current_goal"])
     assert ACTIVE_WORKFLOW_KEYS <= set(data["active_workflow"])
     assert AGENT_JOB_KEYS <= set(data["active_agent_jobs"][0])

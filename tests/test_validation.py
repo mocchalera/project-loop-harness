@@ -23,8 +23,10 @@ def test_validate_missing_project_loop(tmp_path: Path) -> None:
             "repair_class": "structural",
             "requires_human": False,
             "suggested_commands": [f"pcl init --target {tmp_path}"],
+            "proof_scope": "active",
         }
     ]
+    assert result.to_dict()["finding_counts"] == {"active": 1, "historical": 0}
 
 
 def _json_output(capsys) -> dict:
@@ -471,7 +473,13 @@ def test_strict_validate_rejects_missing_rubric_evidence_reference(
     )
 
     assert main(["--root", str(tmp_path), "validate", "--json"]) == 0
-    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": [], "findings": []}
+    assert _json_output(capsys) == {
+        "errors": [],
+        "ok": True,
+        "warnings": [],
+        "findings": [],
+        "finding_counts": {"active": 0, "historical": 0},
+    }
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 1
     payload = _json_output(capsys)
@@ -706,7 +714,13 @@ def test_strict_validate_accepts_terminal_test_case_evidence(tmp_path: Path, cap
     capsys.readouterr()
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
-    assert _json_output(capsys) == {"errors": [], "ok": True, "warnings": [], "findings": []}
+    assert _json_output(capsys) == {
+        "errors": [],
+        "ok": True,
+        "warnings": [],
+        "findings": [],
+        "finding_counts": {"active": 0, "historical": 0},
+    }
 
 
 def test_strict_validate_rejects_terminal_test_case_missing_evidence(
@@ -1322,4 +1336,10 @@ def test_strict_validate_accepts_valid_closed_goal_and_defect(tmp_path: Path, ca
 
     assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
     payload = _json_output(capsys)
-    assert payload == {"errors": [], "ok": True, "warnings": [], "findings": []}
+    assert payload == {
+        "errors": [],
+        "ok": True,
+        "warnings": [],
+        "findings": [],
+        "finding_counts": {"active": 0, "historical": 0},
+    }

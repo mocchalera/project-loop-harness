@@ -45,11 +45,18 @@ def test_report_validation_strict_writes_diagnostics(tmp_path: Path, capsys) -> 
     assert payload["kind"] == "validation"
     assert payload["report"]["strict"] is True
     assert payload["report"]["ok"] is False
+    assert payload["report"]["finding_counts"] == {
+        "active": len(payload["report"]["findings"]),
+        "historical": 0,
+    }
     assert report_path == tmp_path / ".project-loop" / "reports" / "validation-strict.md"
     assert "# Validation Report" in markdown
     assert "Duplicate active workflow runs for goal G-0001: WR-0001, WR-0002." in markdown
     assert "pcl validate --strict --json" in markdown
     assert "manual review" in markdown
+    assert "active_finding_count" in markdown
+    assert "historical_finding_count" in markdown
+    assert "proof_scope" in markdown
 
 
 def test_report_validation_current_passes_for_normal_project(tmp_path: Path, capsys) -> None:

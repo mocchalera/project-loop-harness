@@ -251,6 +251,7 @@ def report_validation(paths: ProjectPaths, *, strict: bool = False) -> dict[str,
         "errors": result.errors,
         "warnings": result.warnings,
         "findings": [finding.to_dict() for finding in result.findings],
+        "finding_counts": result.finding_counts(),
         "next_actions": _validation_next_actions(strict=strict, ok=result.ok),
     }
     path = paths.reports_dir / ("validation-strict.md" if strict else "validation.md")
@@ -449,6 +450,8 @@ def _render_validation_report(data: dict[str, Any]) -> str:
         "error_count": len(data["errors"]),
         "warning_count": len(data["warnings"]),
         "finding_count": len(data["findings"]),
+        "active_finding_count": data["finding_counts"]["active"],
+        "historical_finding_count": data["finding_counts"]["historical"],
     }
     error_rows = [{"message": message} for message in data["errors"]]
     warning_rows = [{"message": message} for message in data["warnings"]]
@@ -456,7 +459,18 @@ def _render_validation_report(data: dict[str, Any]) -> str:
         "# Validation Report",
         "",
         "## Summary",
-        _kv_table(summary, ["strict", "ok", "error_count", "warning_count", "finding_count"]),
+        _kv_table(
+            summary,
+            [
+                "strict",
+                "ok",
+                "error_count",
+                "warning_count",
+                "finding_count",
+                "active_finding_count",
+                "historical_finding_count",
+            ],
+        ),
         "",
         "## Errors",
         _table(error_rows, ["message"]),
@@ -470,6 +484,7 @@ def _render_validation_report(data: dict[str, Any]) -> str:
                 {
                     "code": finding["code"],
                     "severity": finding["severity"],
+                    "proof_scope": finding["proof_scope"],
                     "entity": _finding_entity_label(finding.get("entity")),
                     "related": ", ".join(_finding_entity_label(item) for item in finding["related"]),
                     "repair_class": finding["repair_class"],
@@ -478,7 +493,16 @@ def _render_validation_report(data: dict[str, Any]) -> str:
                 }
                 for finding in data["findings"]
             ],
-            ["code", "severity", "entity", "related", "repair_class", "requires_human", "next_commands"],
+            [
+                "code",
+                "severity",
+                "proof_scope",
+                "entity",
+                "related",
+                "repair_class",
+                "requires_human",
+                "next_commands",
+            ],
         ),
         "",
         "## Suggested Next Actions",

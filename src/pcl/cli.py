@@ -4000,6 +4000,7 @@ def main(argv: list[str] | None = None) -> int:
                             "warnings": validation.warnings,
                             "findings": [finding.to_dict() for finding in validation.findings],
                             "finding_count": len(validation.findings),
+                            "finding_counts": validation.finding_counts(),
                             "finding_codes": [finding.code for finding in validation.findings],
                             "validation_report": ".project-loop/reports/validation-strict.md",
                         },
