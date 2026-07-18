@@ -130,3 +130,13 @@ def test_all_loaded_and_distributed_skill_copies_are_byte_identical() -> None:
 
     for path in SKILL_COPIES:
         assert path.read_bytes() == canonical, f"Skill copy drifted: {path}"
+
+
+def test_skill_documents_target_bound_next_instead_of_manual_intent_check() -> None:
+    skill = SKILL_PATH.read_text(encoding="utf-8")
+
+    assert "pcl next --target <T-XXXX|G-XXXX>" in skill
+    assert "select_target" in skill
+    assert "compare the returned target and reason" not in skill
+    assert "unrelated older work" not in skill
+    assert 'pcl start --new "<literal intent>"' not in skill

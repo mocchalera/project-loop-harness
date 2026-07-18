@@ -719,7 +719,9 @@ def test_init_installs_inspect_first_and_test_first_agent_guidance(tmp_path: Pat
     assert "Agents should not" in skill
     assert "read or parse it for project state" in skill
     assert "installation_skill_drift" in skill
-    assert 'pcl start --new "<literal intent>"' in skill
+    assert "pcl next --target <T-XXXX|G-XXXX>" in skill
+    assert "select_target" in skill
+    assert "compare the returned target and reason" not in skill
     assert "registered evidence source path as write-once" in skill
     assert 'pcl test waive TC-OLD --reason "..."' in skill
     assert "review or audit only" in skill

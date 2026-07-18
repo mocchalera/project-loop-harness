@@ -33,12 +33,9 @@ When this skill is invoked:
    `direct`, `finish`, `dashboard`, or `recover`, before probing multiple help
    pages. Do not add a guide lookup to routine work whose route is already
    clear.
-   Before executing its command, compare the returned target and reason with
-   the user's current intent. If they refer to unrelated older work, do not
-   follow that route. Inspect `pcl loop status`; when the user explicitly
-   introduced separate new work, register the literal intent with
-   `pcl start --new "<literal intent>"`, then confirm routing targets the new
-   Goal or Task.
+   When current intent already names a Task or Goal, bind routing with
+   `pcl next --target <T-XXXX|G-XXXX>`. Unbound multi-Goal ambiguity returns
+   `select_target`; choose the matching ID and rerun with `--target`.
 4. When the user has already supplied explicit implementation intent and no
    active work exists, pass that intent literally to `pcl start`; do not create
    an extra human gate merely to register it.
