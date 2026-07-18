@@ -103,6 +103,20 @@ implement from the spec file, not from prompt summaries.
 | 0184 | CLI Stage 1 presentation extraction | post-v0.5.1 maintainability | P1 | done |
 | 0185 | CLI Stage 2 guide handler extraction | post-v0.5.1 maintainability | P1 | done |
 | 0186 | CLI Stage 2 loop-status handler extraction | post-v0.5.1 maintainability | P1 | done |
+| 0187 | CLI Stage 2 doctor handler extraction | post-v0.5.1 maintainability | P1 | done |
+| 0188 | CLI Stage 2 report-artifact handler extraction | post-v0.5.1 maintainability | P1 | done |
+| 0189 | Config-ready Adoption Proof preparation | v0.5.2 Adoption Proof | P0 | active; implementation ready, external cohort not run |
+| 0190 | Adoption Proof evaluator and participant kit | v0.5.2 Adoption Proof | P0 | done |
+| 0191 | Installed Skill freshness and explicit refresh | v0.5.2 Adoption Proof | P0 | done |
+| 0192 | Audit Evidence impact classification | v0.5.2 Dogfood Hardening | P0 | done |
+| 0193 | Target-bound `pcl next` routing | Harness Minimization | P0 | done |
+| 0194 | Skill prose/runtime parity | Harness Minimization | P0 | done |
+| 0195 | Shared Task/Goal target resolver | Harness Minimization | P1 | done |
+| 0196 | Active proof/historical findings separation | Harness Minimization | P0 | done |
+| 0197 | Layered harness minimization ablation | Harness Minimization | P0 | done (`modify`) |
+| 0197b | Layered ablation fixture materializer | Harness Minimization | P0 | done |
+| 0198 | Evidence-gated direct-flow reduction | Harness Minimization | P1 | done; not implemented after `modify` verdict |
+| 0199 | v0.5.2 release preparation and publication | v0.5.2 Reliability and Harness Minimization | P0 | active; publication authorized |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
@@ -175,6 +189,12 @@ refs in context/resume → **0181** frozen two-repository cross-session/runtime
 dogfood → **0182** local RC → separate human publication decision → **0183**
 public closeout. The milestone does not wait for three external participants;
 their study remains later Adoption evidence. See `docs/plan-v0.5.1.md`.
+
+v0.5.2 combines config-ready adoption work, installed-Skill and Evidence
+hardening, target-bound routing, and the frozen layered harness ablation. The
+external first-use cohort remains open and no adoption claim is made. Task
+**0199** prepares, publishes, and verifies the reliability release under the
+owner's separate publication instruction.
 
 ## Planned next (see growth plan for scope)
 

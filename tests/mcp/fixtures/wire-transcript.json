@@ -27,7 +27,7 @@
         },
         "serverInfo": {
           "name": "pcl-mcp",
-          "version": "0.5.1"
+          "version": "0.5.2"
         },
         "instructions": "Project Loop Harness MCP exposes safe local pcl read operations. State mutations still go through the pcl CLI. Generated dashboard HTML is a human-only view and must not be read or parsed as project state. render_dashboard is only available when the server is started with --approval-mode local-render."
       }

@@ -61,6 +61,8 @@ is a regression, not an automatic regeneration result.
 
 ## Intended changes since v0.3.1 freeze
 
+- 2026-07-18 — `snapshots/pcl-version.json` regenerated for the v0.5.2 release
+  candidate bump (`0.5.1` → `0.5.2`).
 - 2026-07-18 — `empty-validate-strict-json.json` and
   `representative-validate-strict-json.json` regenerated for task 0196 to add
   deterministic active/historical finding counts.

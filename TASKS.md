@@ -189,6 +189,23 @@ Give these tasks to coding agents in this order:
 185. `agent-tasks/0181-controlled-trace-resume-evaluation.md` (v0.5.1 Trace, frozen two-repository cross-session/runtime dogfood without external-user dependency)
 186. `agent-tasks/0182-v051-release-preparation.md` (v0.5.1 Trace, local source/wheel/sdist release-candidate verification; no publication)
 187. `agent-tasks/0183-v051-publication-closeout.md` (v0.5.1 Trace, separately authorized public-release verification and factual closeout)
+188. `agent-tasks/0184-cli-stage1-presentation-extraction.md` (post-v0.5.1 maintainability, extract CLI presentation helpers without behavior changes)
+189. `agent-tasks/0185-cli-stage2-guide-handler-extraction.md` (post-v0.5.1 maintainability, extract read-only guide handlers)
+190. `agent-tasks/0186-cli-stage2-loop-status-handler-extraction.md` (post-v0.5.1 maintainability, extract read-only loop-status handlers)
+191. `agent-tasks/0187-cli-stage2-doctor-handler-extraction.md` (post-v0.5.1 maintainability, extract read-only doctor handlers)
+192. `agent-tasks/0188-cli-stage2-report-artifact-handler-extraction.md` (post-v0.5.1 maintainability, extract report-artifact handlers)
+193. `agent-tasks/0189-v052-adoption-proof.md` (v0.5.2, config-ready initialization, README compression, frozen external cohort, and legacy config repair)
+194. `agent-tasks/0190-v052-adoption-proof-evaluator.md` (v0.5.2, deterministic offline adoption evaluator and participant kit)
+195. `agent-tasks/0191-installed-skill-freshness.md` (v0.5.2, detect and explicitly refresh stale installed Skills with recoverable backups)
+196. `agent-tasks/0192-audit-evidence-impact-classification.md` (v0.5.2 dogfood hardening, classify copied-Evidence audit impact)
+197. `agent-tasks/0193-target-bound-next-routing.md` (harness minimization, bind next-action routing to explicit Task/Goal targets)
+198. `agent-tasks/0194-skill-prose-runtime-parity.md` (harness minimization, retire Skill prose now enforced by runtime routing)
+199. `agent-tasks/0195-shared-task-goal-target-resolver.md` (harness minimization, share deterministic Task/Goal target resolution)
+200. `agent-tasks/0196-active-proof-historical-findings.md` (harness minimization, separate active proof blockers from historical findings)
+201. `agent-tasks/0197-layered-harness-ablation.md` (harness minimization, frozen layered ablation and evidence-gated recommendation)
+202. `agent-tasks/0197b-layered-ablation-fixture-materializer.md` (harness minimization, deterministically materialize frozen baseline/treatment fixtures)
+203. `agent-tasks/0198-evidence-gated-direct-flow-reduction.md` (harness minimization, close direct-flow reduction without implementation after a `modify` verdict)
+204. `agent-tasks/0199-v052-release-publication.md` (v0.5.2, authorized release preparation, publication, and public-artifact verification)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and

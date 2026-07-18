@@ -106,8 +106,8 @@ def test_doctor_handler_preserves_update_advice_json_and_project_bytes(
     update_result = update_check.UpdateCheckResult(
         ok=True,
         package="project-loop-harness",
-        current_version="0.5.1",
-        latest_version="0.5.2",
+        current_version="0.5.2",
+        latest_version="0.5.3",
         update_available=True,
         source_url="https://pypi.org/pypi/project-loop-harness/json",
         checked_at="2026-07-16T00:00:00Z",
@@ -116,7 +116,7 @@ def test_doctor_handler_preserves_update_advice_json_and_project_bytes(
     monkeypatch.setattr(update_check, "check_for_update", lambda **_kwargs: update_result)
     expected_result = validate_project(paths, include_config_advice=True)
     expected_result.add_warning(
-        "pcl 0.5.2 is available; run `pipx upgrade project-loop-harness`.",
+        "pcl 0.5.3 is available; run `pipx upgrade project-loop-harness`.",
         code="update_available",
         entity={"type": "package", "id": "project-loop-harness"},
         repair_class="human_review",

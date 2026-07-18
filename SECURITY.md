@@ -5,12 +5,11 @@ in the target repository's local `.project-loop/` directory.
 
 ## Supported Versions
 
-The current public release line is `0.4.x`. The `0.5.x` line is supported as a
-local release candidate; publication requires a separate operator decision.
+The current public release line is `0.5.x`.
 
 | Version | Supported |
 | --- | --- |
-| `0.5.x` | Yes (release candidate) |
+| `0.5.x` | Yes |
 | `0.4.x` | Yes |
 | `<0.4` | No |
 

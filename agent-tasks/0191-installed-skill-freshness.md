@@ -1,6 +1,6 @@
 # 0191: Installed Skill Freshness and Workflow Discipline
 
-- **Status:** Active
+- **Status:** Done; implemented and verified
 - **Milestone:** v0.5.2 Adoption Proof
 - **Priority:** P0
 - **Size:** M
@@ -56,3 +56,8 @@ than rewriting acceptance history.
    byte-identical and pass Skill validation.
 6. Targeted tests, full pytest, fresh init smoke, strict validation, render,
    and diff checks pass.
+
+## Completion evidence
+
+- `docs/evidence/0191-installed-skill-freshness.md`
+- `docs/evidence/0191b-final-review-addendum.md`
