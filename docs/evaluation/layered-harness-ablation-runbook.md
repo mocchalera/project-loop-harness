@@ -13,12 +13,16 @@ quality, and does not authorize Phase 5 (`0198`) workflow reduction.
 - Baseline commit: `7fa22b2` (`7fa22b23917a7847dee56d574d16a14d9649e086`)
 - Treatment commit: `5ce17ec` (`5ce17ec202ad16fb67d2514fcd95e508ec489ca1`)
 - Cases: exactly 8, split 3 single-session / 3 resume-handoff / 2 human-gate
-- Arms: exactly 16 independent sessions (one baseline and one treatment per case)
+- Prepared arms: exactly 16 independent sessions in `prepared_arms`
+  (one baseline and one treatment per case)
 
 The cohort and fixture are SHA-256-bound before the first independent arm.
 Changing a case ID, prompt, oracle, metric definition, threshold, tolerance,
-arm commit, or layer assignment invalidates the run and requires a new cohort
-ID plus a full 16-arm rerun.
+arm commit, agent assignment, setup mapping, or layer assignment invalidates
+the run and requires a new cohort ID plus a full 16-arm rerun.
+
+JSON objects in the cohort and fixture must not contain duplicate keys. The
+focused tests parse with a duplicate-key rejector.
 
 ## Authorization boundary
 
@@ -38,26 +42,54 @@ The prepared cohort currently records:
 
 Local fixture validation and focused tests do not override those flags.
 
-## Pairing rules
+## Valid PCL ID grammar and setup mapping
 
-Each case freezes one literal objective, prompt, fixture state kind, acceptance
-oracle, allowed context, and agent runtime/model policy for both arms.
+Abstract labels are not executable. Every entity ID passed to `pcl` must match
+the frozen grammar:
 
-| Case | Layer | Focus |
-| --- | --- | --- |
-| LHA-001 | single_session | Explicit Task-bound routing in a multi-goal project |
-| LHA-002 | single_session | Unbound multi-goal ambiguity safe stop |
-| LHA-003 | single_session | Active vs historical validation findings |
-| LHA-004 | resume_handoff | Resume from frozen handoff packet with Task target |
-| LHA-005 | resume_handoff | Goal-target continuity after handoff |
-| LHA-006 | resume_handoff | Shared next/resume malformed-target fail-closed behavior |
-| LHA-007 | human_gate | Open decision remains visible under target binding |
-| LHA-008 | human_gate | Story approval stays a human semantic gate |
+| Entity | Grammar |
+| --- | --- |
+| Goal | `^G-[0-9]{4,}$` |
+| Task | `^T-[0-9]{4,}$` |
+| Feature | `^F-[0-9]{4,}$` |
+| Story | `^US-[0-9]{4,}$` |
+| Decision | `^DEC-[0-9]{4,}$` |
+| Evidence | `^E-[0-9]{4,}$` |
 
-Arm IDs:
+Each case freezes:
 
-- baseline: `LHA-00N-baseline` at commit `7fa22b2`
-- treatment: `LHA-00N-treatment` at commit `5ce17ec`
+1. ordered `setup_steps` that start from `pcl init` on a fresh temp project;
+2. `expected_ids` produced by that order (`G-0001`, `T-0001`, …);
+3. role bindings that reference only those IDs.
+
+Do not invent non-digit target labels. The only intentional invalid target is
+the malformed string `TASK-NOT-A-REAL-ID` in case `LHA-006`, used to exercise
+fail-closed next/resume grammar.
+
+## Pairing and prepared arms
+
+Each case freezes one literal objective, prompt, fixture setup, acceptance
+oracle, allowed context, and agent runtime/model plan for both arms.
+
+| Case | Layer | Planned agent | Runtime | Model |
+| --- | --- | --- | --- | --- |
+| LHA-001 | single_session | grok | cockpit | grok-4.5 |
+| LHA-002 | single_session | grok | cockpit | grok-4.5 |
+| LHA-003 | single_session | grok | cockpit | grok-4.5 |
+| LHA-004 | resume_handoff | codex | cockpit | codex |
+| LHA-005 | resume_handoff | codex | cockpit | codex |
+| LHA-006 | resume_handoff | codex | cockpit | codex |
+| LHA-007 | human_gate | codex | cockpit | codex |
+| LHA-008 | human_gate | codex | cockpit | codex |
+
+`prepared_arms` has exactly 16 entries. For each case:
+
+- `LHA-00N-baseline` at commit `7fa22b2`
+- `LHA-00N-treatment` at commit `5ce17ec`
+
+Both arms of a pair share the same `planned_agent_type`, `planned_runtime`, and
+`planned_model`. Grok covers the three single-session pairs. Codex covers the
+resume and human-gate pairs.
 
 Arms are independent sessions. Do not share memory, tool state, or notes across
 arms. Do not let a treatment arm observe baseline outcomes, or the reverse.
@@ -68,7 +100,7 @@ Each arm receives only:
 
 - its frozen case prompt and oracle;
 - the worktree checked out at its arm commit;
-- the seeded fixture state for that case;
+- the seeded fixture state created by that case's setup steps;
 - the `project-control-loop` Skill and `pcl` CLI at that commit;
 - for resume layers, the frozen handoff packet named by the case.
 
@@ -77,37 +109,41 @@ Do not provide:
 - this freeze transcript or any other arm's transcript;
 - unrecorded operator coaching;
 - fabricated metrics;
-- estimated provider tokens.
+- estimated provider tokens;
+- invalid non-digit target labels as if they were real entity IDs.
 
 Result files are the only permitted write surface for evaluation output.
 
-## Deterministic cost context
+## Deterministic context measure (not Phase 5 proof)
 
 Loaded Skill bytes are a deterministic context-size measure, not a quality
-claim:
+claim and not sufficient alone for `proceed` or Phase 5:
 
 | Condition | Path | Bytes | SHA-256 |
 | --- | --- | --- | --- |
 | baseline | `.agents/skills/project-control-loop/SKILL.md` | 17603 | `15bcd38964fa928060fe5d5567252a17337bd370dab78f4b1f9b4b64e418c2c9` |
 | treatment | `.agents/skills/project-control-loop/SKILL.md` | 17433 | `630a9f94c28acee3d6a59b3fda906a7a3786fb5beab89a67ee5667cc84b6377e` |
 
-Record the frozen byte length on every arm result. Do not re-estimate it from
-memory.
+Record the frozen byte length on every arm result. Treat it as supporting
+context evidence only.
 
 ## Per-arm procedure
 
 1. Confirm authorization flags allow independent execution.
 2. Verify fixture and cohort SHA-256 values still match the freeze.
-3. Check out the arm commit in an isolated worktree or clean session.
-4. Seed only that case's fixture state.
-5. Give the agent only the allowed context for the case.
-6. Run the frozen prompt to completion, safe stop, or hard stop.
-7. Stop immediately on forbidden context, fixture drift, destructive action, or
+3. Verify baseline/treatment full commit hashes resolve in git.
+4. Check out the arm commit in an isolated worktree or clean session.
+5. Seed only that case's fixture via the frozen `setup_steps` and confirm
+   `expected_ids`.
+6. Launch with the pair's planned agent_type/runtime/model.
+7. Give the agent only the allowed context for the case.
+8. Run the frozen prompt to completion, safe stop, or hard stop.
+9. Stop immediately on forbidden context, fixture drift, destructive action, or
    an unrecordable human-gate bypass.
-8. Write one result JSON object containing every
-   `required_result_fields` entry from the fixture.
-9. Preserve the raw Cockpit/session ID in `session_ref`.
-10. Leave failed, contaminated, missing, and safe-stopped arms visible. Never
+10. Write one result JSON object containing every
+    `required_result_fields` entry from the fixture.
+11. Preserve the raw Cockpit/session ID in `session_ref`.
+12. Leave failed, contaminated, missing, and safe-stopped arms visible. Never
     drop them from the denominator.
 
 ## Result capture contract
@@ -117,6 +153,7 @@ Required result fields are frozen in the fixture. Notable rules:
 - `input_tokens` / `output_tokens` are `null` when the runtime does not expose
   trustworthy usage. Never invent or backfill estimates.
 - `loaded_skill_bytes` must match the frozen condition value above.
+- `actual_agent_type`, `actual_runtime`, and `actual_model` record what ran.
 - `critical_gate_violation` is boolean and remains in the denominator when true.
 - `contaminated` is true if forbidden context or fixture drift occurred.
 - Notes are context only; they do not replace structured fields.
@@ -134,11 +171,14 @@ Quality (paired booleans or counts):
 - unintended mutation count
 - human intervention count
 
-Cost (per arm):
+Runtime cost (per arm; eligible to authorize proceed):
 
 - tool/command calls
 - wall-clock seconds
 - input and output tokens when trustworthy
+
+Supporting context (not sufficient alone for proceed):
+
 - loaded Skill bytes
 
 ## Aggregate recommendation (Pareto)
@@ -151,8 +191,15 @@ Return `proceed` only when all of the following hold:
 1. no paired quality regression;
 2. no paired safety regression;
 3. zero critical gate violations;
-4. at least one fully observed paired cost metric strictly improves;
-5. no fully observed paired cost metric worsens beyond the frozen tolerance.
+4. at least one fully observed paired **runtime-cost** metric strictly improves
+   among `tool_command_calls`, `wall_clock_seconds`, `input_tokens`, or
+   `output_tokens`;
+5. no fully observed paired runtime-cost metric worsens beyond the frozen
+   tolerance.
+
+`loaded_skill_bytes` may improve and should be reported, but a Skill-byte
+reduction without a runtime-cost improvement must not yield `proceed` and must
+not authorize Phase 5.
 
 Otherwise return `modify` or `stop`.
 
