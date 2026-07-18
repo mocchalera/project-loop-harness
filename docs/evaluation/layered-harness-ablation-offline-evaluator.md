@@ -35,6 +35,38 @@ flags remain visible as `frozen_preparation_boundary`; they describe the freeze
 slice and are not rewritten. An absent, expired, incomplete, or mismatched
 receipt fails closed before any packet is written.
 
+Materialize executable project roots before starting any independent session:
+
+```bash
+python scripts/materialize_layered_harness_ablation.py \
+  --packet-manifest /tmp/lha-arm-packets/manifest.json \
+  --output-dir /tmp/lha-materialized
+```
+
+The destination must be empty and outside the repository. The materializer
+rechecks authorization expiry, packet/auth hashes, all 16 arm IDs, source
+commits, setup operations, generated entity IDs, frozen Skill byte counts, and
+baseline/treatment semantic equivalence before emitting
+`materialization-manifest.json`. Each arm gets an isolated detached source
+clone, project root, setup log, semantic snapshot, exact consumer brief, and an
+absolute per-arm result path. Resume packets for LHA-004 and LHA-005 are
+generated before the consumer brief.
+
+LHA-003 is generated from synthetic state created with the released v0.3.0
+public CLI, upgraded only with the supported arm-runtime migration, then
+checked for the exact active/historical finding families. The treatment runtime
+must report `active=1` and `historical=1`; the baseline predates that projection
+and must expose the same finding code/entity/severity set. Pair equivalence
+compares durable semantic tables plus that projection-independent finding set,
+not `proof_scope` or `finding_counts`.
+
+Materialization never launches Cockpit sessions or models. Setup, migration,
+verification, export, and resume-packet commands are recorded in the operator
+setup log but omitted from the consumer reasoning brief and measured arm cost.
+The consumer brief contains only the frozen prompt/oracle boundaries, resulting
+fixture IDs/roles, runtime roots, handoff path when applicable, and result
+contract.
+
 Place one exact-schema result object per file in a separate directory, then run:
 
 ```bash

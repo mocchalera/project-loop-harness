@@ -1,6 +1,6 @@
 # 0197b: Layered Ablation Fixture Materializer
 
-- **Status:** Active
+- **Status:** Complete
 - **Milestone:** Harness Minimization Phase 4
 - **Priority:** P0
 - **Size:** M
