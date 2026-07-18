@@ -1,0 +1,39 @@
+{
+  "authorized_agent_types": [
+    "codex",
+    "grok"
+  ],
+  "authorized_arm_ids": [
+    "LHA-001-baseline",
+    "LHA-001-treatment",
+    "LHA-002-baseline",
+    "LHA-002-treatment",
+    "LHA-003-baseline",
+    "LHA-003-treatment",
+    "LHA-004-baseline",
+    "LHA-004-treatment",
+    "LHA-005-baseline",
+    "LHA-005-treatment",
+    "LHA-006-baseline",
+    "LHA-006-treatment",
+    "LHA-007-baseline",
+    "LHA-007-treatment",
+    "LHA-008-baseline",
+    "LHA-008-treatment"
+  ],
+  "authorized_at": "2026-07-18T07:41:00Z",
+  "authorized_by": "human:cockpit-task-2c041d92-explicit-codex-grok-delegation",
+  "budget": {
+    "currency": "USD",
+    "max_amount": 0,
+    "paid_runs_allowed": false
+  },
+  "cohort_id": "LHA-20260718-01",
+  "cohort_sha256": "2726dc760e0dfcb46494d4c9072601868d9b6edc7d7fe13e15378ffdd7a51080",
+  "contract_version": "layered-harness-ablation-authorization/v1",
+  "cost_policy": "Use only already-configured Cockpit accounts; do not purchase incremental usage; stop on any quota, payment, or upgrade prompt.",
+  "data_class": "Repository source plus frozen synthetic evaluation fixtures; no secrets, production data, or unrelated user content.",
+  "expires_at": "2026-07-18T15:00:00Z",
+  "independent_cockpit_sessions": true,
+  "network_model_provider_runs": true
+}
