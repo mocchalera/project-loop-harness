@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
 import shutil
 import sqlite3
@@ -18,6 +18,7 @@ from .errors import DataStoreError, EXIT_USAGE, InvalidInputError, PclError, Pro
 from .events import append_event
 from .ids import next_prefixed_id
 from .paths import ProjectPaths
+from .strict_evidence import strict_read_canonical_file
 from .test_faults import crash_if_requested
 from .timeutil import utc_now_iso
 
@@ -878,6 +879,279 @@ def newest_linked_evidence_id(
         (target_type, target_id, link_role),
     ).fetchone()
     return None if row is None else str(row["evidence_id"])
+
+
+def resolve_strict_copied_evidence(
+    paths: ProjectPaths,
+    *,
+    evidence_id: str,
+) -> dict[str, Any]:
+    """Resolve event-anchored copied Evidence bytes without mutating project state."""
+    if not paths.db_path.is_file():
+        raise ProjectNotInitializedError(root=str(paths.root))
+    evidence_id = str(evidence_id or "").strip()
+    conn = connect(paths.db_path)
+    try:
+        conn.execute("BEGIN")
+        row = conn.execute(
+            "SELECT id, type, path, command FROM evidence WHERE id = ?",
+            (evidence_id,),
+        ).fetchone()
+        event_rows = conn.execute(
+            """
+            SELECT id, sequence, payload_json
+            FROM events
+            WHERE event_type = 'adhoc_evidence_recorded'
+              AND entity_type = 'evidence'
+              AND entity_id = ?
+            ORDER BY sequence, id
+            """,
+            (evidence_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not event_rows:
+        return _strict_copied_result(
+            evidence_id,
+            findings=[{"code": "strict_event_anchor_missing", "evidence_kind": "adhoc"}],
+        )
+    if len(event_rows) != 1:
+        return _strict_copied_result(
+            evidence_id,
+            findings=[
+                {
+                    "code": "strict_event_anchor_ambiguous",
+                    "evidence_kind": "adhoc",
+                    "actual": len(event_rows),
+                }
+            ],
+        )
+    event_row = event_rows[0]
+    event_anchor = {
+        "id": str(event_row["id"]),
+        "sequence": int(event_row["sequence"]),
+        "event_type": "adhoc_evidence_recorded",
+    }
+    try:
+        anchor = json.loads(str(event_row["payload_json"]))
+    except json.JSONDecodeError:
+        return _strict_copied_result(
+            evidence_id,
+            event_anchor=event_anchor,
+            findings=[{"code": "strict_event_anchor_invalid", "evidence_kind": "adhoc"}],
+        )
+    if not isinstance(anchor, dict):
+        return _strict_copied_result(
+            evidence_id,
+            event_anchor=event_anchor,
+            findings=[{"code": "strict_event_anchor_invalid", "evidence_kind": "adhoc"}],
+        )
+    if row is None or str(row["type"]) not in ADHOC_EVIDENCE_TYPES:
+        return _strict_copied_result(
+            evidence_id,
+            event_anchor=event_anchor,
+            findings=[{"code": "strict_evidence_row_invalid", "evidence_kind": "adhoc"}],
+        )
+
+    evidence_type = str(row["type"])
+    expected_manifest_path = f".project-loop/evidence/adhoc/{evidence_id.lower()}-adhoc-v0.json"
+    anchor_members = anchor.get("members")
+    if (
+        anchor.get("contract_version") != ADHOC_EVIDENCE_CONTRACT_VERSION
+        or anchor.get("evidence_type") != evidence_type
+        or anchor.get("manifest_path") != expected_manifest_path
+        or str(row["path"] or "") != expected_manifest_path
+        or anchor.get("command") != row["command"]
+        or not isinstance(anchor_members, list)
+        or not anchor_members
+        or type(anchor.get("member_count")) is not int
+        or anchor["member_count"] != len(anchor_members)
+    ):
+        return _strict_copied_result(
+            evidence_id,
+            event_anchor=event_anchor,
+            findings=[{"code": "strict_event_anchor_mismatch", "evidence_kind": "adhoc"}],
+        )
+
+    manifest_path = paths.root / expected_manifest_path
+    manifest_read = strict_read_canonical_file(
+        manifest_path,
+        expected_parent=paths.evidence_dir / "adhoc",
+    )
+    if not manifest_read.ok:
+        return _strict_copied_result(
+            evidence_id,
+            event_anchor=event_anchor,
+            findings=[_strict_file_finding("manifest", manifest_read.status)],
+        )
+    assert manifest_read.content is not None
+    try:
+        manifest = json.loads(manifest_read.content)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return _strict_copied_result(
+            evidence_id,
+            event_anchor=event_anchor,
+            manifest_bytes=manifest_read.content,
+            findings=[{"code": "strict_manifest_invalid_json"}],
+        )
+    if not isinstance(manifest, dict):
+        return _strict_copied_result(
+            evidence_id,
+            event_anchor=event_anchor,
+            manifest_bytes=manifest_read.content,
+            findings=[{"code": "strict_manifest_invalid"}],
+        )
+    if (
+        manifest.get("contract_version") != anchor["contract_version"]
+        or manifest.get("evidence_id") != evidence_id
+        or manifest.get("evidence_type") != anchor["evidence_type"]
+        or manifest.get("members") != anchor_members
+        or _optional_field_mismatch(manifest, anchor, "sensitive_path_warning_count")
+    ):
+        return _strict_copied_result(
+            evidence_id,
+            event_anchor=event_anchor,
+            manifest=manifest,
+            manifest_bytes=manifest_read.content,
+            findings=[{"code": "strict_manifest_event_mismatch"}],
+        )
+
+    expected_copy_dir_value = (
+        f".project-loop/evidence/adhoc-files/{evidence_id.lower()}"
+    )
+    expected_copy_dir = paths.root / expected_copy_dir_value
+    metadata_findings: list[dict[str, Any]] = []
+    seen_stored_paths: set[str] = set()
+    for index, member in enumerate(anchor_members, start=1):
+        if not isinstance(member, dict):
+            metadata_findings.append(
+                {"code": "strict_copy_metadata_invalid", "index": index}
+            )
+            continue
+        stored_path = member.get("stored_path")
+        size_bytes = member.get("size_bytes")
+        expected_sha256 = member.get("sha256")
+        if member.get("storage_mode") != ADHOC_COPY_STORAGE_MODE:
+            metadata_findings.append(
+                {"code": "strict_copy_required", "index": index}
+            )
+            continue
+        if (
+            not isinstance(stored_path, str)
+            or not stored_path
+            or stored_path in seen_stored_paths
+            or not _is_canonical_member_path(stored_path, expected_copy_dir_value)
+        ):
+            metadata_findings.append(
+                {"code": "strict_copy_path_invalid", "index": index}
+            )
+            continue
+        seen_stored_paths.add(stored_path)
+        if (
+            type(size_bytes) is not int
+            or size_bytes < 0
+            or not isinstance(expected_sha256, str)
+            or re.fullmatch(r"[0-9a-f]{64}", expected_sha256) is None
+        ):
+            metadata_findings.append(
+                {"code": "strict_copy_metadata_invalid", "index": index}
+            )
+    if metadata_findings:
+        return _strict_copied_result(
+            evidence_id,
+            event_anchor=event_anchor,
+            manifest=manifest,
+            manifest_bytes=manifest_read.content,
+            findings=metadata_findings,
+        )
+
+    findings: list[dict[str, Any]] = []
+    resolved_members: list[dict[str, Any]] = []
+    for index, member in enumerate(anchor_members, start=1):
+        stored_path = str(member["stored_path"])
+        copy_read = strict_read_canonical_file(
+            paths.root / stored_path,
+            expected_parent=expected_copy_dir,
+            expected_size=int(member["size_bytes"]),
+        )
+        if not copy_read.ok:
+            findings.append(
+                _strict_file_finding("copy", copy_read.status, index=index, path=stored_path)
+            )
+            continue
+        assert copy_read.content is not None
+        actual_sha256 = hashlib.sha256(copy_read.content).hexdigest()
+        if actual_sha256 != member["sha256"]:
+            findings.append(
+                {"code": "strict_copy_hash_mismatch", "index": index, "path": stored_path}
+            )
+            continue
+        resolved_members.append({"metadata": member, "content": copy_read.content})
+
+    return _strict_copied_result(
+        evidence_id,
+        event_anchor=event_anchor,
+        manifest=manifest,
+        manifest_bytes=manifest_read.content,
+        findings=findings,
+        members=resolved_members if not findings else [],
+    )
+
+
+def _strict_copied_result(
+    evidence_id: str,
+    *,
+    findings: list[dict[str, Any]],
+    event_anchor: dict[str, Any] | None = None,
+    manifest: dict[str, Any] | None = None,
+    manifest_bytes: bytes | None = None,
+    members: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    return {
+        "contract_version": "strict-copied-evidence-resolution/v1",
+        "evidence_id": evidence_id,
+        "ok": not findings,
+        "health": "ok" if not findings else "invalid",
+        "event_anchor": event_anchor,
+        "findings": findings,
+        "manifest": manifest,
+        "manifest_bytes": manifest_bytes,
+        "members": members or [],
+    }
+
+
+def _optional_field_mismatch(
+    left: dict[str, Any],
+    right: dict[str, Any],
+    field: str,
+) -> bool:
+    return (field in left) != (field in right) or (
+        field in left and left[field] != right[field]
+    )
+
+
+def _is_canonical_member_path(path_value: str, expected_directory: str) -> bool:
+    path = PurePosixPath(path_value)
+    return (
+        not path.is_absolute()
+        and ".." not in path.parts
+        and path.as_posix() == path_value
+        and path.parent.as_posix() == expected_directory
+        and path.name not in {"", "."}
+    )
+
+
+def _strict_file_finding(
+    subject: str,
+    status: str,
+    **details: Any,
+) -> dict[str, Any]:
+    if status.startswith("directory_"):
+        code = f"strict_{subject}_directory_invalid"
+    else:
+        code = f"strict_{subject}_{status}"
+    return {"code": code, **details}
 
 
 def assess_adhoc_evidence(

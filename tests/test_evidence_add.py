@@ -1776,3 +1776,298 @@ def test_evidence_add_preserves_strict_audit_log_integrity(tmp_path: Path, capsy
     assert db_events[0]["entity_type"] == "evidence"
     assert db_events[0]["entity_id"] == evidence["id"]
     assert json.loads(db_events[0]["payload_json"]) == jsonl_events[0]["payload"]
+
+
+def _record_strict_copied_fixture(root: Path, capsys) -> dict[str, Any]:
+    _init(root, capsys)
+    artifact = root / "strict-evidence.json"
+    artifact.write_text('{"status":"pass"}\n', encoding="utf-8")
+    assert main([
+        "--root", str(root), "evidence", "add",
+        "--file", artifact.name,
+        "--summary", "strict copied fixture",
+        "--copy",
+        "--json",
+    ]) == 0
+    return _json_output(capsys)["evidence"]
+
+
+def _duplicate_record_event(root: Path, evidence_id: str) -> None:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        row = conn.execute(
+            "SELECT payload_json, created_at FROM events "
+            "WHERE event_type = 'adhoc_evidence_recorded' AND entity_type = 'evidence' "
+            "AND entity_id = ?",
+            (evidence_id,),
+        ).fetchone()
+        sequence = int(conn.execute("SELECT MAX(sequence) + 1 FROM events").fetchone()[0])
+        conn.execute(
+            "INSERT INTO events(id, sequence, event_type, entity_type, entity_id, payload_json, created_at) "
+            "VALUES (?, ?, 'adhoc_evidence_recorded', 'evidence', ?, ?, ?)",
+            ("EV-DUPLICATE001", sequence, evidence_id, row["payload_json"], row["created_at"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_strict_copied_resolver_returns_single_opened_bytes_without_mutation(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    evidence = _record_strict_copied_fixture(tmp_path, capsys)
+    member = evidence["members"][0]
+    manifest_path = tmp_path / evidence["manifest_path"]
+    copied_path = tmp_path / member["stored_path"]
+    watched = {str(manifest_path): 0, str(copied_path): 0}
+    real_open = os.open
+
+    def counted_open(path, flags, *args, **kwargs):
+        normalized = os.fspath(path)
+        if normalized in watched:
+            watched[normalized] += 1
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr("pcl.strict_evidence.os.open", counted_open)
+    before_rows = {
+        "evidence": _db_rows(tmp_path, "SELECT * FROM evidence ORDER BY id"),
+        "events": _db_rows(tmp_path, "SELECT * FROM events ORDER BY sequence"),
+        "outbox": _db_rows(tmp_path, "SELECT * FROM outbox_records ORDER BY id"),
+        "links": _db_rows(tmp_path, "SELECT * FROM evidence_links ORDER BY evidence_id"),
+    }
+    before_files = {
+        evidence["manifest_path"]: manifest_path.read_bytes(),
+        member["stored_path"]: copied_path.read_bytes(),
+    }
+
+    result = evidence_module.resolve_strict_copied_evidence(
+        ProjectPaths(tmp_path),
+        evidence_id=evidence["id"],
+    )
+
+    assert result["ok"] is True
+    assert result["health"] == "ok"
+    assert result["findings"] == []
+    assert result["members"] == [
+        {
+            "metadata": member,
+            "content": before_files[member["stored_path"]],
+        }
+    ]
+    assert watched == {str(manifest_path): 1, str(copied_path): 1}
+    assert {
+        "evidence": _db_rows(tmp_path, "SELECT * FROM evidence ORDER BY id"),
+        "events": _db_rows(tmp_path, "SELECT * FROM events ORDER BY sequence"),
+        "outbox": _db_rows(tmp_path, "SELECT * FROM outbox_records ORDER BY id"),
+        "links": _db_rows(tmp_path, "SELECT * FROM evidence_links ORDER BY evidence_id"),
+    } == before_rows
+    assert manifest_path.read_bytes() == before_files[evidence["manifest_path"]]
+    assert copied_path.read_bytes() == before_files[member["stored_path"]]
+
+
+def test_strict_copied_resolver_rejects_missing_and_duplicate_event_anchors(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    missing_root = tmp_path / "missing"
+    missing_root.mkdir()
+    missing = _record_strict_copied_fixture(missing_root, capsys)
+    conn = connect(missing_root / ".project-loop" / "project.db")
+    try:
+        conn.execute(
+            "UPDATE events SET event_type = 'corrupt_adhoc_record' "
+            "WHERE event_type = 'adhoc_evidence_recorded' "
+            "AND entity_type = 'evidence' AND entity_id = ?",
+            (missing["id"],),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    missing_result = evidence_module.resolve_strict_copied_evidence(
+        ProjectPaths(missing_root), evidence_id=missing["id"]
+    )
+    assert [item["code"] for item in missing_result["findings"]] == [
+        "strict_event_anchor_missing"
+    ]
+
+    duplicate_root = tmp_path / "duplicate"
+    duplicate_root.mkdir()
+    duplicate = _record_strict_copied_fixture(duplicate_root, capsys)
+    _duplicate_record_event(duplicate_root, duplicate["id"])
+
+    duplicate_result = evidence_module.resolve_strict_copied_evidence(
+        ProjectPaths(duplicate_root), evidence_id=duplicate["id"]
+    )
+    assert [item["code"] for item in duplicate_result["findings"]] == [
+        "strict_event_anchor_ambiguous"
+    ]
+
+
+def test_strict_copied_resolver_rejects_non_copied_legacy_evidence(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    artifact = tmp_path / "legacy.json"
+    artifact.write_text('{"status":"pass"}\n', encoding="utf-8")
+    assert main([
+        "--root", str(tmp_path), "evidence", "add",
+        "--file", artifact.name,
+        "--summary", "legacy non-copy fixture",
+        "--json",
+    ]) == 0
+    evidence = _json_output(capsys)["evidence"]
+
+    result = evidence_module.resolve_strict_copied_evidence(
+        ProjectPaths(tmp_path), evidence_id=evidence["id"]
+    )
+
+    assert [item["code"] for item in result["findings"]] == ["strict_copy_required"]
+
+
+def test_strict_copied_resolver_rejects_manifest_rewrite_and_relocated_copy(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    rewrite_root = tmp_path / "rewrite"
+    rewrite_root.mkdir()
+    rewritten = _record_strict_copied_fixture(rewrite_root, capsys)
+    manifest_path = rewrite_root / rewritten["manifest_path"]
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["members"][0]["path"] = "rewritten.json"
+    manifest_path.write_text(json.dumps(manifest, sort_keys=True), encoding="utf-8")
+
+    rewritten_result = evidence_module.resolve_strict_copied_evidence(
+        ProjectPaths(rewrite_root), evidence_id=rewritten["id"]
+    )
+    assert [item["code"] for item in rewritten_result["findings"]] == [
+        "strict_manifest_event_mismatch"
+    ]
+
+    relocate_root = tmp_path / "relocate"
+    relocate_root.mkdir()
+    relocated = _record_strict_copied_fixture(relocate_root, capsys)
+    relocated_manifest_path = relocate_root / relocated["manifest_path"]
+    relocated_manifest = json.loads(relocated_manifest_path.read_text(encoding="utf-8"))
+    wrong_stored_path = ".project-loop/evidence/adhoc-files/e-9999/01-strict-evidence.json"
+    relocated_manifest["members"][0]["stored_path"] = wrong_stored_path
+    relocated_manifest_path.write_text(
+        json.dumps(relocated_manifest, sort_keys=True), encoding="utf-8"
+    )
+    wrong_copy = relocate_root / wrong_stored_path
+    wrong_copy.parent.mkdir(parents=True)
+    wrong_copy.write_bytes((relocate_root / relocated["members"][0]["stored_path"]).read_bytes())
+    conn = connect(relocate_root / ".project-loop" / "project.db")
+    try:
+        row = conn.execute(
+            "SELECT id, payload_json FROM events WHERE event_type = 'adhoc_evidence_recorded' "
+            "AND entity_type = 'evidence' AND entity_id = ?",
+            (relocated["id"],),
+        ).fetchone()
+        event_payload = json.loads(row["payload_json"])
+        event_payload["members"][0]["stored_path"] = wrong_stored_path
+        conn.execute(
+            "UPDATE events SET payload_json = ? WHERE id = ?",
+            (json.dumps(event_payload), row["id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    relocated_result = evidence_module.resolve_strict_copied_evidence(
+        ProjectPaths(relocate_root), evidence_id=relocated["id"]
+    )
+    assert [item["code"] for item in relocated_result["findings"]] == [
+        "strict_copy_path_invalid"
+    ]
+
+
+def test_strict_copied_resolver_rejects_final_and_intermediate_symlinks(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    final_root = tmp_path / "final"
+    final_root.mkdir()
+    final_evidence = _record_strict_copied_fixture(final_root, capsys)
+    final_copy = final_root / final_evidence["members"][0]["stored_path"]
+    outside = final_root / "outside-copy.json"
+    outside.write_bytes(final_copy.read_bytes())
+    final_copy.unlink()
+    final_copy.symlink_to(outside)
+
+    final_result = evidence_module.resolve_strict_copied_evidence(
+        ProjectPaths(final_root), evidence_id=final_evidence["id"]
+    )
+    assert [item["code"] for item in final_result["findings"]] == [
+        "strict_copy_symlink"
+    ]
+
+    intermediate_root = tmp_path / "intermediate"
+    intermediate_root.mkdir()
+    intermediate = _record_strict_copied_fixture(intermediate_root, capsys)
+    copy_dir = (intermediate_root / intermediate["members"][0]["stored_path"]).parent
+    real_dir = intermediate_root / "real-copy-dir"
+    copy_dir.rename(real_dir)
+    copy_dir.symlink_to(real_dir, target_is_directory=True)
+
+    intermediate_result = evidence_module.resolve_strict_copied_evidence(
+        ProjectPaths(intermediate_root), evidence_id=intermediate["id"]
+    )
+    assert [item["code"] for item in intermediate_result["findings"]] == [
+        "strict_copy_directory_invalid"
+    ]
+
+
+def test_strict_copied_resolver_rejects_hash_mismatch_and_identity_change(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    hash_root = tmp_path / "hash"
+    hash_root.mkdir()
+    hash_evidence = _record_strict_copied_fixture(hash_root, capsys)
+    copied_path = hash_root / hash_evidence["members"][0]["stored_path"]
+    copied_path.write_text('{"status":"fail"}\n', encoding="utf-8")
+
+    hash_result = evidence_module.resolve_strict_copied_evidence(
+        ProjectPaths(hash_root), evidence_id=hash_evidence["id"]
+    )
+    assert [item["code"] for item in hash_result["findings"]] == [
+        "strict_copy_hash_mismatch"
+    ]
+
+    identity_root = tmp_path / "identity"
+    identity_root.mkdir()
+    identity = _record_strict_copied_fixture(identity_root, capsys)
+    real_fstat = os.fstat
+    calls = 0
+
+    def drifting_fstat(fd):
+        nonlocal calls
+        value = real_fstat(fd)
+        calls += 1
+        if calls == 4:
+            return type(
+                "ChangedStat",
+                (),
+                {
+                    "st_dev": value.st_dev,
+                    "st_ino": value.st_ino,
+                    "st_size": value.st_size,
+                    "st_mtime_ns": value.st_mtime_ns + 1,
+                    "st_ctime_ns": value.st_ctime_ns,
+                    "st_mode": value.st_mode,
+                },
+            )()
+        return value
+
+    monkeypatch.setattr("pcl.strict_evidence.os.fstat", drifting_fstat)
+    identity_result = evidence_module.resolve_strict_copied_evidence(
+        ProjectPaths(identity_root), evidence_id=identity["id"]
+    )
+    assert [item["code"] for item in identity_result["findings"]] == [
+        "strict_copy_changed"
+    ]

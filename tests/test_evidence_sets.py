@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import sqlite3
 
+import pcl.evidence_sets as evidence_sets_module
 from pcl.cli import main
 from pcl.contracts.evidence_set import (
     EVIDENCE_SET_CONTRACT_VERSION,
@@ -13,6 +15,7 @@ from pcl.contracts.evidence_set import (
 from pcl.db import connect
 from pcl.init_project import init_project
 from pcl.paths import resolve_paths
+from pcl.paths import ProjectPaths
 from pcl.start import start_work
 
 
@@ -21,7 +24,7 @@ FIXTURE_ROOT = Path(__file__).parent / "fixtures" / "evidence_set"
 
 def _initialized_target(tmp_path: Path) -> tuple[Path, str]:
     root = tmp_path / "project"
-    root.mkdir()
+    root.mkdir(parents=True)
     paths = resolve_paths(root)
     init_project(paths)
     started = start_work(paths, intent="Test evidence-set completeness")
@@ -411,3 +414,184 @@ def test_validator_rejects_corrupt_evidence_set_artifact(tmp_path: Path, capsys)
     assert main(["--root", str(root), "validate", "--strict", "--json"]) == 1
     payload = json.loads(capsys.readouterr().out)
     assert any("Evidence set" in error and "contract" in error for error in payload["errors"])
+
+
+def _record_strict_evidence_set_fixture(tmp_path: Path, capsys) -> tuple[Path, dict]:
+    root, task_id = _initialized_target(tmp_path)
+    work_root, manifest = _write_report_manifest(root, reports=[])
+    assert main([
+        "--root", str(root), "evidence-set", "record",
+        "--target", f"task:{task_id}",
+        "--work-root", str(work_root),
+        "--manifest", str(manifest),
+        "--summary", "strict Evidence Set fixture",
+        "--json",
+    ]) == 0
+    return root, json.loads(capsys.readouterr().out)["evidence"]
+
+
+def test_strict_evidence_set_resolver_uses_one_open_and_is_read_only(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    root, evidence = _record_strict_evidence_set_fixture(tmp_path, capsys)
+    artifact_path = root / evidence["path"]
+    artifact_bytes = artifact_path.read_bytes()
+    opens = 0
+    real_open = os.open
+
+    def counted_open(path, flags, *args, **kwargs):
+        nonlocal opens
+        if Path(path) == artifact_path:
+            opens += 1
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr("pcl.strict_evidence.os.open", counted_open)
+    before = _counts(root)
+
+    result = evidence_sets_module.resolve_strict_evidence_set(
+        ProjectPaths(root), evidence_id=evidence["id"]
+    )
+
+    assert result["ok"] is True
+    assert result["health"] == "ok"
+    assert result["findings"] == []
+    assert result["artifact_bytes"] == artifact_bytes
+    assert result["artifact"] == json.loads(artifact_bytes)
+    assert opens == 1
+    assert _counts(root) == before
+    assert artifact_path.read_bytes() == artifact_bytes
+
+
+def test_strict_evidence_set_resolver_rejects_missing_and_duplicate_anchors(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    missing_root, missing = _record_strict_evidence_set_fixture(tmp_path / "missing", capsys)
+    conn = connect(missing_root / ".project-loop" / "project.db")
+    try:
+        conn.execute(
+            "UPDATE events SET event_type = 'corrupt_evidence_set_record' "
+            "WHERE event_type = 'evidence_set_recorded' "
+            "AND entity_type = 'evidence' AND entity_id = ?",
+            (missing["id"],),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    missing_result = evidence_sets_module.resolve_strict_evidence_set(
+        ProjectPaths(missing_root), evidence_id=missing["id"]
+    )
+    assert [item["code"] for item in missing_result["findings"]] == [
+        "strict_event_anchor_missing"
+    ]
+
+    duplicate_root, duplicate = _record_strict_evidence_set_fixture(
+        tmp_path / "duplicate", capsys
+    )
+    conn = connect(duplicate_root / ".project-loop" / "project.db")
+    try:
+        row = conn.execute(
+            "SELECT payload_json, created_at FROM events "
+            "WHERE event_type = 'evidence_set_recorded' AND entity_type = 'evidence' "
+            "AND entity_id = ?",
+            (duplicate["id"],),
+        ).fetchone()
+        sequence = int(conn.execute("SELECT MAX(sequence) + 1 FROM events").fetchone()[0])
+        conn.execute(
+            "INSERT INTO events(id, sequence, event_type, entity_type, entity_id, payload_json, created_at) "
+            "VALUES (?, ?, 'evidence_set_recorded', 'evidence', ?, ?, ?)",
+            ("EV-DUPLICATESET", sequence, duplicate["id"], row["payload_json"], row["created_at"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    duplicate_result = evidence_sets_module.resolve_strict_evidence_set(
+        ProjectPaths(duplicate_root), evidence_id=duplicate["id"]
+    )
+    assert [item["code"] for item in duplicate_result["findings"]] == [
+        "strict_event_anchor_ambiguous"
+    ]
+
+
+def test_strict_evidence_set_resolver_rejects_rewrite_but_legacy_show_stays_ok(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    root, evidence = _record_strict_evidence_set_fixture(tmp_path, capsys)
+    artifact_path = root / evidence["path"]
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    artifact["work_root"] = "work/rewritten"
+    artifact_path.write_text(json.dumps(artifact, sort_keys=True), encoding="utf-8")
+
+    strict = evidence_sets_module.resolve_strict_evidence_set(
+        ProjectPaths(root), evidence_id=evidence["id"]
+    )
+    assert [item["code"] for item in strict["findings"]] == [
+        "strict_evidence_set_hash_mismatch"
+    ]
+
+    assert main([
+        "--root", str(root), "evidence-set", "show", "--evidence", evidence["id"], "--json",
+    ]) == 0
+    legacy = json.loads(capsys.readouterr().out)["evidence_set"]
+    assert legacy["health"] == "ok"
+    assert legacy["artifact"]["work_root"] == "work/rewritten"
+
+
+def test_strict_evidence_set_resolver_rejects_event_metadata_mismatch(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    root, evidence = _record_strict_evidence_set_fixture(tmp_path, capsys)
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        row = conn.execute(
+            "SELECT id, payload_json FROM events WHERE event_type = 'evidence_set_recorded' "
+            "AND entity_type = 'evidence' AND entity_id = ?",
+            (evidence["id"],),
+        ).fetchone()
+        payload = json.loads(row["payload_json"])
+        payload["included_report_count"] += 1
+        conn.execute(
+            "UPDATE events SET payload_json = ? WHERE id = ?",
+            (json.dumps(payload), row["id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = evidence_sets_module.resolve_strict_evidence_set(
+        ProjectPaths(root), evidence_id=evidence["id"]
+    )
+    assert [item["code"] for item in result["findings"]] == [
+        "strict_evidence_set_event_mismatch"
+    ]
+
+
+def test_strict_evidence_set_resolver_rejects_malformed_anchor(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    root, evidence = _record_strict_evidence_set_fixture(tmp_path, capsys)
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        conn.execute(
+            "UPDATE events SET payload_json = '{' "
+            "WHERE event_type = 'evidence_set_recorded' "
+            "AND entity_type = 'evidence' AND entity_id = ?",
+            (evidence["id"],),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    result = evidence_sets_module.resolve_strict_evidence_set(
+        ProjectPaths(root), evidence_id=evidence["id"]
+    )
+    assert [item["code"] for item in result["findings"]] == [
+        "strict_event_anchor_invalid"
+    ]

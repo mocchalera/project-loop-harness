@@ -21,6 +21,7 @@ from .events import append_event
 from .guards import require_initialized
 from .ids import next_prefixed_id
 from .paths import ProjectPaths
+from .strict_evidence import strict_read_canonical_file
 from .timeutil import utc_now_iso
 from .work_briefs import parse_target_ref
 
@@ -294,6 +295,210 @@ def inspect_evidence_set(
         "findings": findings,
         "artifact": artifact,
     }
+
+
+def resolve_strict_evidence_set(
+    paths: ProjectPaths,
+    *,
+    evidence_id: str,
+) -> dict[str, Any]:
+    """Resolve one event-anchored Evidence Set artifact without mutation."""
+    require_initialized(paths)
+    evidence_id = str(evidence_id or "").strip()
+    conn = connect(paths.db_path)
+    try:
+        conn.execute("BEGIN")
+        row = conn.execute(
+            "SELECT id, type, path, summary FROM evidence WHERE id = ?",
+            (evidence_id,),
+        ).fetchone()
+        event_rows = conn.execute(
+            """
+            SELECT id, sequence, payload_json
+            FROM events
+            WHERE event_type = 'evidence_set_recorded'
+              AND entity_type = 'evidence'
+              AND entity_id = ?
+            ORDER BY sequence, id
+            """,
+            (evidence_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+    if not event_rows:
+        return _strict_evidence_set_result(
+            evidence_id,
+            findings=[
+                {"code": "strict_event_anchor_missing", "evidence_kind": "evidence_set"}
+            ],
+        )
+    if len(event_rows) != 1:
+        return _strict_evidence_set_result(
+            evidence_id,
+            findings=[
+                {
+                    "code": "strict_event_anchor_ambiguous",
+                    "evidence_kind": "evidence_set",
+                    "actual": len(event_rows),
+                }
+            ],
+        )
+    event_row = event_rows[0]
+    event_anchor = {
+        "id": str(event_row["id"]),
+        "sequence": int(event_row["sequence"]),
+        "event_type": "evidence_set_recorded",
+    }
+    try:
+        anchor = json.loads(str(event_row["payload_json"]))
+    except json.JSONDecodeError:
+        return _strict_evidence_set_result(
+            evidence_id,
+            event_anchor=event_anchor,
+            findings=[
+                {"code": "strict_event_anchor_invalid", "evidence_kind": "evidence_set"}
+            ],
+        )
+    if not isinstance(anchor, dict):
+        return _strict_evidence_set_result(
+            evidence_id,
+            event_anchor=event_anchor,
+            findings=[
+                {"code": "strict_event_anchor_invalid", "evidence_kind": "evidence_set"}
+            ],
+        )
+    if row is None or str(row["type"]) != EVIDENCE_SET_EVIDENCE_TYPE:
+        return _strict_evidence_set_result(
+            evidence_id,
+            event_anchor=event_anchor,
+            findings=[
+                {"code": "strict_evidence_row_invalid", "evidence_kind": "evidence_set"}
+            ],
+        )
+
+    expected_path = (
+        f".project-loop/evidence/evidence-sets/{evidence_id.lower()}-evidence-set-v1.json"
+    )
+    if str(row["path"] or "") != expected_path or anchor.get("path") != expected_path:
+        return _strict_evidence_set_result(
+            evidence_id,
+            event_anchor=event_anchor,
+            findings=[{"code": "strict_evidence_set_path_invalid"}],
+        )
+
+    artifact_path = paths.root / expected_path
+    artifact_read = strict_read_canonical_file(
+        artifact_path,
+        expected_parent=paths.evidence_dir / "evidence-sets",
+    )
+    if not artifact_read.ok:
+        return _strict_evidence_set_result(
+            evidence_id,
+            event_anchor=event_anchor,
+            findings=[_strict_evidence_set_file_finding(artifact_read.status)],
+        )
+    assert artifact_read.content is not None
+    try:
+        artifact = json.loads(artifact_read.content)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return _strict_evidence_set_result(
+            evidence_id,
+            event_anchor=event_anchor,
+            artifact_bytes=artifact_read.content,
+            findings=[{"code": "strict_evidence_set_invalid_json"}],
+        )
+    if not isinstance(artifact, dict):
+        return _strict_evidence_set_result(
+            evidence_id,
+            event_anchor=event_anchor,
+            artifact_bytes=artifact_read.content,
+            findings=[{"code": "strict_evidence_set_contract_invalid"}],
+        )
+    validation = validate_evidence_set(artifact)
+    if not validation.ok:
+        return _strict_evidence_set_result(
+            evidence_id,
+            event_anchor=event_anchor,
+            artifact=artifact,
+            artifact_bytes=artifact_read.content,
+            findings=[
+                {
+                    "code": "strict_evidence_set_contract_invalid",
+                    "errors": list(validation.errors),
+                }
+            ],
+        )
+
+    artifact_sha256 = _artifact_sha256(artifact)
+    if (
+        anchor.get("contract_version") != EVIDENCE_SET_CONTRACT_VERSION
+        or anchor.get("evidence_id") != evidence_id
+        or anchor.get("target") != artifact["target"]
+        or anchor.get("completeness_status") != artifact["completeness"]["status"]
+        or type(anchor.get("included_report_count")) is not int
+        or anchor["included_report_count"] != len(artifact["included_reports"])
+        or type(anchor.get("excluded_report_count")) is not int
+        or anchor["excluded_report_count"] != len(artifact["excluded_reports"])
+        or anchor.get("summary") != str(row["summary"])
+        or not isinstance(anchor.get("artifact_sha256"), str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", anchor["artifact_sha256"]) is None
+    ):
+        return _strict_evidence_set_result(
+            evidence_id,
+            event_anchor=event_anchor,
+            artifact=artifact,
+            artifact_bytes=artifact_read.content,
+            artifact_sha256=artifact_sha256,
+            findings=[{"code": "strict_evidence_set_event_mismatch"}],
+        )
+    if artifact_sha256 != anchor["artifact_sha256"]:
+        return _strict_evidence_set_result(
+            evidence_id,
+            event_anchor=event_anchor,
+            artifact=artifact,
+            artifact_bytes=artifact_read.content,
+            artifact_sha256=artifact_sha256,
+            findings=[{"code": "strict_evidence_set_hash_mismatch"}],
+        )
+    return _strict_evidence_set_result(
+        evidence_id,
+        event_anchor=event_anchor,
+        artifact=artifact,
+        artifact_bytes=artifact_read.content,
+        artifact_sha256=artifact_sha256,
+        findings=[],
+    )
+
+
+def _strict_evidence_set_result(
+    evidence_id: str,
+    *,
+    findings: list[dict[str, Any]],
+    event_anchor: dict[str, Any] | None = None,
+    artifact: dict[str, Any] | None = None,
+    artifact_bytes: bytes | None = None,
+    artifact_sha256: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "contract_version": "strict-evidence-set-resolution/v1",
+        "evidence_id": evidence_id,
+        "ok": not findings,
+        "health": "ok" if not findings else "invalid",
+        "event_anchor": event_anchor,
+        "findings": findings,
+        "artifact": artifact,
+        "artifact_bytes": artifact_bytes,
+        "artifact_sha256": artifact_sha256,
+    }
+
+
+def _strict_evidence_set_file_finding(status: str) -> dict[str, Any]:
+    if status.startswith("directory_"):
+        code = "strict_evidence_set_directory_invalid"
+    else:
+        code = f"strict_evidence_set_{status}"
+    return {"code": code}
 
 
 def _build_artifact(
