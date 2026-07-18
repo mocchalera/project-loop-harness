@@ -1,10 +1,11 @@
 # 0194: Skill Prose / Runtime Parity
 
-- **Status:** Active
+- **Status:** Complete
 - **Milestone:** Harness Minimization Phase 2
 - **Priority:** P0
 - **Size:** S
 - **Dependency:** 0193 target-bound `pcl next`
+- **Project Loop:** Goal `G-0055`, Task `T-0112`, Feature `F-0058`, Story `US-0056`, Test `TC-0124`
 - **DB schema:** remains 8
 
 ## Problem
@@ -32,4 +33,3 @@ contract drift.
 3. The diff removes more instruction text than it adds.
 4. Skill command-example, parity, and freshness tests pass.
 5. No runtime, schema, dependency, or generated dashboard files change.
-

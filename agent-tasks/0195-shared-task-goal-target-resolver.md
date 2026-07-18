@@ -1,10 +1,11 @@
 # 0195: Shared Task / Goal Target Resolver
 
-- **Status:** Active
+- **Status:** Complete
 - **Milestone:** Harness Minimization Phase 2
 - **Priority:** P1
 - **Size:** S
 - **Dependency:** 0193 target-bound `pcl next`
+- **Project Loop:** Goal `G-0055`, Task `T-0113`, Feature `F-0059`, Story `US-0057`, Test `TC-0125`
 - **DB schema:** remains 8
 
 ## Problem
@@ -31,4 +32,3 @@ the instruction burden removed in 0193.
 3. No target-selection policy is moved into the shared resolver.
 4. No schema migration, dependency, Skill, dashboard, or MCP change.
 5. Targeted tests, Ruff, and full pytest pass.
-
