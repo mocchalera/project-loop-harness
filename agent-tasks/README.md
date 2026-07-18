@@ -116,7 +116,7 @@ implement from the spec file, not from prompt summaries.
 | 0197 | Layered harness minimization ablation | Harness Minimization | P0 | done (`modify`) |
 | 0197b | Layered ablation fixture materializer | Harness Minimization | P0 | done |
 | 0198 | Evidence-gated direct-flow reduction | Harness Minimization | P1 | done; not implemented after `modify` verdict |
-| 0199 | v0.5.2 release preparation and publication | v0.5.2 Reliability and Harness Minimization | P0 | active; publication authorized |
+| 0199 | v0.5.2 release preparation and publication | v0.5.2 Reliability and Harness Minimization | P0 | done; published and publicly verified |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the

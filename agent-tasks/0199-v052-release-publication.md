@@ -1,6 +1,6 @@
 # 0199: v0.5.2 release preparation and publication
 
-- **Status:** Active; publication authorized
+- **Status:** Done; published and publicly verified
 - **Milestone:** v0.5.2 Reliability and Harness Minimization
 - **Priority:** P0
 - **Size:** M
@@ -44,4 +44,13 @@ uncollected external first-use cohort as adoption proof.
 
 ## Completion evidence
 
-- Pending publication and public-artifact verification.
+- Release commit: `bbe14cf5a8375e72eaa121c1b8a5a96362560d1d`
+- GitHub Release: `v0.5.2`
+- Green release-commit CI run: `29638815262`
+- Trusted Publishing run: `29639130354`, success
+- Public wheel SHA-256:
+  `d7f5dda21e721c3405e694991fa7bbc844f7a31daecb4572efd67c48ffc81048`
+- Public sdist SHA-256:
+  `529e2236628d70cef2efade82a4ff3017649658e960e6c5b3e8afc0e2f1f601b`
+- Clean public install, strict validation, render, and pipx update: passed
+- `docs/evidence/0199-v052-publication-closeout.md`
