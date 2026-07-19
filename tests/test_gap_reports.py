@@ -1,15 +1,17 @@
 from __future__ import annotations
 
-from copy import deepcopy
 import json
 from pathlib import Path
+import re
 
 import pytest
 
 from pcl.cli import main
 from pcl.contracts.gap_report import (
     GAP_REPORT_CONTRACT_VERSION,
+    GAP_REPORT_TIMESTAMP_PATTERN,
     gap_report_schema,
+    load_gap_report,
     validate_gap_report,
 )
 from pcl.db import connect
@@ -41,7 +43,9 @@ def _report_for_target(
     value["target"]["id"] = target_id
     value["gap_class"] = gap_class
     if lesson_evidence_refs is not None:
-        value["candidate_lessons"][0]["evidence_refs"] = lesson_evidence_refs
+        value["candidate_lessons"]["lesson-release-route"]["evidence_refs"] = (
+            lesson_evidence_refs
+        )
     path = tmp_path / f"gap-{gap_class}.json"
     path.write_text(json.dumps(value), encoding="utf-8")
     return path
@@ -64,6 +68,23 @@ def _json_output(capsys) -> dict:
     return json.loads(capsys.readouterr().out)
 
 
+def _next_gap_artifact_paths(root: Path) -> tuple[Path, Path]:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        ids = [str(row[0]) for row in conn.execute("SELECT id FROM evidence").fetchall()]
+    finally:
+        conn.close()
+    next_number = max(int(value.split("-")[1]) for value in ids) + 1
+    final = (
+        root
+        / ".project-loop"
+        / "evidence"
+        / "gap-reports"
+        / f"e-{next_number:04d}-gap-report-v1.json"
+    )
+    return final, final.with_suffix(".json.tmp")
+
+
 def test_gap_report_schema_and_validator_accept_minimal_fixture() -> None:
     value = json.loads((FIXTURE_ROOT / "minimal.json").read_text(encoding="utf-8"))
 
@@ -74,15 +95,19 @@ def test_gap_report_schema_and_validator_accept_minimal_fixture() -> None:
     assert result.errors == ()
     assert schema["$id"].endswith("gap-report-v1.schema.json")
     assert schema["additionalProperties"] is False
+    assert schema["properties"]["candidate_lessons"]["type"] == "object"
+    assert (
+        schema["properties"]["generated_at"]["pattern"]
+        == GAP_REPORT_TIMESTAMP_PATTERN
+    )
 
 
-def test_gap_report_validator_fails_closed_on_unknowns_duplicates_and_non_finite() -> None:
+def test_gap_report_validator_fails_closed_on_unknowns_and_non_finite() -> None:
     value = json.loads((FIXTURE_ROOT / "minimal.json").read_text(encoding="utf-8"))
     value["unexpected"] = True
     value["gap_class"] = "guess"
     value["target"] = {"type": "agent_job", "id": "T-0001"}
-    value["candidate_lessons"].append(deepcopy(value["candidate_lessons"][0]))
-    value["candidate_lessons"][0]["confidence"] = float("nan")
+    value["candidate_lessons"]["lesson-release-route"]["confidence"] = float("nan")
 
     result = validate_gap_report(value)
 
@@ -90,8 +115,42 @@ def test_gap_report_validator_fails_closed_on_unknowns_duplicates_and_non_finite
     assert any("$.unexpected: additional property" in error for error in result.errors)
     assert any("$.gap_class: must be one of" in error for error in result.errors)
     assert any("$.target.id: has invalid format" in error for error in result.errors)
-    assert any("lesson_id: must be unique" in error for error in result.errors)
     assert any("non-finite JSON numbers" in error for error in result.errors)
+
+
+@pytest.mark.parametrize(
+    ("timestamp", "accepted"),
+    [
+        ("2024-02-29T12:00:00Z", True),
+        ("2026-02-29T12:00:00Z", False),
+        ("2026-02-31T12:00:00Z", False),
+        ("0000-01-01T00:00:00Z", False),
+    ],
+)
+def test_gap_report_schema_pattern_and_validator_agree_on_real_dates(
+    timestamp: str,
+    accepted: bool,
+) -> None:
+    value = json.loads((FIXTURE_ROOT / "minimal.json").read_text(encoding="utf-8"))
+    value["generated_at"] = timestamp
+    pattern = gap_report_schema()["properties"]["generated_at"]["pattern"]
+
+    assert (re.fullmatch(pattern, timestamp) is not None) is accepted
+    assert validate_gap_report(value).ok is accepted
+
+
+def test_gap_report_loader_rejects_duplicate_lesson_keys(tmp_path: Path) -> None:
+    text = (FIXTURE_ROOT / "minimal.json").read_text(encoding="utf-8")
+    duplicate = text.replace(
+        '"candidate_lessons": {',
+        '"candidate_lessons": {"lesson-release-route": {},',
+        1,
+    )
+    path = tmp_path / "duplicate.json"
+    path.write_text(duplicate, encoding="utf-8")
+
+    with pytest.raises(ValueError, match="duplicate JSON object key"):
+        load_gap_report(path)
 
 
 @pytest.mark.parametrize(
@@ -119,7 +178,9 @@ def test_gap_report_validator_handles_non_string_enums_without_crashing() -> Non
     value = json.loads((FIXTURE_ROOT / "minimal.json").read_text(encoding="utf-8"))
     value["target"] = {"type": {"invalid": True}, "id": "T-0001"}
     value["gap_class"] = ["context"]
-    value["candidate_lessons"][0]["durable_owner"] = {"invalid": True}
+    value["candidate_lessons"]["lesson-release-route"]["durable_owner"] = {
+        "invalid": True
+    }
 
     result = validate_gap_report(value)
 
@@ -237,6 +298,101 @@ def test_gap_add_show_list_and_duplicate_rejection(tmp_path: Path, capsys) -> No
     duplicate = _json_output(capsys)
     assert duplicate["error"]["code"] == "gap_report_duplicate"
     assert _counts(root) == before_duplicate
+
+
+@pytest.mark.parametrize("redirect", ["directory", "temp", "final"])
+def test_gap_add_rejects_redirected_artifact_paths_without_mutation(
+    tmp_path: Path,
+    capsys,
+    redirect: str,
+) -> None:
+    root, task_id = _initialized_target(tmp_path)
+    report = _report_for_target(tmp_path, task_id)
+    final, temp = _next_gap_artifact_paths(root)
+    external = tmp_path / "external"
+    external.mkdir()
+    sentinel = external / "sentinel.json"
+    sentinel.write_text("do not change\n", encoding="utf-8")
+    before = _counts(root)
+
+    if redirect == "directory":
+        final.parent.symlink_to(external, target_is_directory=True)
+    else:
+        final.parent.mkdir()
+        destination = temp if redirect == "temp" else final
+        destination.symlink_to(sentinel)
+
+    assert main([
+        "--root", str(root), "gap", "add", str(report),
+        "--summary", "Redirect attempt", "--json",
+    ]) == 4
+
+    assert _json_output(capsys)["error"]["code"] == "data_store_error"
+    assert sentinel.read_text(encoding="utf-8") == "do not change\n"
+    assert _counts(root) == before
+    assert not (external / final.name).exists()
+
+
+def test_gap_show_detects_same_size_semantic_preserving_byte_drift(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    root, task_id = _initialized_target(tmp_path)
+    report = _report_for_target(tmp_path, task_id)
+    assert main([
+        "--root", str(root), "gap", "add", str(report),
+        "--summary", "Byte-bound report", "--json",
+    ]) == 0
+    evidence = _json_output(capsys)["evidence"]
+    artifact = root / evidence["path"]
+    original = artifact.read_text(encoding="utf-8")
+    changed = original.replace('"contract_version": "', '"contract_version" :"', 1)
+    assert len(changed.encode("utf-8")) == len(original.encode("utf-8"))
+    assert json.loads(changed) == json.loads(original)
+    artifact.write_text(changed, encoding="utf-8")
+
+    assert main([
+        "--root", str(root), "gap", "show", "--evidence", evidence["id"], "--json",
+    ]) == 0
+    shown = _json_output(capsys)["gap_report"]
+    assert shown["health"] == "warning"
+    assert "artifact_hash_mismatch" in {item["code"] for item in shown["findings"]}
+
+
+def test_gap_class_filter_uses_recorded_anchor_after_artifact_tamper(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    root, task_id = _initialized_target(tmp_path)
+    report = _report_for_target(tmp_path, task_id)
+    assert main([
+        "--root", str(root), "gap", "add", str(report),
+        "--summary", "Recorded context class", "--json",
+    ]) == 0
+    evidence = _json_output(capsys)["evidence"]
+    artifact = root / evidence["path"]
+    original = artifact.read_text(encoding="utf-8")
+    value = json.loads(original)
+    value["gap_class"] = "proof"
+    changed = json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    changed = changed.replace("{\n", "{  \n", 1)
+    assert len(changed.encode("utf-8")) == len(original.encode("utf-8"))
+    artifact.write_text(changed, encoding="utf-8")
+
+    assert main([
+        "--root", str(root), "gap", "list", "--gap-class", "context", "--json",
+    ]) == 0
+    context_reports = _json_output(capsys)["gap_reports"]
+    assert [item["evidence_id"] for item in context_reports] == [evidence["id"]]
+    assert context_reports[0]["gap_class"] == "context"
+    assert context_reports[0]["recorded_gap_class"] == "context"
+    assert context_reports[0]["artifact_gap_class"] == "proof"
+    assert context_reports[0]["health"] == "warning"
+
+    assert main([
+        "--root", str(root), "gap", "list", "--gap-class", "proof", "--json",
+    ]) == 0
+    assert _json_output(capsys)["gap_reports"] == []
 
 
 def test_gap_add_rejects_unknown_target_without_mutation(tmp_path: Path, capsys) -> None:

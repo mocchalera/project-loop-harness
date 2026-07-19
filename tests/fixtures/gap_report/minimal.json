@@ -19,14 +19,13 @@
     "description": "The worker could not locate the project-owned release runbook."
   },
   "gap_class": "context",
-  "candidate_lessons": [
-    {
-      "lesson_id": "lesson-release-route",
+  "candidate_lessons": {
+    "lesson-release-route": {
       "lesson": "Route release work to the project-owned runbook from the compact agent entrypoint.",
       "durable_owner": "agents_md",
       "evidence_refs": [
         "evidence:E-0001"
       ]
     }
-  ]
+  }
 }

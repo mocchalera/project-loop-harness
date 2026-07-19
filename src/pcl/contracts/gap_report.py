@@ -57,11 +57,18 @@ _TARGETS = {
 _EVIDENCE_REF = re.compile(r"^evidence:E-[0-9]{4,}$")
 _PACKET_ID = re.compile(r"^cp-sha256:[0-9a-f]{64}$")
 _WORKFLOW_RUN_ID = re.compile(r"^WR-[0-9]{4,}$")
-_LESSON_ID = re.compile(r"^lesson-[a-z0-9][a-z0-9._-]*$")
-_TIMESTAMP = re.compile(
-    r"^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])"
-    r"T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$"
+GAP_REPORT_LESSON_ID_PATTERN = r"^lesson-[a-z0-9][a-z0-9._-]*$"
+GAP_REPORT_TIMESTAMP_PATTERN = (
+    r"^(?!0000-)(?:"
+    r"[0-9]{4}-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12][0-9]|3[01])|"
+    r"(?:04|06|09|11)-(?:0[1-9]|[12][0-9]|30)|"
+    r"02-(?:0[1-9]|1[0-9]|2[0-8]))|"
+    r"(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|"
+    r"(?:[02468][048]|[13579][26])00)-02-29"
+    r")T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]Z$"
 )
+_LESSON_ID = re.compile(GAP_REPORT_LESSON_ID_PATTERN)
+_TIMESTAMP = re.compile(GAP_REPORT_TIMESTAMP_PATTERN)
 
 
 @dataclass(frozen=True)
@@ -87,7 +94,11 @@ def gap_report_schema() -> dict[str, Any]:
 
 def load_gap_report(path: str | Path) -> Any:
     with Path(path).open(encoding="utf-8") as handle:
-        return json.load(handle, parse_constant=_reject_non_finite)
+        return json.load(
+            handle,
+            parse_constant=_reject_non_finite,
+            object_pairs_hook=_reject_duplicate_keys,
+        )
 
 
 def canonical_gap_report_json(report: Mapping[str, Any]) -> str:
@@ -105,7 +116,11 @@ def serialized_gap_report(report: Mapping[str, Any]) -> str:
 
 
 def gap_report_sha256(report: Mapping[str, Any]) -> str:
-    digest = hashlib.sha256(canonical_gap_report_json(report).encode("utf-8")).hexdigest()
+    return gap_report_artifact_sha256(serialized_gap_report(report).encode("utf-8"))
+
+
+def gap_report_artifact_sha256(content: bytes) -> str:
+    digest = hashlib.sha256(content).hexdigest()
     return f"sha256:{digest}"
 
 
@@ -188,21 +203,16 @@ def _handoff(value: Any, errors: list[str]) -> None:
 
 def _lessons(value: Any, errors: list[str]) -> None:
     path = "$.candidate_lessons"
-    if not _array(value, path, errors):
+    if not _object(value, path, errors):
         return
-    seen: set[str] = set()
-    for index, item in enumerate(value):
-        item_path = f"{path}[{index}]"
+    for lesson_id, item in value.items():
+        item_path = f"{path}.{lesson_id}"
+        if not isinstance(lesson_id, str) or _LESSON_ID.fullmatch(lesson_id) is None:
+            errors.append(f"{item_path}: property name has invalid format")
         if not _object(item, item_path, errors):
             continue
-        allowed = {"lesson_id", "lesson", "durable_owner", "evidence_refs"}
+        allowed = {"lesson", "durable_owner", "evidence_refs"}
         _fields(item, item_path, allowed, allowed, errors)
-        lesson_id = item.get("lesson_id")
-        _string(lesson_id, f"{item_path}.lesson_id", errors, pattern=_LESSON_ID)
-        if isinstance(lesson_id, str):
-            if lesson_id in seen:
-                errors.append(f"{item_path}.lesson_id: must be unique")
-            seen.add(lesson_id)
         _string(item.get("lesson"), f"{item_path}.lesson", errors)
         _enum(item.get("durable_owner"), DURABLE_OWNERS, f"{item_path}.durable_owner", errors)
         _reference_array(item.get("evidence_refs"), f"{item_path}.evidence_refs", errors)
@@ -289,3 +299,12 @@ def _non_finite(value: Any, path: str, errors: list[str]) -> None:
 
 def _reject_non_finite(value: str) -> Any:
     raise ValueError(f"Non-finite JSON number is not allowed: {value}")
+
+
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key is not allowed: {key}")
+        result[key] = value
+    return result

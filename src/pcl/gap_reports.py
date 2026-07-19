@@ -14,7 +14,7 @@ from .approval_provenance import (
 from .contracts.gap_report import (
     GAP_CLASSES,
     gap_lesson_sha256,
-    gap_report_sha256,
+    gap_report_artifact_sha256,
     load_gap_report,
     serialized_gap_report,
     validate_gap_report,
@@ -25,7 +25,12 @@ from .events import append_event
 from .guards import require_initialized
 from .ids import next_prefixed_id
 from .paths import ProjectPaths
-from .strict_evidence import strict_read_canonical_file
+from .strict_evidence import (
+    StrictFileWrite,
+    strict_read_canonical_file,
+    strict_remove_written_file,
+    strict_write_new_canonical_file,
+)
 from .timeutil import utc_now_iso
 
 
@@ -59,9 +64,10 @@ def add_gap_report(
     summary = _required(summary, "summary")
     report = _load_valid_report(file)
     target = _report_target(report)
-    artifact_sha256 = gap_report_sha256(report)
     serialized = serialized_gap_report(report)
-    byte_size = len(serialized.encode("utf-8"))
+    artifact_content = serialized.encode("utf-8")
+    artifact_sha256 = gap_report_artifact_sha256(artifact_content)
+    byte_size = len(artifact_content)
     _preflight_report(paths, report, artifact_sha256)
 
     planned = {
@@ -76,17 +82,18 @@ def add_gap_report(
 
     conn = connect_mutation(paths)
     final_path: Path | None = None
-    temp_path: Path | None = None
+    write_receipt: StrictFileWrite | None = None
     try:
         _validate_report_references(conn, report)
         _reject_duplicate(conn, artifact_sha256)
         evidence_id = next_prefixed_id(conn, "evidence", "E")
         artifact_dir = paths.evidence_dir / "gap-reports"
-        artifact_dir.mkdir(parents=True, exist_ok=True)
         final_path = artifact_dir / f"{evidence_id.lower()}-gap-report-v1.json"
-        temp_path = final_path.with_suffix(".json.tmp")
-        temp_path.write_text(serialized, encoding="utf-8")
-        temp_path.replace(final_path)
+        write_receipt = strict_write_new_canonical_file(
+            final_path,
+            expected_parent=artifact_dir,
+            content=artifact_content,
+        )
         now = utc_now_iso()
         relative_path = final_path.relative_to(paths.root).as_posix()
         conn.execute(
@@ -139,11 +146,11 @@ def add_gap_report(
         }
     except PclError:
         conn.rollback()
-        _remove_uncommitted_file(conn, temp_path, final_path)
+        _remove_uncommitted_file(conn, write_receipt)
         raise
     except (OSError, sqlite3.Error) as exc:
         conn.rollback()
-        _remove_uncommitted_file(conn, temp_path, final_path)
+        _remove_uncommitted_file(conn, write_receipt)
         raise DataStoreError(
             f"Could not record Gap Report Evidence: {exc}",
             details={"file": file},
@@ -201,7 +208,11 @@ def list_gap_reports(
             ).fetchall()
         reports = [_show_gap_report(conn, paths, str(row["id"])) for row in rows]
         if gap_class is not None:
-            reports = [item for item in reports if item.get("gap_class") == gap_class]
+            reports = [
+                item
+                for item in reports
+                if item.get("recorded_gap_class") in {None, gap_class}
+            ]
         return {
             "ok": True,
             "filters": {"target": target, "gap_class": gap_class},
@@ -432,7 +443,7 @@ def _validate_report_references(conn: sqlite3.Connection, report: dict[str, Any]
             _validate_target(conn, {"type": "workflow_run", "id": str(workflow_run)})
     lesson_refs = [
         ref
-        for lesson in report["candidate_lessons"]
+        for lesson in report["candidate_lessons"].values()
         for ref in lesson["evidence_refs"]
     ]
     _validate_evidence_refs(conn, lesson_refs)
@@ -549,6 +560,16 @@ def _show_gap_report(
             else:
                 findings.append({"code": "anchor_invalid", "reason": "payload is not an object"})
 
+    recorded_gap_class: str | None = None
+    if anchor is not None:
+        anchor_gap_class = anchor.get("gap_class")
+        if isinstance(anchor_gap_class, str) and anchor_gap_class in GAP_CLASSES:
+            recorded_gap_class = anchor_gap_class
+        else:
+            findings.append(
+                {"code": "anchor_gap_class_invalid", "actual": anchor_gap_class}
+            )
+
     expected_dir = paths.evidence_dir / "gap-reports"
     expected_path = expected_dir / f"{evidence_id.lower()}-gap-report-v1.json"
     row_path = paths.root / str(row["path"])
@@ -580,6 +601,15 @@ def _show_gap_report(
     if not read.ok or read.content is None:
         findings.append({"code": "artifact_read_failed", "status": read.status, "detail": read.detail})
     else:
+        artifact_sha256 = gap_report_artifact_sha256(read.content)
+        if anchor is not None and anchor.get("artifact_sha256") != artifact_sha256:
+            findings.append(
+                {
+                    "code": "artifact_hash_mismatch",
+                    "expected": anchor.get("artifact_sha256"),
+                    "actual": artifact_sha256,
+                }
+            )
         try:
             value = json.loads(read.content.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as exc:
@@ -590,18 +620,9 @@ def _show_gap_report(
                 findings.append({"code": "contract_invalid", "errors": list(validation.errors)})
             elif isinstance(value, dict):
                 report = value
-                artifact_sha256 = gap_report_sha256(value)
                 if _report_target(value) != target:
                     findings.append(
                         {"code": "target_mismatch", "artifact": _report_target(value), "link": target}
-                    )
-                if anchor is not None and anchor.get("artifact_sha256") != artifact_sha256:
-                    findings.append(
-                        {
-                            "code": "artifact_hash_mismatch",
-                            "expected": anchor.get("artifact_sha256"),
-                            "actual": artifact_sha256,
-                        }
                     )
                 if anchor is not None and anchor.get("gap_class") != value["gap_class"]:
                     findings.append({"code": "anchor_gap_class_mismatch"})
@@ -636,8 +657,8 @@ def _show_gap_report(
         valid_promotions.append(promotion)
     lessons: list[dict[str, Any]] = []
     if report is not None:
-        for raw_lesson in report["candidate_lessons"]:
-            lesson = dict(raw_lesson)
+        for lesson_id, raw_lesson in report["candidate_lessons"].items():
+            lesson = {"lesson_id": lesson_id, **raw_lesson}
             lesson_sha256 = gap_lesson_sha256(_lesson_content(lesson))
             matching = [
                 item
@@ -670,7 +691,13 @@ def _show_gap_report(
         "earliest_failed_handoff": (
             None if report is None else report["earliest_failed_handoff"]
         ),
-        "gap_class": None if report is None else report["gap_class"],
+        "gap_class": (
+            recorded_gap_class
+            if recorded_gap_class is not None
+            else None if report is None else report["gap_class"]
+        ),
+        "recorded_gap_class": recorded_gap_class,
+        "artifact_gap_class": None if report is None else report["gap_class"],
         "candidate_lessons": lessons,
         "claims_are_facts": False,
         "health": "ok" if not findings else "warning",
@@ -756,14 +783,12 @@ def _required(value: str, field: str) -> str:
 
 def _remove_uncommitted_file(
     conn: sqlite3.Connection,
-    temp_path: Path | None,
-    final_path: Path | None,
+    receipt: StrictFileWrite | None,
 ) -> None:
     if getattr(conn, "_authoritative_commit_completed", False):
         return
-    for path in (temp_path, final_path):
-        if path is not None and path.exists():
-            path.unlink()
+    if receipt is not None:
+        strict_remove_written_file(receipt)
 
 
 def _error(code: str, message: str, **details: Any) -> GapReportError:

@@ -39,8 +39,9 @@ Top-level fields are strict; unknown fields fail closed.
 - `gap_class`: one closed value:
   `context`, `capability`, `domain_ownership`, `authority`, `proof`,
   `feedback_delivery`, or `worker_limitation`.
-- `candidate_lessons`: zero or more unique `lesson_id` values with the lesson,
-  proposed durable owner, and supporting typed Evidence references.
+- `candidate_lessons`: an object keyed by unique `lesson_id` values. Each value
+  contains the lesson, proposed durable owner, and supporting typed Evidence
+  references. Duplicate JSON object keys are rejected while loading.
 
 Durable owners are closed to `agents_md`, `skill`, `types`, `api`, `tests`,
 `runbook`, `project_docs`, and `tool_error_message`. A new owner or gap class
@@ -71,8 +72,11 @@ pcl gap add gap-report.json \
 
 Recorded files use the canonical project-local path
 `.project-loop/evidence/gap-reports/e-nnnn-gap-report-v1.json`. The anchor event
-stores target, path, byte size, canonical artifact SHA-256, gap class, and
-candidate count. The same canonical report cannot be recorded twice.
+stores target, path, byte size, the SHA-256 of the exact stored UTF-8 bytes, gap
+class, and candidate count. Creation opens canonical directories without
+following symlinks, writes a new no-follow temporary file, and publishes it
+without overwriting an existing final path. The same normalized report cannot
+be recorded twice.
 
 ## Inspect and filter
 
@@ -84,8 +88,13 @@ pcl gap list --target task:T-0001 --gap-class context --json
 Read paths require exactly one `gap_report_recorded` anchor and one
 `gap_report` target link. They verify the canonical path, reject symlinks and
 identity changes, read the recorded byte size once, revalidate the contract,
-and compare the canonical SHA-256 with the anchor. Findings remain visible as
-`health: warning`; unhealthy reports cannot authorize promotion.
+and compare the exact stored-byte SHA-256 with the anchor. `--gap-class`
+filters by the anchor's immutable recorded class, while the current artifact
+class is returned separately as `artifact_gap_class`; tampering therefore
+cannot move a warning into another filter bucket. An unreadable or invalid
+anchor class is included in filtered results so the warning is not hidden.
+Findings remain visible as `health: warning`; unhealthy reports cannot
+authorize promotion.
 
 ## Approve candidate promotion
 

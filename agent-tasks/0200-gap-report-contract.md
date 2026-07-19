@@ -41,8 +41,9 @@ The inherited Cockpit plan is accepted with these corrections:
 - one closed `gap_class`:
   `context`, `capability`, `domain_ownership`, `authority`, `proof`,
   `feedback_delivery`, or `worker_limitation`;
-- zero or more candidate lessons, each with a stable `lesson_id`, proposed
-  `durable_owner`, and supporting Evidence references.
+- zero or more candidate lessons in an object keyed by stable, structurally
+  unique `lesson_id` values, each with a proposed `durable_owner` and
+  supporting Evidence references.
 
 The diagnosis is a claim, not a fact. `worker_limitation` remains especially
 provisional; one report cannot establish a general model limitation.
@@ -62,8 +63,8 @@ promotion and unhealthy or uncited lessons fail closed.
 ## Acceptance
 
 1. Packaged JSON Schema and hand-written validator agree and reject unknown
-   fields, malformed IDs/timestamps, invalid enums, duplicate lesson IDs, and
-   non-finite JSON.
+   fields, malformed IDs/real-date timestamps, invalid enums, duplicate raw
+   JSON lesson keys, and non-finite JSON.
 2. Add/dry-run/show/list are deterministic, target-bound, and zero-mutation on
    failure; strict reads surface tampering instead of trusting the file path.
 3. Promotion is human-only, hash-bound, Evidence-corroborated, idempotent, and

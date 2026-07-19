@@ -118,6 +118,7 @@ implement from the spec file, not from prompt summaries.
 | 0198 | Evidence-gated direct-flow reduction | Harness Minimization | P1 | done; not implemented after `modify` verdict |
 | 0199 | v0.5.2 release preparation and publication | v0.5.2 Reliability and Harness Minimization | P0 | done; published and publicly verified |
 | 0200 | `gap-report/v1` Harness Gap Evidence | Harness Engineering Feedback Loop | P0 | done |
+| 0201 | `gap-report/v1` Integrity Hardening | Harness Engineering Feedback Loop | P1 | done |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
