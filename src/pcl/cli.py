@@ -77,6 +77,12 @@ from .contracts.work_brief import (
     load_work_brief,
     validate_work_brief,
 )
+from .contracts.gap_report import (
+    GAP_CLASSES,
+    GAP_REPORT_CONTRACT_VERSION,
+    load_gap_report,
+    validate_gap_report,
+)
 from .contracts.route_recommendation import (
     ROUTE_RECOMMENDATION_CONTRACT_VERSION,
     load_route_recommendation,
@@ -272,6 +278,7 @@ from .workflow_proposals import (
     read_workflow_proposal,
 )
 from .work_briefs import add_work_brief, approve_work_brief, review_work_brief, show_work_brief
+from .gap_reports import add_gap_report, list_gap_reports, promote_gap_lesson, show_gap_report
 from .workflow_sandbox import (
     LEGACY_DEPRECATION,
     guard_workflow_file,
@@ -1168,6 +1175,7 @@ def build_parser() -> argparse.ArgumentParser:
             ROUTE_RECOMMENDATION_CONTRACT_VERSION,
             ROUTE_OVERRIDE_CONTRACT_VERSION,
             WORK_BRIEF_CONTRACT_VERSION,
+            GAP_REPORT_CONTRACT_VERSION,
             EVIDENCE_SET_CONTRACT_VERSION,
             COMPLETION_POLICY_CONTRACT_VERSION,
             PROFILE_MANIFEST_CONTRACT_VERSION,
@@ -1304,6 +1312,49 @@ def build_parser() -> argparse.ArgumentParser:
     p_brief_review.add_argument("--actor-kind", choices=["human", "agent", "system"])
     p_brief_review.add_argument("--reason", required=True)
     p_brief_review.add_argument("--dry-run", action="store_true")
+
+    p_gap = sub.add_parser("gap", help="Manage immutable Harness Gap Report Evidence")
+    gap_sub = p_gap.add_subparsers(dest="gap_command", required=True)
+    p_gap_add = gap_sub.add_parser("add", help="Validate and record a gap-report/v1")
+    p_gap_add.add_argument("file", help="Path to gap-report/v1 JSON")
+    p_gap_add.add_argument("--summary", required=True)
+    p_gap_add.add_argument("--dry-run", action="store_true")
+    p_gap_show = gap_sub.add_parser("show", help="Inspect Gap Report Evidence")
+    p_gap_show.add_argument("--evidence", required=True, dest="evidence_id")
+    p_gap_list = gap_sub.add_parser("list", help="List Gap Report Evidence")
+    p_gap_list.add_argument(
+        "--target",
+        dest="target_ref",
+        help="Optional target reference as <target-type>:<target-id>",
+    )
+    p_gap_list.add_argument("--gap-class", choices=sorted(GAP_CLASSES))
+    p_gap_promote = gap_sub.add_parser(
+        "promote",
+        help="Approve a candidate lesson for later application to its durable owner",
+    )
+    p_gap_promote.add_argument("evidence_id")
+    p_gap_promote.add_argument("--lesson", required=True, dest="lesson_id")
+    p_gap_promote.add_argument("--actor", required=True)
+    p_gap_promote.add_argument("--actor-kind", choices=["human", "agent", "system"])
+    p_gap_promote.add_argument(
+        "--recorded-by",
+        help="Identity that writes the human decision to PCL; defaults to --actor",
+    )
+    p_gap_promote.add_argument(
+        "--recorder-kind",
+        choices=["human", "agent", "system"],
+    )
+    p_gap_promote.add_argument(
+        "--source-kind",
+        choices=["cli", "conversation", "cockpit", "api"],
+        help="Origin of the human decision; mediated approval requires conversation or cockpit",
+    )
+    p_gap_promote.add_argument(
+        "--source-ref",
+        help="Factual reference to the conversation, Cockpit task, or API decision source",
+    )
+    p_gap_promote.add_argument("--reason", required=True)
+    p_gap_promote.add_argument("--dry-run", action="store_true")
 
     p_route = sub.add_parser("route", help="Recommend deterministic work routes")
     route_sub = p_route.add_subparsers(dest="route_command", required=True)
@@ -1885,6 +1936,7 @@ def _validate_contract_file(
         ),
         ROUTE_OVERRIDE_CONTRACT_VERSION: (load_route_override, validate_route_override),
         WORK_BRIEF_CONTRACT_VERSION: (load_work_brief, validate_work_brief),
+        GAP_REPORT_CONTRACT_VERSION: (load_gap_report, validate_gap_report),
         EVIDENCE_SET_CONTRACT_VERSION: (load_evidence_set, validate_evidence_set),
         COMPLETION_POLICY_CONTRACT_VERSION: (
             load_completion_policy,
@@ -2368,6 +2420,68 @@ def main(argv: list[str] | None = None) -> int:
                 print(to_pretty_json(result["planned"]))
             else:
                 print(f"Recorded Work Brief review {result['event_id']}")
+            return 0
+
+        if args.command == "gap" and args.gap_command == "add":
+            result = add_gap_report(
+                paths,
+                file=args.file,
+                summary=args.summary,
+                dry_run=args.dry_run,
+            )
+            if json_output:
+                _print_json(result)
+            elif args.dry_run:
+                print(to_pretty_json(result["planned"]))
+            else:
+                evidence = result["evidence"]
+                print(f"{evidence['id']} gap_class={evidence['gap_class']}")
+            return 0
+
+        if args.command == "gap" and args.gap_command == "show":
+            result = show_gap_report(paths, evidence_id=args.evidence_id)
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result))
+            return 0
+
+        if args.command == "gap" and args.gap_command == "list":
+            result = list_gap_reports(
+                paths,
+                target_ref=args.target_ref,
+                gap_class=args.gap_class,
+            )
+            if json_output:
+                _print_json(result)
+            else:
+                print(to_pretty_json(result))
+            return 0
+
+        if args.command == "gap" and args.gap_command == "promote":
+            result = promote_gap_lesson(
+                paths,
+                evidence_id=args.evidence_id,
+                lesson_id=args.lesson_id,
+                actor=args.actor,
+                actor_kind=args.actor_kind,
+                recorded_by=args.recorded_by,
+                recorder_kind=args.recorder_kind,
+                source_kind=args.source_kind,
+                source_ref=args.source_ref,
+                reason=args.reason,
+                dry_run=args.dry_run,
+            )
+            if json_output:
+                _print_json(result)
+            elif args.dry_run:
+                print(to_pretty_json(result["planned"]))
+            elif result["changed"]:
+                print(
+                    f"Approved candidate lesson {args.lesson_id}; durable-owner application pending"
+                )
+            else:
+                print(f"Candidate lesson {args.lesson_id} promotion is already approved")
             return 0
 
         if args.command == "route" and args.route_command == "recommend":

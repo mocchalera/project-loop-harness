@@ -708,9 +708,15 @@ def test_init_installs_inspect_first_and_test_first_agent_guidance(tmp_path: Pat
 
     assert "pcl init --dry-run --json" in agents
     assert "pcl story" in agents
+    assert "accepted outcome, proof boundary, and authority envelope" in agents
+    assert "pcl gap add" in agents
+    assert "pcl gap promote" in agents
     assert "Do not read or parse `.project-loop/dashboard/dashboard.html` as project state" in agents
     assert ".project-loop/dashboard/dashboard-data.json" in agents
     assert "pcl story" in claude
+    assert "accepted outcome, proof boundary, and authority envelope" in claude
+    assert "pcl gap add" in claude
+    assert "pcl gap promote" in claude
     assert "Do not read, parse, or hand-edit generated dashboard HTML" in claude
     assert "dashboard-data.json" in claude
     assert "Adoption and setup safety" in skill

@@ -28,3 +28,19 @@ The guide is available before `pcl init` and does not create `.project-loop`.
 It complements `pcl next --json`: use `guide` to learn a purpose-oriented route
 and `next` to read the authoritative recommendation for the current project
 state.
+
+## Record a repeated harness failure
+
+When a bounded trajectory exposes an environment problem rather than only a
+product defect, validate and record a `gap-report/v1`:
+
+```bash
+pcl contract validate --type gap-report/v1 gap-report.json --json
+pcl gap add gap-report.json --summary "Earliest failed handoff" --dry-run --json
+pcl gap add gap-report.json --summary "Earliest failed handoff" --json
+pcl gap list --target task:T-0001 --gap-class context --json
+```
+
+Candidate lessons remain claims. `pcl gap promote` requires hash-bound human
+provenance and records approval with durable-owner application still pending.
+See [Gap Report v1](gap-report-v1.md).

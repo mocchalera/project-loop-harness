@@ -154,8 +154,9 @@ exist, the project does not claim external adoption.
 - [Security](SECURITY.md) and [Contributing](CONTRIBUTING.md).
 
 Advanced contracts stay in `docs/`: completion packets, evidence sets,
-completion policy, context packs, code context, workflow execution, Council
-Profile, trace/resume, reports, migrations, and dashboard data.
+completion policy, [Harness Gap Reports](docs/gap-report-v1.md), context packs,
+code context, workflow execution, Council Profile, trace/resume, reports,
+migrations, and dashboard data.
 
 ## Local development
 

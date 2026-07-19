@@ -10,11 +10,15 @@ Rules for coding agents:
 - Do not read or parse `.project-loop/dashboard/dashboard.html` as project state; it is a human-only view.
 - Use `pcl` JSON commands, reports, evidence paths, or `.project-loop/dashboard/dashboard-data.json` for machine context.
 - Use `pcl` commands to mutate project-loop state.
+- Let project-local instructions, source files, and current system state govern over general guidance.
+- Before consequential mutation, identify the accepted outcome, proof boundary, and authority envelope.
+- Load only the context and Skills relevant to the current unresolved decision.
 - After meaningful state changes, run `pcl validate` and `pcl render`.
 - Evidence is required for status changes.
 - In non-empty projects, inspect with `pcl init --dry-run --json` before applying initialization changes.
 - For behavior changes, capture user stories and test cases with `pcl story` and `pcl test`.
 - Human approval is required for database migrations, dependency additions, auth/billing changes, production config changes, and destructive operations.
 - Prefer small, verifiable changes.
+- Record repeated environment failures with `pcl gap add`; candidate lessons require human promotion approval through `pcl gap promote` and separate application to their durable owner.
 - If the same failure repeats, stop and escalate instead of looping indefinitely.
 <!-- project-loop-harness:end -->

@@ -1,0 +1,32 @@
+{
+  "contract_version": "gap-report/v1",
+  "producer": {
+    "name": "example-agent",
+    "version": "1.0"
+  },
+  "generated_at": "2026-07-19T00:00:00Z",
+  "target": {
+    "type": "task",
+    "id": "T-0001"
+  },
+  "related": {
+    "evidence_refs": [
+      "evidence:E-0001"
+    ]
+  },
+  "earliest_failed_handoff": {
+    "stage": "context retrieval",
+    "description": "The worker could not locate the project-owned release runbook."
+  },
+  "gap_class": "context",
+  "candidate_lessons": [
+    {
+      "lesson_id": "lesson-release-route",
+      "lesson": "Route release work to the project-owned runbook from the compact agent entrypoint.",
+      "durable_owner": "agents_md",
+      "evidence_refs": [
+        "evidence:E-0001"
+      ]
+    }
+  ]
+}

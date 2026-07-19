@@ -206,6 +206,7 @@ Give these tasks to coding agents in this order:
 202. `agent-tasks/0197b-layered-ablation-fixture-materializer.md` (harness minimization, deterministically materialize frozen baseline/treatment fixtures)
 203. `agent-tasks/0198-evidence-gated-direct-flow-reduction.md` (harness minimization, close direct-flow reduction without implementation after a `modify` verdict)
 204. `agent-tasks/0199-v052-release-publication.md` (v0.5.2, authorized release preparation, publication, and public-artifact verification)
+205. `agent-tasks/0200-gap-report-contract.md` (Harness Engineering feedback loop, immutable gap-report/v1 Evidence plus human-gated candidate-lesson promotion authorization)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and
