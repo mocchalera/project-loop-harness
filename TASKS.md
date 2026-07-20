@@ -209,6 +209,7 @@ Give these tasks to coding agents in this order:
 205. `agent-tasks/0200-gap-report-contract.md` (Harness Engineering feedback loop, immutable gap-report/v1 Evidence plus human-gated candidate-lesson promotion authorization)
 206. `agent-tasks/0201-gap-report-integrity-hardening.md` (Harness Engineering feedback loop, no-follow artifact writes, exact-byte hash binding, contract parity, and recorded-class filtering)
 207. `agent-tasks/0202-v053-local-release-preparation.md` (v0.5.3 local release candidate, version/release-note alignment, source/package verification, hashes, and no publication)
+208. `agent-tasks/0203-v053-release-publication.md` (v0.5.3 authorized publication, immutable source chain, Trusted Publishing, public artifact hashes, clean-install verification, and pipx replacement)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and

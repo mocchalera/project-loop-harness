@@ -120,6 +120,7 @@ implement from the spec file, not from prompt summaries.
 | 0200 | `gap-report/v1` Harness Gap Evidence | Harness Engineering Feedback Loop | P0 | done |
 | 0201 | `gap-report/v1` Integrity Hardening | Harness Engineering Feedback Loop | P1 | done |
 | 0202 | v0.5.3 local release preparation | v0.5.3 Evidence Integrity and Harness Feedback | P0 | done; local RC ready, not published |
+| 0203 | v0.5.3 release publication | v0.5.3 Evidence Integrity and Harness Feedback | P0 | done; published and publicly verified |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
@@ -200,8 +201,9 @@ external first-use cohort remains open and no adoption claim is made. Task
 owner's separate publication instruction.
 
 v0.5.3 packages event-anchored strict Evidence resolution and the bounded
-`gap-report/v1` feedback layer. Task **0202** prepares and verifies the local
-release candidate; tagging, pushing, and public publication remain separate.
+`gap-report/v1` feedback layer. Task **0202** prepared and verified the local
+release candidate; task **0203** published and independently verified the
+GitHub Release, Trusted Publishing run, PyPI artifacts, and clean public install.
 
 ## Planned next (see growth plan for scope)
 
@@ -218,7 +220,7 @@ release candidate; tagging, pushing, and public publication remain separate.
 | v0.5.1 | Trace & Efficient Handoff: source-bound claims-not-facts handoff plus controlled cross-session/runtime resume evidence |
 | post-v0.5.1 | Behavior-preserving staged CLI split; 0184 presentation, then 0185 guide, 0186 loop status, 0187 doctor, and 0188 report-artifact handlers |
 | v0.5.2 | 0189 config-ready adoption and frozen cohort → 0190 participant kit and deterministic proof evaluator → five-user outcome cohort → observed-friction repair |
-| v0.5.3 | strict copied-Evidence resolution → 0200 Gap Report contract → 0201 integrity hardening → 0202 local release candidate |
+| v0.5.3 | published and publicly verified; strict copied-Evidence resolution → 0200 Gap Report contract → 0201 integrity hardening → 0202 local RC → 0203 publication closeout |
 
 Everything with an ID below 0102 is completed design history; see `TASKS.md`
 for the one-line summary of each.
