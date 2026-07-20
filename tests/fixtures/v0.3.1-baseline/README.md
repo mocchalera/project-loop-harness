@@ -61,6 +61,8 @@ is a regression, not an automatic regeneration result.
 
 ## Intended changes since v0.3.1 freeze
 
+- 2026-07-20 — `snapshots/pcl-version.json` regenerated for the v0.5.3 local
+  release candidate bump (`0.5.2` → `0.5.3`).
 - 2026-07-19 — `snapshots/pcl-help.json` regenerated for task 0200 to include
   the additive `gap` command. `gap show/list` are read-only; `gap add` records
   immutable target-bound Evidence and `gap promote` records human-gated,
