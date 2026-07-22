@@ -1,6 +1,6 @@
 # 0209: Refactoring integrated verification
 
-- **Status:** Planned
+- **Status:** Complete
 - **Milestone:** Post-v0.5.3 maintainability
 - **Priority:** P1
 - **Size:** S
@@ -21,4 +21,3 @@ surface, record durable Evidence, and close the refactoring Goal.
 3. Source, wheel, and sdist command/help smoke tests pass.
 4. PCL tasks are terminal, a completion packet is emitted, and the Goal is
    closed with that packet Evidence.
-

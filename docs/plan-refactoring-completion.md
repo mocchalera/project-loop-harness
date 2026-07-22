@@ -58,3 +58,12 @@ characterization tests reveal output, event, or zero-trace behavior drift.
 - Source, wheel, and sdist entry points expose identical command/help behavior.
 - No new dependency, schema migration, external write, or unrelated cleanup.
 
+## Completion result
+
+Completed on 2026-07-22. The final implementation reduced `cli.py` from 4,319
+to 231 lines and `commands.py` from 2,444 lines to a 54-line compatibility
+facade. The final code revision passed 1,178 tests with one skip, Ruff,
+source-checkout doctor, strict validation, render, and source/wheel/sdist smoke
+checks. Audit projection counts were aligned; the audit command retained 55
+pre-existing human-review anomalies and added none. Evidence for each stage is
+recorded under `docs/evidence/0204-*` through `docs/evidence/0209-*`.

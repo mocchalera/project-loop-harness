@@ -1,9 +1,24 @@
 # Maintainer entry hardening and CLI split contract
 
-This document freezes the observable behavior boundary for a future staged
-split of `src/pcl/cli.py` and `src/pcl/commands.py`. It also defines the source
+This document freezes the observable behavior boundary used by the completed
+staged split of `src/pcl/cli.py` and `src/pcl/commands.py`. It also defines the source
 checkout diagnostic that protects verification from a stale editable install
 or a neighboring worktree.
+
+## Completion status
+
+The staged split completed on 2026-07-22 without changing the frozen boundary:
+
+- `pcl.cli` is a 231-line entrypoint and error-routing facade;
+- command orchestration lives in read/entity/execution/governance/profile,
+  control/context/planning handler modules;
+- `pcl.commands` is a 54-line public compatibility facade over domain,
+  next-action, and finish-planning services; and
+- `pcl.parser.build_parser` composes seven ordered command-family builders and
+  remains re-exported from `pcl.cli`.
+
+The integrated verification record is
+`docs/evidence/0209-refactoring-integrated-verification.md`.
 
 ## Source-checkout doctor diagnostic
 
@@ -87,6 +102,9 @@ Evidence. It must not be hidden inside a module move.
   handlers remain orchestration only.
 - Gate: command-family mutation tests, event/outbox/audit tests, failure
   zero-trace tests, then full suite.
+- Implemented tasks: `agent-tasks/0204-cli-stage3-entity-handlers.md`;
+  `agent-tasks/0205-cli-stage3-execution-evidence-handlers.md`;
+  `agent-tasks/0206-cli-stage3-control-profile-handlers.md`.
 
 ### Stage 4 — Parser construction
 
@@ -94,6 +112,8 @@ Evidence. It must not be hidden inside a module move.
 - Keep one top-level `build_parser()` and the existing console entry points.
 - Gate: complete parser-example matrix, `--help` surfaces, source/wheel/sdist
   smoke, and full CI matrix.
+- Implemented tasks: `agent-tasks/0207-command-service-responsibility-split.md`;
+  `agent-tasks/0208-cli-stage4-parser-construction.md`.
 
 ## Slice acceptance gate
 
