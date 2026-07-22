@@ -1,6 +1,6 @@
 # 0208: CLI Stage 4 parser construction split
 
-- **Status:** Planned
+- **Status:** Complete
 - **Milestone:** Post-v0.5.3 maintainability
 - **Priority:** P1
 - **Size:** M
@@ -18,4 +18,3 @@ Split parser construction by command family while retaining one public
    remain unchanged.
 2. Skill example parsing and complete help smoke checks pass.
 3. Distribution tests, Ruff, full pytest, and source/wheel/sdist smoke pass.
-
