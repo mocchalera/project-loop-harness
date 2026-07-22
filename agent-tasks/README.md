@@ -128,6 +128,7 @@ implement from the spec file, not from prompt summaries.
 | 0208 | CLI Stage 4 parser construction split | post-v0.5.3 maintainability | P1 | done |
 | 0209 | Refactoring integrated verification | post-v0.5.3 maintainability | P1 | done |
 | 0210 | v0.5.4 local release preparation | v0.5.4 Maintainability | P0 | done; local RC ready, not published |
+| 0211 | v0.5.4 release publication | v0.5.4 Maintainability | P0 | done; published and publicly verified |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
@@ -219,9 +220,10 @@ split -> **0208** parser construction -> **0209** integrated verification.
 See `docs/plan-refactoring-completion.md`.
 
 v0.5.4 packages that completed behavior-preserving split as a patch release.
-Task **0210** aligns version and distribution surfaces, records local artifact
-Evidence, and keeps push, tag, GitHub Release, PyPI, and pipx changes behind a
-separate publication authorization.
+Task **0210** aligned version and distribution surfaces and recorded local
+artifact Evidence. Task **0211** used the owner's separate authorization to
+publish and independently verify the annotated tag, GitHub Release, Trusted
+Publishing run, PyPI artifacts, clean public install, and pipx upgrade.
 
 ## Planned next (see growth plan for scope)
 
@@ -240,7 +242,7 @@ separate publication authorization.
 | v0.5.2 | 0189 config-ready adoption and frozen cohort → 0190 participant kit and deterministic proof evaluator → five-user outcome cohort → observed-friction repair |
 | v0.5.3 | published and publicly verified; strict copied-Evidence resolution → 0200 Gap Report contract → 0201 integrity hardening → 0202 local RC → 0203 publication closeout |
 | post-v0.5.3 | complete frozen CLI/commands refactor: 0204 → 0205 → 0206 → 0207 → 0208 → 0209 |
-| v0.5.4 | behavior-preserving CLI/commands maintainability release → 0210 local RC → separately authorized publication |
+| v0.5.4 | published and publicly verified; behavior-preserving CLI/commands maintainability release → 0210 local RC → 0211 publication closeout |
 
 Everything with an ID below 0102 is completed design history; see `TASKS.md`
 for the one-line summary of each.

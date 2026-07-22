@@ -217,6 +217,7 @@ Give these tasks to coding agents in this order:
 213. `agent-tasks/0208-cli-stage4-parser-construction.md` (post-v0.5.3 pure refactor, split parser construction behind stable build_parser)
 214. `agent-tasks/0209-refactoring-integrated-verification.md` (post-v0.5.3 integrated source/wheel/sdist verification and PCL closeout)
 215. `agent-tasks/0210-v054-local-release-preparation.md` (v0.5.4 behavior-preserving maintainability release, version/distribution alignment, local artifact Evidence, and no publication)
+216. `agent-tasks/0211-v054-release-publication.md` (v0.5.4 authorized publication, immutable tag chain, Trusted Publishing, public artifact hashes, clean-install verification, and pipx upgrade)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and
