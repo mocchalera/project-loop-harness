@@ -131,13 +131,15 @@ Use `pcl update command` to print the appropriate manual upgrade command. Set
 ## The proof boundary
 
 A release, download, clone, dashboard, or passing internal demo is output
-evidence—not adoption evidence. v0.5.2 is being judged by observed first use in
-real repositories: time to healthy setup, time to a verified completion packet,
-maintainer interventions, safety violations, and voluntary reuse.
+evidence—not adoption evidence. External adoption is judged only by observed
+first use in real repositories: time to healthy setup, time to a verified
+completion packet, maintainer interventions, safety violations, and voluntary
+reuse.
 
-The frozen cohort method and success thresholds live in
-[v0.5.2 Adoption Proof](docs/adoption-proof-v0.5.2.md). Until those observations
-exist, the project does not claim external adoption.
+As of v0.5.4, no version-current external cohort result has been recorded, so
+the project does not claim external adoption. The
+[v0.5.2 Adoption Proof](docs/adoption-proof-v0.5.2.md) remains available as a
+historical study contract, not as current work or a successful outcome.
 
 ## Documentation
 
