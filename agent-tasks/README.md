@@ -205,6 +205,12 @@ v0.5.3 packages event-anchored strict Evidence resolution and the bounded
 release candidate; task **0203** published and independently verified the
 GitHub Release, Trusted Publishing run, PyPI artifacts, and clean public install.
 
+Post-v0.5.3 maintainability completes the frozen behavior-preserving split:
+**0204** entity lifecycle handlers -> **0205** execution/Evidence handlers ->
+**0206** control/Profile handlers -> **0207** `commands.py` responsibility
+split -> **0208** parser construction -> **0209** integrated verification.
+See `docs/plan-refactoring-completion.md`.
+
 ## Planned next (see growth plan for scope)
 
 | Milestone | Theme |
@@ -221,6 +227,7 @@ GitHub Release, Trusted Publishing run, PyPI artifacts, and clean public install
 | post-v0.5.1 | Behavior-preserving staged CLI split; 0184 presentation, then 0185 guide, 0186 loop status, 0187 doctor, and 0188 report-artifact handlers |
 | v0.5.2 | 0189 config-ready adoption and frozen cohort → 0190 participant kit and deterministic proof evaluator → five-user outcome cohort → observed-friction repair |
 | v0.5.3 | published and publicly verified; strict copied-Evidence resolution → 0200 Gap Report contract → 0201 integrity hardening → 0202 local RC → 0203 publication closeout |
+| post-v0.5.3 | complete frozen CLI/commands refactor: 0204 → 0205 → 0206 → 0207 → 0208 → 0209 |
 
 Everything with an ID below 0102 is completed design history; see `TASKS.md`
 for the one-line summary of each.

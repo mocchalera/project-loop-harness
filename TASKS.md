@@ -210,6 +210,12 @@ Give these tasks to coding agents in this order:
 206. `agent-tasks/0201-gap-report-integrity-hardening.md` (Harness Engineering feedback loop, no-follow artifact writes, exact-byte hash binding, contract parity, and recorded-class filtering)
 207. `agent-tasks/0202-v053-local-release-preparation.md` (v0.5.3 local release candidate, version/release-note alignment, source/package verification, hashes, and no publication)
 208. `agent-tasks/0203-v053-release-publication.md` (v0.5.3 authorized publication, immutable source chain, Trusted Publishing, public artifact hashes, clean-install verification, and pipx replacement)
+209. `agent-tasks/0204-cli-stage3-entity-handlers.md` (post-v0.5.3 pure refactor, extract Goal/Task/Feature/Story/Test/Defect CLI orchestration)
+210. `agent-tasks/0205-cli-stage3-execution-evidence-handlers.md` (post-v0.5.3 pure refactor, extract execution, Evidence, verification, and human-queue orchestration)
+211. `agent-tasks/0206-cli-stage3-control-profile-handlers.md` (post-v0.5.3 pure refactor, extract Profile/control/read-write orchestration and remaining dispatch)
+212. `agent-tasks/0207-command-service-responsibility-split.md` (post-v0.5.3 pure refactor, split commands.py behind a compatibility facade)
+213. `agent-tasks/0208-cli-stage4-parser-construction.md` (post-v0.5.3 pure refactor, split parser construction behind stable build_parser)
+214. `agent-tasks/0209-refactoring-integrated-verification.md` (post-v0.5.3 integrated source/wheel/sdist verification and PCL closeout)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and
