@@ -11,195 +11,96 @@ from .audit import (
     AuditCommandError,
     EXIT_AUDIT_INTERNAL,
     audit_check,
-    audit_check_exit_code,
-    audit_rebuild_exit_code,
     audit_repair,
-    audit_repair_exit_code,
     rebuild_jsonl_from_sqlite,
 )
-from .adaptive_policy import render_policy_explanation, resolve_policy_for_target
 from .code_index import (
     GIT_DIFF_SENTINEL,
-    analyze_impact,
-    build_code_index,
-    code_index_status,
-    compare_retrieval_baseline,
-    evaluate_retrieval,
-    propose_retrieval_fixture,
-    record_retrieval_baseline,
-    search_code,
 )
 from .commands import (
     FEATURE_STATUSES,
-    build_next_action,
-    finish_plan,
-    next_action,
-    to_pretty_json,
 )
 from .context import (
     DEFAULT_MAX_TOKENS,
-    context_check_for_job,
-    context_check_for_task,
-    pack_context_for_job,
-    pack_context_for_task,
 )
-from .context_usage import record_context_pack_usage
 from .contracts.completion_packet import (
     COMPLETION_PACKET_CONTRACT_VERSION,
-    load_completion_packet,
-    validate_completion_packet,
 )
 from .contracts.handoff_packet import (
     HANDOFF_PACKET_CONTRACT_VERSION,
-    load_handoff_packet,
-    validate_handoff_packet,
 )
 from .contracts.intent_index import (
     INTENT_INDEX_CONTRACT_VERSION,
-    load_intent_index,
-    validate_intent_index,
 )
 from .contracts.work_brief import (
     WORK_BRIEF_CONTRACT_VERSION,
-    load_work_brief,
-    validate_work_brief,
 )
 from .contracts.gap_report import (
     GAP_CLASSES,
     GAP_REPORT_CONTRACT_VERSION,
-    load_gap_report,
-    validate_gap_report,
 )
 from .contracts.route_recommendation import (
     ROUTE_RECOMMENDATION_CONTRACT_VERSION,
-    load_route_recommendation,
-    validate_route_recommendation,
 )
 from .contracts.route_override import (
     ROUTE_OVERRIDE_CONTRACT_VERSION,
-    load_route_override,
-    validate_route_override,
 )
 from .contracts.evidence_set import (
     EVIDENCE_SET_CONTRACT_VERSION,
-    load_evidence_set,
-    validate_evidence_set,
 )
 from .contracts.completion_policy import (
     COMPLETION_POLICY_CONTRACT_VERSION,
-    load_completion_policy,
-    validate_completion_policy,
 )
 from .contracts.profile_manifest import (
     PROFILE_MANIFEST_CONTRACT_VERSION,
-    load_profile_manifest,
-    validate_profile_manifest,
 )
 from .contracts.profile_run_request import (
     PROFILE_RUN_REQUEST_CONTRACT_VERSION,
-    load_profile_run_request,
-    validate_profile_run_request,
 )
 from .contracts.profile_output_bundle import (
     PROFILE_OUTPUT_BUNDLE_CONTRACT_VERSION,
-    load_profile_output_bundle,
-    validate_profile_output_bundle,
 )
 from .contracts.council_run import (
     COUNCIL_RUN_CONTRACT_VERSION,
-    load_council_run,
-    validate_council_run,
 )
 from .contracts.claim_set import (
     CLAIM_SET_CONTRACT_VERSION,
-    load_claim_set,
-    validate_claim_set,
 )
 from .contracts.verification_plan import (
     VERIFICATION_PLAN_CONTRACT_VERSION,
-    load_verification_plan,
-    validate_verification_plan,
 )
 from .contracts.decision_proposal import (
     DECISION_PROPOSAL_CONTRACT_VERSION,
-    load_decision_proposal,
-    validate_decision_proposal,
 )
-from .code_context.summary import render_receipt_summary
-from .evidence_sets import plan_evidence_set, record_evidence_set, show_evidence_set
-from .completion_policies import evaluate_completion_policy
+from .control_handlers import handle_control_command
+from .context_handlers import handle_context_command
 from .errors import DataStoreError, InvalidInputError, PclError
 from .entity_handlers import handle_entity_command
 from .execution_handlers import handle_execution_command
-from .exporters import export_csv
-from .finish_execution import emit_finish_packet, plan_finish_packet
-from .init_project import init_project, plan_init_project
-from .kpi_report import report_kpi
-from .skill_usage_report import (
-    default_skill_usage_roots,
-    render_skill_usage_markdown,
-    report_skill_usage,
-    serialized_skill_usage_report,
-    write_skill_usage_report,
-)
-from .lifecycle_repair import (
-    apply_structural_lifecycle_repair,
-    build_lifecycle_repair_plan,
-    render_lifecycle_repair_plan,
-)
-from .migrations import apply_migrations, migration_status
-from .outbox import project_pending_events
 from .paths import resolve_paths
-from .presentation import (
-    format_context_check_summary as _format_context_check_summary,
-    format_finish_summary as _format_finish_summary,
-    format_next_explanation as _format_next_explanation,
-    format_start_summary as _format_start_summary,
-    impact_text_payload as _impact_text_payload,
-)
-from .profiles import list_profiles, show_profile, validate_profile
-from .profile_ingest import plan_profile_ingest
-from .profile_bundle_store import ingest_profile_bundle
-from .profile_authorization import (
-    ProfileAuthorizationError,
-    authorize_profile_request,
-    revoke_profile_authorization,
-)
-from .profile_fixture_runner import run_profile_fixture
-from .profile_prepare import prepare_profile_request
-from .renderer import render_dashboard
-from .receipt_show import receipt_summary_for_ref
+from .planning_handlers import handle_planning_command
+from .profile_handlers import handle_profile_command
 from .read_handlers import (
-    handle_doctor,
     handle_guide,
-    handle_loop_status,
-    handle_report_artifact,
 )
 from .registry import (
     AGENT_STATUSES,
 )
-from .routing import recommend_route
-from .route_overrides import current_route, override_route
-from .resume import build_handoff_packet, render_handoff_markdown, serialized_handoff_packet
 from .stories import (
     STORY_STATUSES,
     TEST_CASE_STATUSES,
     TEST_CASE_TYPES,
 )
-from .start import start_work
 from .timeutil import utc_now_iso
 from .tasks import (
     TASK_RISKS,
     TASK_STATUSES,
 )
 from . import update_check
-from .validators import validate_project
 from .verifications import VERIFICATION_RESULTS
 from .workflow_proposals import (
     PROPOSAL_STATUSES,
 )
-from .work_briefs import add_work_brief, approve_work_brief, review_work_brief, show_work_brief
-from .gap_reports import add_gap_report, list_gap_reports, promote_gap_lesson, show_gap_report
 from .governance_handlers import handle_governance_command
 
 
@@ -1805,172 +1706,12 @@ def _print_legacy_evidence_warning(result: dict, *, json_output: bool) -> None:
         )
 
 
-def _print_evidence_set_warnings(result: dict) -> None:
-    for warning in result.get("warnings", []):
-        print(
-            "WARNING: Evidence set excluded "
-            f"{warning['kind']} ({warning['status']}) at {warning['path']}; "
-            f"required={str(warning['required']).lower()}.",
-            file=sys.stderr,
-        )
-
-
 def _print_test_plan_warnings(result: dict) -> None:
     for warning in result.get("warnings", []):
         print(
             f"WARNING: {warning['message']} Suggested: {warning['suggested_command']}",
             file=sys.stderr,
         )
-
-
-def _validate_contract_file(
-    path_value: str,
-    *,
-    contract_type: str,
-    json_output: bool,
-) -> int:
-    contract_handlers = {
-        COMPLETION_PACKET_CONTRACT_VERSION: (
-            load_completion_packet,
-            validate_completion_packet,
-        ),
-        HANDOFF_PACKET_CONTRACT_VERSION: (load_handoff_packet, validate_handoff_packet),
-        INTENT_INDEX_CONTRACT_VERSION: (load_intent_index, validate_intent_index),
-        ROUTE_RECOMMENDATION_CONTRACT_VERSION: (
-            load_route_recommendation,
-            validate_route_recommendation,
-        ),
-        ROUTE_OVERRIDE_CONTRACT_VERSION: (load_route_override, validate_route_override),
-        WORK_BRIEF_CONTRACT_VERSION: (load_work_brief, validate_work_brief),
-        GAP_REPORT_CONTRACT_VERSION: (load_gap_report, validate_gap_report),
-        EVIDENCE_SET_CONTRACT_VERSION: (load_evidence_set, validate_evidence_set),
-        COMPLETION_POLICY_CONTRACT_VERSION: (
-            load_completion_policy,
-            validate_completion_policy,
-        ),
-        PROFILE_MANIFEST_CONTRACT_VERSION: (
-            load_profile_manifest,
-            validate_profile_manifest,
-        ),
-        PROFILE_RUN_REQUEST_CONTRACT_VERSION: (
-            load_profile_run_request,
-            validate_profile_run_request,
-        ),
-        PROFILE_OUTPUT_BUNDLE_CONTRACT_VERSION: (
-            load_profile_output_bundle,
-            validate_profile_output_bundle,
-        ),
-        COUNCIL_RUN_CONTRACT_VERSION: (load_council_run, validate_council_run),
-        CLAIM_SET_CONTRACT_VERSION: (load_claim_set, validate_claim_set),
-        VERIFICATION_PLAN_CONTRACT_VERSION: (
-            load_verification_plan,
-            validate_verification_plan,
-        ),
-        DECISION_PROPOSAL_CONTRACT_VERSION: (
-            load_decision_proposal,
-            validate_decision_proposal,
-        ),
-    }
-    load_packet, validate_packet = contract_handlers[contract_type]
-    try:
-        packet = load_packet(path_value)
-    except OSError as exc:
-        raise InvalidInputError(
-            f"Could not read contract file: {path_value}",
-            details={"path": path_value, "reason": str(exc)},
-        ) from exc
-    except json.JSONDecodeError as exc:
-        raise InvalidInputError(
-            f"Contract file is not valid JSON: {path_value}",
-            details={"column": exc.colno, "line": exc.lineno, "path": path_value},
-        ) from exc
-    except ValueError as exc:
-        raise InvalidInputError(
-            f"Contract file contains an invalid JSON value: {path_value}",
-            details={"path": path_value, "reason": str(exc)},
-        ) from exc
-
-    result = validate_packet(packet)
-    payload = result.to_dict()
-    payload["path"] = path_value
-    if json_output:
-        _print_json(payload)
-    elif result.ok:
-        print(f"Valid {contract_type}: {path_value}")
-    else:
-        for error in result.errors:
-            print(f"ERROR: {error}", file=sys.stderr)
-    return 0 if result.ok else 1
-
-
-def _run_finish_tail(paths) -> list[dict]:
-    executed: list[dict] = []
-    strict = validate_project(paths, strict=True)
-    executed.append({"command": "pcl validate --strict", "ok": strict.ok})
-    if not strict.ok:
-        return executed
-
-    render_validation = validate_project(paths)
-    if not render_validation.ok:
-        executed.append({"command": "pcl render", "ok": False})
-        return executed
-
-    render_dashboard(paths)
-    executed.append({"command": "pcl render", "ok": True})
-    return executed
-
-
-def _print_validation(result, *, json_output: bool = False) -> int:
-    if json_output:
-        _print_json(result.to_dict())
-        return 0 if result.ok else 1
-
-    for warning in result.warnings:
-        print(f"WARNING: {warning}")
-    for error in result.errors:
-        print(f"ERROR: {error}")
-    if result.ok:
-        print("OK")
-        return 0
-    return 1
-
-
-def _print_update_check(result, *, json_output: bool = False) -> int:
-    if json_output:
-        _print_json(result.to_dict())
-        return 0
-    if result.disabled:
-        print(f"Update check disabled by {update_check.NO_VERSION_CHECK_ENV}.")
-    elif not result.ok:
-        print(f"Update check unavailable: {result.error}")
-    elif result.update_available and result.latest_version:
-        print(f"Update available: pcl {result.latest_version} (current {result.current_version})")
-        print(f"Run: {result.install.command}")
-    else:
-        print(f"pcl is up to date ({result.current_version})")
-    return 0
-
-
-def _print_update_command(context, *, json_output: bool = False) -> int:
-    payload = {"install": context.to_dict(), "ok": True}
-    if json_output:
-        _print_json(payload)
-    else:
-        print(context.command)
-    return 0
-
-
-def _print_init_plan(plan, *, json_output: bool = False) -> int:
-    if json_output:
-        _print_json(plan.to_dict())
-        return 0 if plan.ok else 1
-    print(f"Init plan for {plan.root}")
-    for entry in plan.changes:
-        print(f"[{entry.action.upper():9}] {entry.path}  ({entry.reason})")
-    for error in plan.errors:
-        print(f"ERROR: {error}")
-    print("No files were changed.")
-    return 0 if plan.ok else 1
 
 
 def _print_error(error: PclError, *, json_output: bool = False) -> None:
@@ -2048,649 +1789,20 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "guide":
             return handle_guide(args.topic, json_output=json_output, output=sys.stdout)
 
-        if args.command == "profile" and args.profile_command == "list":
-            result = list_profiles()
-            if json_output:
-                _print_json(result)
-            else:
-                for profile in result["profiles"]:
-                    routes = ",".join(profile["supported_routes"])
-                    print(
-                        f"{profile['runner_profile_id']} {profile['profile_version']} "
-                        f"{profile['display_name']} routes={routes} "
-                        f"source={profile['source']} executed_by_plh=false"
-                    )
-            return 0
+        profile_status = handle_profile_command(args, paths, json_output=json_output)
+        if profile_status is not None:
+            return profile_status
 
-        if args.command == "profile" and args.profile_command == "show":
-            result = show_profile(args.runner_profile_id)
-            if json_output:
-                _print_json(result)
-            else:
-                manifest = result["manifest"]
-                print(
-                    f"Runner Profile: {result['runner_profile_id']} "
-                    f"version={manifest['profile_version']}"
-                )
-                print(
-                    f"Source: {result['source']} trust={result['trust']} "
-                    f"executed_by_plh=false"
-                )
-                print(f"Manifest SHA-256: {result['manifest_sha256']}")
-                print(f"Routes: {', '.join(manifest['supported_routes'])}")
-                print(
-                    "Terminology: route_profile selects Direct/Discover/Assure; "
-                    "role_profile selects context packing."
-                )
-            return 0
-
-        if args.command == "profile" and args.profile_command == "validate":
-            result = validate_profile(args.runner_profile_id)
-            if json_output:
-                _print_json(result)
-            elif result["ok"]:
-                print(
-                    f"Valid built-in runner Profile: {result['runner_profile_id']} "
-                    f"sha256={result['manifest_sha256']}"
-                )
-            else:
-                for error in result["errors"]:
-                    print(f"ERROR: {error}", file=sys.stderr)
-            return 0 if result["ok"] else 1
-
-        if args.command == "profile" and args.profile_command == "prepare":
-            result = prepare_profile_request(
-                paths,
-                runner_profile_id=args.runner_profile_id,
-                target_ref=args.target_ref,
-                brief_id=args.brief_id,
-                output=args.output,
-                network_access=args.network_access,
-                paid_service_requested=args.paid_service,
-                allowed_providers=args.provider,
-                repository_content_policy=args.repository_content_policy,
-                monetary_budget=args.monetary_budget,
-                currency=args.currency,
-            )
-            if json_output:
-                _print_json(result)
-            elif result["output_path"]:
-                print(
-                    f"Prepared {args.runner_profile_id} request at "
-                    f"{result['output_path']} (runner_executed=false)"
-                )
-            else:
-                print(to_pretty_json(result["request"]))
-            return 0
-
-        if args.command == "profile" and args.profile_command == "ingest":
-            operation = plan_profile_ingest if args.dry_run else ingest_profile_bundle
-            result = operation(
-                paths,
-                request_file=args.request_file,
-                bundle_file=args.bundle_file,
-                accept_failed=args.accept_failed,
-                summary=args.summary,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result))
-            return 0
-
-        if args.command == "profile" and args.profile_command == "authorize":
-            provenance = {
-                "actor": args.actor,
-                "actor_kind": args.actor_kind,
-                "recorded_by": args.recorded_by,
-                "recorder_kind": args.recorder_kind,
-                "source_kind": args.source_kind,
-                "source_ref": args.source_ref,
-                "reason": args.reason,
-            }
-            if args.authorized_event_id:
-                if args.request_file or args.output:
-                    raise ProfileAuthorizationError(
-                        message="--revoke cannot be combined with --request or --output.",
-                        code="profile_authorization_revoke_arguments",
-                        exit_code=2,
-                        details={},
-                    )
-                result = revoke_profile_authorization(
-                    paths,
-                    authorized_event_id=args.authorized_event_id,
-                    **provenance,
-                )
-            else:
-                if not args.request_file or not args.output:
-                    raise ProfileAuthorizationError(
-                        message="--request and --output are required unless --revoke is used.",
-                        code="profile_authorization_request_arguments",
-                        exit_code=2,
-                        details={},
-                    )
-                result = authorize_profile_request(
-                    paths,
-                    request_file=args.request_file,
-                    output=args.output,
-                    max_cost=args.max_cost,
-                    currency=args.currency,
-                    allowed_providers=args.provider,
-                    data_classes=args.data_class,
-                    expires_at=args.expires_at,
-                    **provenance,
-                )
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result))
-            return 0
-
-        if args.command == "profile" and args.profile_command == "fixture-run":
-            result = run_profile_fixture(
-                request_file=args.request_file,
-                status=args.status,
-                output_dir=args.output_dir,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result))
-            return 0
-
-        if args.command == "contract" and args.contract_command == "validate":
-            return _validate_contract_file(
-                args.file,
-                contract_type=args.contract_type,
-                json_output=json_output,
-            )
-
-        if args.command == "evidence-set" and args.evidence_set_command == "plan":
-            result = plan_evidence_set(
-                paths,
-                target_ref=args.target_ref,
-                work_root=args.work_root,
-                manifest_file=args.manifest_file,
-                required_kinds=args.required_kinds,
-                included_refs=args.included_refs,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result["plan"]))
-                _print_evidence_set_warnings(result)
-            return 0
-
-        if args.command == "evidence-set" and args.evidence_set_command == "record":
-            result = record_evidence_set(
-                paths,
-                target_ref=args.target_ref,
-                work_root=args.work_root,
-                manifest_file=args.manifest_file,
-                required_kinds=args.required_kinds,
-                included_refs=args.included_refs,
-                summary=args.summary,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                evidence = result["evidence"]
-                print(f"{evidence['id']} completeness={evidence['completeness_status']}")
-                _print_evidence_set_warnings(result)
-            return 0
-
-        if args.command == "evidence-set" and args.evidence_set_command == "show":
-            result = show_evidence_set(paths, evidence_id=args.evidence_id)
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result["evidence_set"]))
-            return 0
-
-        if args.command == "completion" and args.completion_command == "evaluate":
-            result = evaluate_completion_policy(
-                paths,
-                policy_file=args.policy_file,
-                evidence_set_id=args.evidence_set_id,
-                test_case_id=args.test_case_id,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result["evaluation"]))
-            return 0 if result["ok"] else 1
-
-        if args.command == "brief" and args.brief_command == "add":
-            result = add_work_brief(
-                paths,
-                file=args.file,
-                summary=args.summary,
-                dry_run=args.dry_run,
-            )
-            if json_output:
-                _print_json(result)
-            elif args.dry_run:
-                print(to_pretty_json(result["planned"]))
-            else:
-                evidence = result["evidence"]
-                print(f"{evidence['id']} {evidence['brief_id']} revision={evidence['revision']}")
-            return 0
-
-        if args.command == "brief" and args.brief_command == "show":
-            result = show_work_brief(
-                paths,
-                evidence_id=args.evidence_id,
-                target_ref=args.target_ref,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result))
-            return 0
-
-        if args.command == "brief" and args.brief_command == "approve":
-            result = approve_work_brief(
-                paths,
-                evidence_id=args.evidence_id,
-                actor=args.actor,
-                actor_kind=args.actor_kind,
-                recorded_by=args.recorded_by,
-                recorder_kind=args.recorder_kind,
-                source_kind=args.source_kind,
-                source_ref=args.source_ref,
-                reason=args.reason,
-                dry_run=args.dry_run,
-            )
-            if json_output:
-                _print_json(result)
-            elif args.dry_run:
-                print(to_pretty_json(result["planned"]))
-            elif result["changed"]:
-                print(f"Approved Work Brief Evidence {args.evidence_id}")
-            else:
-                print(f"Work Brief Evidence {args.evidence_id} is already approved")
-            return 0
-
-        if args.command == "brief" and args.brief_command == "review":
-            result = review_work_brief(
-                paths,
-                evidence_id=args.evidence_id,
-                actor=args.actor,
-                actor_kind=args.actor_kind,
-                reason=args.reason,
-                dry_run=args.dry_run,
-            )
-            if json_output:
-                _print_json(result)
-            elif args.dry_run:
-                print(to_pretty_json(result["planned"]))
-            else:
-                print(f"Recorded Work Brief review {result['event_id']}")
-            return 0
-
-        if args.command == "gap" and args.gap_command == "add":
-            result = add_gap_report(
-                paths,
-                file=args.file,
-                summary=args.summary,
-                dry_run=args.dry_run,
-            )
-            if json_output:
-                _print_json(result)
-            elif args.dry_run:
-                print(to_pretty_json(result["planned"]))
-            else:
-                evidence = result["evidence"]
-                print(f"{evidence['id']} gap_class={evidence['gap_class']}")
-            return 0
-
-        if args.command == "gap" and args.gap_command == "show":
-            result = show_gap_report(paths, evidence_id=args.evidence_id)
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result))
-            return 0
-
-        if args.command == "gap" and args.gap_command == "list":
-            result = list_gap_reports(
-                paths,
-                target_ref=args.target_ref,
-                gap_class=args.gap_class,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result))
-            return 0
-
-        if args.command == "gap" and args.gap_command == "promote":
-            result = promote_gap_lesson(
-                paths,
-                evidence_id=args.evidence_id,
-                lesson_id=args.lesson_id,
-                actor=args.actor,
-                actor_kind=args.actor_kind,
-                recorded_by=args.recorded_by,
-                recorder_kind=args.recorder_kind,
-                source_kind=args.source_kind,
-                source_ref=args.source_ref,
-                reason=args.reason,
-                dry_run=args.dry_run,
-            )
-            if json_output:
-                _print_json(result)
-            elif args.dry_run:
-                print(to_pretty_json(result["planned"]))
-            elif result["changed"]:
-                print(
-                    f"Approved candidate lesson {args.lesson_id}; durable-owner application pending"
-                )
-            else:
-                print(f"Candidate lesson {args.lesson_id} promotion is already approved")
-            return 0
-
-        if args.command == "route" and args.route_command == "recommend":
-            result = recommend_route(
-                paths,
-                target_ref=args.target_ref,
-                brief_file=args.brief_file,
-                changed_paths=args.changed_paths,
-                record=args.record,
-            )
-            if json_output:
-                _print_json(result)
-            elif args.record and result["changed"]:
-                print(
-                    f"{result['evidence']['id']} "
-                    f"{result['recommendation']['profile']} "
-                    f"risk={result['recommendation']['risk_level']}"
-                )
-            else:
-                print(to_pretty_json(result["recommendation"]))
-            return 0
-
-        if args.command == "route" and args.route_command == "override":
-            result = override_route(
-                paths,
-                target_ref=args.target_ref,
-                requested_profile=args.requested_profile,
-                actor=args.actor,
-                reason=args.reason,
-                brief_file=args.brief_file,
-                changed_paths=args.changed_paths,
-                policy_file=args.policy_file,
-                dry_run=args.dry_run,
-            )
-            if json_output:
-                _print_json(result)
-            elif args.dry_run:
-                print(to_pretty_json(result["planned"]))
-            elif result["changed"]:
-                print(
-                    f"{result['evidence']['override']['id']} "
-                    f"profile={result['override']['requested_profile']}"
-                )
-            else:
-                print(f"Route override already recorded: {result['evidence']['override']['id']}")
-            return 0
-
-        if args.command == "route" and args.route_command == "current":
-            result = current_route(
-                paths,
-                target_ref=args.target_ref,
-                brief_file=args.brief_file,
-                changed_paths=args.changed_paths,
-                policy_file=args.policy_file,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result))
-            return 0
-
-        if args.command == "policy" and args.policy_command in {"resolve", "explain"}:
-            result = resolve_policy_for_target(
-                paths,
-                target_ref=args.target_ref,
-                brief_file=args.brief_file,
-                changed_paths=args.changed_paths,
-                policy_file=args.policy_file,
-            )
-            if json_output:
-                _print_json(result)
-            elif args.policy_command == "explain":
-                print(render_policy_explanation(result["resolution"]), end="")
-            else:
-                print(to_pretty_json(result["resolution"]))
-            return 0
-
-        if args.command == "resume":
-            if json_output and args.format == "markdown":
-                raise InvalidInputError("--json cannot be combined with --format markdown.")
-            output_format = "json" if json_output else (args.format or "markdown")
-            output_path = Path(args.output) if args.output else None
-            if output_path is not None:
-                resolved_output = output_path.resolve()
-                loop_dir = paths.loop_dir.resolve()
-                exports_dir = paths.exports_dir.resolve()
-                if resolved_output.is_relative_to(loop_dir) and not resolved_output.is_relative_to(
-                    exports_dir
-                ):
-                    raise InvalidInputError(
-                        "--output cannot overwrite Project Loop state; use .project-loop/exports or a path outside .project-loop.",
-                        details={
-                            "path": args.output,
-                            "allowed_project_loop_dir": str(paths.exports_dir),
-                        },
-                    )
-            packet = build_handoff_packet(paths, target_id=args.resume_target)
-            rendered = (
-                serialized_handoff_packet(packet)
-                if output_format == "json"
-                else render_handoff_markdown(packet)
-            )
-            if output_path is not None:
-                try:
-                    output_path.write_text(rendered, encoding="utf-8")
-                except OSError as exc:
-                    raise InvalidInputError(
-                        f"Could not write handoff packet: {args.output}",
-                        details={"path": args.output, "reason": str(exc)},
-                    ) from exc
-            if output_format == "json":
-                payload: dict[str, object] = {"ok": True, "handoff_packet": packet}
-                if args.output:
-                    payload["output"] = args.output
-                _print_json(payload)
-            elif args.output:
-                print(args.output)
-            else:
-                print(rendered, end="")
-            return 0
-
-        if args.command == "init":
-            if args.dry_run:
-                plan = plan_init_project(
-                    paths,
-                    overwrite=args.force,
-                    with_claude=not args.no_claude,
-                    repair_config=args.repair_config,
-                    refresh_skill=args.refresh_skill,
-                )
-                return _print_init_plan(plan, json_output=json_output)
-            result = init_project(
-                paths,
-                overwrite=args.force,
-                with_claude=not args.no_claude,
-                repair_config=args.repair_config,
-                refresh_skill=args.refresh_skill,
-            )
-            if json_output:
-                payload = {
-                    "ok": True,
-                    "root": str(result.root),
-                    "created": result.created,
-                    "event_appended": result.event_appended,
-                }
-                if args.repair_config:
-                    payload["repaired_config_commands"] = list(
-                        result.repaired_config_commands
-                    )
-                if args.refresh_skill:
-                    payload["skill_refreshed"] = result.skill_refreshed
-                    payload["skill_backup_path"] = result.skill_backup_path
-                _print_json(payload)
-            else:
-                print(f"Initialized Project Loop Harness at {paths.root}")
-                if result.repaired_config_commands:
-                    print(
-                        "Repaired legacy empty commands: "
-                        + ", ".join(result.repaired_config_commands)
-                    )
-            return 0
-
-        if args.command == "start":
-            payload = start_work(
-                paths,
-                intent=args.intent,
-                dry_run=args.dry_run,
-                no_init=args.no_init,
-                new=args.new,
-                skills=args.skill,
-            )
-            if json_output:
-                _print_json(payload)
-            else:
-                print(_format_start_summary(payload))
-            return 1 if payload["status"] == "init_blocked" else 0
-
-        if args.command == "doctor":
-            return handle_doctor(
-                paths,
-                strict=args.strict,
-                check_updates=args.check_updates,
-                json_output=json_output,
-                output=sys.stdout,
-            )
-
-        if args.command == "validate":
-            result = validate_project(paths, strict=args.strict)
-            return _print_validation(result, json_output=json_output)
-
-        if args.command == "migrate":
-            if args.migrate_status or args.migrate_action == "status":
-                status = migration_status(paths)
-                payload = {"ok": True, **status.to_dict()}
-                if json_output:
-                    _print_json(payload)
-                else:
-                    print(to_pretty_json(payload))
-                return 0
-            result = apply_migrations(paths)
-            if json_output:
-                _print_json(result.to_dict())
-            elif result.metadata_repair is not None:
-                repair = result.metadata_repair
-                print(
-                    "Repaired metadata.schema_version from "
-                    f"{repair['from_schema_version']} to {repair['to_schema_version']}: "
-                    f"{repair['reason']}. This was a metadata repair, not a schema migration."
-                )
-            elif result.applied:
-                for migration in result.applied:
-                    print(f"Applied migration {migration.id}")
-            else:
-                print("No pending migrations")
-            return 0
-
-        if args.command == "audit" and args.audit_command == "flush":
-            result = project_pending_events(paths)
-            if json_output:
-                _print_json({"ok": result.ok, **result.to_dict()})
-            else:
-                print(to_pretty_json(result.to_dict()))
-            return 0 if result.ok else 6
-
-        if args.command == "audit" and args.audit_command == "check":
-            result = audit_check(paths)
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result))
-            return audit_check_exit_code(result)
-
-        if args.command == "audit" and args.audit_command == "repair":
-            result = audit_repair(paths, apply=args.apply)
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result))
-            return audit_repair_exit_code(result)
-
-        if args.command == "audit" and args.audit_command == "rebuild-jsonl":
-            output = None if args.output is None else Path(args.output).resolve()
-            try:
-                result = rebuild_jsonl_from_sqlite(paths, output=output, apply=args.apply)
-            except OSError as exc:
-                raise AuditCommandError(
-                    message=f"Audit JSONL rebuild was interrupted by an I/O error: {exc}",
-                    code="audit_rebuild_io_error",
-                    exit_code=6,
-                ) from exc
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result))
-            return audit_rebuild_exit_code(result)
-
-        if args.command == "repair" and args.repair_command == "lifecycle":
-            if args.apply:
-                raise InvalidInputError(
-                    "--apply is not supported; use --apply-structural.",
-                    details={"flag": "--apply", "supported_flag": "--apply-structural"},
-                )
-            if args.apply_structural:
-                result = apply_structural_lifecycle_repair(paths)
-                if json_output:
-                    _print_json(result)
-                else:
-                    print(to_pretty_json(result))
-                return 0
-            plan = build_lifecycle_repair_plan(paths)
-            if json_output:
-                _print_json(plan)
-            else:
-                print(render_lifecycle_repair_plan(plan))
-            return 0
-
-        if args.command == "render":
-            result = validate_project(paths)
-            if not result.ok:
-                return _print_validation(result, json_output=json_output)
-            render_dashboard(paths, locale=args.locale)
-            if json_output:
-                _print_json(
-                    {
-                        "data_path": str(paths.dashboard_data),
-                        "ok": True,
-                        "path": str(paths.dashboard_html),
-                    }
-                )
-            else:
-                print(f"Rendered {paths.dashboard_html}")
-            return 0
-
-        if args.command == "update" and args.update_command == "check":
-            result = update_check.check_for_update(
-                timeout=args.timeout,
-                use_cache=not args.no_cache,
-            )
-            return _print_update_check(result, json_output=json_output)
-
-        if args.command == "update" and args.update_command == "command":
-            context = update_check.detect_install_context()
-            return _print_update_command(context, json_output=json_output)
+        control_status = handle_control_command(
+            args,
+            paths,
+            json_output=json_output,
+            audit_check_fn=audit_check,
+            audit_repair_fn=audit_repair,
+            rebuild_jsonl_fn=rebuild_jsonl_from_sqlite,
+        )
+        if control_status is not None:
+            return control_status
 
         entity_status = handle_entity_command(
             args,
@@ -2701,9 +1813,6 @@ def main(argv: list[str] | None = None) -> int:
         )
         if entity_status is not None:
             return entity_status
-
-        if args.command == "loop" and args.loop_command == "status":
-            return handle_loop_status(paths, json_output=json_output, output=sys.stdout)
 
         execution_status = handle_execution_command(
             args,
@@ -2728,345 +1837,18 @@ def main(argv: list[str] | None = None) -> int:
         if governance_status is not None:
             return governance_status
 
-        if args.command == "context" and args.context_command == "pack":
-            now = utc_now_iso()
-            if args.job_id:
-                if args.master_trace_context:
-                    raise InvalidInputError(
-                        "--master-trace-context is valid only with --task.",
-                        details={"master_trace_context": True, "target_type": "agent_job"},
-                    )
-                pack = pack_context_for_job(
-                    paths,
-                    job_id=args.job_id,
-                    now=now,
-                    reader_role=args.role,
-                    max_tokens=args.max_tokens,
-                    include_code_context=args.include_code_context,
-                    require_bound_receipt=args.require_bound_receipt,
-                )
-            else:
-                pack = pack_context_for_task(
-                    paths,
-                    task_id=args.task_id,
-                    now=now,
-                    reader_role=args.role,
-                    max_tokens=args.max_tokens,
-                    include_code_context=args.include_code_context,
-                    require_bound_receipt=args.require_bound_receipt,
-                    include_master_trace_context=args.master_trace_context,
-                )
-            if args.record_usage:
-                record_context_pack_usage(paths, pack)
-            if json_output:
-                _print_json({"ok": True, "context_pack": pack})
-            else:
-                print(pack["markdown"], end="")
-            return 0
+        context_status = handle_context_command(
+            args,
+            paths,
+            json_output=json_output,
+            now_factory=utc_now_iso,
+        )
+        if context_status is not None:
+            return context_status
 
-        if args.command == "context" and args.context_command == "check":
-            if args.job_id:
-                payload = context_check_for_job(
-                    paths,
-                    job_id=args.job_id,
-                    require_bound_receipt=args.require_bound_receipt,
-                )
-            else:
-                payload = context_check_for_task(
-                    paths,
-                    task_id=args.task_id,
-                    require_bound_receipt=args.require_bound_receipt,
-                )
-            if json_output:
-                _print_json({"ok": True, "context_check": payload})
-            else:
-                print(_format_context_check_summary(payload))
-            return 0
-
-        if args.command == "receipt" and args.receipt_command == "show":
-            summary = receipt_summary_for_ref(
-                paths,
-                now=utc_now_iso(),
-                ref=args.ref,
-                latest=args.latest,
-            )
-            if json_output:
-                _print_json(summary)
-            else:
-                print(render_receipt_summary(summary), end="")
-            return 0
-
-        if args.command == "index" and args.index_command == "build":
-            result = build_code_index(paths, include_files=args.include_files)
-            if json_output:
-                _print_json(result)
-            else:
-                index = result["index"]
-                print(
-                    f"Indexed {index['file_count']} files "
-                    f"({index['indexed_bytes']} bytes), ignored {index['ignored_count']} paths "
-                    f"({index['sensitive_omitted_count']} sensitive)"
-                )
-            return 0
-
-        if args.command == "index" and args.index_command == "status":
-            result = code_index_status(paths, include_files=args.include_files)
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result["index"]))
-            return 0
-
-        if args.command == "code" and args.code_command == "search":
-            result = search_code(paths, query=args.query, limit=args.limit)
-            if json_output:
-                _print_json(result)
-            else:
-                warning = result["search"].get("git_head_warning")
-                if warning:
-                    print(warning["message"])
-                for item in result["search"]["results"]:
-                    lines = item.get("lines") or []
-                    line = lines[0] if lines else 0
-                    print(f"{item['path']}:{line} {item['snippet']}")
-                    if item.get("snapshot_consistency") != "fresh":
-                        print(
-                            "  warning: "
-                            f"snapshot_consistency={item['snapshot_consistency']} "
-                            f"({item['snapshot_consistency_reason']})"
-                        )
-            return 0
-
-        if args.command == "impact":
-            result = analyze_impact(
-                paths,
-                diff_source=args.diff_source,
-                base_ref=args.base_ref,
-                staged=args.staged,
-                unstaged=args.unstaged,
-                include_untracked=args.include_untracked,
-                all_changes=args.all_changes,
-                for_task=args.for_task,
-                for_job=args.for_job,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                display, excluded_summary = _impact_text_payload(result["impact"])
-                print(to_pretty_json(display))
-                if excluded_summary:
-                    print(excluded_summary)
-            return 0
-
-        if args.command == "eval" and args.eval_command == "retrieval":
-            if args.record_baseline:
-                result = record_retrieval_baseline(paths, fixture_path=args.fixture)
-            elif args.compare_baseline:
-                result = compare_retrieval_baseline(paths, fixture_path=args.fixture)
-            else:
-                result = evaluate_retrieval(paths, fixture_path=args.fixture)
-            if json_output:
-                _print_json(result)
-            elif args.record_baseline:
-                print(result["baseline"]["evidence_path"])
-            elif args.compare_baseline:
-                print(to_pretty_json(result["comparison"]))
-            else:
-                print(to_pretty_json(result["evaluation"]))
-            return 0
-
-        if (
-            args.command == "eval"
-            and args.eval_command == "fixture"
-            and args.eval_fixture_command == "propose"
-        ):
-            result = propose_retrieval_fixture(
-                paths,
-                receipt_evidence_id=args.from_receipt,
-                force=args.force,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(result["fixture"]["path"])
-            return 0
-
-        if args.command == "next":
-            if args.strict:
-                validation = validate_project(paths, strict=True)
-                if not validation.ok:
-                    action = build_next_action(
-                        action_type="resolve_validation_errors",
-                        command="pcl report validation --strict",
-                        reason="Strict validation failed; review diagnostics before continuing the loop.",
-                        target={
-                            "strict": True,
-                            "ok": validation.ok,
-                            "errors": validation.errors,
-                            "warnings": validation.warnings,
-                            "findings": [finding.to_dict() for finding in validation.findings],
-                            "finding_count": len(validation.findings),
-                            "finding_counts": validation.finding_counts(),
-                            "finding_codes": [finding.code for finding in validation.findings],
-                            "validation_report": ".project-loop/reports/validation-strict.md",
-                        },
-                        priority=1,
-                        blocking=True,
-                        requires_human=True,
-                        safe_to_run=True,
-                        expected_after="Strict validation passes and normal next-action routing can resume.",
-                    )
-                else:
-                    action = next_action(paths, target=args.next_target)
-            else:
-                action = next_action(paths, target=args.next_target)
-            if json_output:
-                _print_json(action)
-            elif args.explain:
-                print(_format_next_explanation(action))
-            else:
-                print(to_pretty_json(action))
-            return 0
-
-        if args.command == "finish":
-            packet_only_flags = any(
-                [
-                    args.dry_run,
-                    args.task,
-                    args.base,
-                    args.timeout != 120,
-                    args.max_output_bytes != 1_048_576,
-                ]
-            )
-            if args.execute and args.emit_packet:
-                raise InvalidInputError(
-                    "--execute and --emit-packet are separate modes and cannot be combined."
-                )
-            if packet_only_flags and not args.emit_packet:
-                raise InvalidInputError(
-                    "--dry-run, --task, --base, --timeout, and --max-output-bytes require --emit-packet."
-                )
-            if args.emit_packet:
-                if args.dry_run:
-                    packet_payload = plan_finish_packet(
-                        paths,
-                        run_id=args.run,
-                        goal_id=args.goal,
-                        task_id=args.task,
-                        base_revision=args.base,
-                    )
-                    packet_payload["exit_code"] = 0
-                else:
-                    packet_payload = emit_finish_packet(
-                        paths,
-                        run_id=args.run,
-                        goal_id=args.goal,
-                        task_id=args.task,
-                        base_revision=args.base,
-                        timeout_seconds=args.timeout,
-                        max_output_bytes=args.max_output_bytes,
-                    )
-                if json_output:
-                    _print_json({"ok": True, "finish": packet_payload})
-                else:
-                    print(to_pretty_json(packet_payload))
-                return int(packet_payload["exit_code"])
-            payload = finish_plan(paths, run_id=args.run, goal_id=args.goal)
-            exit_code = 0
-            if args.execute:
-                payload = dict(payload)
-                if payload["remaining_steps"]:
-                    payload["executed"] = []
-                    payload["changed"] = False
-                else:
-                    executed = _run_finish_tail(paths)
-                    payload["executed"] = executed
-                    payload["changed"] = bool(executed)
-                    if any(not item["ok"] for item in executed):
-                        exit_code = 1
-            if json_output:
-                _print_json({"ok": True, "finish": payload})
-            else:
-                print(_format_finish_summary(payload))
-            return exit_code
-
-        if args.command == "export" and args.export_command == "csv":
-            paths_written = export_csv(paths)
-            if json_output:
-                _print_json({"ok": True, "paths": [str(p) for p in paths_written]})
-            else:
-                for p in paths_written:
-                    print(p)
-            return 0
-
-        if args.command == "report" and args.report_command in {
-            "goal",
-            "run",
-            "feature",
-            "defect",
-            "validation",
-        }:
-            identifier_attributes = {
-                "goal": "goal_id",
-                "run": "workflow_run_id",
-                "feature": "feature_id",
-                "defect": "defect_id",
-            }
-            identifier = getattr(
-                args,
-                identifier_attributes.get(args.report_command, ""),
-                None,
-            )
-            return handle_report_artifact(
-                paths,
-                args.report_command,
-                identifier=identifier,
-                strict=getattr(args, "strict", False),
-                json_output=json_output,
-                output=sys.stdout,
-            )
-
-        if args.command == "report" and args.report_command == "kpi":
-            result = report_kpi(paths, since=args.since)
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result["sections"]))
-            return 0
-
-        if args.command == "report" and args.report_command == "skill-usage":
-            result = report_skill_usage(
-                since=args.since,
-                until=args.until,
-                sources=args.source or None,
-                codex_root=args.codex_root,
-                claude_root=args.claude_root,
-                cockpit_root=args.cockpit_root,
-            )
-            rendered = (
-                serialized_skill_usage_report(result)
-                if json_output
-                else render_skill_usage_markdown(result)
-            )
-            if args.output:
-                source_roots = default_skill_usage_roots(
-                    codex_root=args.codex_root,
-                    claude_root=args.claude_root,
-                    cockpit_root=args.cockpit_root,
-                )
-                write_skill_usage_report(
-                    args.output,
-                    rendered,
-                    forbidden_roots=source_roots.values(),
-                    forbidden_paths=(
-                        paths.db_path,
-                        paths.events_path,
-                        paths.dashboard_html,
-                        paths.dashboard_data,
-                    ),
-                )
-            print(rendered, end="")
-            return 0
+        planning_status = handle_planning_command(args, paths, json_output=json_output)
+        if planning_status is not None:
+            return planning_status
 
         parser.error("Unhandled command")
         return 2
