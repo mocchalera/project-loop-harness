@@ -38,15 +38,9 @@ from .code_index import (
 )
 from .commands import (
     FEATURE_STATUSES,
-    add_feature,
     build_next_action,
-    create_goal,
     finish_plan,
-    list_features,
     next_action,
-    open_defect,
-    read_feature,
-    set_feature_status,
     to_pretty_json,
 )
 from .context import (
@@ -152,6 +146,7 @@ from .evidence_sets import plan_evidence_set, record_evidence_set, show_evidence
 from .completion_policies import evaluate_completion_policy
 from .evidence_show import render_evidence_metadata, show_evidence
 from .errors import DataStoreError, InvalidInputError, PclError
+from .entity_handlers import handle_entity_command
 from .exporters import export_csv
 from .finish_execution import emit_finish_packet, plan_finish_packet
 from .escalations import (
@@ -171,28 +166,20 @@ from .skill_usage_report import (
     write_skill_usage_report,
 )
 from .lifecycle import (
-    cancel_goal,
     cancel_job,
     cancel_workflow_run,
-    close_goal,
-    close_defect,
     complete_job,
     complete_workflow_run,
     fail_job,
     fail_workflow_run,
-    fix_defect,
     record_verification,
-    start_defect,
-    triage_defect,
-    verify_defect,
-    waive_defect,
 )
 from .lifecycle_repair import (
     apply_structural_lifecycle_repair,
     build_lifecycle_repair_plan,
     render_lifecycle_repair_plan,
 )
-from .relationship_repair import add_evidence_link, repair_test_links
+from .relationship_repair import add_evidence_link
 from .migrations import apply_migrations, migration_status
 from .outbox import project_pending_events
 from .paths import resolve_paths
@@ -237,33 +224,12 @@ from .stories import (
     STORY_STATUSES,
     TEST_CASE_STATUSES,
     TEST_CASE_TYPES,
-    approve_story,
-    block_test_case,
-    draft_story,
-    fail_test_case,
-    list_stories,
-    list_test_cases,
-    missing_test_case,
-    pass_test_case,
-    plan_test_case,
-    read_story,
-    read_test_case,
-    reverify_test_case,
-    review_story,
-    waive_story,
-    waive_test_case,
 )
 from .start import start_work
 from .timeutil import utc_now_iso
 from .tasks import (
     TASK_RISKS,
     TASK_STATUSES,
-    add_dependency,
-    create_task,
-    list_tasks,
-    read_task,
-    remove_dependency,
-    set_task_status,
 )
 from . import update_check
 from .validators import validate_project
@@ -2786,464 +2752,15 @@ def main(argv: list[str] | None = None) -> int:
             context = update_check.detect_install_context()
             return _print_update_command(context, json_output=json_output)
 
-        if args.command == "goal" and args.goal_command == "create":
-            goal_id = create_goal(
-                paths,
-                title=args.title,
-                completion_json=args.completion_json,
-                budget_json=args.budget_json,
-            )
-            if json_output:
-                _print_json({"id": goal_id, "ok": True})
-            else:
-                print(goal_id)
-            return 0
-
-        if args.command == "goal" and args.goal_command == "close":
-            result = close_goal(
-                paths,
-                goal_id=args.goal_id,
-                summary=args.summary,
-                evidence=args.evidence,
-                evidence_id=args.evidence_id,
-                verification_id=args.verification,
-            )
-            _print_legacy_evidence_warning(result, json_output=json_output)
-            if json_output:
-                _print_json(result)
-            elif result.get("changed") is False:
-                print(f"Goal {result['goal_id']} already {result['status']}; no change recorded.")
-            else:
-                print(f"Closed goal {result['goal_id']}")
-            return 0
-
-        if args.command == "goal" and args.goal_command == "cancel":
-            result = cancel_goal(paths, goal_id=args.goal_id, summary=args.summary)
-            if json_output:
-                _print_json(result)
-            elif result.get("changed") is False:
-                print(f"Goal {result['goal_id']} already {result['status']}; no change recorded.")
-            else:
-                print(f"Cancelled goal {result['goal_id']}")
-            return 0
-
-        if args.command == "feature" and args.feature_command == "add":
-            feature_id = add_feature(
-                paths,
-                name=args.name,
-                surface=args.surface,
-                description=args.description,
-                evidence=args.evidence,
-                task_id=args.task,
-            )
-            if json_output:
-                _print_json({"id": feature_id, "ok": True})
-            else:
-                print(feature_id)
-            return 0
-
-        if args.command == "feature" and args.feature_command == "list":
-            features = list_features(paths, status=args.status)
-            if json_output:
-                _print_json({"features": features, "ok": True})
-            elif features:
-                for feature in features:
-                    print(
-                        f"{feature['id']} {feature['status']} surface={feature['surface']} name={feature['name']}"
-                    )
-            else:
-                print("No features")
-            return 0
-
-        if args.command == "feature" and args.feature_command == "read":
-            feature = read_feature(paths, args.feature_id)
-            if json_output:
-                _print_json({"feature": feature, "ok": True})
-            else:
-                print(to_pretty_json(feature))
-            return 0
-
-        if args.command == "feature" and args.feature_command == "status":
-            result = set_feature_status(
-                paths,
-                args.feature_id,
-                status=args.status,
-                summary=args.summary,
-                evidence=args.evidence,
-                evidence_id=args.evidence_id,
-            )
-            _print_legacy_evidence_warning(result, json_output=json_output)
-            if json_output:
-                _print_json(result)
-            elif result.get("changed") is False:
-                print(
-                    f"Feature {result['feature_id']} already {result['status']}; no change recorded."
-                )
-            else:
-                print(f"Updated feature {result['feature_id']} to {result['status']}")
-            return 0
-
-        if args.command == "story" and args.story_command == "draft":
-            result = draft_story(
-                paths,
-                feature_id=args.feature,
-                actor=args.actor,
-                goal=args.goal,
-                benefit=args.benefit,
-                expected_behavior=args.expected_behavior,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(result["id"])
-            return 0
-
-        if args.command == "story" and args.story_command == "review":
-            result = review_story(paths, story_id=args.story_id, summary=args.summary)
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Reviewed story {result['id']}")
-            return 0
-
-        if args.command == "story" and args.story_command == "approve":
-            result = approve_story(paths, story_id=args.story_id, summary=args.summary)
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Approved story {result['id']}")
-            return 0
-
-        if args.command == "story" and args.story_command == "waive":
-            result = waive_story(paths, story_id=args.story_id, reason=args.reason)
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Waived story {result['id']}")
-            return 0
-
-        if args.command == "story" and args.story_command == "list":
-            stories = list_stories(paths, feature_id=args.feature, status=args.status)
-            if json_output:
-                _print_json({"ok": True, "stories": stories})
-            elif stories:
-                for story in stories:
-                    print(
-                        f"{story['id']} {story['status']} feature={story['feature_id']} goal={story['goal']}"
-                    )
-            else:
-                print("No stories")
-            return 0
-
-        if args.command == "story" and args.story_command == "read":
-            story = read_story(paths, args.story_id)
-            if json_output:
-                _print_json({"ok": True, "story": story})
-            else:
-                print(to_pretty_json(story))
-            return 0
-
-        if args.command == "test" and args.test_command == "plan":
-            result = plan_test_case(
-                paths,
-                feature_id=args.feature,
-                story_id=args.story,
-                test_type=args.type,
-                scenario=args.scenario,
-                expected=args.expected,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(result["id"])
-                _print_test_plan_warnings(result)
-            return 0
-
-        if args.command == "test" and args.test_command == "link":
-            result = repair_test_links(
-                paths,
-                test_case_id=args.test_case_id,
-                story_id=args.story,
-                evidence_id=args.evidence_id,
-                summary=args.summary,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result))
-            return 0
-
-        if args.command == "test" and args.test_command == "pass":
-            result = pass_test_case(
-                paths,
-                test_case_id=args.test_case_id,
-                summary=args.summary,
-                evidence=args.evidence,
-                evidence_id=args.evidence_id,
-                workflow_run_id=args.run,
-                completion_policy_file=args.completion_policy_file,
-            )
-            _print_legacy_evidence_warning(result, json_output=json_output)
-            if json_output:
-                _print_json(result)
-            elif result.get("changed") is False:
-                print(f"Test case {result['id']} already {result['status']}; no change recorded.")
-            else:
-                print(f"Passed test case {result['id']}")
-            return 0
-
-        if args.command == "test" and args.test_command == "reverify":
-            result = reverify_test_case(
-                paths,
-                test_case_id=args.test_case_id,
-                summary=args.summary,
-                evidence_id=args.evidence_id,
-                completion_policy_file=args.completion_policy_file,
-            )
-            if json_output:
-                _print_json(result)
-            elif result.get("changed") is False:
-                print(f"Test case {result['id']} already has this reverified proof; no change recorded.")
-            else:
-                print(f"Reverified test case {result['id']}")
-            return 0
-
-        if args.command == "test" and args.test_command == "fail":
-            result = fail_test_case(
-                paths,
-                test_case_id=args.test_case_id,
-                summary=args.summary,
-                evidence=args.evidence,
-                evidence_id=args.evidence_id,
-                workflow_run_id=args.run,
-            )
-            _print_legacy_evidence_warning(result, json_output=json_output)
-            if json_output:
-                _print_json(result)
-            elif result.get("changed") is False:
-                print(f"Test case {result['id']} already {result['status']}; no change recorded.")
-            else:
-                print(f"Failed test case {result['id']}")
-            return 0
-
-        if args.command == "test" and args.test_command == "block":
-            result = block_test_case(
-                paths,
-                test_case_id=args.test_case_id,
-                summary=args.summary,
-                workflow_run_id=args.run,
-            )
-            if json_output:
-                _print_json(result)
-            elif result.get("changed") is False:
-                print(f"Test case {result['id']} already {result['status']}; no change recorded.")
-            else:
-                print(f"Blocked test case {result['id']}")
-            return 0
-
-        if args.command == "test" and args.test_command == "missing":
-            result = missing_test_case(paths, test_case_id=args.test_case_id, summary=args.summary)
-            if json_output:
-                _print_json(result)
-            elif result.get("changed") is False:
-                print(f"Test case {result['id']} already {result['status']}; no change recorded.")
-            else:
-                print(f"Marked test case {result['id']} missing")
-            return 0
-
-        if args.command == "test" and args.test_command == "waive":
-            result = waive_test_case(paths, test_case_id=args.test_case_id, reason=args.reason)
-            if json_output:
-                _print_json(result)
-            elif result.get("changed") is False:
-                print(f"Test case {result['id']} already {result['status']}; no change recorded.")
-            else:
-                print(f"Waived test case {result['id']}")
-            return 0
-
-        if args.command == "test" and args.test_command == "list":
-            test_cases = list_test_cases(
-                paths,
-                feature_id=args.feature,
-                story_id=args.story,
-                status=args.status,
-            )
-            if json_output:
-                _print_json({"ok": True, "test_cases": test_cases})
-            elif test_cases:
-                for test_case in test_cases:
-                    print(
-                        f"{test_case['id']} {test_case['status']} feature={test_case['feature_id']} "
-                        f"type={test_case['type']}"
-                    )
-            else:
-                print("No test cases")
-            return 0
-
-        if args.command == "test" and args.test_command == "read":
-            test_case = read_test_case(paths, args.test_case_id)
-            if json_output:
-                _print_json({"ok": True, "test_case": test_case})
-            else:
-                print(to_pretty_json(test_case))
-            return 0
-
-        if args.command == "task" and args.task_command == "create":
-            result = create_task(
-                paths,
-                title=args.title,
-                description=args.description,
-                priority=args.priority,
-                owner=args.owner,
-                risk=args.risk,
-                effort=args.effort,
-                goal_id=args.goal,
-                feature_id=args.feature,
-                defect_id=args.defect,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(result["id"])
-            return 0
-
-        if args.command == "task" and args.task_command == "list":
-            tasks = list_tasks(paths, status=args.status, goal_id=args.goal, owner=args.owner)
-            if json_output:
-                _print_json({"ok": True, "tasks": tasks})
-            elif tasks:
-                for task in tasks:
-                    print(
-                        f"{task['id']} {task['status']} priority={task['priority']} "
-                        f"title={task['title']}"
-                    )
-            else:
-                print("No tasks")
-            return 0
-
-        if args.command == "task" and args.task_command == "read":
-            task = read_task(paths, args.task_id)
-            if json_output:
-                _print_json({"ok": True, "task": task})
-            else:
-                print(to_pretty_json(task))
-            return 0
-
-        if args.command == "task" and args.task_command == "status":
-            result = set_task_status(
-                paths, args.task_id, status=args.new_status, reason=args.reason
-            )
-            if json_output:
-                _print_json(result)
-            elif result.get("changed") is False:
-                print(f"Task {result['id']} already {result['status']}; no change recorded.")
-            else:
-                print(
-                    f"Updated task {result['id']} from {result['from_status']} to {result['to_status']}"
-                )
-            return 0
-
-        if args.command == "task" and args.task_command == "depend":
-            result = add_dependency(paths, args.task_id, depends_on_task_id=args.depends_on_task_id)
-            if json_output:
-                _print_json(result)
-            else:
-                print(
-                    f"Added task dependency {result['task_id']} -> {result['depends_on_task_id']}"
-                )
-            return 0
-
-        if args.command == "task" and args.task_command == "undepend":
-            result = remove_dependency(
-                paths, args.task_id, depends_on_task_id=args.depends_on_task_id
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(
-                    f"Removed task dependency {result['task_id']} -> {result['depends_on_task_id']}"
-                )
-            return 0
-
-        if args.command == "defect" and args.defect_command == "open":
-            defect_id = open_defect(
-                paths,
-                feature_id=args.feature,
-                severity=args.severity,
-                expected=args.expected,
-                actual=args.actual,
-                test_case_id=args.test,
-                reproduction=args.reproduction,
-                evidence=args.evidence,
-            )
-            if json_output:
-                _print_json({"id": defect_id, "ok": True})
-            else:
-                print(defect_id)
-            return 0
-
-        if args.command == "defect" and args.defect_command == "triage":
-            result = triage_defect(paths, defect_id=args.defect_id, summary=args.summary)
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Triaged defect {result['defect_id']}")
-            return 0
-
-        if args.command == "defect" and args.defect_command == "start":
-            result = start_defect(paths, defect_id=args.defect_id, summary=args.summary)
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Started defect {result['defect_id']}")
-            return 0
-
-        if args.command == "defect" and args.defect_command == "fix":
-            result = fix_defect(
-                paths,
-                defect_id=args.defect_id,
-                summary=args.summary,
-                evidence=args.evidence,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Fixed defect {result['defect_id']}")
-            return 0
-
-        if args.command == "defect" and args.defect_command == "verify":
-            result = verify_defect(
-                paths,
-                defect_id=args.defect_id,
-                summary=args.summary,
-                verification_id=args.verification,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Verified defect {result['defect_id']}")
-            return 0
-
-        if args.command == "defect" and args.defect_command == "close":
-            result = close_defect(
-                paths,
-                defect_id=args.defect_id,
-                summary=args.summary,
-                evidence=args.evidence,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Closed defect {result['defect_id']}")
-            return 0
-
-        if args.command == "defect" and args.defect_command == "waive":
-            result = waive_defect(paths, defect_id=args.defect_id, reason=args.reason)
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Waived defect {result['defect_id']}")
-            return 0
+        entity_status = handle_entity_command(
+            args,
+            paths,
+            json_output=json_output,
+            output=sys.stdout,
+            error=sys.stderr,
+        )
+        if entity_status is not None:
+            return entity_status
 
         if args.command == "loop" and args.loop_command == "status":
             return handle_loop_status(paths, json_output=json_output, output=sys.stdout)
