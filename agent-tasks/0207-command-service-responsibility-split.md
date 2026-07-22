@@ -1,6 +1,6 @@
 # 0207: Command service responsibility split
 
-- **Status:** Planned
+- **Status:** Complete
 - **Milestone:** Post-v0.5.3 maintainability
 - **Priority:** P1
 - **Size:** M
@@ -19,4 +19,3 @@ domain, next-action routing, and finish-planning modules.
 2. Query ordering, transactions, event payloads, routing priority, and finish
    plans remain byte-for-byte compatible where serialized.
 3. Direct service tests, next-action tests, Ruff, and full pytest pass.
-
