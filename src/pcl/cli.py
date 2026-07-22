@@ -17,14 +17,7 @@ from .audit import (
     audit_repair_exit_code,
     rebuild_jsonl_from_sqlite,
 )
-from .agents import (
-    generate_agent_command,
-    ingest_agent_run,
-    read_job_prompt,
-    read_job_prompt_handoff,
-)
 from .adaptive_policy import render_policy_explanation, resolve_policy_for_target
-from .checkpoints import checkpoint_status, record_checkpoint
 from .code_index import (
     GIT_DIFF_SENTINEL,
     analyze_impact,
@@ -133,29 +126,13 @@ from .contracts.decision_proposal import (
     validate_decision_proposal,
 )
 from .code_context.summary import render_receipt_summary
-from .decisions import (
-    list_decisions,
-    open_decision,
-    read_decision,
-    resolve_decision,
-    waive_decision,
-)
-from .dispatch import assign_job, heartbeat_job, lease_job, reap_expired_leases, release_job
-from .evidence import record_adhoc_evidence, supersede_evidence
 from .evidence_sets import plan_evidence_set, record_evidence_set, show_evidence_set
 from .completion_policies import evaluate_completion_policy
-from .evidence_show import render_evidence_metadata, show_evidence
 from .errors import DataStoreError, InvalidInputError, PclError
 from .entity_handlers import handle_entity_command
+from .execution_handlers import handle_execution_command
 from .exporters import export_csv
 from .finish_execution import emit_finish_packet, plan_finish_packet
-from .escalations import (
-    cancel_escalation,
-    list_escalations,
-    open_escalation,
-    read_escalation,
-    resolve_escalation,
-)
 from .init_project import init_project, plan_init_project
 from .kpi_report import report_kpi
 from .skill_usage_report import (
@@ -165,21 +142,11 @@ from .skill_usage_report import (
     serialized_skill_usage_report,
     write_skill_usage_report,
 )
-from .lifecycle import (
-    cancel_job,
-    cancel_workflow_run,
-    complete_job,
-    complete_workflow_run,
-    fail_job,
-    fail_workflow_run,
-    record_verification,
-)
 from .lifecycle_repair import (
     apply_structural_lifecycle_repair,
     build_lifecycle_repair_plan,
     render_lifecycle_repair_plan,
 )
-from .relationship_repair import add_evidence_link
 from .migrations import apply_migrations, migration_status
 from .outbox import project_pending_events
 from .paths import resolve_paths
@@ -193,7 +160,6 @@ from .presentation import (
 from .profiles import list_profiles, show_profile, validate_profile
 from .profile_ingest import plan_profile_ingest
 from .profile_bundle_store import ingest_profile_bundle
-from .profile_decisions import select_profile_proposal, show_profile_proposal
 from .profile_authorization import (
     ProfileAuthorizationError,
     authorize_profile_request,
@@ -211,11 +177,6 @@ from .read_handlers import (
 )
 from .registry import (
     AGENT_STATUSES,
-    list_agents,
-    read_agent,
-    register_agent,
-    retire_agent,
-    update_agent,
 )
 from .routing import recommend_route
 from .route_overrides import current_route, override_route
@@ -233,34 +194,13 @@ from .tasks import (
 )
 from . import update_check
 from .validators import validate_project
-from .verification_feedback import record_verification_feedback, verification_feedback_stats
-from .verifications import VERIFICATION_RESULTS, list_verifications, read_verification
+from .verifications import VERIFICATION_RESULTS
 from .workflow_proposals import (
     PROPOSAL_STATUSES,
-    approve_workflow_proposal,
-    cancel_workflow_proposal,
-    list_workflow_proposals,
-    propose_workflow,
-    read_workflow_proposal,
 )
 from .work_briefs import add_work_brief, approve_work_brief, review_work_brief, show_work_brief
 from .gap_reports import add_gap_report, list_gap_reports, promote_gap_lesson, show_gap_report
-from .workflow_sandbox import (
-    LEGACY_DEPRECATION,
-    guard_workflow_file,
-    guard_workflow_proposal,
-    guard_workflow_template,
-    sandbox_workflow_file,
-    sandbox_workflow_proposal,
-    sandbox_workflow_template,
-)
-from .workflow_verifier import (
-    verify_workflow_file,
-    verify_workflow_proposal,
-    verify_workflow_template,
-)
-from .workflow_executor import execute_workflow
-from .workflows import list_jobs, read_job, run_workflow
+from .governance_handlers import handle_governance_command
 
 
 def _choices_help(values: set[str]) -> str:
@@ -2765,473 +2705,28 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "loop" and args.loop_command == "status":
             return handle_loop_status(paths, json_output=json_output, output=sys.stdout)
 
-        if args.command == "loop" and args.loop_command == "run":
-            result = run_workflow(
-                paths,
-                workflow_id=args.workflow_id,
-                goal_id=args.goal,
-                defect_id=args.defect,
-            )
-            if json_output:
-                _print_json(result)
-            elif result.get("no_op"):
-                print(
-                    "No workflow run created: all tracked features are already covered "
-                    f"({result['covered_feature_count']})."
-                )
-            else:
-                run = result["workflow_run"]
-                print(f"Created workflow run {run['id']} for {run['workflow_id']}")
-                for job in result["jobs"]:
-                    print(f"Queued job {job['id']} role={job['role']} prompt={job['prompt_path']}")
-            return 0
+        execution_status = handle_execution_command(
+            args,
+            paths,
+            json_output=json_output,
+            output=sys.stdout,
+            error=sys.stderr,
+        )
+        if execution_status is not None:
+            return execution_status
 
-        if args.command == "loop" and args.loop_command == "execute":
-            result = execute_workflow(
-                paths,
-                workflow_id=args.workflow_id,
-                goal_id=args.goal,
-                defect_id=args.defect,
-                agent_adapter=args.agent_adapter,
-                allow_agent_exec=args.allow_agent_exec,
-                timeout_seconds=args.timeout_seconds,
-                max_output_bytes=args.max_output_bytes,
-                redaction_patterns=args.redact_pattern,
-                allowed_env_names=args.allow_env,
-                auto_verify=not args.no_auto_verify,
-                complete=not args.no_complete,
-                close_goal_on_complete=args.close_goal,
-                render=not args.no_render,
-                retry_run_id=args.retry_run,
-                resume_run_id=args.resume_run,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result))
-            return 0 if result["ok"] else 1
-
-        if args.command == "loop" and args.loop_command == "complete":
-            result = complete_workflow_run(
-                paths, workflow_run_id=args.workflow_run_id, summary=args.summary
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Completed workflow run {result['workflow_run_id']}")
-            return 0
-
-        if args.command == "loop" and args.loop_command == "fail":
-            result = fail_workflow_run(
-                paths, workflow_run_id=args.workflow_run_id, summary=args.summary
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Failed workflow run {result['workflow_run_id']}")
-            return 0
-
-        if args.command == "loop" and args.loop_command == "cancel":
-            result = cancel_workflow_run(
-                paths, workflow_run_id=args.workflow_run_id, summary=args.summary
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Cancelled workflow run {result['workflow_run_id']}")
-            return 0
-
-        if args.command == "workflow" and args.workflow_command == "propose":
-            result = propose_workflow(paths, source_path=args.file, summary=args.summary)
-            if json_output:
-                _print_json(result)
-            else:
-                print(result["id"])
-            return 0
-
-        if args.command == "workflow" and args.workflow_command == "verify":
-            if args.file:
-                result = verify_workflow_file(paths, source_path=args.file)
-            elif args.proposal:
-                result = verify_workflow_proposal(paths, proposal_id=args.proposal)
-            else:
-                result = verify_workflow_template(paths, workflow_id=args.template)
-            payload = {"ok": result["ok"], "verification": result}
-            if json_output:
-                _print_json(payload)
-            else:
-                print(to_pretty_json(payload))
-            return 0 if result["ok"] else 1
-
-        if args.command == "workflow" and args.workflow_command in {"guard", "sandbox"}:
-            legacy_alias = args.workflow_command == "sandbox"
-            if legacy_alias:
-                print(f"WARNING: {LEGACY_DEPRECATION}", file=sys.stderr)
-            file_handler = sandbox_workflow_file if legacy_alias else guard_workflow_file
-            proposal_handler = (
-                sandbox_workflow_proposal if legacy_alias else guard_workflow_proposal
-            )
-            template_handler = (
-                sandbox_workflow_template if legacy_alias else guard_workflow_template
-            )
-            redaction_patterns = [] if legacy_alias else args.redact_pattern
-            if args.file:
-                result = file_handler(
-                    paths,
-                    source_path=args.file,
-                    execute=args.execute,
-                    timeout_seconds=args.timeout_seconds,
-                    max_output_bytes=args.max_output_bytes,
-                    **({"redaction_patterns": redaction_patterns} if not legacy_alias else {}),
-                    allowed_env_names=args.allow_env,
-                )
-            elif args.proposal:
-                result = proposal_handler(
-                    paths,
-                    proposal_id=args.proposal,
-                    execute=args.execute,
-                    timeout_seconds=args.timeout_seconds,
-                    max_output_bytes=args.max_output_bytes,
-                    **({"redaction_patterns": redaction_patterns} if not legacy_alias else {}),
-                    allowed_env_names=args.allow_env,
-                )
-            else:
-                result = template_handler(
-                    paths,
-                    workflow_id=args.template,
-                    execute=args.execute,
-                    timeout_seconds=args.timeout_seconds,
-                    max_output_bytes=args.max_output_bytes,
-                    **({"redaction_patterns": redaction_patterns} if not legacy_alias else {}),
-                    allowed_env_names=args.allow_env,
-                )
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result))
-            return 0 if result["ok"] else 1
-
-        if (
-            args.command == "workflow"
-            and args.workflow_command == "proposals"
-            and args.workflow_proposals_command == "list"
-        ):
-            proposals = list_workflow_proposals(paths, status=args.status)
-            if json_output:
-                _print_json({"ok": True, "proposals": proposals})
-            elif proposals:
-                for proposal in proposals:
-                    print(
-                        f"{proposal['id']} workflow={proposal['workflow_id']} "
-                        f"path={proposal['path']}"
-                    )
-            else:
-                print("No workflow proposals")
-            return 0
-
-        if (
-            args.command == "workflow"
-            and args.workflow_command == "proposals"
-            and args.workflow_proposals_command == "read"
-        ):
-            proposal = read_workflow_proposal(paths, args.proposal_id)
-            if json_output:
-                _print_json({"ok": True, "proposal": proposal})
-            else:
-                print(to_pretty_json(proposal))
-            return 0
-
-        if (
-            args.command == "workflow"
-            and args.workflow_command == "proposals"
-            and args.workflow_proposals_command == "approve"
-        ):
-            result = approve_workflow_proposal(paths, args.proposal_id, summary=args.summary)
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Approved workflow proposal {result['id']} as {result['workflow_path']}")
-            return 0
-
-        if (
-            args.command == "workflow"
-            and args.workflow_command == "proposals"
-            and args.workflow_proposals_command == "cancel"
-        ):
-            result = cancel_workflow_proposal(paths, args.proposal_id, summary=args.summary)
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Cancelled workflow proposal {result['id']}")
-            return 0
-
-        if args.command == "jobs" and args.jobs_command == "list":
-            jobs = list_jobs(paths, workflow_run_id=args.run, status=args.status)
-            if json_output:
-                _print_json({"ok": True, "jobs": jobs})
-            elif jobs:
-                for job in jobs:
-                    print(
-                        f"{job['id']} {job['status']} workflow={job['workflow_id']} "
-                        f"run={job['workflow_run_id']} role={job['role']}"
-                    )
-            else:
-                print("No agent jobs")
-            return 0
-
-        if args.command == "jobs" and args.jobs_command == "read":
-            job = read_job(paths, args.job_id)
-            if json_output:
-                _print_json({"ok": True, "job": job})
-            else:
-                print(job["prompt"])
-            return 0
-
-        if args.command == "jobs" and args.jobs_command == "complete":
-            result = complete_job(
-                paths,
-                job_id=args.job_id,
-                summary=args.summary,
-                output_path=args.output,
-                evidence_id=args.evidence,
-                token_input=args.token_input,
-                token_output=args.token_output,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Completed job {result['job_id']}")
-            return 0
-
-        if args.command == "jobs" and args.jobs_command == "fail":
-            result = fail_job(paths, job_id=args.job_id, summary=args.summary)
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Failed job {result['job_id']}")
-            return 0
-
-        if args.command == "jobs" and args.jobs_command == "cancel":
-            result = cancel_job(paths, job_id=args.job_id, summary=args.summary)
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Cancelled job {result['job_id']}")
-            return 0
-
-        if args.command == "jobs" and args.jobs_command == "assign":
-            result = assign_job(paths, job_id=args.job_id, agent_id=args.agent)
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Assigned job {result['job_id']} to {result['assigned_agent_id']}")
-            return 0
-
-        if args.command == "jobs" and args.jobs_command == "lease":
-            result = lease_job(
-                paths,
-                job_id=args.job_id,
-                agent_id=args.agent,
-                ttl_seconds=args.ttl_seconds,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(
-                    f"Leased job {result['job_id']} to {result['assigned_agent_id']} "
-                    f"until {result['lease_expires_at']}"
-                )
-            return 0
-
-        if args.command == "jobs" and args.jobs_command == "heartbeat":
-            result = heartbeat_job(paths, job_id=args.job_id, ttl_seconds=args.ttl_seconds)
-            if json_output:
-                _print_json(result)
-            else:
-                print(
-                    f"Heartbeat recorded for job {result['job_id']} until {result['lease_expires_at']}"
-                )
-            return 0
-
-        if args.command == "jobs" and args.jobs_command == "release":
-            result = release_job(paths, job_id=args.job_id, reason=args.reason)
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Released job {result['job_id']}")
-            return 0
-
-        if args.command == "jobs" and args.jobs_command == "reap":
-            result = reap_expired_leases(paths)
-            if json_output:
-                _print_json(result)
-            else:
-                print(
-                    "Reaped expired leases: "
-                    f"requeued={','.join(result['reaped_job_ids']) or '-'} "
-                    f"blocked={','.join(result['blocked_job_ids']) or '-'}"
-                )
-            return 0
-
-        if args.command == "prompt" and args.prompt_command == "job":
-            if json_output:
-                _print_json(read_job_prompt_handoff(paths, args.job_id))
-            else:
-                prompt = read_job_prompt(paths, args.job_id)
-                print(prompt)
-            return 0
-
-        if args.command == "agent" and args.agent_command == "command":
-            command = generate_agent_command(paths, args.job_id, args.adapter)
-            if json_output:
-                _print_json({"ok": True, "agent_command": command.to_dict()})
-            else:
-                if command.command:
-                    print(command.command)
-                else:
-                    print(command.instructions)
-            return 0
-
-        if args.command == "agent" and args.agent_command == "register":
-            result = register_agent(
-                paths,
-                name=args.name,
-                role=args.role,
-                adapter=args.adapter,
-                max_concurrency=args.max_concurrency,
-                metadata_json=args.metadata_json,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Registered agent {result['id']}")
-            return 0
-
-        if args.command == "agent" and args.agent_command == "list":
-            agents = list_agents(paths, status=args.status)
-            if json_output:
-                _print_json({"ok": True, "agents": agents})
-            elif agents:
-                for agent in agents:
-                    print(
-                        f"{agent['id']} {agent['status']} name={agent['name']} "
-                        f"role={agent['role']} adapter={agent['adapter']} "
-                        f"active_leases={agent['active_lease_count']}/{agent['max_concurrency']}"
-                    )
-            else:
-                print("No agents")
-            return 0
-
-        if args.command == "agent" and args.agent_command == "read":
-            agent = read_agent(paths, args.agent_id)
-            if json_output:
-                _print_json({"ok": True, "agent": agent})
-            else:
-                print(to_pretty_json(agent))
-            return 0
-
-        if args.command == "agent" and args.agent_command == "update":
-            result = update_agent(
-                paths,
-                args.agent_id,
-                fields={
-                    "name": args.name,
-                    "role": args.role,
-                    "adapter": args.adapter,
-                    "max_concurrency": args.max_concurrency,
-                    "metadata_json": args.metadata_json,
-                    "status": args.status,
-                },
-                reason=args.reason,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Updated agent {result['agent']['id']}")
-            return 0
-
-        if args.command == "agent" and args.agent_command == "retire":
-            result = retire_agent(paths, args.agent_id, reason=args.reason)
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Retired agent {result['agent']['id']}")
-            return 0
-
-        if args.command == "ingest-agent-run":
-            result = ingest_agent_run(paths, args.path)
-            if json_output:
-                _print_json(result)
-            else:
-                print(
-                    f"Ingested {result['output_path']} as {result['evidence_id']} "
-                    f"for job {result['job_id']}"
-                )
-            return 0
-
-        if args.command == "evidence" and args.evidence_command == "add":
-            result = record_adhoc_evidence(
-                paths,
-                files=args.files,
-                summary=args.summary,
-                command=args.claimed_command,
-                allow_sensitive_evidence=args.allow_sensitive_evidence,
-                copy_files=args.copy_files,
-                task_id=args.task_id,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                for warning in result.get("warnings", []):
-                    print(f"WARNING: {warning}", file=sys.stderr)
-                evidence = result["evidence"]
-                print(f"{evidence['id']} {evidence['type']} {evidence['manifest_path']}")
-            return 0
-
-        if args.command == "evidence" and args.evidence_command == "show":
-            result = show_evidence(paths, args.evidence_id)
-            if json_output:
-                _print_json(result)
-            else:
-                print(render_evidence_metadata(result), end="")
-            return 0
-
-        if args.command == "evidence" and args.evidence_command == "supersede":
-            result = supersede_evidence(
-                paths,
-                evidence_id=args.evidence_id,
-                replacement_evidence_id=args.replacement_evidence_id,
-                summary=args.summary,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(
-                    f"Evidence {result['evidence_id']} superseded by {result['superseded_by']}"
-                    + ("" if result["changed"] else " (already recorded)")
-                )
-            return 0
-
-        if args.command == "evidence" and args.evidence_command == "link":
-            target_type, separator, target_id = args.target_ref.partition(":")
-            if not separator or not target_type or not target_id:
-                raise InvalidInputError(
-                    "--target must be formatted as <target-type>:<target-id>.",
-                    details={"target": args.target_ref},
-                )
-            result = add_evidence_link(
-                paths,
-                evidence_id=args.evidence_id,
-                target_type=target_type,
-                target_id=target_id,
-                role=args.role,
-                summary=args.summary,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result))
-            return 0
+        governance_status = handle_governance_command(
+            args,
+            paths,
+            json_output=json_output,
+            rubric_json=_rubric_json_argument(args)
+            if args.command == "verification" and args.verification_command == "record"
+            else None,
+            output=sys.stdout,
+            error=sys.stderr,
+        )
+        if governance_status is not None:
+            return governance_status
 
         if args.command == "context" and args.context_command == "pack":
             now = utc_now_iso()
@@ -3394,226 +2889,6 @@ def main(argv: list[str] | None = None) -> int:
                 _print_json(result)
             else:
                 print(result["fixture"]["path"])
-            return 0
-
-        if args.command == "verification" and args.verification_command == "record":
-            result = record_verification(
-                paths,
-                workflow_run_id=args.run,
-                result=args.result,
-                reasons=args.reason,
-                verifier_role=args.verifier_role,
-                rubric_json=_rubric_json_argument(args),
-                target_job_id=args.target_job,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(result["id"])
-            return 0
-
-        if args.command == "verification" and args.verification_command == "list":
-            verifications = list_verifications(paths, workflow_run_id=args.run, result=args.result)
-            if json_output:
-                _print_json({"ok": True, "verifications": verifications})
-            elif verifications:
-                for verification in verifications:
-                    print(
-                        f"{verification['id']} {verification['result']} "
-                        f"run={verification['workflow_run_id']} "
-                        f"target_job={verification['target_job_id'] or ''}"
-                    )
-            else:
-                print("No verifications")
-            return 0
-
-        if args.command == "verification" and args.verification_command == "read":
-            verification = read_verification(paths, args.verification_id)
-            if json_output:
-                _print_json({"ok": True, "verification": verification})
-            else:
-                print(to_pretty_json(verification))
-            return 0
-
-        if args.command == "verification" and args.verification_command == "feedback":
-            result = record_verification_feedback(
-                paths,
-                suggestion_id=args.suggestion,
-                status=args.status,
-                result=args.result,
-                supporting_evidence_id=args.evidence,
-                note=args.note,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(result["feedback"]["id"])
-            return 0
-
-        if args.command == "verification" and args.verification_command == "stats":
-            result = verification_feedback_stats(paths)
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result["stats"]))
-            return 0
-
-        if args.command == "decision" and args.decision_command == "open":
-            result = open_decision(
-                paths,
-                question=args.question,
-                recommendation=args.recommendation,
-                blocks_json=args.blocks_json,
-                escalation_id=args.escalation,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(result["id"])
-            return 0
-
-        if args.command == "decision" and args.decision_command == "resolve":
-            result = resolve_decision(
-                paths,
-                decision_id=args.decision_id,
-                selected_option=args.selected_option,
-                reason=args.reason,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Resolved decision {result['id']}")
-            return 0
-
-        if args.command == "decision" and args.decision_command == "waive":
-            result = waive_decision(paths, decision_id=args.decision_id, reason=args.reason)
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Waived decision {result['id']}")
-            return 0
-
-        if args.command == "decision" and args.decision_command == "list":
-            decisions = list_decisions(paths, status=args.status)
-            if json_output:
-                _print_json({"ok": True, "decisions": decisions})
-            elif decisions:
-                for decision in decisions:
-                    print(f"{decision['id']} {decision['status']} question={decision['question']}")
-            else:
-                print("No decisions")
-            return 0
-
-        if args.command == "decision" and args.decision_command == "read":
-            decision = read_decision(paths, args.decision_id)
-            if json_output:
-                _print_json({"ok": True, "decision": decision})
-            else:
-                print(to_pretty_json(decision))
-            return 0
-
-        if args.command == "decision" and args.decision_command == "proposal":
-            if args.decision_proposal_command == "show":
-                result = show_profile_proposal(paths, args.decision_id)
-            else:
-                result = select_profile_proposal(
-                    paths,
-                    decision_id=args.decision_id,
-                    candidate_id=args.candidate_id,
-                    decline=args.decline,
-                    actor=args.actor,
-                    actor_kind=args.actor_kind,
-                    recorded_by=args.recorded_by,
-                    recorder_kind=args.recorder_kind,
-                    source_kind=args.source_kind,
-                    source_ref=args.source_ref,
-                    reason=args.reason,
-                    override_reason=args.override_reason,
-                )
-            if json_output:
-                _print_json(result)
-            else:
-                print(to_pretty_json(result))
-            return 0
-
-        if args.command == "escalation" and args.escalation_command == "open":
-            result = open_escalation(
-                paths,
-                severity=args.severity,
-                question=args.question,
-                recommendation=args.recommendation,
-                workflow_run_id=args.run,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(result["id"])
-            return 0
-
-        if args.command == "escalation" and args.escalation_command == "resolve":
-            result = resolve_escalation(
-                paths,
-                escalation_id=args.escalation_id,
-                summary=args.summary,
-                decision_id=args.decision,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Resolved escalation {result['id']}")
-            return 0
-
-        if args.command == "escalation" and args.escalation_command == "cancel":
-            result = cancel_escalation(
-                paths, escalation_id=args.escalation_id, summary=args.summary
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Cancelled escalation {result['id']}")
-            return 0
-
-        if args.command == "escalation" and args.escalation_command == "list":
-            escalations = list_escalations(paths, status=args.status)
-            if json_output:
-                _print_json({"ok": True, "escalations": escalations})
-            elif escalations:
-                for escalation in escalations:
-                    print(
-                        f"{escalation['id']} {escalation['status']} severity={escalation['severity']} "
-                        f"run={escalation['workflow_run_id'] or ''}"
-                    )
-            else:
-                print("No escalations")
-            return 0
-
-        if args.command == "escalation" and args.escalation_command == "read":
-            escalation = read_escalation(paths, args.escalation_id)
-            if json_output:
-                _print_json({"ok": True, "escalation": escalation})
-            else:
-                print(to_pretty_json(escalation))
-            return 0
-
-        if args.command == "checkpoint" and args.checkpoint_command == "status":
-            status = checkpoint_status(paths)
-            if json_output:
-                _print_json(status)
-            else:
-                print(to_pretty_json(status))
-            return 0
-
-        if args.command == "checkpoint" and args.checkpoint_command == "record":
-            result = record_checkpoint(
-                paths,
-                summary=args.summary,
-                evidence=args.evidence,
-                review_type=args.review_type,
-            )
-            if json_output:
-                _print_json(result)
-            else:
-                print(f"Recorded checkpoint {result['checkpoint_id']}")
             return 0
 
         if args.command == "next":
