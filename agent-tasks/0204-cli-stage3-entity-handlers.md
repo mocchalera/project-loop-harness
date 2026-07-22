@@ -1,6 +1,6 @@
 # 0204: CLI Stage 3 entity lifecycle handlers
 
-- **Status:** Active
+- **Status:** Done; implemented and verified
 - **Milestone:** Post-v0.5.3 maintainability
 - **Priority:** P1
 - **Size:** M
@@ -21,3 +21,8 @@ Extract Goal, Task, Feature, Story, Test, and Defect CLI orchestration from
 3. Targeted tests, Skill examples, distribution tests, Ruff, and full pytest
    pass.
 
+## Completion evidence
+
+- `docs/evidence/0204-cli-stage3-entity-handlers.md`
+- Implementation commit: `d7d38ea`
+- Full regression: 1,164 passed, 1 skipped
