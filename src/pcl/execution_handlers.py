@@ -450,4 +450,3 @@ def handle_execution_command(
 
 def _write_json(payload: object, output: TextIO) -> None:
     print(json.dumps(payload, ensure_ascii=False, sort_keys=True), file=output)
-

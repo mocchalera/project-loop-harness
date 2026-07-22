@@ -32,4 +32,3 @@ outbox, artifact, and human-gate ownership.
   authorization behavior changed.
 - No dependency, schema, migration, provider, telemetry, or external write.
 - Unrelated dirty paths were preserved and excluded from the commit.
-

@@ -32,4 +32,3 @@ transaction, event, and outbox ownership remain unchanged.
   write.
 - Unrelated `.claude/**`, `.playwright-cli/`, `.project-loop/*.lock`, and
   `.work/` paths were preserved and excluded from the commit.
-
