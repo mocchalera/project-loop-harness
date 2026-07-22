@@ -1,6 +1,6 @@
 # 0206: CLI Stage 3 control and Profile handlers
 
-- **Status:** Planned
+- **Status:** Complete
 - **Milestone:** Post-v0.5.3 maintainability
 - **Priority:** P1
 - **Size:** M
@@ -20,4 +20,3 @@ and remaining CLI orchestration from `cli.py`.
 2. Characterization tests pin moved JSON/text/error branches.
 3. Targeted tests, Skill examples, distribution tests, Ruff, and full pytest
    pass.
-
