@@ -815,9 +815,11 @@ def _execute_command(
         redaction_patterns=compile_redaction_patterns(redaction_patterns),
         additional_allowed_env_names=allowed_env_names,
     )
+    command["executed_argv"] = argv
     command["exit_code"] = process_result["exit_code"]
     command["status"] = "passed" if process_result["exit_code"] == 0 else "failed"
     command["timed_out"] = process_result["timed_out"]
+    command["duration_seconds"] = process_result["duration_seconds"]
     command["stdout_path"] = str(stdout_path.relative_to(paths.root))
     command["stderr_path"] = str(stderr_path.relative_to(paths.root))
     command["stdout"] = process_result["stdout"]
@@ -826,6 +828,8 @@ def _execute_command(
     command["redacted"] = process_result["redacted"]
     command["termination"] = process_result["termination"]
     command["failure_kind"] = process_result["failure_kind"]
+    command["spawn_error_kind"] = process_result["spawn_error_kind"]
+    command["artifact_collection"] = process_result["artifact_collection"]
     command["permission_contract"] = process_result["permission_contract"]
 
 

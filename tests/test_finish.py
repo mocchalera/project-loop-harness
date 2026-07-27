@@ -389,10 +389,23 @@ def test_finish_emit_packet_success_and_idempotent_rerun(tmp_path: Path, capsys)
     assert finish["execution"]["materialization"]["classification"] == "read_only"
     assert finish["execution"]["effect"]["classification"] == "declared_outputs"
     assert finish["checks"][0]["status"] == "passed"
+    assert finish["checks"][0]["contract_version"] == "finish-check-result/v2"
+    assert finish["checks"][0]["runner_result"]["status"] == "completed"
+    assert finish["checks"][0]["assertion_result"]["status"] == "passed"
+    assert finish["checks"][0]["failure_phase"] is None
+    assert finish["checks"][0]["failure_kind"] is None
+    assert finish["checks"][0]["attempt_identity"]["contract_version"] == (
+        "verification-attempt-identity/v1"
+    )
+    assert finish["checks"][0]["stability_evaluation"]["status"] == (
+        "stability_required"
+    )
+    assert finish["checks"][0]["stability_evaluation"]["reproducible"] is False
     packet = load_completion_packet(tmp_path / finish["packet"]["path"])
     assert validate_completion_packet(packet).ok is True
     assert packet["repository"]["diff_sha256"] == finish["repository"]["diff_sha256"]
     assert packet["checks"][0]["artifact_ref"] == f"evidence:{finish['checks'][0]['evidence_id']}"
+    assert packet["checks"][0]["reproducible"] is False
     before = _state_counts(tmp_path)
 
     assert main(command) == 0
@@ -516,6 +529,14 @@ def test_finish_timeout_exposes_bounded_retry_and_next_preserves_it(
     finish = _finish_payload(capsys)
     expected = "pcl finish --emit-packet --task T-0001 --timeout 600 --json"
     assert finish["checks"][0]["status"] == "timed_out"
+    assert finish["checks"][0]["runner_result"]["status"] == "timed_out"
+    assert finish["checks"][0]["assertion_result"]["status"] == "not_evaluated"
+    assert finish["checks"][0]["failure_phase"] == "execute"
+    assert finish["checks"][0]["failure_kind"] == "timeout"
+    assert finish["checks"][0]["attempt_identity"]["contract_version"] == (
+        "verification-attempt-identity/v1"
+    )
+    assert finish["checks"][0]["stability_evaluation"]["reproducible"] is False
     assert finish["timeout_recovery"] == {
         "available": True,
         "reason": "finish_check_timed_out",
@@ -528,6 +549,7 @@ def test_finish_timeout_exposes_bounded_retry_and_next_preserves_it(
         ),
     }
     packet = load_completion_packet(tmp_path / finish["packet"]["path"])
+    assert packet["checks"][0]["reproducible"] is False
     assert packet["next_action"]["command"] == expected
     packet["next_action"]["command"] = "pcl finish --emit-packet --task T-9999 --timeout 600 --json"
     assert completion_packet_timeout_action(packet) is None

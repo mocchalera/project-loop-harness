@@ -61,6 +61,25 @@ def test_timeout_terminates_process_group_and_records_reason(tmp_path: Path) -> 
     assert result["termination"]["method"] == "terminate_process_group"
 
 
+def test_missing_executable_records_typed_spawn_failure(tmp_path: Path) -> None:
+    result = execute_guarded_process(
+        ["pcl-command-that-does-not-exist"],
+        cwd=tmp_path,
+        stdout_path=tmp_path / "stdout.bin",
+        stderr_path=tmp_path / "stderr.bin",
+        timeout_seconds=5,
+    )
+
+    assert result["exit_code"] is None
+    assert result["failure_kind"] == "spawn_error"
+    assert result["spawn_error_kind"] == "not_found"
+    assert result["artifact_collection"] == {
+        "status": "collected",
+        "stdout": True,
+        "stderr": True,
+    }
+
+
 def test_redaction_filters_positive_and_negative_fixtures_before_write(tmp_path: Path) -> None:
     secret = "sk-abcdefghijklmnopqrstuvwxyz123456"
     result = _run(
@@ -96,5 +115,11 @@ def test_environment_uses_allowlist_and_does_not_inherit_secret(monkeypatch) -> 
     assert "PCL_TEST_SECRET" not in env
     assert "PCL_TEST_ALLOWED" in contract["inherited_names"]
     assert contract["inheritance"] == "allowlist"
+    assert contract["sha256"].startswith("sha256:")
+    assert contract["execution_context"] == {
+        "worker_sha256": None,
+        "shard_sha256": None,
+        "seed_sha256": None,
+    }
     assert contract["values_recorded"] is False
     assert os.environ["PCL_TEST_SECRET"] == "must-not-leak"

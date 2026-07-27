@@ -420,6 +420,45 @@ def test_duplicate_reproducible_check_fail_then_pass_is_recommended() -> None:
     )
 
 
+def test_pcl_produced_nonreproducible_check_remains_replayable() -> None:
+    from pcl.resume import (
+        _first_passed_replay_command,
+        _next_safe_action,
+        _verification_commands,
+    )
+
+    packet = {
+        "producer": {"name": "project-loop-harness", "version": "0.0.0"},
+        "checks": [
+            {
+                "id": "CHK-0001",
+                "command": "python -m pytest",
+                "status": "passed",
+                "artifact_ref": "evidence:E-0001",
+                "reproducible": False,
+            }
+        ],
+    }
+
+    assert _verification_commands(packet) == [{
+        "command": "python -m pytest",
+        "previous_status": "passed",
+        "evidence_refs": ["evidence:E-0001"],
+        "proof_source": "completion-packet/v1.checks/CHK-0001",
+    }]
+    assert _first_passed_replay_command(packet) == "python -m pytest"
+    assert _next_safe_action(
+        {"type": "task", "status": "done"},
+        packet,
+        [],
+    ) == {
+        "text": (
+            "Rerun the first passed completion check to gather fresh stability evidence."
+        ),
+        "command": "python -m pytest",
+    }
+
+
 def test_resume_incomplete_then_newer_packet_marks_older_packet_omitted(
     tmp_path: Path,
     capsys,

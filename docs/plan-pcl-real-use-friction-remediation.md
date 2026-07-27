@@ -20,7 +20,8 @@
 | --- | --- | --- |
 | P0-1 C0 verification input manifest | implemented | `ceb9748`, `docs/evidence/0213-finish-input-manifest-validation.md` |
 | P0-1 C1 isolated finish workspace | implemented | `19b7c0b`, `docs/evidence/0214-finish-isolated-workspace-validation.md` |
-| P0-2 以降 | planned | 本書の依存順で継続 |
+| P0-2 result and stability contract | in progress | `T-0142`, `F-0071`, `US-0069` draft, `TC-0144`〜`TC-0146` |
+| P0-3 以降 | planned | 本書の依存順で継続 |
 
 ## 1. 成功条件
 
@@ -124,14 +125,22 @@ P0 完了時に、次をすべて満たす。
 
 check result を次へ分離する。
 
-- `runner_result`: spawn、timeout、signal、exit、artifact collection
-- `assertion_result`: passed / failed / not_evaluated / unknown
+- `finish-check-result/v2`: completion-check Evidence の加算的 contract。completion-packet/v1 の check shape は変更しない
+- `runner-result/v1`: spawn、timeout、signal、exit、artifact collection
+- `assertion-result/v1`: passed / failed / not_evaluated / unknown
 - `failure_phase`: prepare / spawn / execute / assert / collect / commit
 - `failure_kind`: configuration / dependency / timeout / crash / assertion / mutation / race / infrastructure / unknown
 
-attempt identity は input manifest、argv / scope、tool versions、OS / arch、environment digest、worker / shard / seed、timeout、cache mode / manifest、lock digest、finish policy digest を含む。
+`verification-attempt-identity/v1` は input manifest、実行 argv / scope、PCL・Python・Python module version、実行ファイル identity、OS / arch、environment digest、worker / shard / seed digest、timeout、cache mode / manifest、lock digest、finish policy digest を含む。全 CLI に共通する安全な version probe はこの slice で追加せず、version を解決できない外部 tool は executable path / stat と `null` version で過大主張を避ける。
 
-`reproducible: true` は単発 exit 0 から設定しない。cold / warm strata、最小連続 pass 数、最大 attempt 数、混在結果を `stability-evaluation/v1` に保持し、未達は `INCOMPLETE_FLAKY` または `STABILITY_REQUIRED` とする。
+`reproducible: true` は単発 exit 0 から設定しない。cold / warm strata、最小連続 pass 数、最大 attempt 数、混在結果を `stability-evaluation/v1` に保持し、評価状態を `stable` / `stability_required` / `incomplete_flaky` / `incompatible_attempts` とする。
+
+P0-2 の後方互換境界:
+
+- isolated finish の現在の1回実行は `cold` 1 attempt として記録し、必ず `reproducible: false` とする。
+- `resume` は PCL が生成した非 reproducible check を「権威ある再現済み結果」には昇格させず、次回 stability Evidence を得る replay command として保持する。
+- completion-packet/v1 に未定義の outcome は追加しない。`STABILITY_REQUIRED` / `INCOMPLETE_FLAKY` に相当する terminal enforcement は、P0-3 の shared readiness evaluator へ接続する。
+- compatible attempt の履歴参照・重複実行回避は P0-5 で実装する。P0-2 は deterministic identity と純粋 evaluation contract を先に固定する。
 
 ### P0-3: Shared terminal readiness
 
@@ -216,7 +225,7 @@ P0 の Evidence-first 実装を壊さず、次を別判断で行う。
 | --- | --- | --- |
 | C0 | `src/pcl/verification_manifest.py` | `tests/test_verification_manifest.py` |
 | C1 | `src/pcl/finish_execution.py`, `src/pcl/workflow_sandbox.py` | `tests/test_finish.py`, `tests/test_guarded_process.py` |
-| Result / stability | `src/pcl/finish_execution.py`, contracts | finish contract / timeout / mixed outcome tests |
+| Result / stability | `src/pcl/verification_results.py`, `finish_execution.py`, `guarded_process.py`, `resume.py` | finish contract / timeout / signal / mixed outcome / replay tests |
 | Readiness | `src/pcl/terminal_readiness.py`, `action_routing.py`, `lifecycle.py` | routing / finish / lifecycle parity tests |
 | Start / router | start command service、routing | attach / multi-goal / visible state tests |
 | Audit / reuse | audit command service、Evidence lookup | scoped read / no duplicate execution tests |
@@ -280,3 +289,12 @@ P0 全体の release gate:
 | target-bound dry-run は正しい `T-0141` を選べたが、既存 agent state を含む 1,749 input と大量の `changes` を無制限 JSON で返した | `F7`, P0-5 | audit だけでなく finish dry-run にも `--summary` / pagination / machine-state exclusion policy が必要 |
 | C1 の package-manager compatibility では root `node_modules` の独立 copy までは決定的に扱えるが、workspace ごとの dependency tree は typed config がない | `F10`, P0-6 / P1 backend | residual risk として Evidence に記録 |
 | Story は user の意味承認を代行せず `US-0068` を draft に保持したため、実装 Evidence が green でも Test terminal transition は行っていない | `F9`, P0-7 | 権限境界どおり。implementation authorization と Story semantic approval の表示分離が必要 |
+
+### 2026-07-28: P0-2 実装 dogfood
+
+| 観測 | 対応先 | 状態 |
+| --- | --- | --- |
+| `next --target T-0141` が今回の target を block しない外部キャンペーン Decision `DEC-0014` を再び返した | `F4`, P0-4 | 再現継続。Decision は変更せず、明示されたローカル実装だけを継続 |
+| Story draft を保存した直後の `feature status ... specified` が reviewer-checkable Evidence 必須で拒否された | `F5`, `F9`, P0-3 / P0-7 | state は誤って進めず discovered のまま保持。Story specification と implementation Evidence の必要条件を command guidance で分離する余地 |
+| 単発成功を `reproducible: false` に直すと、`resume` が安全な再実行 command まで削除した | `FD`, P0-2 | 回帰テストで検出。PCL 生成 check に限り stability Evidence 用 replay command を保持するよう修正 |
+| P0-2 の record-only stability と現行 terminal transition の間に一時的な不一致が残る | `F2`, `F5`, P0-3 | completion-packet/v1 を壊さず、shared readiness 接続まで明示的 residual gap とする |

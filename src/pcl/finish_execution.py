@@ -36,6 +36,11 @@ from .verification_manifest import (
     collect_verification_input_manifest,
     compare_verification_input_manifests,
 )
+from .verification_results import (
+    build_finish_check_result,
+    build_verification_attempt_identity,
+    evaluate_stability,
+)
 from .workflow_sandbox import execute_planned_guarded_command, plan_guarded_project_checks
 
 
@@ -46,6 +51,8 @@ COMPLETION_CHECK_LINK_ROLE = "verification_check"
 FINISH_ATTEMPT_CONTRACT_VERSION = "finish-attempt/v1"
 FINISH_ATTEMPT_EVIDENCE_TYPE = "finish_attempt"
 FINISH_ATTEMPT_LINK_ROLE = "finish_attempt"
+FINISH_STABILITY_MINIMUM_CONSECUTIVE_PASSES = 2
+FINISH_STABILITY_MAXIMUM_ATTEMPTS = 3
 FINISH_DECLARED_OUTPUT_PATTERNS = (
     ".mypy_cache/**",
     ".pytest_cache/**",
@@ -121,6 +128,15 @@ def _plan_finish_packet(
                 "git_metadata_shared": False,
             },
             "declared_output_patterns": list(FINISH_DECLARED_OUTPUT_PATTERNS),
+            "stability_policy": {
+                "mode": "record_only",
+                "minimum_consecutive_passes": (
+                    FINISH_STABILITY_MINIMUM_CONSECUTIVE_PASSES
+                ),
+                "maximum_attempts": FINISH_STABILITY_MAXIMUM_ATTEMPTS,
+                "required_strata": ["cold", "warm"],
+                "terminal_enforcement": "deferred_to_shared_readiness",
+            },
         },
         "execution_provenance": linked_task_provenance(paths, task_id=target["id"])
         if target["type"] == "task" else None,
@@ -219,6 +235,11 @@ def emit_finish_packet(
                     "Canonical verification inputs changed while the isolated workspace was prepared.",
                     details={"materialization_effect": materialization},
                 )
+            finish_policy = _finish_check_policy(
+                commands,
+                timeout_seconds=timeout_seconds,
+                max_output_bytes=max_output_bytes,
+            )
             for command in commands:
                 execute_planned_guarded_command(
                     paths,
@@ -227,6 +248,13 @@ def emit_finish_packet(
                     timeout_seconds=timeout_seconds,
                     max_output_bytes=max_output_bytes,
                     execution_root=workspace["root"],
+                )
+                _attach_finish_check_contracts(
+                    command,
+                    input_manifest=input_manifest,
+                    finish_policy=finish_policy,
+                    timeout_seconds=timeout_seconds,
+                    max_output_bytes=max_output_bytes,
                 )
             workspace_after = collect_verification_input_manifest(
                 workspace["root"],
@@ -853,7 +881,10 @@ def _build_packet(
         {
             "id": f"CHK-{index:04d}", "command": row["command"], "status": row["status"],
             "exit_code": row["exit_code"], "artifact_ref": f"evidence:{row['evidence_id']}",
-            "reproducible": True, "reason": row["reason"],
+            "reproducible": bool(
+                row.get("stability_evaluation", {}).get("reproducible")
+            ),
+            "reason": row["reason"],
         }
         for index, row in enumerate(check_rows, start=1)
     ]
@@ -965,20 +996,83 @@ def _apply_terminal_transition(
     return {"changed": True, "from_status": target["status"], "to_status": "done"}
 
 
-def _check_result(command: dict[str, Any], *, evidence_id: str) -> dict[str, Any]:
-    timed_out = bool(command.get("timed_out"))
-    status = "timed_out" if timed_out else str(command["status"])
+def _finish_check_policy(
+    commands: list[dict[str, Any]],
+    *,
+    timeout_seconds: int,
+    max_output_bytes: int,
+) -> dict[str, Any]:
     return {
-        "evidence_id": evidence_id, "command": str(command["resolved_command"]),
-        "status": status, "exit_code": command.get("exit_code"),
-        "reason": "Timed out during guarded execution." if timed_out else (None if status == "passed" else "Guarded command returned a non-zero exit code."),
-        "stdout_path": command.get("stdout_path"), "stderr_path": command.get("stderr_path"),
-        "stdout": command.get("stdout"), "stderr": command.get("stderr"),
-        "output_truncated": bool(command.get("output_truncated")), "redacted": bool(command.get("redacted")),
-        "permission_contract": command.get("permission_contract"),
-        "termination": command.get("termination"),
-        "failure_kind": command.get("failure_kind"),
+        "contract_version": "finish-check-policy/v1",
+        "commands": [
+            {
+                "id": command.get("step_id"),
+                "scope": command.get("scope"),
+                "config_key": command.get("config_key"),
+                "kind": command.get("kind"),
+                "argv": [str(part) for part in command.get("argv", [])],
+            }
+            for command in commands
+        ],
+        "declared_output_patterns": list(FINISH_DECLARED_OUTPUT_PATTERNS),
+        "timeout_seconds": timeout_seconds,
+        "max_output_bytes": max_output_bytes,
+        "stability": {
+            "minimum_consecutive_passes": (
+                FINISH_STABILITY_MINIMUM_CONSECUTIVE_PASSES
+            ),
+            "maximum_attempts": FINISH_STABILITY_MAXIMUM_ATTEMPTS,
+            "required_strata": ["cold", "warm"],
+        },
     }
+
+
+def _attach_finish_check_contracts(
+    command: dict[str, Any],
+    *,
+    input_manifest: dict[str, Any],
+    finish_policy: dict[str, Any],
+    timeout_seconds: int,
+    max_output_bytes: int,
+) -> None:
+    stability_stratum = "cold"
+    identity = build_verification_attempt_identity(
+        input_manifest=input_manifest,
+        command=command,
+        finish_policy=finish_policy,
+        timeout_seconds=timeout_seconds,
+        max_output_bytes=max_output_bytes,
+        stability_stratum=stability_stratum,
+    )
+    provisional = build_finish_check_result(
+        command,
+        evidence_id="E-0000",
+        attempt_identity=identity,
+        stability_evaluation={},
+    )
+    stability = evaluate_stability(
+        [
+            {
+                "attempt_identity": identity,
+                "assertion_result": provisional["assertion_result"],
+                "stratum": stability_stratum,
+            }
+        ],
+        minimum_consecutive_passes=FINISH_STABILITY_MINIMUM_CONSECUTIVE_PASSES,
+        maximum_attempts=FINISH_STABILITY_MAXIMUM_ATTEMPTS,
+    )
+    command["attempt_identity"] = identity
+    command["stability_stratum"] = stability_stratum
+    command["stability_evaluation"] = stability
+
+
+def _check_result(command: dict[str, Any], *, evidence_id: str) -> dict[str, Any]:
+    return build_finish_check_result(
+        command,
+        evidence_id=evidence_id,
+        attempt_identity=command["attempt_identity"],
+        stability_evaluation=command["stability_evaluation"],
+    )
 
 
 def _matching_completion_packet(paths: ProjectPaths, *, target: dict[str, Any], repository: dict[str, Any]) -> dict[str, Any] | None:

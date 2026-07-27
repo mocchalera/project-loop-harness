@@ -689,7 +689,10 @@ def _next_safe_action(
         replay_command = _first_passed_replay_command(completion_packet)
         if replay_command is not None:
             return {
-                "text": "Rerun the first passed reproducible completion check.",
+                "text": (
+                    "Rerun the first passed completion check to gather fresh "
+                    "stability evidence."
+                ),
                 "command": replay_command,
             }
         return {
@@ -785,7 +788,7 @@ def _restart_context(
 
 def _verification_commands(completion_packet: dict[str, Any] | None) -> list[dict[str, Any]]:
     result = []
-    for authoritative in _authoritative_reproducible_checks(completion_packet):
+    for authoritative in _replayable_completion_checks(completion_packet):
         item = authoritative["check"]
         result.append(
             {
@@ -802,7 +805,7 @@ def _first_passed_replay_command(completion_packet: dict[str, Any] | None) -> st
     return next(
         (
             str(authoritative["check"]["command"])
-            for authoritative in _authoritative_reproducible_checks(completion_packet)
+            for authoritative in _replayable_completion_checks(completion_packet)
             if authoritative["check"].get("status") == "passed"
         ),
         None,
@@ -822,6 +825,47 @@ def _authoritative_reproducible_checks(
             and item.get("reproducible") is True
             and isinstance(item.get("command"), str)
             and item["command"]
+        ),
+        key=_completion_check_sort_key,
+    )
+    by_command: dict[str, dict[str, Any]] = {}
+    for item in ordered:
+        command = str(item["command"])
+        current = by_command.setdefault(command, {"check": item, "evidence_refs": []})
+        current["check"] = item
+        artifact_ref = item.get("artifact_ref")
+        if isinstance(artifact_ref, str) and artifact_ref not in current["evidence_refs"]:
+            current["evidence_refs"].append(artifact_ref)
+    return sorted(
+        by_command.values(),
+        key=lambda authoritative: _completion_check_sort_key(authoritative["check"]),
+    )
+
+
+def _replayable_completion_checks(
+    completion_packet: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if completion_packet is None or not isinstance(completion_packet.get("checks"), list):
+        return []
+    producer = completion_packet.get("producer")
+    pcl_produced = (
+        isinstance(producer, dict)
+        and producer.get("name") == "project-loop-harness"
+    )
+    ordered = sorted(
+        (
+            item
+            for item in completion_packet["checks"]
+            if isinstance(item, dict)
+            and isinstance(item.get("command"), str)
+            and item["command"]
+            and (
+                item.get("reproducible") is True
+                or (
+                    pcl_produced
+                    and isinstance(item.get("artifact_ref"), str)
+                )
+            )
         ),
         key=_completion_check_sort_key,
     )

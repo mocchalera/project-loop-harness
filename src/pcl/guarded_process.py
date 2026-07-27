@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import signal
@@ -19,6 +21,8 @@ READ_CHUNK_BYTES = 65_536
 DEFAULT_ENV_ALLOWLIST = frozenset(
     {
         "CI",
+        "CI_NODE_INDEX",
+        "CI_NODE_TOTAL",
         "COLORTERM",
         "COMSPEC",
         "FORCE_COLOR",
@@ -30,9 +34,16 @@ DEFAULT_ENV_ALLOWLIST = frozenset(
         "PATH",
         "PATHEXT",
         "PYTHONPATH",
+        "PYTHONHASHSEED",
+        "PYTEST_RANDOMLY_SEED",
+        "PYTEST_XDIST_WORKER",
+        "PYTEST_XDIST_WORKER_COUNT",
+        "RANDOM_SEED",
         "SYSTEMROOT",
         "TEMP",
         "TERM",
+        "TEST_SHARD_INDEX",
+        "TEST_TOTAL_SHARDS",
         "TMP",
         "TMPDIR",
         "USERPROFILE",
@@ -95,6 +106,26 @@ def build_subprocess_env(
         "inheritance": "allowlist",
         "inherited_names": inherited_names,
         "blocked_name_count": len(set(os.environ) - set(inherited_names)),
+        "sha256": _environment_sha256(inherited),
+        "execution_context": {
+            "worker_sha256": _selected_environment_sha256(
+                inherited,
+                {"PYTEST_XDIST_WORKER", "PYTEST_XDIST_WORKER_COUNT"},
+            ),
+            "shard_sha256": _selected_environment_sha256(
+                inherited,
+                {
+                    "CI_NODE_INDEX",
+                    "CI_NODE_TOTAL",
+                    "TEST_SHARD_INDEX",
+                    "TEST_TOTAL_SHARDS",
+                },
+            ),
+            "seed_sha256": _selected_environment_sha256(
+                inherited,
+                {"PYTHONHASHSEED", "PYTEST_RANDOMLY_SEED", "RANDOM_SEED"},
+            ),
+        },
         "values_recorded": False,
     }
 
@@ -122,6 +153,7 @@ def execute_guarded_process(
     timed_out = False
     exit_code: int | None = None
     spawn_error = ""
+    spawn_error_kind = ""
     termination = {"requested": False, "method": "", "escalated": False}
 
     try:
@@ -137,6 +169,13 @@ def execute_guarded_process(
         )
     except OSError as exc:
         spawn_error = f"{exc.__class__.__name__}: {exc}\n"
+        spawn_error_kind = (
+            "not_found"
+            if isinstance(exc, FileNotFoundError)
+            else "permission_denied"
+            if isinstance(exc, PermissionError)
+            else "os_error"
+        )
         stderr_capture.consume(spawn_error.encode("utf-8", errors="replace"))
     else:
         assert process.stdout is not None
@@ -176,8 +215,14 @@ def execute_guarded_process(
         "timed_out": timed_out,
         "duration_seconds": round(time.monotonic() - started, 6),
         "failure_kind": "spawn_error" if spawn_error else ("timeout" if timed_out else ""),
+        "spawn_error_kind": spawn_error_kind,
         "stdout": stdout_metadata,
         "stderr": stderr_metadata,
+        "artifact_collection": {
+            "status": "collected",
+            "stdout": True,
+            "stderr": True,
+        },
         "output_truncated": stdout_metadata["truncated"] or stderr_metadata["truncated"],
         "redacted": stdout_metadata["redacted"] or stderr_metadata["redacted"],
         "termination": termination,
@@ -194,6 +239,28 @@ def execute_guarded_process(
             },
         },
     }
+
+
+def _environment_sha256(environment: dict[str, str]) -> str:
+    encoded = json.dumps(
+        sorted(environment.items()),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def _selected_environment_sha256(
+    environment: dict[str, str],
+    names: set[str],
+) -> str | None:
+    selected = sorted(
+        (name, environment[name])
+        for name in names
+        if name in environment
+    )
+    return _environment_sha256(dict(selected)) if selected else None
 
 
 def _drain_stream(stream: Any, capture: _BoundedStream) -> None:
