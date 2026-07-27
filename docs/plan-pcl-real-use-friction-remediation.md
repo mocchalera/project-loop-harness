@@ -20,7 +20,7 @@
 | --- | --- | --- |
 | P0-1 C0 verification input manifest | implemented | `ceb9748`, `docs/evidence/0213-finish-input-manifest-validation.md` |
 | P0-1 C1 isolated finish workspace | implemented | `19b7c0b`, `docs/evidence/0214-finish-isolated-workspace-validation.md` |
-| P0-2 result and stability contract | in progress | `T-0142`, `F-0071`, `US-0069` draft, `TC-0144`〜`TC-0146` |
+| P0-2 result and stability contract | implemented | `92346bb`, `E-0599`〜`E-0601`, `docs/evidence/0215-finish-result-stability-validation.md` |
 | P0-3 以降 | planned | 本書の依存順で継続 |
 
 ## 1. 成功条件
@@ -298,3 +298,4 @@ P0 全体の release gate:
 | Story draft を保存した直後の `feature status ... specified` が reviewer-checkable Evidence 必須で拒否された | `F5`, `F9`, P0-3 / P0-7 | state は誤って進めず discovered のまま保持。Story specification と implementation Evidence の必要条件を command guidance で分離する余地 |
 | 単発成功を `reproducible: false` に直すと、`resume` が安全な再実行 command まで削除した | `FD`, P0-2 | 回帰テストで検出。PCL 生成 check に限り stability Evidence 用 replay command を保持するよう修正 |
 | P0-2 の record-only stability と現行 terminal transition の間に一時的な不一致が残る | `F2`, `F5`, P0-3 | completion-packet/v1 を壊さず、shared readiness 接続まで明示的 residual gap とする |
+| 同じ検証文書の Evidence `E-0599` を3つの Testへ共有しようとすると `conflicting acceptance target` で拒否され、Testごとに `E-0600` / `E-0601` の重複登録が必要だった | `F8`, P0-5 | Evidence bytesと検証実行は同じ。immutable resultの複数acceptance target linkまたはbundle参照を検討する |
