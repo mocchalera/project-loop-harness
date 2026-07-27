@@ -299,3 +299,12 @@ P0 全体の release gate:
 | 単発成功を `reproducible: false` に直すと、`resume` が安全な再実行 command まで削除した | `FD`, P0-2 | 回帰テストで検出。PCL 生成 check に限り stability Evidence 用 replay command を保持するよう修正 |
 | P0-2 の record-only stability と現行 terminal transition の間に一時的な不一致が残る | `F2`, `F5`, P0-3 | completion-packet/v1 を壊さず、shared readiness 接続まで明示的 residual gap とする |
 | 同じ検証文書の Evidence `E-0599` を3つの Testへ共有しようとすると `conflicting acceptance target` で拒否され、Testごとに `E-0600` / `E-0601` の重複登録が必要だった | `F8`, P0-5 | Evidence bytesと検証実行は同じ。immutable resultの複数acceptance target linkまたはbundle参照を検討する |
+
+### 2026-07-28: adopter task `81812d6f` 継続監視
+
+| 観測 | 対応先 | 状態 |
+| --- | --- | --- |
+| 同一Node laneがGitHub runnerの実空き容量12GBと既定timeoutの影響で失敗し、機能不一致・fixture不備・resource不足の切り分けに長時間を要した | `FB`, `FD`, `F10`, P0-2 / P0-6 | attempt identityとは別に、disk / memory / CPU / runner limitのresource envelopeを観測provenanceへ追加し、正規化したcapacity classだけをcompatibility判断へ使う |
+| PCL Evidenceのproducer commandに省略表記が保存でき、後からexact path入りEvidenceへ差し替える必要があった | `F9`, P0-7 | claimed commandにplaceholder / ellipsis警告を追加し、可能ならguarded executor receiptのexact argvを参照する |
+| 正常な耐久コピーEvidence追加後にaudit異常数が220→223へ増えたが、target / since / delta scopeがなく原因切り分けが難しかった | `F7`, P0-5 | `audit check --target --since --summary`と「今回mutationが増やしたfinding」の差分表示を受け入れ条件へ追加する |
+| integration worktreeのPCL照会は`not_initialized`で停止し、canonical checkoutへ手動で戻って状態確認した | `F10`, P0-6 | canonical DBを増殖させず、worktree実行からcanonical state rootとexecution rootをtyped bindingする |
