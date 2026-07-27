@@ -17,6 +17,8 @@ from .locales import HUMAN_GATE_JA
 from .paths import ProjectPaths
 from .project_config import finish_check_configuration
 from .target_resolver import TaskGoalTargetNotFoundError, resolve_existing_task_goal
+from .tasks import task_terminal_readiness_for_row
+from .terminal_readiness import feature_terminal_readiness
 from .workflow_proposals import next_reviewable_workflow_proposal
 
 from .command_domain import loop_status
@@ -594,6 +596,8 @@ def _explicit_task_next_action(paths: ProjectPaths, *, task: dict) -> dict:
     finally:
         conn.close()
     task_id = str(enriched["id"])
+    if enriched.get("derived_status") == "ready_to_close":
+        return _finish_ready_task_next_action(enriched)
     if enriched["status"] == "blocked":
         return build_next_action(
             action_type="inspect_blocked_task",
@@ -898,6 +902,24 @@ def _passing_feature_next_action(paths: ProjectPaths) -> dict | None:
             """,
             (feature["id"],),
         ).fetchall()
+        stories = conn.execute(
+            """
+            SELECT id, status
+            FROM user_stories
+            WHERE feature_id = ?
+            ORDER BY id
+            """,
+            (feature["id"],),
+        ).fetchall()
+        defects = conn.execute(
+            """
+            SELECT id, status
+            FROM defects
+            WHERE feature_id = ?
+            ORDER BY id
+            """,
+            (feature["id"],),
+        ).fetchall()
         blockers: list[dict[str, Any]] = []
         for test in tests:
             if test["status"] != "passing":
@@ -953,7 +975,36 @@ def _passing_feature_next_action(paths: ProjectPaths) -> dict | None:
                     "required_artifacts": ["evidence-set/v1", "completion-policy/v1"],
                 }
             )
-        feature["completion_status"] = "blocked" if blockers else "ready_for_explicit_done_review"
+        completion_requirements = [
+            {
+                "code": blocker["code"],
+                "state": "incomplete",
+                "message": (
+                    "A Test lacks a passing hash-bound Evidence Set "
+                    "completion-policy receipt."
+                ),
+                "next_command": (
+                    f"pcl evidence show {blocker['evidence_id']} --json"
+                    if blocker.get("evidence_id")
+                    else f"pcl feature read {feature['id']} --json"
+                ),
+                "details": blocker,
+            }
+            for blocker in blockers
+        ]
+        readiness = feature_terminal_readiness(
+            feature_id=str(feature["id"]),
+            stories=(dict(story) for story in stories),
+            tests=(dict(test) for test in tests),
+            defects=(dict(defect) for defect in defects),
+            additional_requirements=completion_requirements,
+        )
+        feature["terminal_readiness"] = readiness
+        feature["completion_status"] = (
+            "ready_for_explicit_done_review"
+            if readiness["terminal_allowed"]
+            else "blocked"
+        )
         feature["completion_blockers"] = blockers
         blocker_evidence_id = next(
             (
@@ -1347,6 +1398,8 @@ def _task_next_action(paths: ProjectPaths, *, goal_id: str | None = None) -> dic
         if in_progress is not None:
             task = _task_next_action_target(conn, dict(in_progress))
             task_id = str(task["id"])
+            if task.get("derived_status") == "ready_to_close":
+                return _finish_ready_task_next_action(task)
             return build_next_action(
                 action_type="work_on_task",
                 command=f"pcl context pack --task {task_id} --json",
@@ -1367,6 +1420,8 @@ def _task_next_action(paths: ProjectPaths, *, goal_id: str | None = None) -> dic
             return None
         task = _task_next_action_target(conn, dict(actionable))
         task_id = str(task["id"])
+        if task.get("derived_status") == "ready_to_close":
+            return _finish_ready_task_next_action(task)
         return build_next_action(
             action_type="work_on_task",
             command=f"pcl context pack --task {task_id} --json",
@@ -1514,7 +1569,32 @@ def _task_next_action_target(conn, task: dict) -> dict:
     ).fetchall()
     task["dependency_ids"] = [str(row["depends_on_task_id"]) for row in dependency_rows]
     task["dependent_ids"] = [str(row["task_id"]) for row in dependent_rows]
+    if task.get("related_feature_id"):
+        readiness = task_terminal_readiness_for_row(conn, task)
+        task["terminal_readiness"] = readiness
+        task["derived_status"] = readiness["derived_task_status"]
     return task
+
+
+def _finish_ready_task_next_action(task: dict) -> dict:
+    task_id = str(task["id"])
+    return build_next_action(
+        action_type="finish_task",
+        command=f"pcl finish --emit-packet --task {task_id} --json",
+        reason=(
+            "The linked Feature Story/Test lifecycle is complete; the Task is "
+            "ready to close through verified finish checks."
+        ),
+        target=task,
+        priority=58,
+        blocking=False,
+        requires_human=False,
+        safe_to_run=True,
+        expected_after=(
+            f"Configured checks emit a Task-bound completion packet and Task {task_id} "
+            "becomes done only on a completed outcome."
+        ),
+    )
 
 
 def _unfinished_executor_next_action(

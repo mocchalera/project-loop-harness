@@ -24,6 +24,7 @@ from .rubric import (
     rubric_contract_version,
     validate_rubric,
 )
+from .terminal_readiness import goal_terminal_readiness
 from .timeutil import utc_now_iso
 
 
@@ -31,7 +32,6 @@ ACTIVE_JOB_STATUSES = {"queued", "running", "blocked"}
 TERMINAL_JOB_STATUSES = {"passed", "failed", "cancelled"}
 ACTIVE_RUN_STATUSES = {"queued", "running", "blocked"}
 ACTIVE_DEFECT_STATUSES = {"open", "triaged", "in_progress", "fixed", "verified"}
-TERMINAL_TASK_STATUSES = {"done", "cancelled", "waived"}
 
 
 class JobCompletionEvidenceError(PclError):
@@ -571,25 +571,26 @@ def close_goal(
 def _require_goal_tasks_terminal(conn, goal_id: str) -> None:
     if not table_exists(conn, "tasks"):
         return
-    terminal_statuses = sorted(TERMINAL_TASK_STATUSES)
-    placeholders = ", ".join("?" for _ in terminal_statuses)
     rows = conn.execute(
-        f"""
+        """
         SELECT id, status
         FROM tasks
         WHERE related_goal_id = ?
-          AND status NOT IN ({placeholders})
         ORDER BY id
         """,
-        (goal_id, *terminal_statuses),
+        (goal_id,),
     ).fetchall()
-    if not rows:
+    readiness = goal_terminal_readiness(
+        goal_id=goal_id,
+        tasks=(dict(row) for row in rows),
+    )
+    if readiness["terminal_allowed"]:
         return
-    incomplete_tasks = [{"id": str(row["id"]), "status": str(row["status"])} for row in rows]
+    reason = readiness["reasons"][0]
     raise EvidenceAddError(
-        f"Goal {goal_id} cannot close while related Tasks are non-terminal.",
-        code="goal_close_tasks_incomplete",
-        details={"goal_id": goal_id, "incomplete_tasks": incomplete_tasks},
+        reason["message"],
+        code=reason["code"],
+        details=reason["details"],
     )
 
 

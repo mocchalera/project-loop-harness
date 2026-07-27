@@ -29,7 +29,9 @@ from .ids import next_prefixed_id
 from .paths import ProjectPaths
 from .project_config import finish_check_configuration
 from .route_overrides import recorded_route_context
+from .terminal_readiness import evaluate_terminal_readiness, finish_terminal_readiness
 from .timeutil import utc_now_iso
+from .tasks import task_terminal_readiness_for_row
 from .validators import validate_project
 from .verification_manifest import (
     canonical_verification_input_manifest_json,
@@ -181,12 +183,27 @@ def emit_finish_packet(
         and existing["outcome"] in {"COMPLETED_VERIFIED", "COMPLETED_WITH_RISK"}
         and _target_is_terminal(paths, target)
     ):
+        existing_requirements = []
+        if existing["outcome"] == "COMPLETED_WITH_RISK":
+            existing_requirements.append(
+                {
+                    "code": "existing_completion_with_risk",
+                    "state": "risk",
+                    "message": "The existing completion packet records accepted risk.",
+                    "details": {"outcome": existing["outcome"]},
+                }
+            )
         return {
             **plan,
             "dry_run": False,
             "changed": False,
             "idempotent": True,
             "packet": existing,
+            "terminal_readiness": evaluate_terminal_readiness(
+                target_type=target["type"],
+                target_id=target["id"],
+                requirements=existing_requirements,
+            ),
             "checks": [],
             "exit_code": 0,
         }
@@ -275,6 +292,40 @@ def emit_finish_packet(
         race_detected = _snapshot_identity(plan) != _snapshot_identity(after)
         strict = validate_project(paths, strict=True)
         blockers = _target_blockers(paths, target)
+        target_readiness = blockers.get("target_readiness")
+        effect_requirements = (
+            list(target_readiness["reasons"])
+            if isinstance(target_readiness, dict)
+            else []
+        )
+        if effect["classification"] in {"mutates_inputs", "unknown"}:
+            effect_requirements.append(
+                {
+                    "code": "finish_workspace_input_mutation",
+                    "state": "incomplete",
+                    "message": (
+                        "A finish check changed canonical verification inputs or its "
+                        "effect could not be classified."
+                    ),
+                    "details": {
+                        "classification": effect["classification"],
+                        "changes": effect["changes"],
+                        "reasons": effect["reasons"],
+                    },
+                }
+            )
+        terminal_readiness = finish_terminal_readiness(
+            target_type=target["type"],
+            target_id=target["id"],
+            commands=commands,
+            strict_ok=strict.ok,
+            strict_errors=list(strict.errors),
+            strict_warnings=list(strict.warnings),
+            race_detected=race_detected,
+            blockers=blockers,
+            stability_mode=plan["execution_plan"]["stability_policy"]["mode"],
+            additional_requirements=effect_requirements,
+        )
         if effect["classification"] in {"mutates_inputs", "unknown"}:
             committed_attempt = _commit_finish_attempt(
                 paths,
@@ -305,6 +356,7 @@ def emit_finish_packet(
                     "errors": list(strict.errors),
                     "warnings": list(strict.warnings),
                 },
+                "terminal_readiness": terminal_readiness,
                 "checks": committed_attempt["checks"],
                 "attempt": committed_attempt["attempt"],
                 "target_transition": {
@@ -324,11 +376,8 @@ def emit_finish_packet(
             return result
         outcome = _completion_outcome(
             changes=after["changes"],
-            commands=commands,
-            strict_ok=strict.ok,
-            strict_warnings=list(strict.warnings),
-            race_detected=race_detected,
             blockers=blockers,
+            terminal_readiness=terminal_readiness,
         )
         committed = _commit_completion_packet(
             paths,
@@ -361,6 +410,7 @@ def emit_finish_packet(
             "errors": list(strict.errors),
             "warnings": list(strict.warnings),
         },
+        "terminal_readiness": terminal_readiness,
         "checks": committed["checks"],
         "packet": committed["packet"],
         "target_transition": committed["target_transition"],
@@ -558,6 +608,7 @@ def _target_blockers(paths: ProjectPaths, target: dict[str, Any]) -> dict[str, A
                 decisions.append({"id": str(row["id"]), "question": str(row["question"])})
         budget_exhausted = False
         goal_id = target.get("goal_id")
+        escalations = []
         if goal_id:
             row = conn.execute("SELECT budget_json FROM goals WHERE id = ?", (goal_id,)).fetchone()
             if row is not None:
@@ -566,27 +617,72 @@ def _target_blockers(paths: ProjectPaths, target: dict[str, Any]) -> dict[str, A
                 except json.JSONDecodeError:
                     budget = {}
                 budget_exhausted = budget.get("exhausted") is True
+            escalations = [
+                {
+                    "id": str(row["id"]),
+                    "question": str(row["question"]),
+                    "severity": str(row["severity"]),
+                }
+                for row in conn.execute(
+                    """
+                    SELECT escalations.id, escalations.question, escalations.severity
+                    FROM escalations
+                    JOIN workflow_runs
+                      ON workflow_runs.id = escalations.workflow_run_id
+                    WHERE escalations.status = 'open'
+                      AND workflow_runs.goal_id = ?
+                    ORDER BY escalations.id
+                    """,
+                    (goal_id,),
+                ).fetchall()
+            ]
+        target_readiness = None
+        if target["type"] == "task":
+            task = conn.execute(
+                """
+                SELECT id, status, related_feature_id
+                FROM tasks
+                WHERE id = ?
+                """,
+                (target["id"],),
+            ).fetchone()
+            if task is not None:
+                target_readiness = task_terminal_readiness_for_row(
+                    conn,
+                    dict(task),
+                )
     finally:
         conn.close()
     planner = target.get("finish_plan") or {}
     human_steps = [step for step in planner.get("remaining_steps", []) if step.get("requires_human")]
-    return {"decisions": decisions, "human_steps": human_steps, "budget_exhausted": budget_exhausted}
+    return {
+        "decisions": decisions,
+        "escalations": escalations,
+        "human_steps": human_steps,
+        "budget_exhausted": budget_exhausted,
+        "target_readiness": target_readiness,
+    }
 
 
 def _completion_outcome(
-    *, changes: list[dict[str, Any]], commands: list[dict[str, Any]], strict_ok: bool,
-    strict_warnings: list[str],
-    race_detected: bool, blockers: dict[str, Any],
+    *,
+    changes: list[dict[str, Any]],
+    blockers: dict[str, Any],
+    terminal_readiness: dict[str, Any],
 ) -> str:
     if blockers["budget_exhausted"]:
         return "INCOMPLETE_BUDGET_EXHAUSTED"
-    if blockers["decisions"] or blockers["human_steps"]:
+    if blockers["decisions"] or blockers["escalations"] or blockers["human_steps"]:
         return "INCOMPLETE_HUMAN_DECISION_REQUIRED"
-    if race_detected or not strict_ok or any(command["status"] != "passed" for command in commands):
+    if not terminal_readiness["terminal_allowed"]:
         return "INCOMPLETE_VALIDATION"
     if not changes:
         return "NO_CHANGES"
-    return "COMPLETED_WITH_RISK" if strict_warnings else "COMPLETED_VERIFIED"
+    return (
+        "COMPLETED_WITH_RISK"
+        if terminal_readiness["status"] == "ready_with_risk"
+        else "COMPLETED_VERIFIED"
+    )
 
 
 def _commit_finish_attempt(
@@ -901,6 +997,7 @@ def _build_packet(
     if failed:
         reasons.append("Configured checks did not pass: " + ", ".join(failed))
     human_decisions = [item["question"] for item in blockers["decisions"]]
+    human_decisions.extend(item["question"] for item in blockers["escalations"])
     human_decisions.extend(str(step["reason"]) for step in blockers["human_steps"])
     recovery = finish_timeout_recovery(
         target=target,

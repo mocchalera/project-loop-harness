@@ -22,6 +22,7 @@
       "created_at": "<TIMESTAMP>",
       "dependency_ids": [],
       "dependent_ids": [],
+      "derived_status": "todo",
       "description": "Synthetic task used only by the public baseline fixture.",
       "effort": null,
       "id": "T-0001",
@@ -33,6 +34,58 @@
       "related_goal_status": "open",
       "risk": null,
       "status": "todo",
+      "terminal_readiness": {
+        "contract_version": "terminal-readiness/v1",
+        "derived_task_status": "todo",
+        "next_commands": [
+          "pcl feature read F-0001 --json",
+          "pcl test read TC-0001 --json"
+        ],
+        "reasons": [
+          {
+            "code": "feature_done_story_incomplete",
+            "details": {
+              "feature_id": "F-0001",
+              "stories": [
+                {
+                  "id": "US-0001",
+                  "status": "draft"
+                }
+              ],
+              "story_count": 1
+            },
+            "message": "Feature F-0001 has missing or incomplete Stories.",
+            "next_command": "pcl feature read F-0001 --json",
+            "requires_human": true,
+            "state": "blocked"
+          },
+          {
+            "code": "feature_done_tests_incomplete",
+            "details": {
+              "feature_id": "F-0001",
+              "test_count": 1,
+              "tests": [
+                {
+                  "id": "TC-0001",
+                  "status": "planned"
+                }
+              ]
+            },
+            "message": "Feature F-0001 has missing or incomplete non-waived Tests.",
+            "next_command": "pcl test read TC-0001 --json",
+            "requires_human": false,
+            "state": "incomplete"
+          }
+        ],
+        "requires_human": true,
+        "source_feature_id": "F-0001",
+        "status": "blocked",
+        "target": {
+          "id": "T-0001",
+          "type": "task"
+        },
+        "terminal_allowed": false
+      },
       "title": "Inspect baseline context",
       "updated_at": "<TIMESTAMP>"
     },

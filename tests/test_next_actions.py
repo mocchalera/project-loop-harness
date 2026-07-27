@@ -272,7 +272,64 @@ def test_next_routes_passing_unfinished_feature_with_completion_blocker(
             "required_artifacts": ["evidence-set/v1", "completion-policy/v1"],
         }
     ]
+    assert action["target"]["terminal_readiness"]["contract_version"] == (
+        "terminal-readiness/v1"
+    )
+    assert action["target"]["terminal_readiness"]["status"] == "incomplete"
+    assert action["target"]["terminal_readiness"]["reasons"][0]["code"] == (
+        "completion_policy_receipt_missing"
+    )
     assert "Evidence Set completion-policy receipt" in action["reason"]
+
+
+def test_targeted_next_routes_ready_to_close_task_to_verified_finish(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main([
+        "--root", str(tmp_path), "task", "create", "--title", "Projected Task",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "feature", "add", "--name", "Projected Feature",
+        "--surface", "cli:pcl", "--task", "T-0001",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "story", "draft", "--feature", "F-0001",
+        "--actor", "operator", "--goal", "complete task",
+        "--expected-behavior", "Task becomes ready to close",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "story", "approve", "US-0001",
+        "--summary", "Approved",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "test", "plan", "--feature", "F-0001",
+        "--story", "US-0001", "--type", "acceptance",
+        "--scenario", "Projected task passes", "--expected", "passing",
+    ]) == 0
+    capsys.readouterr()
+    artifact = tmp_path / "projected-task-result.txt"
+    artifact.write_text("passed\n", encoding="utf-8")
+    assert main([
+        "--root", str(tmp_path), "evidence", "add", "--file", artifact.name,
+        "--summary", "Projected task acceptance", "--copy", "--json",
+    ]) == 0
+    evidence_id = str(_json_output(capsys)["evidence"]["id"])
+    assert main([
+        "--root", str(tmp_path), "test", "pass", "TC-0001",
+        "--summary", "Passed", "--evidence-id", evidence_id,
+    ]) == 0
+    capsys.readouterr()
+
+    assert main([
+        "--root", str(tmp_path), "next", "--target", "T-0001", "--json",
+    ]) == 0
+    action = _json_output(capsys)
+    assert action["type"] == "finish_task"
+    assert action["command"] == "pcl finish --emit-packet --task T-0001 --json"
+    assert action["target"]["derived_status"] == "ready_to_close"
+    assert action["target"]["terminal_readiness"]["status"] == "ready"
 
 
 def test_next_keeps_goal_continuation_ahead_of_advisory_checkpoint(tmp_path: Path, capsys) -> None:

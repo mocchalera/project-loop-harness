@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from .db import connect, connect_mutation
@@ -8,6 +9,7 @@ from .events import append_event
 from .guards import require_initialized
 from .ids import next_prefixed_id
 from .paths import ProjectPaths
+from .terminal_readiness import task_terminal_readiness
 from .timeutil import utc_now_iso
 
 
@@ -166,7 +168,10 @@ def list_tasks(
             """,
             tuple(params),
         ).fetchall()
-        return [dict(row) for row in rows]
+        tasks = [dict(row) for row in rows]
+        for task in tasks:
+            _attach_task_terminal_readiness(conn, task)
+        return tasks
     finally:
         conn.close()
 
@@ -179,6 +184,7 @@ def read_task(paths: ProjectPaths, task_id: str) -> dict[str, Any]:
         task = dict(_get_task(conn, task_id))
         task["dependencies"] = _related_tasks(conn, task_id, direction="dependencies")
         task["dependents"] = _related_tasks(conn, task_id, direction="dependents")
+        _attach_task_terminal_readiness(conn, task)
         return task
     finally:
         conn.close()
@@ -325,6 +331,67 @@ def _get_task(conn, task_id: str):
             details={"task_id": task_id},
         )
     return row
+
+
+def task_terminal_readiness_for_row(
+    conn,
+    task: Mapping[str, Any],
+) -> dict[str, Any]:
+    feature_id = str(task.get("related_feature_id") or "").strip() or None
+    stories = []
+    tests = []
+    defects = []
+    if feature_id is not None:
+        stories = [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT id, status
+                FROM user_stories
+                WHERE feature_id = ?
+                ORDER BY id
+                """,
+                (feature_id,),
+            ).fetchall()
+        ]
+        tests = [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT id, status
+                FROM test_cases
+                WHERE feature_id = ?
+                ORDER BY id
+                """,
+                (feature_id,),
+            ).fetchall()
+        ]
+        defects = [
+            dict(row)
+            for row in conn.execute(
+                """
+                SELECT id, status
+                FROM defects
+                WHERE feature_id = ?
+                ORDER BY id
+                """,
+                (feature_id,),
+            ).fetchall()
+        ]
+    return task_terminal_readiness(
+        task_id=str(task["id"]),
+        task_status=str(task["status"]),
+        feature_id=feature_id,
+        stories=stories,
+        tests=tests,
+        defects=defects,
+    )
+
+
+def _attach_task_terminal_readiness(conn, task: dict[str, Any]) -> None:
+    readiness = task_terminal_readiness_for_row(conn, task)
+    task["terminal_readiness"] = readiness
+    task["derived_status"] = readiness["derived_task_status"]
 
 
 def _get_entity(conn, table: str, entity_id: str, label: str, field_name: str):

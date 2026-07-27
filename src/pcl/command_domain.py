@@ -17,6 +17,7 @@ from .errors import InvalidInputError
 from .guards import require_initialized
 from .ids import next_prefixed_id
 from .paths import ProjectPaths
+from .terminal_readiness import feature_terminal_readiness
 from .timeutil import utc_now_iso
 
 FEATURE_STATUSES = {"discovered", "specified", "needs_test", "needs_fix", "passing", "done", "waived"}
@@ -316,34 +317,28 @@ def _guard_feature_done(conn, feature_id: str) -> None:
         "SELECT id, status FROM user_stories WHERE feature_id = ? ORDER BY id",
         (feature_id,),
     ).fetchall()
-    incomplete_stories = [dict(row) for row in stories if row["status"] not in {"approved", "waived"}]
-    if not stories or incomplete_stories:
-        raise EvidenceAddError(
-            f"Feature {feature_id} has missing or incomplete Stories.",
-            code="feature_done_story_incomplete",
-            details={"feature_id": feature_id, "stories": incomplete_stories, "story_count": len(stories)},
-        )
     tests = conn.execute(
-        "SELECT id, status FROM test_cases WHERE feature_id = ? AND status != 'waived' ORDER BY id",
+        "SELECT id, status FROM test_cases WHERE feature_id = ? ORDER BY id",
         (feature_id,),
     ).fetchall()
-    incomplete_tests = [dict(row) for row in tests if row["status"] != "passing"]
-    if not tests or incomplete_tests:
-        raise EvidenceAddError(
-            f"Feature {feature_id} has missing or incomplete non-waived Tests.",
-            code="feature_done_tests_incomplete",
-            details={"feature_id": feature_id, "tests": incomplete_tests, "test_count": len(tests)},
-        )
     defects = conn.execute(
-        "SELECT id, status FROM defects WHERE feature_id = ? AND status NOT IN ('closed', 'waived') ORDER BY id",
+        "SELECT id, status FROM defects WHERE feature_id = ? ORDER BY id",
         (feature_id,),
     ).fetchall()
-    if defects:
-        raise EvidenceAddError(
-            f"Feature {feature_id} has active Defects.",
-            code="feature_done_open_defects",
-            details={"feature_id": feature_id, "defects": [dict(row) for row in defects]},
-        )
+    readiness = feature_terminal_readiness(
+        feature_id=feature_id,
+        stories=(dict(row) for row in stories),
+        tests=(dict(row) for row in tests),
+        defects=(dict(row) for row in defects),
+    )
+    if readiness["terminal_allowed"]:
+        return
+    reason = readiness["reasons"][0]
+    raise EvidenceAddError(
+        reason["message"],
+        code=reason["code"],
+        details=reason["details"],
+    )
 
 
 def open_defect(

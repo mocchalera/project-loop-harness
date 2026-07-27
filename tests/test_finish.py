@@ -401,6 +401,11 @@ def test_finish_emit_packet_success_and_idempotent_rerun(tmp_path: Path, capsys)
         "stability_required"
     )
     assert finish["checks"][0]["stability_evaluation"]["reproducible"] is False
+    assert finish["terminal_readiness"]["contract_version"] == "terminal-readiness/v1"
+    assert finish["terminal_readiness"]["status"] == "ready"
+    assert finish["terminal_readiness"]["reasons"][0]["code"] == (
+        "finish_stability_record_only"
+    )
     packet = load_completion_packet(tmp_path / finish["packet"]["path"])
     assert validate_completion_packet(packet).ok is True
     assert packet["repository"]["diff_sha256"] == finish["repository"]["diff_sha256"]
@@ -450,6 +455,10 @@ def test_finish_input_mutation_is_isolated_and_records_attempt_without_packet(
     assert finish["execution"]["effect"]["reasons"] == []
     assert finish["attempt"]["contract_version"] == "finish-attempt/v1"
     assert finish["attempt"]["outcome"] == "INCOMPLETE_VALIDATION"
+    assert finish["terminal_readiness"]["status"] == "incomplete"
+    assert finish["terminal_readiness"]["reasons"][0]["code"] == (
+        "finish_workspace_input_mutation"
+    )
     assert "packet" not in finish
     assert finish["target_transition"] == {
         "changed": False,
@@ -508,6 +517,40 @@ def test_finish_emit_packet_failure_keeps_task_active(tmp_path: Path, capsys) ->
         assert conn.execute("SELECT status FROM tasks WHERE id = 'T-0001'").fetchone()[0] == "in_progress"
     finally:
         conn.close()
+
+
+def test_finish_blocks_linked_task_until_feature_readiness_is_complete(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    assert main([
+        "--root", str(tmp_path), "feature", "add", "--name", "Incomplete",
+        "--surface", "cli:pcl", "--task", "T-0001",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "story", "draft", "--feature", "F-0001",
+        "--actor", "operator", "--goal", "finish linked work",
+        "--expected-behavior", "Human approval and passing Tests are required",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "test", "plan", "--feature", "F-0001",
+        "--story", "US-0001", "--type", "acceptance",
+        "--scenario", "Incomplete linked work", "--expected", "not terminal",
+    ]) == 0
+    capsys.readouterr()
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001",
+        "--json",
+    ]) == 1
+    finish = _finish_payload(capsys)
+    assert finish["packet"]["outcome"] == "INCOMPLETE_VALIDATION"
+    assert finish["terminal_readiness"]["status"] == "blocked"
+    assert finish["terminal_readiness"]["reasons"][0]["code"] == (
+        "feature_done_story_incomplete"
+    )
+    assert finish["target_transition"]["changed"] is False
 
 
 def test_finish_timeout_exposes_bounded_retry_and_next_preserves_it(
@@ -731,6 +774,10 @@ def test_finish_human_gate_emits_incomplete_packet_and_next_action(tmp_path: Pat
     ]) == 0
     finish = _finish_payload(capsys)
     assert finish["packet"]["outcome"] == "INCOMPLETE_HUMAN_DECISION_REQUIRED"
+    assert finish["terminal_readiness"]["status"] == "blocked"
+    assert finish["terminal_readiness"]["reasons"][0]["code"] == (
+        "finish_human_decision_required"
+    )
     packet = load_completion_packet(tmp_path / finish["packet"]["path"])
     assert packet["human_decisions"] == ["May this task close?"]
     assert packet["next_action"]["command"] == "pcl decision list --status open"
@@ -745,6 +792,10 @@ def test_finish_budget_block_emits_incomplete_packet(tmp_path: Path, capsys) -> 
     ]) == 0
     finish = _finish_payload(capsys)
     assert finish["packet"]["outcome"] == "INCOMPLETE_BUDGET_EXHAUSTED"
+    assert finish["terminal_readiness"]["status"] == "blocked"
+    assert finish["terminal_readiness"]["reasons"][0]["code"] == (
+        "finish_budget_exhausted"
+    )
     packet = load_completion_packet(tmp_path / finish["packet"]["path"])
     assert packet["next_action"]["command"] is None
     assert finish["target_transition"]["changed"] is False

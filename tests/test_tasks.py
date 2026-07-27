@@ -126,6 +126,51 @@ def test_task_crud_ordering_and_filters(tmp_path: Path, capsys) -> None:
     assert read["task"]["dependents"] == []
 
 
+def test_task_read_projects_linked_feature_as_ready_to_close(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    task = _create_task(tmp_path, capsys, title="Projected readiness")
+    assert main([
+        "--root", str(tmp_path), "feature", "add", "--name", "Projected",
+        "--surface", "cli:pcl", "--task", task["id"],
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "story", "draft", "--feature", "F-0001",
+        "--actor", "operator", "--goal", "complete projected work",
+        "--expected-behavior", "Task becomes ready to close",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "story", "approve", "US-0001",
+        "--summary", "Approved",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "test", "plan", "--feature", "F-0001",
+        "--story", "US-0001", "--type", "acceptance",
+        "--scenario", "Projected work passes", "--expected", "passing",
+    ]) == 0
+    capsys.readouterr()
+    artifact = tmp_path / "projected-result.txt"
+    artifact.write_text("passed\n", encoding="utf-8")
+    assert main([
+        "--root", str(tmp_path), "evidence", "add", "--file", artifact.name,
+        "--summary", "Projected acceptance", "--copy", "--json",
+    ]) == 0
+    evidence_id = str(_json_output(capsys)["evidence"]["id"])
+    assert main([
+        "--root", str(tmp_path), "test", "pass", "TC-0001",
+        "--summary", "Passed", "--evidence-id", evidence_id,
+    ]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "task", "read", task["id"], "--json"]) == 0
+    projected = _json_output(capsys)["task"]
+    assert projected["derived_status"] == "ready_to_close"
+    assert projected["terminal_readiness"]["status"] == "ready"
+    assert projected["terminal_readiness"]["source_feature_id"] == "F-0001"
+
+
 def test_task_status_transitions_require_reason(tmp_path: Path, capsys) -> None:
     _init(tmp_path, capsys)
 

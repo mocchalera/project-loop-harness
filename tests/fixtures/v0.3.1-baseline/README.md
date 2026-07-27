@@ -61,6 +61,10 @@ is a regression, not an automatic regeneration result.
 
 ## Intended changes since v0.3.1 freeze
 
+- 2026-07-28 — `snapshots/representative-next-json.json` regenerated for
+  P0-3 shared terminal readiness. Linked Task targets now expose additive
+  `terminal-readiness/v1` reasons and a derived Task status; existing action
+  fields and commands remain unchanged while the Task is not ready to close.
 - 2026-07-22 — `snapshots/pcl-version.json` regenerated for the v0.5.4 local
   release candidate bump (`0.5.3` → `0.5.4`).
 - 2026-07-20 — `snapshots/pcl-version.json` regenerated for the v0.5.3 local
