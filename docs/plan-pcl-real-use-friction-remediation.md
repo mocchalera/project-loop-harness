@@ -21,7 +21,8 @@
 | P0-1 C0 verification input manifest | implemented | `ceb9748`, `docs/evidence/0213-finish-input-manifest-validation.md` |
 | P0-1 C1 isolated finish workspace | implemented | `19b7c0b`, `docs/evidence/0214-finish-isolated-workspace-validation.md` |
 | P0-2 result and stability contract | implemented | `92346bb`, `E-0599`〜`E-0601`, `docs/evidence/0215-finish-result-stability-validation.md` |
-| P0-3 以降 | planned | 本書の依存順で継続 |
+| P0-3 shared terminal readiness | implemented | `f946277`, `63457ec`, `E-0602`, `docs/evidence/0216-shared-terminal-readiness-validation.md` |
+| P0-4 以降 | planned | 本書の依存順で継続 |
 
 ## 1. 成功条件
 
@@ -166,6 +167,13 @@ P0-2 の後方互換境界:
 
 Feature / Story / Test の完了から Task の `ready_to_close` を派生表示する。low strict warning は risk として残し terminal success を許可するが、error / unknown / invalid Evidence は許可しない。
 
+実装境界（2026-07-28）:
+
+- `terminal-readiness/v1` は副作用なし・決定論的な加算contractとして実装済み。
+- `next`、`finish`、Feature / Goal lifecycle guardが共有判定を使用する。
+- linked Taskは`task read`で完全な判定、`task list`でcompactな`derived_status`を返す。
+- P0-2の単発stabilityはP0-5のcompatible history/reuse実装まではrecord-only advisoryを維持する。
+
 ### P0-4: Start and router targeting
 
 対象: `F3`, `F4`, `F6`
@@ -308,3 +316,13 @@ P0 全体の release gate:
 | PCL Evidenceのproducer commandに省略表記が保存でき、後からexact path入りEvidenceへ差し替える必要があった | `F9`, P0-7 | claimed commandにplaceholder / ellipsis警告を追加し、可能ならguarded executor receiptのexact argvを参照する |
 | 正常な耐久コピーEvidence追加後にaudit異常数が220→223へ増えたが、target / since / delta scopeがなく原因切り分けが難しかった | `F7`, P0-5 | `audit check --target --since --summary`と「今回mutationが増やしたfinding」の差分表示を受け入れ条件へ追加する |
 | integration worktreeのPCL照会は`not_initialized`で停止し、canonical checkoutへ手動で戻って状態確認した | `F10`, P0-6 | canonical DBを増殖させず、worktree実行からcanonical state rootとexecution rootをtyped bindingする |
+| 最新reportは旧SHA `c5ef0ba9` のaccepted結果を補強証拠として分離し、最終SHA `d9eab21f` のreview task `7242f774` と全緑CI `30291783362` を正式根拠として明記した | `F10`, P0-6 | exact SHA / review task / CI runをtyped execution bindingへ保持する必要性を再確認。監視側からadopter stateは変更していない |
+
+### 2026-07-28: P0-3 実装 dogfood
+
+| 観測 | 対応先 | 状態 |
+| --- | --- | --- |
+| `next --target T-0142` が今回のtargetをblockしない `DEC-0014` を返した | `F4`, P0-4 | 3 slice連続で再現。shared readinessではなくrouting scopeの問題として分離 |
+| 既存`completion_blockers`へStory/Test/Defect理由を混ぜるとDefect lifecycleの公開shapeを壊した | `F2`, P0-3 | 従来fieldはcompletion-policy専用に維持し、全理由を加算`terminal_readiness`へ分離 |
+| linked Taskへ完全readinessを一覧表示すると大量Task projectでJSONを増幅する | `F7`, P0-5 | `task list`はcompactな`derived_status`のみ、`task read` / `next` / `finish`は完全contractへ分離 |
+| baseline snapshotが加算`terminal_readiness`を意図変更として記録しておらず全体回帰で検出された | `F2`, P0-3 | snapshotとfixture READMEを同時更新し、既存action command/fieldは維持 |
