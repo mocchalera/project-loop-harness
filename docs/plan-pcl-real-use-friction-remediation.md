@@ -19,7 +19,7 @@
 | Slice | 状態 | 実装 / Evidence |
 | --- | --- | --- |
 | P0-1 C0 verification input manifest | implemented | `ceb9748`, `docs/evidence/0213-finish-input-manifest-validation.md` |
-| P0-1 C1 isolated finish workspace | implemented, pending commit | `docs/evidence/0214-finish-isolated-workspace-validation.md` |
+| P0-1 C1 isolated finish workspace | implemented | `19b7c0b`, `docs/evidence/0214-finish-isolated-workspace-validation.md` |
 | P0-2 以降 | planned | 本書の依存順で継続 |
 
 ## 1. 成功条件
@@ -268,3 +268,15 @@ P0 全体の release gate:
 - DB migration、依存追加、外部変更がない。
 
 続く Slice C1 で finish execution に接続するまでは、現行 `pcl finish --emit-packet` が canonical root で check を実行する既知リスクは残る。C0 完了だけを finish safety 完了とは扱わない。
+
+## 10. 継続監視ログ
+
+### 2026-07-27: P0-1 実装 dogfood
+
+| 観測 | 対応先 | 状態 |
+| --- | --- | --- |
+| `pcl start --new` で `G-0067 / T-0141` を作成した直後も、`next_actions` が対象を block していない `DEC-0014` の resolve command を返した | `F4`, P0-4 | 再現済み |
+| `work_started` と start receipt が記録されても `T-0141.status` は `todo` のままだった | `F6`, P0-4 | 再現済み。明示 `pcl task status ... in_progress` で補正 |
+| target-bound dry-run は正しい `T-0141` を選べたが、既存 agent state を含む 1,749 input と大量の `changes` を無制限 JSON で返した | `F7`, P0-5 | audit だけでなく finish dry-run にも `--summary` / pagination / machine-state exclusion policy が必要 |
+| C1 の package-manager compatibility では root `node_modules` の独立 copy までは決定的に扱えるが、workspace ごとの dependency tree は typed config がない | `F10`, P0-6 / P1 backend | residual risk として Evidence に記録 |
+| Story は user の意味承認を代行せず `US-0068` を draft に保持したため、実装 Evidence が green でも Test terminal transition は行っていない | `F9`, P0-7 | 権限境界どおり。implementation authorization と Story semantic approval の表示分離が必要 |
