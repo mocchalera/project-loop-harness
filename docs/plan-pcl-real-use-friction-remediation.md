@@ -14,6 +14,14 @@
 
 本書は実装順を定める。各 Story の意味承認、DB migration、依存追加、外部自動書き込み、過去状態の自動再オープンは、別途明示的な人間判断を必要とする。
 
+### 実装進捗
+
+| Slice | 状態 | 実装 / Evidence |
+| --- | --- | --- |
+| P0-1 C0 verification input manifest | implemented | `ceb9748`, `docs/evidence/0213-finish-input-manifest-validation.md` |
+| P0-1 C1 isolated finish workspace | implemented, pending commit | `docs/evidence/0214-finish-isolated-workspace-validation.md` |
+| P0-2 以降 | planned | 本書の依存順で継続 |
+
 ## 1. 成功条件
 
 P0 完了時に、次をすべて満たす。

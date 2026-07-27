@@ -384,6 +384,10 @@ def test_finish_emit_packet_success_and_idempotent_rerun(tmp_path: Path, capsys)
         "from_status": "in_progress",
         "to_status": "done",
     }
+    assert finish["execution"]["workspace"]["kind"] == "independent_git_copy"
+    assert finish["execution"]["workspace"]["git_metadata_shared"] is False
+    assert finish["execution"]["materialization"]["classification"] == "read_only"
+    assert finish["execution"]["effect"]["classification"] == "declared_outputs"
     assert finish["checks"][0]["status"] == "passed"
     packet = load_completion_packet(tmp_path / finish["packet"]["path"])
     assert validate_completion_packet(packet).ok is True
@@ -397,6 +401,82 @@ def test_finish_emit_packet_success_and_idempotent_rerun(tmp_path: Path, capsys)
     assert rerun["changed"] is False
     assert rerun["packet"] == finish["packet"]
     assert _state_counts(tmp_path) == before
+
+
+def test_finish_input_mutation_is_isolated_and_records_attempt_without_packet(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    protected = tmp_path / "protected.txt"
+    protected.write_text("canonical\n", encoding="utf-8")
+    _git(tmp_path, "add", "protected.txt")
+    _git(tmp_path, "commit", "-m", "protected fixture")
+    (tmp_path / "test_sample.py").write_text(
+        "from pathlib import Path\n\n"
+        "def test_sample():\n"
+        "    Path('protected.txt').write_text('mutated by check\\n', encoding='utf-8')\n"
+        "    assert True\n",
+        encoding="utf-8",
+    )
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001", "--json",
+    ]) == 1
+    finish = _finish_payload(capsys)
+
+    assert protected.read_text(encoding="utf-8") == "canonical\n"
+    assert finish["checks"][0]["status"] == "passed"
+    assert finish["execution"]["effect"]["classification"] == "mutates_inputs"
+    assert {
+        "path": "protected.txt",
+        "before_source": "tracked",
+        "after_source": "tracked",
+        "change": "modified",
+    } in finish["execution"]["effect"]["changes"]
+    assert finish["execution"]["effect"]["reasons"] == []
+    assert finish["attempt"]["contract_version"] == "finish-attempt/v1"
+    assert finish["attempt"]["outcome"] == "INCOMPLETE_VALIDATION"
+    assert "packet" not in finish
+    assert finish["target_transition"] == {
+        "changed": False,
+        "from_status": "in_progress",
+        "to_status": "in_progress",
+    }
+    assert _evidence_count(tmp_path, "finish_attempt") == 1
+    assert _evidence_count(tmp_path, "completion_packet") == 0
+    attempt = json.loads(
+        (tmp_path / finish["attempt"]["path"]).read_text(encoding="utf-8")
+    )
+    assert attempt["attempt_id"] == finish["attempt"]["attempt_id"]
+    assert attempt["input_manifest"]["contract_version"] == (
+        "verification-input-manifest/v1"
+    )
+    assert attempt["workspace"]["metadata"]["git_metadata_shared"] is False
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        event = conn.execute(
+            """
+            SELECT payload_json FROM events
+            WHERE event_type = 'finish_attempt_recorded'
+            ORDER BY sequence DESC LIMIT 1
+            """
+        ).fetchone()
+        link = conn.execute(
+            """
+            SELECT link_role FROM evidence_links
+            WHERE evidence_id = ?
+            """,
+            (finish["attempt"]["evidence_id"],),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert json.loads(event["payload_json"])["attempt_id"] == attempt["attempt_id"]
+    assert link["link_role"] == "finish_attempt"
+
+    assert main(["--root", str(tmp_path), "validate", "--strict", "--json"]) == 0
+    validation = _json_output(capsys)
+    assert validation["errors"] == []
 
 
 def test_finish_emit_packet_failure_keeps_task_active(tmp_path: Path, capsys) -> None:

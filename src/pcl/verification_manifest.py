@@ -50,17 +50,7 @@ def collect_verification_input_manifest(
         "--others",
         "--exclude-standard",
     )
-    ignored = (
-        _git_paths(
-            canonical_root,
-            "ls-files",
-            "--others",
-            "--ignored",
-            "--exclude-standard",
-        )
-        if patterns
-        else []
-    )
+    ignored = _git_ignored_paths(canonical_root, patterns) if patterns else []
 
     sources: dict[str, str] = {}
     for path in tracked:
@@ -350,6 +340,24 @@ def _collection_error(
 
 def _git_paths(root: Path, *args: str) -> list[str]:
     output = _git_bytes(root, *args, "-z")
+    return _decode_git_paths(output)
+
+
+def _git_ignored_paths(root: Path, patterns: tuple[str, ...]) -> list[str]:
+    output = _git_bytes(
+        root,
+        "ls-files",
+        "-z",
+        "--others",
+        "--ignored",
+        "--exclude-standard",
+        "--",
+        *(f":(glob){pattern}" for pattern in patterns),
+    )
+    return _decode_git_paths(output)
+
+
+def _decode_git_paths(output: bytes) -> list[str]:
     return sorted(
         path.decode("utf-8", errors="surrogateescape")
         for path in output.split(b"\0")

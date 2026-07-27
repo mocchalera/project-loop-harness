@@ -120,6 +120,36 @@ dirty-state, changed-path, or diff-hash change yields
 `INCOMPLETE_VALIDATION`; finish records the check Evidence and packet but does
 not complete the target.
 
+### Isolated verification workspace
+
+Before executing configured checks, finish records a
+`verification-input-manifest/v1` for the canonical Git working tree. The
+manifest hashes tracked and untracked regular files, records modes and symlink
+targets, excludes `.project-loop/**`, and fails closed when an input is
+unreadable, unsupported, or changes while it is read.
+
+Finish then creates a temporary local clone with independent Git metadata,
+materializes the captured dirty tracked and untracked inputs, removes the
+clone's origin, and runs checks there. The canonical checkout is never
+automatically restored because checks do not run in it. When a Node package
+manager check needs an existing root `node_modules`, finish copies that
+directory into the temporary workspace; it does not symlink or hardlink those
+files to the canonical project.
+
+Pre/post workspace manifests classify effects as:
+
+- `read_only`;
+- `declared_outputs` for policy-listed, Git-ignored cache/build output;
+- `mutates_inputs`;
+- `unknown`.
+
+`read_only` and `declared_outputs` continue through the existing completion
+packet decision. `mutates_inputs` and `unknown` return
+`INCOMPLETE_VALIDATION`, keep the target active, and record a content-addressed
+`finish-attempt/v1` plus check Evidence and a `finish_attempt_recorded` event.
+They do not create a completion packet, because a check that changes or cannot
+account for its verification inputs is not completion proof.
+
 ### Timeout recovery
 
 When a guarded finish check reaches the per-check timeout, the JSON result adds

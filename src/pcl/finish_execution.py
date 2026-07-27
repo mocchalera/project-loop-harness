@@ -22,6 +22,7 @@ from .errors import DataStoreError, FinishChecksNotConfiguredError, InvalidInput
 from .events import append_event
 from .evidence import insert_evidence_link, linked_task_provenance
 from .finish_recovery import finish_timeout_recovery
+from .finish_workspace import isolated_finish_workspace
 from .guarded_process import DEFAULT_MAX_OUTPUT_BYTES
 from .guards import require_initialized
 from .ids import next_prefixed_id
@@ -30,6 +31,11 @@ from .project_config import finish_check_configuration
 from .route_overrides import recorded_route_context
 from .timeutil import utc_now_iso
 from .validators import validate_project
+from .verification_manifest import (
+    canonical_verification_input_manifest_json,
+    collect_verification_input_manifest,
+    compare_verification_input_manifests,
+)
 from .workflow_sandbox import execute_planned_guarded_command, plan_guarded_project_checks
 
 
@@ -37,6 +43,24 @@ COMPLETION_PACKET_EVIDENCE_TYPE = "completion_packet"
 COMPLETION_CHECK_EVIDENCE_TYPE = "completion_check"
 COMPLETION_PACKET_LINK_ROLE = "completion_packet"
 COMPLETION_CHECK_LINK_ROLE = "verification_check"
+FINISH_ATTEMPT_CONTRACT_VERSION = "finish-attempt/v1"
+FINISH_ATTEMPT_EVIDENCE_TYPE = "finish_attempt"
+FINISH_ATTEMPT_LINK_ROLE = "finish_attempt"
+FINISH_DECLARED_OUTPUT_PATTERNS = (
+    ".mypy_cache/**",
+    ".pytest_cache/**",
+    ".ruff_cache/**",
+    "**/.mypy_cache/**",
+    "**/.pytest_cache/**",
+    "**/.ruff_cache/**",
+    "**/__pycache__/**",
+    "**/*.egg-info/**",
+    "__pycache__/**",
+    "*.egg-info/**",
+    "build/**",
+    "dist/**",
+    "target/**",
+)
 
 
 def plan_finish_packet(
@@ -47,11 +71,33 @@ def plan_finish_packet(
     task_id: str | None = None,
     base_revision: str | None = None,
 ) -> dict[str, Any]:
+    plan, _ = _plan_finish_packet(
+        paths,
+        run_id=run_id,
+        goal_id=goal_id,
+        task_id=task_id,
+        base_revision=base_revision,
+    )
+    return plan
+
+
+def _plan_finish_packet(
+    paths: ProjectPaths,
+    *,
+    run_id: str | None = None,
+    goal_id: str | None = None,
+    task_id: str | None = None,
+    base_revision: str | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     require_initialized(paths)
     target = _resolve_target(paths, run_id=run_id, goal_id=goal_id, task_id=task_id)
     repository = _repository_snapshot(paths, base_revision=base_revision)
     commands = plan_guarded_project_checks(paths)
-    return {
+    input_manifest = collect_verification_input_manifest(
+        paths.root,
+        declared_output_patterns=FINISH_DECLARED_OUTPUT_PATTERNS,
+    )
+    plan = {
         "mode": "emit_packet",
         "dry_run": True,
         "target": target,
@@ -59,13 +105,27 @@ def plan_finish_packet(
         "changes": repository["changes"],
         "harness_local_state": repository["harness_local_state"],
         "check_plan": [_public_check_plan(command) for command in commands],
-        "safe_to_execute": bool(commands) and all(command["safe_to_run"] for command in commands),
+        "safe_to_execute": (
+            bool(commands)
+            and input_manifest["ok"]
+            and all(command["safe_to_run"] for command in commands)
+        ),
         "blocked_checks": [
             _public_check_plan(command) for command in commands if not command["safe_to_run"]
         ],
+        "verification_input": _manifest_summary(input_manifest),
+        "execution_plan": {
+            "workspace": {
+                "kind": "independent_git_copy",
+                "temporary": True,
+                "git_metadata_shared": False,
+            },
+            "declared_output_patterns": list(FINISH_DECLARED_OUTPUT_PATTERNS),
+        },
         "execution_provenance": linked_task_provenance(paths, task_id=target["id"])
         if target["type"] == "task" else None,
     }
+    return plan, input_manifest
 
 
 def emit_finish_packet(
@@ -91,7 +151,7 @@ def emit_finish_packet(
                 "next_command": "pcl doctor --json",
             }
         )
-    plan = plan_finish_packet(
+    plan, input_manifest = _plan_finish_packet(
         paths,
         run_id=run_id,
         goal_id=goal_id,
@@ -133,18 +193,107 @@ def emit_finish_packet(
 
     stage_dir = _stage_check_dir(paths)
     try:
-        for command in commands:
-            execute_planned_guarded_command(
-                paths,
-                command,
-                run_dir=stage_dir,
-                timeout_seconds=timeout_seconds,
-                max_output_bytes=max_output_bytes,
+        with isolated_finish_workspace(
+            paths.root,
+            input_manifest=input_manifest,
+            commands=commands,
+        ) as workspace:
+            workspace_before = collect_verification_input_manifest(
+                workspace["root"],
+                declared_output_patterns=FINISH_DECLARED_OUTPUT_PATTERNS,
             )
+            if not workspace_before["ok"]:
+                raise InvalidInputError(
+                    "The isolated finish workspace input manifest is unhealthy.",
+                    details=_manifest_summary(workspace_before),
+                )
+            materialization = compare_verification_input_manifests(
+                input_manifest,
+                workspace_before,
+            )
+            if materialization["classification"] not in {
+                "read_only",
+                "declared_outputs",
+            }:
+                raise InvalidInputError(
+                    "Canonical verification inputs changed while the isolated workspace was prepared.",
+                    details={"materialization_effect": materialization},
+                )
+            for command in commands:
+                execute_planned_guarded_command(
+                    paths,
+                    command,
+                    run_dir=stage_dir,
+                    timeout_seconds=timeout_seconds,
+                    max_output_bytes=max_output_bytes,
+                    execution_root=workspace["root"],
+                )
+            workspace_after = collect_verification_input_manifest(
+                workspace["root"],
+                declared_output_patterns=FINISH_DECLARED_OUTPUT_PATTERNS,
+            )
+            effect = compare_verification_input_manifests(
+                workspace_before,
+                workspace_after,
+            )
+            execution = {
+                "workspace": workspace["public"],
+                "materialization": materialization,
+                "input_before": _manifest_summary(workspace_before),
+                "input_after": _manifest_summary(workspace_after),
+                "effect": effect,
+            }
         after = _repository_snapshot(paths, base_revision=plan["repository"]["base_revision"])
         race_detected = _snapshot_identity(plan) != _snapshot_identity(after)
         strict = validate_project(paths, strict=True)
         blockers = _target_blockers(paths, target)
+        if effect["classification"] in {"mutates_inputs", "unknown"}:
+            committed_attempt = _commit_finish_attempt(
+                paths,
+                target=target,
+                repository=after,
+                commands=commands,
+                stage_dir=stage_dir,
+                input_manifest=input_manifest,
+                workspace_before=workspace_before,
+                workspace_after=workspace_after,
+                execution=execution,
+                strict_errors=list(strict.errors),
+                strict_warnings=list(strict.warnings),
+                race_detected=race_detected,
+            )
+            result = {
+                **plan,
+                "dry_run": False,
+                "repository": after["packet_repository"],
+                "changes": after["changes"],
+                "harness_local_state": after["harness_local_state"],
+                "changed": True,
+                "idempotent": False,
+                "race_detected": race_detected,
+                "execution": execution,
+                "strict_validation": {
+                    "ok": strict.ok,
+                    "errors": list(strict.errors),
+                    "warnings": list(strict.warnings),
+                },
+                "checks": committed_attempt["checks"],
+                "attempt": committed_attempt["attempt"],
+                "target_transition": {
+                    "changed": False,
+                    "from_status": target["status"],
+                    "to_status": target["status"],
+                },
+                "exit_code": 1,
+            }
+            recovery = finish_timeout_recovery(
+                target=target,
+                checks=committed_attempt["checks"],
+                timeout_seconds=timeout_seconds,
+            )
+            if recovery is not None:
+                result["timeout_recovery"] = recovery
+            return result
         outcome = _completion_outcome(
             changes=after["changes"],
             commands=commands,
@@ -178,6 +327,7 @@ def emit_finish_packet(
         "changed": True,
         "idempotent": False,
         "race_detected": race_detected,
+        "execution": execution,
         "strict_validation": {
             "ok": strict.ok,
             "errors": list(strict.errors),
@@ -411,6 +561,144 @@ def _completion_outcome(
     return "COMPLETED_WITH_RISK" if strict_warnings else "COMPLETED_VERIFIED"
 
 
+def _commit_finish_attempt(
+    paths: ProjectPaths,
+    *,
+    target: dict[str, Any],
+    repository: dict[str, Any],
+    commands: list[dict[str, Any]],
+    stage_dir: Path,
+    input_manifest: dict[str, Any],
+    workspace_before: dict[str, Any],
+    workspace_after: dict[str, Any],
+    execution: dict[str, Any],
+    strict_errors: list[str],
+    strict_warnings: list[str],
+    race_detected: bool,
+) -> dict[str, Any]:
+    for manifest in (input_manifest, workspace_before, workspace_after):
+        canonical_verification_input_manifest_json(manifest)
+    conn = connect_mutation(paths)
+    now = utc_now_iso().replace("+00:00", "Z")
+    try:
+        check_rows = _store_check_evidence(
+            paths,
+            conn,
+            target=target,
+            commands=commands,
+            now=now,
+        )
+        attempt = {
+            "contract_version": FINISH_ATTEMPT_CONTRACT_VERSION,
+            "attempt_id": "",
+            "generated_at": now,
+            "outcome": "INCOMPLETE_VALIDATION",
+            "target": {
+                "type": target["type"],
+                "id": target["id"],
+                "intent": target["intent"],
+            },
+            "repository": repository["packet_repository"],
+            "changes": repository["changes"],
+            "input_manifest": input_manifest,
+            "workspace": {
+                "metadata": execution["workspace"],
+                "materialization": execution["materialization"],
+                "before": workspace_before,
+                "after": workspace_after,
+            },
+            "effect": execution["effect"],
+            "checks": check_rows,
+            "strict_validation": {
+                "ok": not strict_errors,
+                "errors": strict_errors,
+                "warnings": strict_warnings,
+            },
+            "race_detected": race_detected,
+        }
+        attempt["attempt_id"] = _finish_attempt_id(attempt)
+        attempt_hash = attempt["attempt_id"].removeprefix("fa-sha256:")
+        attempt_path = (
+            paths.evidence_dir / "finish-attempts" / f"{attempt_hash}.json"
+        )
+        attempt_path.parent.mkdir(parents=True, exist_ok=True)
+        if not attempt_path.exists():
+            attempt_path.write_text(
+                json.dumps(
+                    attempt,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+        attempt_evidence_id = next_prefixed_id(conn, "evidence", "E")
+        relative_attempt_path = str(attempt_path.relative_to(paths.root))
+        conn.execute(
+            """
+            INSERT INTO evidence(id, type, path, command, summary, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                attempt_evidence_id,
+                FINISH_ATTEMPT_EVIDENCE_TYPE,
+                relative_attempt_path,
+                "pcl finish --emit-packet",
+                (
+                    "Finish attempt INCOMPLETE_VALIDATION "
+                    f"({execution['effect']['classification']}) "
+                    f"for {target['type']} {target['id']}"
+                ),
+                now,
+            ),
+        )
+        insert_evidence_link(
+            conn,
+            evidence_id=attempt_evidence_id,
+            target_type=target["type"],
+            target_id=target["id"],
+            link_role=FINISH_ATTEMPT_LINK_ROLE,
+            created_at=now,
+        )
+        append_event(
+            conn=conn,
+            events_path=paths.events_path,
+            event_type="finish_attempt_recorded",
+            entity_type=target["type"],
+            entity_id=target["id"],
+            payload={
+                "contract_version": FINISH_ATTEMPT_CONTRACT_VERSION,
+                "attempt_id": attempt["attempt_id"],
+                "evidence_id": attempt_evidence_id,
+                "path": relative_attempt_path,
+                "outcome": attempt["outcome"],
+                "effect_classification": execution["effect"]["classification"],
+                "input_manifest_sha256": input_manifest["manifest_sha256"],
+                "check_evidence_ids": [
+                    row["evidence_id"] for row in check_rows
+                ],
+            },
+        )
+        conn.commit()
+        return {
+            "checks": check_rows,
+            "attempt": {
+                "contract_version": FINISH_ATTEMPT_CONTRACT_VERSION,
+                "attempt_id": attempt["attempt_id"],
+                "evidence_id": attempt_evidence_id,
+                "path": relative_attempt_path,
+                "outcome": attempt["outcome"],
+                "effect_classification": execution["effect"]["classification"],
+            },
+        }
+    except (OSError, sqlite3.Error) as exc:
+        conn.rollback()
+        raise DataStoreError(f"Could not commit finish attempt: {exc}") from exc
+    finally:
+        conn.close()
+
+
 def _commit_completion_packet(
     paths: ProjectPaths, *, target: dict[str, Any], repository: dict[str, Any],
     commands: list[dict[str, Any]], stage_dir: Path, strict_errors: list[str],
@@ -420,28 +708,13 @@ def _commit_completion_packet(
     conn = connect_mutation(paths)
     now = utc_now_iso().replace("+00:00", "Z")
     try:
-        check_rows = []
-        for command in commands:
-            evidence_id = next_prefixed_id(conn, "evidence", "E")
-            final_dir = paths.evidence_dir / "completion-checks" / evidence_id
-            final_dir.mkdir(parents=True, exist_ok=False)
-            for key in ("stdout_path", "stderr_path"):
-                source = paths.root / str(command[key])
-                destination = final_dir / source.name
-                source.replace(destination)
-                command[key] = str(destination.relative_to(paths.root))
-                if isinstance(command.get(key.removesuffix("_path")), dict):
-                    command[key.removesuffix("_path")]["path"] = command[key]
-            result_path = final_dir / "result.json"
-            check_payload = _check_result(command, evidence_id=evidence_id)
-            result_path.write_text(json.dumps(check_payload, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
-            relative = str(result_path.relative_to(paths.root))
-            conn.execute(
-                "INSERT INTO evidence(id, type, path, command, summary, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (evidence_id, COMPLETION_CHECK_EVIDENCE_TYPE, relative, command["resolved_command"], f"Finish check {command['status']}: {command['resolved_command']}", now),
-            )
-            insert_evidence_link(conn, evidence_id=evidence_id, target_type=target["type"], target_id=target["id"], link_role=COMPLETION_CHECK_LINK_ROLE, created_at=now)
-            check_rows.append(check_payload)
+        check_rows = _store_check_evidence(
+            paths,
+            conn,
+            target=target,
+            commands=commands,
+            now=now,
+        )
 
         adaptive_route = recorded_route_context(
             paths,
@@ -495,6 +768,78 @@ def _commit_completion_packet(
         raise DataStoreError(f"Could not commit completion packet: {exc}") from exc
     finally:
         conn.close()
+
+
+def _store_check_evidence(
+    paths: ProjectPaths,
+    conn: sqlite3.Connection,
+    *,
+    target: dict[str, Any],
+    commands: list[dict[str, Any]],
+    now: str,
+) -> list[dict[str, Any]]:
+    check_rows: list[dict[str, Any]] = []
+    for command in commands:
+        evidence_id = next_prefixed_id(conn, "evidence", "E")
+        final_dir = paths.evidence_dir / "completion-checks" / evidence_id
+        final_dir.mkdir(parents=True, exist_ok=False)
+        for key in ("stdout_path", "stderr_path"):
+            source = paths.root / str(command[key])
+            destination = final_dir / source.name
+            source.replace(destination)
+            command[key] = str(destination.relative_to(paths.root))
+            if isinstance(command.get(key.removesuffix("_path")), dict):
+                command[key.removesuffix("_path")]["path"] = command[key]
+        result_path = final_dir / "result.json"
+        check_payload = _check_result(command, evidence_id=evidence_id)
+        result_path.write_text(
+            json.dumps(
+                check_payload,
+                ensure_ascii=False,
+                sort_keys=True,
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        relative = str(result_path.relative_to(paths.root))
+        conn.execute(
+            """
+            INSERT INTO evidence(id, type, path, command, summary, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                evidence_id,
+                COMPLETION_CHECK_EVIDENCE_TYPE,
+                relative,
+                command["resolved_command"],
+                f"Finish check {command['status']}: {command['resolved_command']}",
+                now,
+            ),
+        )
+        insert_evidence_link(
+            conn,
+            evidence_id=evidence_id,
+            target_type=target["type"],
+            target_id=target["id"],
+            link_role=COMPLETION_CHECK_LINK_ROLE,
+            created_at=now,
+        )
+        check_rows.append(check_payload)
+    return check_rows
+
+
+def _finish_attempt_id(attempt: dict[str, Any]) -> str:
+    semantic = {
+        key: value for key, value in attempt.items() if key != "attempt_id"
+    }
+    encoded = json.dumps(
+        semantic,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"fa-sha256:{hashlib.sha256(encoded).hexdigest()}"
 
 
 def _build_packet(
@@ -683,6 +1028,17 @@ def _snapshot_identity(value: dict[str, Any]) -> tuple[Any, ...]:
     repository = value.get("repository") or value["packet_repository"]
     changes = value.get("changes", [])
     return (repository["base_revision"], repository["head_revision"], repository["diff_sha256"], repository["dirty"], json.dumps(changes, sort_keys=True))
+
+
+def _manifest_summary(manifest: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "contract_version": manifest["contract_version"],
+        "manifest_sha256": manifest["manifest_sha256"],
+        "ok": bool(manifest["ok"]),
+        "entry_count": len(manifest["entries"]),
+        "error_count": len(manifest["errors"]),
+        "errors": manifest["errors"],
+    }
 
 
 def _public_check_plan(command: dict[str, Any]) -> dict[str, Any]:

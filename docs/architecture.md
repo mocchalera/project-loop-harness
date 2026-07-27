@@ -109,6 +109,14 @@ allowlist. It does not provide OS, network, or filesystem isolation. A future
 container backend may implement stronger isolation behind an explicit backend
 contract; the current host backend must never be presented as a sandbox.
 
+`pcl finish --emit-packet` adds a narrower repository-safety layer around the
+same host executor. It runs project checks in a temporary independent Git copy,
+compares pre/post `verification-input-manifest/v1` artifacts, and rejects input
+mutation as completion proof. This protects the canonical Git working tree from
+ordinary check writes, but it is not an OS sandbox: absolute-path writes,
+network access, and writes through external tools or environments remain
+outside this guarantee.
+
 Each stdout and stderr stream is drained incrementally and retains at most 1 MiB
 by default. Evidence records the configured cap, original byte count, retained
 byte count, head-retention strategy, timeout/termination status, and truncation

@@ -280,6 +280,7 @@ def execute_planned_guarded_command(
     max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
     redaction_patterns: Iterable[str] = (),
     allowed_env_names: Iterable[str] = (),
+    execution_root: Path | None = None,
 ) -> None:
     if not command.get("safe_to_run"):
         raise InvalidInputError(
@@ -298,6 +299,7 @@ def execute_planned_guarded_command(
         max_output_bytes=max_output_bytes,
         redaction_patterns=redaction_patterns,
         allowed_env_names=allowed_env_names,
+        execution_root=execution_root,
     )
 
 
@@ -797,13 +799,15 @@ def _execute_command(
     max_output_bytes: int,
     redaction_patterns: Iterable[str],
     allowed_env_names: Iterable[str] = (),
+    execution_root: Path | None = None,
 ) -> None:
-    argv = _execution_argv(paths, command)
+    working_root = execution_root or paths.root
+    argv = _execution_argv(paths, command, execution_root=working_root)
     stdout_path = run_dir / f"{command['index']:02d}-{_safe_file_token(command['step_id'])}.stdout.txt"
     stderr_path = run_dir / f"{command['index']:02d}-{_safe_file_token(command['step_id'])}.stderr.txt"
     process_result = execute_guarded_process(
         argv,
-        cwd=paths.root,
+        cwd=working_root,
         stdout_path=stdout_path,
         stderr_path=stderr_path,
         timeout_seconds=timeout_seconds,
@@ -825,10 +829,22 @@ def _execute_command(
     command["permission_contract"] = process_result["permission_contract"]
 
 
-def _execution_argv(paths: ProjectPaths, command: dict[str, Any]) -> list[str]:
+def _execution_argv(
+    paths: ProjectPaths,
+    command: dict[str, Any],
+    *,
+    execution_root: Path | None = None,
+) -> list[str]:
     argv = [str(part) for part in command["argv"]]
     if command["kind"] == "pcl":
-        return [sys.executable, "-m", "pcl", "--root", str(paths.root), *argv[1:]]
+        return [
+            sys.executable,
+            "-m",
+            "pcl",
+            "--root",
+            str(execution_root or paths.root),
+            *argv[1:],
+        ]
     return argv
 
 
