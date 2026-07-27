@@ -170,6 +170,11 @@ def test_task_read_projects_linked_feature_as_ready_to_close(
     assert projected["terminal_readiness"]["status"] == "ready"
     assert projected["terminal_readiness"]["source_feature_id"] == "F-0001"
 
+    assert main(["--root", str(tmp_path), "task", "list", "--json"]) == 0
+    listed = _json_output(capsys)["tasks"][0]
+    assert listed["derived_status"] == "ready_to_close"
+    assert "terminal_readiness" not in listed
+
 
 def test_task_status_transitions_require_reason(tmp_path: Path, capsys) -> None:
     _init(tmp_path, capsys)

@@ -170,7 +170,7 @@ def list_tasks(
         ).fetchall()
         tasks = [dict(row) for row in rows]
         for task in tasks:
-            _attach_task_terminal_readiness(conn, task)
+            _attach_task_derived_status(conn, task)
         return tasks
     finally:
         conn.close()
@@ -389,8 +389,17 @@ def task_terminal_readiness_for_row(
 
 
 def _attach_task_terminal_readiness(conn, task: dict[str, Any]) -> None:
+    if not task.get("related_feature_id"):
+        return
     readiness = task_terminal_readiness_for_row(conn, task)
     task["terminal_readiness"] = readiness
+    task["derived_status"] = readiness["derived_task_status"]
+
+
+def _attach_task_derived_status(conn, task: dict[str, Any]) -> None:
+    if not task.get("related_feature_id"):
+        return
+    readiness = task_terminal_readiness_for_row(conn, task)
     task["derived_status"] = readiness["derived_task_status"]
 
 
