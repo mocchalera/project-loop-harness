@@ -1,9 +1,13 @@
 # P1 Plan: finish progress visibility and compact actual output
 
-Status: planned, implementation not authorized  
-Date: 2026-07-28  
-PCL target: `G-0073` / `T-0151` / `F-0080`  
-Stories: `US-0082`, `US-0083`  
+Status: planned, implementation not authorized
+
+Date: 2026-07-28
+
+PCL target: `G-0073` / `T-0151` / `F-0080`
+
+Stories: `US-0082`, `US-0083`
+
 Tests: `TC-0184`–`TC-0192`
 
 ## 1. Decision and scope
