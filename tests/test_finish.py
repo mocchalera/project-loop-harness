@@ -6,6 +6,7 @@ import subprocess
 
 import pytest
 
+from pcl import finish_output
 from pcl.cli import main
 from pcl.contracts.completion_packet import load_completion_packet, validate_completion_packet
 from pcl.db import connect
@@ -519,7 +520,7 @@ def test_finish_output_projection_summary_and_page_bound_display_without_weakeni
 @pytest.mark.parametrize(
     "extra",
     [
-        ["--summary"],
+        ["--summary", "--output-limit", "1"],
         ["--dry-run", "--summary", "--output-limit", "1"],
         ["--dry-run", "--output-limit", "0"],
         ["--dry-run", "--output-offset", "-1"],
@@ -541,6 +542,284 @@ def test_finish_output_projection_flags_fail_closed_without_mutation(
 
     assert payload["error"]["code"] == "invalid_input"
     assert _state_counts(tmp_path) == before
+
+
+def test_finish_actual_summary_is_compact_and_preserves_durable_proof(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    claude_state = tmp_path / ".claude" / "state"
+    claude_state.mkdir(parents=True)
+    (claude_state / "session.json").write_text('{"noise": true}\n', encoding="utf-8")
+    work_state = tmp_path / ".work"
+    work_state.mkdir()
+    (work_state / "trace.txt").write_text("local trace\n", encoding="utf-8")
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet",
+        "--task", "T-0001", "--summary", "--exclude-machine-state", "--json",
+    ]) == 0
+    finish = _finish_payload(capsys)
+
+    assert finish["target_binding"] == {
+        "target_type": "task",
+        "target_id": "T-0001",
+        "source": "explicit",
+    }
+    assert finish["repository"]["diff_sha256"].startswith("sha256:")
+    assert finish["changes"] == []
+    assert finish["harness_local_state"] == []
+    assert finish["packet"]["outcome"] == "COMPLETED_VERIFIED"
+    assert finish["target_transition"]["to_status"] == "done"
+    assert finish["terminal_readiness"]["contract_version"] == (
+        "terminal-readiness/v1"
+    )
+    assert finish["terminal_readiness"]["terminal_allowed"] is True
+    assert finish["strict_validation"]["ok"] is True
+    assert finish["strict_validation"]["warning_count"] >= 0
+    assert finish["execution"]["effect"]["classification"] == "declared_outputs"
+
+    check = finish["checks"][0]
+    assert check["contract_version"] == "finish-check-result/v2"
+    assert check["evidence_id"].startswith("E-")
+    assert check["artifact_sha256"].startswith("sha256:")
+    assert check["status"] == "passed"
+    assert check["runner_status"] == "completed"
+    assert check["assertion_status"] == "passed"
+    assert check["attempt_identity_sha256"].startswith("sha256:")
+    assert check["execution_identity_sha256"].startswith("sha256:")
+    assert "command" not in check
+    assert "stdout" not in check
+    assert "stderr" not in check
+    assert "permission_contract" not in check
+
+    projection = finish["output_projection"]
+    assert projection["contract_version"] == "finish-output-projection/v1"
+    assert projection["source_mode"] == "actual"
+    assert projection["mode"] == "summary"
+    assert projection["repository_snapshot"]["diff_sha256"] == (
+        finish["repository"]["diff_sha256"]
+    )
+    assert projection["machine_state"]["omitted_count"] == 2
+    assert projection["sections"]["checks"]["total_count"] == 1
+    assert projection["sections"]["checks"]["returned_count"] == 1
+
+    check_evidence = json.loads(
+        (
+            tmp_path
+            / ".project-loop"
+            / "evidence"
+            / "completion-checks"
+            / check["evidence_id"]
+            / "result.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert check_evidence["command"] == "python -m pytest -q test_sample.py"
+    assert check_evidence["permission_contract"]["backend"] == "host_subprocess"
+    packet = load_completion_packet(tmp_path / finish["packet"]["path"])
+    assert packet["repository"]["diff_sha256"] == finish["repository"]["diff_sha256"]
+    assert packet["checks"][0]["artifact_ref"] == f"evidence:{check['evidence_id']}"
+    assert len(json.dumps(finish, ensure_ascii=False).encode("utf-8")) <= 16_384
+
+
+def test_finish_actual_projection_is_presentation_only(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    full_root = tmp_path / "full"
+    projected_root = tmp_path / "projected"
+    _create_packet_project(full_root, capsys)
+    _create_packet_project(projected_root, capsys)
+
+    assert main([
+        "--root", str(full_root), "finish", "--emit-packet",
+        "--task", "T-0001", "--json",
+    ]) == 0
+    full = _finish_payload(capsys)
+    assert "output_projection" not in full
+    full_counts = _state_counts(full_root)
+
+    assert main([
+        "--root", str(projected_root), "finish", "--emit-packet",
+        "--task", "T-0001", "--summary", "--json",
+    ]) == 0
+    projected = _finish_payload(capsys)
+    projected_counts = _state_counts(projected_root)
+
+    assert projected_counts == full_counts
+    assert projected["packet"]["outcome"] == full["packet"]["outcome"]
+    assert projected["target_transition"] == full["target_transition"]
+    assert projected["repository"]["diff_sha256"] == full["repository"]["diff_sha256"]
+    assert projected["checks"][0]["evidence_id"] == full["checks"][0]["evidence_id"]
+    assert projected["output_projection"]["source_mode"] == "actual"
+
+
+def test_finish_actual_summary_bounds_large_nested_sections() -> None:
+    changes = [
+        {
+            "path": f".claude/state/{index:04d}.json"
+            if index % 2
+            else f"src/generated_{index:04d}.py",
+            "status": "modified",
+        }
+        for index in range(500)
+    ]
+    warnings = [f"repeated warning {index % 5}" for index in range(200)]
+    effect_changes = [
+        {"path": f"build/output-{index:04d}.txt", "change": "added"}
+        for index in range(200)
+    ]
+    readiness_reasons = [
+        {
+            "code": f"reason_{index % 4}",
+            "state": "risk",
+            "requires_human": False,
+            "next_command": f"pcl test read TC-{index % 4:04d} --json",
+        }
+        for index in range(200)
+    ]
+    result = {
+        "mode": "emit_packet",
+        "dry_run": False,
+        "target": {"type": "task", "id": "T-0001", "status": "in_progress"},
+        "target_binding": {
+            "target_type": "task",
+            "target_id": "T-0001",
+            "source": "explicit",
+        },
+        "repository": {
+            "base_revision": "base",
+            "head_revision": "head",
+            "dirty": True,
+            "diff_sha256": "sha256:" + "a" * 64,
+        },
+        "changes": changes,
+        "harness_local_state": changes[:100],
+        "checks": [{
+            "contract_version": "finish-check-result/v2",
+            "evidence_id": "E-0001",
+            "artifact_sha256": "sha256:" + "b" * 64,
+            "command": "python -m pytest",
+            "status": "passed",
+            "exit_code": 0,
+            "failure_phase": None,
+            "failure_kind": None,
+            "runner_result": {"status": "completed"},
+            "assertion_result": {"status": "passed"},
+            "stdout": {"text": "large output" * 100},
+            "stderr": {"text": ""},
+            "permission_contract": {"environment": {"values": ["secret"]}},
+            "output_truncated": False,
+            "redacted": False,
+            "attempt_identity": {
+                "identity_sha256": "sha256:" + "c" * 64,
+                "execution_identity_sha256": "sha256:" + "d" * 64,
+            },
+            "stability_evaluation": {
+                "status": "reproducible",
+                "reproducible": True,
+                "attempt_count": 2,
+                "remaining_attempts": 1,
+            },
+            "reuse": {
+                "status": "executed",
+                "reused_role_count": 0,
+                "role_bindings": [{"config_key": "test"}],
+                "compatible_history": list(range(200)),
+            },
+        }],
+        "execution": {
+            "workspace": {
+                "kind": "independent_git_copy",
+                "temporary": True,
+                "git_metadata_shared": False,
+            },
+            "materialization": {
+                "classification": "read_only",
+                "changes": effect_changes,
+                "reasons": warnings,
+            },
+            "input_before": {
+                "contract_version": "verification-input-manifest/v1",
+                "manifest_sha256": "sha256:" + "e" * 64,
+                "entry_count": 500,
+            },
+            "input_after": {
+                "contract_version": "verification-input-manifest/v1",
+                "manifest_sha256": "sha256:" + "e" * 64,
+                "entry_count": 500,
+            },
+            "effect": {
+                "classification": "declared_outputs",
+                "changes": effect_changes,
+                "reasons": warnings,
+            },
+        },
+        "strict_validation": {
+            "ok": True,
+            "errors": [],
+            "warnings": warnings,
+        },
+        "terminal_readiness": {
+            "contract_version": "terminal-readiness/v1",
+            "status": "ready_with_risk",
+            "terminal_allowed": True,
+            "requires_human": False,
+            "reasons": readiness_reasons,
+            "next_commands": [
+                f"pcl test read TC-{index:04d} --json" for index in range(200)
+            ],
+        },
+        "packet": {
+            "packet_id": "cp-sha256:" + "f" * 64,
+            "evidence_id": "E-0002",
+            "path": ".project-loop/evidence/completion-packets/packet.json",
+            "outcome": "COMPLETED_WITH_RISK",
+        },
+        "target_transition": {
+            "changed": True,
+            "from_status": "in_progress",
+            "to_status": "done",
+        },
+        "changed": True,
+        "idempotent": False,
+        "race_detected": False,
+        "exit_code": 0,
+    }
+
+    projected = finish_output.project_finish_result_output(
+        result,
+        summary=True,
+        output_offset=None,
+        output_limit=None,
+        exclude_machine_state=True,
+    )
+
+    assert projected["repository"] == result["repository"]
+    assert projected["packet"] == result["packet"]
+    assert projected["changes"] == []
+    assert projected["harness_local_state"] == []
+    assert projected["checks"][0]["evidence_id"] == "E-0001"
+    assert projected["execution"]["effect"] == {
+        "classification": "declared_outputs",
+        "change_count": 200,
+        "reason_count": 200,
+    }
+    assert projected["strict_validation"] == {
+        "ok": True,
+        "error_count": 0,
+        "warning_count": 200,
+    }
+    assert projected["terminal_readiness"]["reason_count"] == 200
+    assert projected["terminal_readiness"]["reason_counts"] == {
+        "reason_0": 50,
+        "reason_1": 50,
+        "reason_2": 50,
+        "reason_3": 50,
+    }
+    assert projected["output_projection"]["machine_state"]["omitted_count"] == 250
+    assert len(json.dumps(projected, ensure_ascii=False).encode("utf-8")) <= 16_384
 
 
 def test_finish_emit_packet_success_and_idempotent_rerun(tmp_path: Path, capsys) -> None:

@@ -64,24 +64,24 @@ def add_planning_parsers(sub) -> None:
     p_finish.add_argument(
         "--summary",
         action="store_true",
-        help="With packet dry-run, return counts without change rows",
+        help="With packet emission, return compact counts and proof anchors",
     )
     p_finish.add_argument(
         "--output-offset",
         type=int,
         default=None,
-        help="With packet dry-run, start each output section at this row offset",
+        help="With packet emission, start each output section at this row offset",
     )
     p_finish.add_argument(
         "--output-limit",
         type=int,
         default=None,
-        help="With packet dry-run, bound each output section to this many rows",
+        help="With packet emission, bound each output section to this many rows",
     )
     p_finish.add_argument(
         "--exclude-machine-state",
         action="store_true",
-        help="With packet dry-run, omit documented local-runtime paths from display only",
+        help="With packet emission, omit documented local-runtime paths from display only",
     )
 
     p_resume = sub.add_parser("resume", help="Build a read-only handoff packet for current work")

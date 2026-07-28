@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Mapping
 from typing import Any
 
 from .errors import InvalidInputError
@@ -113,6 +114,84 @@ def project_finish_plan_output(
     return projected
 
 
+def project_finish_result_output(
+    result: dict[str, Any],
+    *,
+    summary: bool,
+    output_offset: int | None,
+    output_limit: int | None,
+    exclude_machine_state: bool,
+) -> dict[str, Any]:
+    """Project an executed finish result without changing durable proof."""
+
+    projected = project_finish_plan_output(
+        result,
+        summary=summary,
+        output_offset=output_offset,
+        output_limit=output_limit,
+        exclude_machine_state=exclude_machine_state,
+    )
+    output_projection = dict(projected["output_projection"])
+    output_projection["source_mode"] = "actual"
+    if not summary:
+        return {**projected, "output_projection": output_projection}
+
+    checks = _mapping_list(result.get("checks"))
+    check_plan = _mapping_list(result.get("check_plan"))
+    execution = _mapping(result.get("execution"))
+    strict_validation = _mapping(result.get("strict_validation"))
+    terminal_readiness = _mapping(result.get("terminal_readiness"))
+    materialization = _mapping(execution.get("materialization"))
+    effect = _mapping(execution.get("effect"))
+    readiness_reasons = _mapping_list(terminal_readiness.get("reasons"))
+
+    sections = dict(output_projection["sections"])
+    sections.update(
+        {
+            "checks": _summary_section(len(checks), len(checks)),
+            "check_plan": _summary_section(len(check_plan), len(check_plan)),
+            "execution_materialization_changes": _summary_section(
+                len(_mapping_list(materialization.get("changes"))),
+                0,
+            ),
+            "execution_materialization_reasons": _summary_section(
+                len(_list(materialization.get("reasons"))),
+                0,
+            ),
+            "execution_effect_changes": _summary_section(
+                len(_mapping_list(effect.get("changes"))),
+                0,
+            ),
+            "execution_effect_reasons": _summary_section(
+                len(_list(effect.get("reasons"))),
+                0,
+            ),
+            "strict_validation_errors": _summary_section(
+                len(_list(strict_validation.get("errors"))),
+                0,
+            ),
+            "strict_validation_warnings": _summary_section(
+                len(_list(strict_validation.get("warnings"))),
+                0,
+            ),
+            "terminal_readiness_reasons": _summary_section(
+                len(readiness_reasons),
+                0,
+            ),
+        }
+    )
+    output_projection["sections"] = sections
+    return {
+        **projected,
+        "check_plan": [_compact_check_plan(row) for row in check_plan],
+        "checks": [_compact_check(row) for row in checks],
+        "execution": _compact_execution(execution),
+        "strict_validation": _compact_strict_validation(strict_validation),
+        "terminal_readiness": _compact_terminal_readiness(terminal_readiness),
+        "output_projection": output_projection,
+    }
+
+
 def validate_finish_output_flags(
     *,
     dry_run: bool,
@@ -127,11 +206,7 @@ def validate_finish_output_flags(
         or output_limit is not None
         or exclude_machine_state
     )
-    if enabled and not dry_run:
-        raise InvalidInputError(
-            "Finish output projection flags require --emit-packet --dry-run.",
-            details={"field": "finish_output_projection"},
-        )
+    _ = dry_run
     if enabled:
         _validate_projection_options(
             summary=summary,
@@ -140,6 +215,177 @@ def validate_finish_output_flags(
             output_limit=output_limit,
         )
     return enabled
+
+
+def _compact_check_plan(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        key: row.get(key)
+        for key in ("id", "config_key", "safe_to_run", "blocked_reason")
+        if key in row
+    }
+
+
+def _compact_check(row: Mapping[str, Any]) -> dict[str, Any]:
+    runner_result = _mapping(row.get("runner_result"))
+    assertion_result = _mapping(row.get("assertion_result"))
+    attempt_identity = _mapping(row.get("attempt_identity"))
+    stability = _mapping(row.get("stability_evaluation"))
+    reuse = _mapping(row.get("reuse"))
+    role_bindings = _mapping_list(reuse.get("role_bindings"))
+    compatible_history = _list(reuse.get("compatible_history"))
+    compact = {
+        "contract_version": row.get("contract_version"),
+        "evidence_id": row.get("evidence_id"),
+        "artifact_sha256": row.get("artifact_sha256"),
+        "status": row.get("status"),
+        "exit_code": row.get("exit_code"),
+        "failure_phase": row.get("failure_phase"),
+        "failure_kind": row.get("failure_kind"),
+        "runner_status": runner_result.get("status"),
+        "assertion_status": assertion_result.get("status"),
+        "output_truncated": bool(row.get("output_truncated")),
+        "redacted": bool(row.get("redacted")),
+        "attempt_identity_sha256": attempt_identity.get("identity_sha256"),
+        "execution_identity_sha256": attempt_identity.get(
+            "execution_identity_sha256"
+        ),
+        "stability_status": stability.get("status"),
+        "reproducible": bool(stability.get("reproducible")),
+        "attempt_count": stability.get("attempt_count"),
+        "remaining_attempts": stability.get("remaining_attempts"),
+    }
+    if reuse:
+        compact["reuse"] = {
+            "contract_version": reuse.get("contract_version"),
+            "status": reuse.get("status"),
+            "reused_role_count": reuse.get("reused_role_count"),
+            "role_bindings": role_bindings[:10],
+            "role_binding_count": len(role_bindings),
+            "compatible_history_count": len(compatible_history),
+        }
+    return compact
+
+
+def _compact_execution(execution: Mapping[str, Any]) -> dict[str, Any]:
+    if not execution:
+        return {}
+    workspace = _mapping(execution.get("workspace"))
+    return {
+        "workspace": {
+            key: workspace.get(key)
+            for key in ("kind", "temporary", "git_metadata_shared")
+            if key in workspace
+        },
+        "materialization": _compact_effect(execution.get("materialization")),
+        "input_before": _compact_manifest(execution.get("input_before")),
+        "input_after": _compact_manifest(execution.get("input_after")),
+        "effect": _compact_effect(execution.get("effect")),
+    }
+
+
+def _compact_manifest(value: Any) -> dict[str, Any]:
+    manifest = _mapping(value)
+    return {
+        key: manifest.get(key)
+        for key in (
+            "contract_version",
+            "manifest_sha256",
+            "ok",
+            "entry_count",
+            "tracked_count",
+            "untracked_count",
+            "ignored_count",
+            "unknown_count",
+        )
+        if key in manifest
+    }
+
+
+def _compact_effect(value: Any) -> dict[str, Any]:
+    effect = _mapping(value)
+    if not effect:
+        return {}
+    return {
+        "classification": effect.get("classification"),
+        "change_count": len(_mapping_list(effect.get("changes"))),
+        "reason_count": len(_list(effect.get("reasons"))),
+    }
+
+
+def _compact_strict_validation(validation: Mapping[str, Any]) -> dict[str, Any]:
+    if not validation:
+        return {}
+    return {
+        "ok": validation.get("ok"),
+        "error_count": len(_list(validation.get("errors"))),
+        "warning_count": len(_list(validation.get("warnings"))),
+    }
+
+
+def _compact_terminal_readiness(readiness: Mapping[str, Any]) -> dict[str, Any]:
+    if not readiness:
+        return {}
+    reasons = _mapping_list(readiness.get("reasons"))
+    reason_counts = Counter(str(reason.get("code") or "unknown") for reason in reasons)
+    recovery_commands = _unique_strings(
+        [
+            *(
+                reason.get("next_command")
+                for reason in reasons
+                if reason.get("next_command")
+            ),
+            *_list(readiness.get("next_commands")),
+        ]
+    )
+    compact = {
+        key: readiness.get(key)
+        for key in (
+            "contract_version",
+            "status",
+            "terminal_allowed",
+            "requires_human",
+            "derived_task_status",
+            "source_feature_id",
+            "target",
+        )
+        if key in readiness
+    }
+    compact.update(
+        {
+            "reason_count": len(reasons),
+            "reason_counts": dict(sorted(reason_counts.items())),
+            "reason_codes": sorted(reason_counts),
+            "recovery_commands": recovery_commands[:20],
+            "recovery_command_count": len(recovery_commands),
+        }
+    )
+    return compact
+
+
+def _summary_section(total_count: int, returned_count: int) -> dict[str, Any]:
+    return {
+        "total_count": total_count,
+        "eligible_count": total_count,
+        "returned_count": returned_count,
+        "has_more": total_count > returned_count,
+        "next_offset": returned_count if total_count > returned_count else None,
+    }
+
+
+def _mapping(value: Any) -> Mapping[str, Any]:
+    return value if isinstance(value, Mapping) else {}
+
+
+def _mapping_list(value: Any) -> list[Mapping[str, Any]]:
+    return [item for item in _list(value) if isinstance(item, Mapping)]
+
+
+def _list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
+def _unique_strings(values: list[Any]) -> list[str]:
+    return list(dict.fromkeys(str(value) for value in values if value))
 
 
 def _validate_projection_options(

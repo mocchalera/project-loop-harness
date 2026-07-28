@@ -8,7 +8,11 @@ from .commands import build_next_action, finish_plan, next_action
 from .errors import InvalidInputError
 from .exporters import export_csv
 from .finish_execution import emit_finish_packet, plan_finish_packet
-from .finish_output import project_finish_plan_output, validate_finish_output_flags
+from .finish_output import (
+    project_finish_plan_output,
+    project_finish_result_output,
+    validate_finish_output_flags,
+)
 from .kpi_report import report_kpi
 from .paths import ProjectPaths
 from .presentation import format_finish_summary, format_next_explanation, to_pretty_json
@@ -129,6 +133,14 @@ def handle_planning_command(
                     timeout_seconds=args.timeout,
                     max_output_bytes=args.max_output_bytes,
                 )
+                if output_projection:
+                    packet_payload = project_finish_result_output(
+                        packet_payload,
+                        summary=args.summary,
+                        output_offset=args.output_offset,
+                        output_limit=args.output_limit,
+                        exclude_machine_state=args.exclude_machine_state,
+                    )
             _print_json({"ok": True, "finish": packet_payload}) if json_output else print(
                 to_pretty_json(packet_payload)
             )
