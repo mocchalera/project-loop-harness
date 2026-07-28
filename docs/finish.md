@@ -153,15 +153,23 @@ account for its verification inputs is not completion proof.
 ### Timeout recovery
 
 When a guarded finish check reaches the per-check timeout, the JSON result adds
-`timeout_recovery`. For a timeout below the guarded executor ceiling, it names
-one exact retry command for the same target with `--timeout 600 --json`.
-The incomplete completion packet stores the same command in `next_action`, so a
-subsequent `pcl next --json` preserves the recovery route for an agent.
+`timeout_recovery`. Finish keeps its 120-second default and accepts an explicit
+per-check timeout up to its finish-only 1200-second ceiling. Recovery advances
+through bounded steps: a timeout below 600 seconds names an exact same-target
+retry with `--timeout 600 --json`, and a timeout from 600 through 1199 seconds
+names an exact same-target retry with `--timeout 1200 --json`. Values above
+1200 are rejected before check execution or Evidence mutation. Generic workflow
+and guarded executor surfaces keep their separate 600-second ceiling.
+
+The incomplete completion packet stores the same command in `next_action`, so
+both `pcl next --json` and `pcl next --target <T-XXXX|G-XXXX> --json` preserve
+the recovery route. Targeted routing reads only the newest valid packet linked
+to the explicitly selected target.
 
 PCL does not run this retry automatically and does not change `pcl.yaml`. If a
-check times out at the 600-second ceiling, the recovery instead points to the
-timed-out check Evidence. `pcl next` then recommends diagnosis rather than the
-same ineffective retry. In both cases the packet outcome remains
+check times out at the 1200-second finish ceiling, the recovery instead points
+to the timed-out check Evidence. `pcl next` then recommends diagnosis rather
+than the same ineffective retry. In both cases the packet outcome remains
 `INCOMPLETE_VALIDATION` until a later explicit finish run passes.
 
 ### Evidence and commit boundary

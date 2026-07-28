@@ -969,7 +969,7 @@ def test_finish_timeout_exposes_bounded_retry_and_next_preserves_it(
     assert action["safe_to_run"] is True
 
 
-def test_finish_timeout_at_limit_routes_to_evidence_diagnosis(
+def test_finish_timeout_at_legacy_limit_routes_to_bounded_final_retry(
     tmp_path: Path, capsys, monkeypatch
 ) -> None:
     _create_packet_project(tmp_path, capsys)
@@ -988,26 +988,107 @@ def test_finish_timeout_at_limit_routes_to_evidence_diagnosis(
     ]) == 1
     finish = _finish_payload(capsys)
     evidence_id = finish["checks"][0]["evidence_id"]
+    retry = "pcl finish --emit-packet --task T-0001 --timeout 1200 --json"
+    assert finish["timeout_recovery"] == {
+        "available": True,
+        "reason": "finish_check_timed_out",
+        "timed_out_evidence_id": evidence_id,
+        "previous_timeout_seconds": 600,
+        "suggested_timeout_seconds": 1200,
+        "retry_command": retry,
+        "diagnostic_command": f"pcl evidence show {evidence_id} --json",
+    }
+    packet = load_completion_packet(tmp_path / finish["packet"]["path"])
+    assert packet["next_action"]["command"] == retry
+
+    assert main([
+        "--root", str(tmp_path), "next", "--target", "T-0001", "--json",
+    ]) == 0
+    action = _json_output(capsys)
+    assert action["type"] == "retry_finish_timeout"
+    assert action["command"] == retry
+    assert action["blocking"] is False
+    assert action["requires_human"] is False
+    assert action["routing_scope"] == "target"
+    assert action["target_binding"]["target_id"] == "T-0001"
+
+
+def test_finish_timeout_at_finish_limit_routes_target_to_evidence_diagnosis(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+
+    def fake_timeout(paths, command, *, run_dir, **kwargs):
+        _record_fake_timeout(paths.root, command, run_dir)
+
+    monkeypatch.setattr(
+        "pcl.finish_execution.execute_planned_guarded_command",
+        fake_timeout,
+    )
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001",
+        "--timeout", "1200", "--json",
+    ]) == 1
+    finish = _finish_payload(capsys)
+    evidence_id = finish["checks"][0]["evidence_id"]
     diagnostic = f"pcl evidence show {evidence_id} --json"
     assert finish["timeout_recovery"] == {
         "available": False,
         "reason": "finish_timeout_limit_reached",
         "timed_out_evidence_id": evidence_id,
-        "previous_timeout_seconds": 600,
+        "previous_timeout_seconds": 1200,
         "suggested_timeout_seconds": None,
         "retry_command": None,
         "diagnostic_command": diagnostic,
     }
     packet = load_completion_packet(tmp_path / finish["packet"]["path"])
     assert packet["next_action"]["command"] == diagnostic
-    assert "--timeout 600" not in packet["next_action"]["command"]
+    assert "--timeout" not in packet["next_action"]["command"]
 
-    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    assert main([
+        "--root", str(tmp_path), "next", "--target", "T-0001", "--json",
+    ]) == 0
     action = _json_output(capsys)
     assert action["type"] == "diagnose_finish_timeout"
     assert action["command"] == diagnostic
     assert action["blocking"] is True
     assert action["requires_human"] is False
+    assert action["routing_scope"] == "target"
+    assert action["target_binding"]["target_id"] == "T-0001"
+
+
+def test_finish_rejects_timeout_above_finish_limit_before_mutation(
+    tmp_path: Path, capsys, monkeypatch
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    before = _state_counts(tmp_path)
+
+    def unexpected_execution(*args, **kwargs):
+        pytest.fail("finish check executed above the timeout limit")
+
+    monkeypatch.setattr(
+        "pcl.finish_execution.execute_planned_guarded_command",
+        unexpected_execution,
+    )
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001",
+        "--timeout", "1201", "--json",
+    ]) == 2
+    error = _json_output(capsys)
+    assert error == {
+        "ok": False,
+        "error": {
+            "code": "invalid_input",
+            "message": "--timeout must be 1200 seconds or less.",
+            "details": {
+                "timeout_seconds": 1201,
+                "maximum_timeout_seconds": 1200,
+            },
+        },
+    }
+    assert _state_counts(tmp_path) == before
 
 
 def test_newer_non_timeout_packet_suppresses_stale_timeout_recovery(
@@ -1041,6 +1122,16 @@ def test_newer_non_timeout_packet_suppresses_stale_timeout_recovery(
     assert main(["--root", str(tmp_path), "next", "--json"]) == 0
     action = _json_output(capsys)
     assert action["type"] not in {"retry_finish_timeout", "diagnose_finish_timeout"}
+
+    assert main([
+        "--root", str(tmp_path), "next", "--target", "T-0001", "--json",
+    ]) == 0
+    targeted = _json_output(capsys)
+    assert targeted["type"] not in {
+        "retry_finish_timeout",
+        "diagnose_finish_timeout",
+    }
+    assert targeted["target_binding"]["target_id"] == "T-0001"
 
 
 def test_finish_rejects_fail_open_missing_path_check_before_execution(

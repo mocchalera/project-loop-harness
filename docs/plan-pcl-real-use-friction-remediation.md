@@ -26,7 +26,8 @@
 | P0-5a scoped audit | implemented | `6794ce9`, `E-0606`, `docs/evidence/0218-scoped-audit-validation.md` |
 | P0-5b immutable check reuse | implemented | `230a454`, `E-0609`, `docs/evidence/0219-immutable-finish-check-reuse-validation.md` |
 | P0-5c output / retry friction | implemented | `1b45260`, `E-0611`〜`E-0613`, `docs/evidence/0220-finish-output-start-retry-validation.md` |
-| P0-6 execution binding / progress receipt | implemented | `G-0071`, `T-0148`, `F-0077`, `E-0616`〜`E-0617`, `docs/evidence/0221-execution-binding-progress-receipt-validation.md` |
+| P0-6 execution binding / progress receipt | implemented | `G-0071`, `T-0148`, `F-0077`, `E-0616`〜`E-0618`, `docs/evidence/0221-execution-binding-progress-receipt-validation.md` |
+| P0-6d finish timeout / recovery dogfood repair | implemented | `T-0149`, `F-0078`, `US-0078`〜`US-0079`, `TC-0174`〜`TC-0178` |
 | P0-7 以降 | planned | P0-6 の target-bound progress orientation 後に継続 |
 
 ## 1. 成功条件
@@ -240,8 +241,34 @@ P0-5a は DB migration、依存追加、audit mutation を行わない。Story
   `handoff-packet/v1` / `context-pack/v1` shapeは維持する。
 - 壊れた最新receiptは旧receiptへ黙ってfallbackせずinvalidとして表示し、
   orientationへ採用しない。
-- Story `US-0076`〜`US-0077` はdraft、Tests `TC-0168`〜`TC-0173` は
-  plannedのまま開始し、実装許可を意味承認へ読み替えない。
+- Story `US-0076`〜`US-0077` は人間承認後にapproved、Tests
+  `TC-0168`〜`TC-0173` は対象・全体・dogfood Evidenceに基づきpassingへ
+  遷移した。実装許可だけを意味承認へ読み替えていない。
+
+#### P0-6d: finish timeout / recovery dogfood repair
+
+P0-6 Goal の completion packet を実プロジェクトで生成した際、通常の全体
+suite は約982秒で成功する一方、既存の timeout recovery は120秒から600秒への
+1回だけを案内し、600秒到達後はretry不能とした。さらに明示対象付き
+`pcl next --target G-0071` は最新packetのterminal recoveryを考慮せず、同じ
+`finish` を再提案した。
+
+Cockpit Ask `ask_9a017a75db97` の人間承認に基づき、P0-7より先に次を修正する。
+
+- `pcl finish` の既定120秒は維持し、finish専用の明示timeout上限を1200秒とする。
+- timeout recovery は120秒等から600秒、600秒から1200秒の最大2段階とし、
+  1200秒到達後はretry commandを返さない。
+- generic workflow / guarded executorの600秒上限は変更しない。
+- `next --target` は選択targetの最新valid completion packetだけを参照し、
+  recovery可能なら同target retry、不能ならexact Evidence診断へfail closedする。
+- 新しい非timeout packetは古いtimeout recoveryを抑止する。
+
+停止条件:
+
+- timeoutを無制限化しない。1200秒超はcheck実行・Evidence mutation前に拒否する。
+- DB migration、依存追加、generic workflow executor変更、schema破壊を行わない。
+- 過去の成功Evidenceで現在のtimeoutを迂回せず、修正後の実finishでGoalを閉じる。
+- 同じ修正後failureが反復した場合は再試行せず、Evidenceを保存して人間判断へ戻す。
 
 ### P0-7: Operator contract
 

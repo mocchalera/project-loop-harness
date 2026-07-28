@@ -490,6 +490,17 @@ def _targeted_next_action(paths: ProjectPaths, *, target_id: str) -> dict:
     if defect is not None:
         return _bind_next_action(defect, binding=binding, routing_scope="target")
 
+    timeout_recovery = _finish_timeout_recovery_next_action(
+        paths,
+        target_scope=resolved,
+    )
+    if timeout_recovery is not None:
+        return _bind_next_action(
+            timeout_recovery,
+            binding=binding,
+            routing_scope="target",
+        )
+
     if target["type"] == "task":
         action = _explicit_task_next_action(paths, task=target)
         return _bind_next_action(action, binding=binding, routing_scope="target")
@@ -715,7 +726,11 @@ def _one_next_candidate_per_goal(rows) -> list[dict[str, Any]]:
     return candidates
 
 
-def _finish_timeout_recovery_next_action(paths: ProjectPaths) -> dict | None:
+def _finish_timeout_recovery_next_action(
+    paths: ProjectPaths,
+    *,
+    target_scope: ResolvedRoutingTarget | None = None,
+) -> dict | None:
     conn = connect(paths.db_path)
     try:
         rows = conn.execute(
@@ -734,6 +749,10 @@ def _finish_timeout_recovery_next_action(paths: ProjectPaths) -> dict | None:
         for row in rows:
             target_type = str(row["target_type"])
             target_id = str(row["target_id"])
+            if target_scope is not None and (
+                target_type != target_scope.type or target_id != target_scope.id
+            ):
+                continue
             target_key = (target_type, target_id)
             if target_key in seen_targets:
                 continue

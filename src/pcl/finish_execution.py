@@ -25,7 +25,7 @@ from .db import connect, connect_mutation
 from .errors import DataStoreError, FinishChecksNotConfiguredError, InvalidInputError
 from .events import append_event
 from .evidence import insert_evidence_link, linked_task_provenance
-from .finish_recovery import finish_timeout_recovery
+from .finish_recovery import MAX_FINISH_TIMEOUT_SECONDS, finish_timeout_recovery
 from .finish_workspace import isolated_finish_workspace
 from .guarded_process import DEFAULT_MAX_OUTPUT_BYTES
 from .guards import require_initialized
@@ -176,6 +176,14 @@ def emit_finish_packet(
 ) -> dict[str, Any]:
     if timeout_seconds < 1:
         raise InvalidInputError("--timeout must be at least 1 second.")
+    if timeout_seconds > MAX_FINISH_TIMEOUT_SECONDS:
+        raise InvalidInputError(
+            f"--timeout must be {MAX_FINISH_TIMEOUT_SECONDS} seconds or less.",
+            details={
+                "timeout_seconds": timeout_seconds,
+                "maximum_timeout_seconds": MAX_FINISH_TIMEOUT_SECONDS,
+            },
+        )
     if max_output_bytes < 1:
         raise InvalidInputError("--max-output-bytes must be at least 1.")
     configuration = finish_check_configuration(paths.root)
@@ -1108,17 +1116,20 @@ def _next_action(
     command = f"pcl finish --emit-packet --{target['type']} {target['id']}"
     if outcome == "INCOMPLETE_VALIDATION":
         if timeout_recovery is not None and timeout_recovery["available"]:
+            suggested_timeout_seconds = timeout_recovery["suggested_timeout_seconds"]
             return {
                 "text": (
-                    "A finish check timed out. Retry once with the bounded 600-second timeout."
+                    "A finish check timed out. Retry once with the bounded "
+                    f"{suggested_timeout_seconds}-second timeout."
                 ),
                 "command": timeout_recovery["retry_command"],
             }
         if timeout_recovery is not None:
             return {
                 "text": (
-                    "A finish check timed out at the 600-second limit. Inspect its Evidence "
-                    "before changing the check or retrying."
+                    "A finish check timed out at the "
+                    f"{MAX_FINISH_TIMEOUT_SECONDS}-second limit. Inspect its "
+                    "Evidence before changing the check or retrying."
                 ),
                 "command": timeout_recovery["diagnostic_command"],
             }

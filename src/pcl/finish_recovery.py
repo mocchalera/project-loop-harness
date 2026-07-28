@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Any, Iterable, Mapping
 
 
-MAX_FINISH_TIMEOUT_SECONDS = 600
+FINISH_TIMEOUT_RECOVERY_STEPS_SECONDS = (600, 1200)
+MAX_FINISH_TIMEOUT_SECONDS = FINISH_TIMEOUT_RECOVERY_STEPS_SECONDS[-1]
 
 
 def finish_timeout_recovery(
@@ -17,17 +18,25 @@ def finish_timeout_recovery(
         return None
 
     evidence_id = str(timed_out["evidence_id"])
-    if timeout_seconds < MAX_FINISH_TIMEOUT_SECONDS:
+    suggested_timeout_seconds = next(
+        (
+            candidate
+            for candidate in FINISH_TIMEOUT_RECOVERY_STEPS_SECONDS
+            if candidate > timeout_seconds
+        ),
+        None,
+    )
+    if suggested_timeout_seconds is not None:
         retry_command = (
             f"pcl finish --emit-packet --{target['type']} {target['id']} "
-            f"--timeout {MAX_FINISH_TIMEOUT_SECONDS} --json"
+            f"--timeout {suggested_timeout_seconds} --json"
         )
         return {
             "available": True,
             "reason": "finish_check_timed_out",
             "timed_out_evidence_id": evidence_id,
             "previous_timeout_seconds": timeout_seconds,
-            "suggested_timeout_seconds": MAX_FINISH_TIMEOUT_SECONDS,
+            "suggested_timeout_seconds": suggested_timeout_seconds,
             "retry_command": retry_command,
             "diagnostic_command": f"pcl evidence show {evidence_id} --json",
         }
@@ -68,17 +77,20 @@ def completion_packet_timeout_action(packet: Mapping[str, Any]) -> dict[str, Any
     target = packet.get("target")
     if not isinstance(target, dict):
         return None
-    retry_command = (
-        f"pcl finish --emit-packet --{target.get('type')} {target.get('id')} "
-        f"--timeout {MAX_FINISH_TIMEOUT_SECONDS} --json"
-    )
+    retry_commands = {
+        (
+            f"pcl finish --emit-packet --{target.get('type')} {target.get('id')} "
+            f"--timeout {timeout_seconds} --json"
+        )
+        for timeout_seconds in FINISH_TIMEOUT_RECOVERY_STEPS_SECONDS
+    }
     artifact_ref = timed_out.get("artifact_ref")
     diagnostic_command = (
         f"pcl evidence show {str(artifact_ref).removeprefix('evidence:')} --json"
         if isinstance(artifact_ref, str) and artifact_ref.startswith("evidence:E-")
         else None
     )
-    if command == retry_command:
+    if command in retry_commands:
         action_type = "retry_finish_timeout"
     elif diagnostic_command is not None and command == diagnostic_command:
         action_type = "diagnose_finish_timeout"
