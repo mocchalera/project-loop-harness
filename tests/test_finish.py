@@ -181,6 +181,44 @@ def _evidence_count(root: Path, evidence_type: str) -> int:
         conn.close()
 
 
+def _configure_finish_command(root: Path, key: str, command: str) -> None:
+    config_path = root / "pcl.yaml"
+    config = config_path.read_text(encoding="utf-8")
+    config = config.replace(f'{key}: ""', f'{key}: "{command}"')
+    config_path.write_text(config, encoding="utf-8")
+
+
+def _finish_command_key(command: dict) -> str:
+    return str(command["raw_command"]).removeprefix("project.commands.")
+
+
+def _open_task_decision(root: Path, capsys) -> None:
+    assert main([
+        "--root", str(root), "decision", "open",
+        "--question", "May this task close?", "--recommendation", "Review Evidence",
+        "--blocks-json", '[{"type":"task","id":"T-0001"}]',
+    ]) == 0
+    capsys.readouterr()
+
+
+def _latest_check_anchor(root: Path) -> dict:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        row = conn.execute(
+            """
+            SELECT payload_json
+            FROM events
+            WHERE event_type = 'completion_packet_created'
+            ORDER BY sequence DESC
+            LIMIT 1
+            """
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    return json.loads(str(row["payload_json"]))
+
+
 def _record_fake_timeout(root: Path, command: dict, run_dir: Path) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     stdout_path = run_dir / "01-finish.stdout.txt"
@@ -440,6 +478,195 @@ def test_finish_emit_packet_success_and_idempotent_rerun(tmp_path: Path, capsys)
     assert rerun["changed"] is False
     assert rerun["packet"] == finish["packet"]
     assert _state_counts(tmp_path) == before
+
+
+def test_finish_equivalent_roles_execute_once_and_share_hash_anchored_result(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    _configure_finish_command(
+        tmp_path,
+        "lint",
+        "python -m pytest -q test_sample.py",
+    )
+    from pcl import finish_execution
+
+    execute = finish_execution.execute_planned_guarded_command
+    executed_roles: list[str] = []
+
+    def counted_execute(paths, command, **kwargs):
+        executed_roles.append(_finish_command_key(command))
+        return execute(paths, command, **kwargs)
+
+    monkeypatch.setattr(
+        finish_execution,
+        "execute_planned_guarded_command",
+        counted_execute,
+    )
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet",
+        "--task", "T-0001", "--json",
+    ]) == 0
+    finish = _finish_payload(capsys)
+
+    assert executed_roles == ["lint"]
+    assert len(finish["checks"]) == 1
+    check = finish["checks"][0]
+    assert check["reuse"]["contract_version"] == "check-result-reuse/v1"
+    assert check["reuse"]["role_bindings"] == [
+        {"check_id": "finish_checks:1", "config_key": "lint"},
+        {"check_id": "finish_checks:2", "config_key": "test"},
+    ]
+    assert check["reuse"]["reused_role_count"] == 1
+    assert check["reuse"]["compatible_history"] == []
+    assert check["attempt_identity"]["execution_identity_sha256"].startswith(
+        "sha256:"
+    )
+    assert check["artifact_sha256"].startswith("sha256:")
+    assert _evidence_count(tmp_path, "completion_check") == 1
+
+    packet = load_completion_packet(tmp_path / finish["packet"]["path"])
+    assert len(packet["checks"]) == 1
+    anchor = _latest_check_anchor(tmp_path)
+    assert anchor["check_results"] == [{
+        "evidence_id": check["evidence_id"],
+        "sha256": check["artifact_sha256"],
+    }]
+
+
+def test_finish_compatible_hash_anchored_history_contributes_to_stability(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    _configure_finish_command(
+        tmp_path,
+        "lint",
+        "python -m pytest -q test_sample.py",
+    )
+    _open_task_decision(tmp_path, capsys)
+    from pcl import finish_execution
+
+    execute = finish_execution.execute_planned_guarded_command
+    execution_count = 0
+
+    def counted_execute(paths, command, **kwargs):
+        nonlocal execution_count
+        execution_count += 1
+        return execute(paths, command, **kwargs)
+
+    monkeypatch.setattr(
+        finish_execution,
+        "execute_planned_guarded_command",
+        counted_execute,
+    )
+    command = [
+        "--root", str(tmp_path), "finish", "--emit-packet",
+        "--task", "T-0001", "--json",
+    ]
+
+    assert main(command) == 0
+    first = _finish_payload(capsys)
+    first_check = first["checks"][0]
+    assert first["packet"]["outcome"] == "INCOMPLETE_HUMAN_DECISION_REQUIRED"
+
+    assert main(command) == 0
+    second = _finish_payload(capsys)
+    second_check = second["checks"][0]
+
+    assert execution_count == 2
+    assert second_check["reuse"]["compatible_history"] == [{
+        "evidence_id": first_check["evidence_id"],
+        "artifact_sha256": first_check["artifact_sha256"],
+        "assertion_status": "passed",
+        "stability_stratum": "cold",
+    }]
+    assert second_check["reuse"]["history_rejections"] == {}
+    assert second_check["stability_evaluation"]["attempt_count"] == 2
+    assert second_check["stability_evaluation"]["strata"]["cold"]["passed"] == 2
+    assert second_check["stability_evaluation"]["reproducible"] is False
+    assert _evidence_count(tmp_path, "completion_check") == 2
+
+
+def test_finish_history_rejects_tampered_and_policy_incompatible_results(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    _open_task_decision(tmp_path, capsys)
+    command = [
+        "--root", str(tmp_path), "finish", "--emit-packet",
+        "--task", "T-0001", "--json",
+    ]
+
+    assert main(command) == 0
+    first = _finish_payload(capsys)
+    first_check = first["checks"][0]
+    result_path = tmp_path / ".project-loop" / "evidence" / (
+        f"completion-checks/{first_check['evidence_id']}/result.json"
+    )
+    result_path.write_text(
+        result_path.read_text(encoding="utf-8") + " ",
+        encoding="utf-8",
+    )
+
+    assert main(command) == 0
+    tamper_run = _finish_payload(capsys)
+    tamper_check = tamper_run["checks"][0]
+    assert tamper_check["reuse"]["compatible_history"] == []
+    assert tamper_check["reuse"]["history_rejections"] == {
+        "artifact_hash_mismatch": 1,
+    }
+    assert tamper_check["stability_evaluation"]["attempt_count"] == 1
+
+    assert main([*command[:-1], "--timeout", "121", "--json"]) == 0
+    policy_run = _finish_payload(capsys)
+    assert policy_run["checks"][0]["reuse"]["history_rejections"] == {
+        "artifact_hash_mismatch": 1,
+        "execution_identity_mismatch": 1,
+    }
+    assert policy_run["checks"][0]["stability_evaluation"]["attempt_count"] == 1
+
+
+def test_finish_distinct_roles_still_execute_independently(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    _configure_finish_command(
+        tmp_path,
+        "lint",
+        "python -m ruff check test_sample.py",
+    )
+    from pcl import finish_execution
+
+    execute = finish_execution.execute_planned_guarded_command
+    executed_roles: list[str] = []
+
+    def counted_execute(paths, command, **kwargs):
+        executed_roles.append(_finish_command_key(command))
+        return execute(paths, command, **kwargs)
+
+    monkeypatch.setattr(
+        finish_execution,
+        "execute_planned_guarded_command",
+        counted_execute,
+    )
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet",
+        "--task", "T-0001", "--json",
+    ]) == 0
+    finish = _finish_payload(capsys)
+
+    assert executed_roles == ["lint", "test"]
+    assert len(finish["checks"]) == 2
+    assert [check["reuse"]["reused_role_count"] for check in finish["checks"]] == [0, 0]
 
 
 def test_finish_input_mutation_is_isolated_and_records_attempt_without_packet(

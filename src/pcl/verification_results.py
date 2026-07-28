@@ -18,6 +18,9 @@ ASSERTION_RESULT_CONTRACT_VERSION = "assertion-result/v1"
 VERIFICATION_ATTEMPT_IDENTITY_CONTRACT_VERSION = (
     "verification-attempt-identity/v1"
 )
+VERIFICATION_EXECUTION_IDENTITY_CONTRACT_VERSION = (
+    "verification-execution-identity/v1"
+)
 STABILITY_EVALUATION_CONTRACT_VERSION = "stability-evaluation/v1"
 
 _LOCK_FILE_NAMES = frozenset(
@@ -86,6 +89,7 @@ def build_finish_check_result(
         "assertion_result": assertion_result,
         "attempt_identity": dict(attempt_identity),
         "stability_evaluation": dict(stability_evaluation),
+        "reuse": dict(command.get("reuse", {})),
     }
 
 
@@ -161,6 +165,32 @@ def build_verification_attempt_identity(
     semantic["identity_sha256"] = _canonical_sha256(
         {key: value for key, value in semantic.items() if key != "identity_sha256"}
     )
+    execution_semantic = {
+        "contract_version": VERIFICATION_EXECUTION_IDENTITY_CONTRACT_VERSION,
+        "input_manifest_sha256": semantic["input_manifest_sha256"],
+        "lock_inputs_sha256": semantic["lock_inputs_sha256"],
+        "command": {
+            "argv": argv,
+            "scope": command.get("scope"),
+            "kind": command.get("kind"),
+        },
+        "toolchain": semantic["toolchain"],
+        "platform": semantic["platform"],
+        "environment": semantic["environment"],
+        "execution": {
+            "timeout_seconds": timeout_seconds,
+            "max_output_bytes": max_output_bytes,
+        },
+        "finish_execution_policy_sha256": _canonical_sha256(
+            _execution_policy(finish_policy)
+        ),
+    }
+    semantic["execution_identity_contract_version"] = (
+        VERIFICATION_EXECUTION_IDENTITY_CONTRACT_VERSION
+    )
+    semantic["execution_identity_sha256"] = _canonical_sha256(
+        execution_semantic
+    )
     return semantic
 
 
@@ -189,10 +219,10 @@ def evaluate_stability(
 
     attempt_rows = [dict(attempt) for attempt in attempts]
     identities = {
-        str(identity["identity_sha256"])
+        identity_sha256
         for attempt in attempt_rows
         if isinstance((identity := attempt.get("attempt_identity")), Mapping)
-        and isinstance(identity.get("identity_sha256"), str)
+        and (identity_sha256 := _comparable_identity_sha256(identity)) is not None
     }
     statuses = [_attempt_assertion_status(attempt) for attempt in attempt_rows]
     strata = [_attempt_stratum(attempt) for attempt in attempt_rows]
@@ -233,16 +263,13 @@ def evaluate_stability(
         "reasons": [],
     }
 
-    if len(identities) != 1 or len(identities) != len(
-        {
-            str(
-                attempt.get("attempt_identity", {}).get("identity_sha256")
-                if isinstance(attempt.get("attempt_identity"), Mapping)
-                else ""
-            )
-            for attempt in attempt_rows
-        }
-    ):
+    recorded_identities = {
+        _comparable_identity_sha256(identity)
+        if isinstance((identity := attempt.get("attempt_identity")), Mapping)
+        else None
+        for attempt in attempt_rows
+    }
+    if len(identities) != 1 or recorded_identities != identities:
         if attempt_rows:
             result["status"] = "incompatible_attempts"
             result["reasons"] = ["attempt_identity_mismatch"]
@@ -479,6 +506,13 @@ def _attempt_assertion_status(attempt: Mapping[str, Any]) -> str:
     return str(status)
 
 
+def _comparable_identity_sha256(identity: Mapping[str, Any]) -> str | None:
+    value = identity.get("execution_identity_sha256")
+    if not isinstance(value, str):
+        value = identity.get("identity_sha256")
+    return value if isinstance(value, str) else None
+
+
 def _attempt_stratum(attempt: Mapping[str, Any]) -> str:
     value = str(attempt.get("stratum") or "")
     return value if value in _STABILITY_STRATA else "cold"
@@ -502,3 +536,41 @@ def _canonical_sha256(value: Any) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
+
+
+def _execution_policy(finish_policy: Mapping[str, Any]) -> dict[str, Any]:
+    commands = finish_policy.get("commands")
+    unique_commands: dict[tuple[str, str, tuple[str, ...]], dict[str, Any]] = {}
+    if isinstance(commands, list):
+        for command in commands:
+            if not isinstance(command, Mapping):
+                continue
+            argv_value = command.get("argv")
+            argv = (
+                tuple(str(part) for part in argv_value)
+                if isinstance(argv_value, list)
+                else ()
+            )
+            key = (
+                str(command.get("scope") or ""),
+                str(command.get("kind") or ""),
+                argv,
+            )
+            unique_commands[key] = {
+                "scope": command.get("scope"),
+                "kind": command.get("kind"),
+                "argv": list(argv),
+            }
+    return {
+        "contract_version": finish_policy.get("contract_version"),
+        "commands": [
+            unique_commands[key]
+            for key in sorted(unique_commands)
+        ],
+        "declared_output_patterns": finish_policy.get(
+            "declared_output_patterns",
+            [],
+        ),
+        "timeout_seconds": finish_policy.get("timeout_seconds"),
+        "max_output_bytes": finish_policy.get("max_output_bytes"),
+    }

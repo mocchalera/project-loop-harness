@@ -11,6 +11,10 @@ from typing import Any
 
 from . import __version__
 from .commands import finish_plan
+from .check_result_reuse import (
+    CHECK_RESULT_REUSE_CONTRACT_VERSION,
+    load_compatible_check_history,
+)
 from .contracts.completion_packet import (
     COMPLETION_PACKET_CONTRACT_VERSION,
     canonical_json,
@@ -110,7 +114,7 @@ def _plan_finish_packet(
         task_id=task_id,
     )
     repository = _repository_snapshot(paths, base_revision=base_revision)
-    commands = plan_guarded_project_checks(paths)
+    commands = _coalesce_finish_checks(plan_guarded_project_checks(paths))
     input_manifest = collect_verification_input_manifest(
         paths.root,
         declared_output_patterns=FINISH_DECLARED_OUTPUT_PATTERNS,
@@ -222,7 +226,7 @@ def emit_finish_packet(
             "exit_code": 0,
         }
 
-    commands = plan_guarded_project_checks(paths)
+    commands = _coalesce_finish_checks(plan_guarded_project_checks(paths))
     if not commands:
         raise FinishChecksNotConfiguredError(
             details={
@@ -282,6 +286,8 @@ def emit_finish_packet(
                 )
                 _attach_finish_check_contracts(
                     command,
+                    paths=paths,
+                    target=target,
                     input_manifest=input_manifest,
                     finish_policy=finish_policy,
                     timeout_seconds=timeout_seconds,
@@ -847,6 +853,7 @@ def _commit_finish_attempt(
                 "check_evidence_ids": [
                     row["evidence_id"] for row in check_rows
                 ],
+                "check_results": _check_result_anchors(check_rows),
             },
         )
         conn.commit()
@@ -923,6 +930,7 @@ def _commit_completion_packet(
                 "path": relative_packet_path, "outcome": outcome,
                 "diff_sha256": packet["repository"]["diff_sha256"],
                 "check_evidence_ids": [row["evidence_id"] for row in check_rows],
+                "check_results": _check_result_anchors(check_rows),
                 "target_transition": transition,
             },
         )
@@ -961,15 +969,18 @@ def _store_check_evidence(
                 command[key.removesuffix("_path")]["path"] = command[key]
         result_path = final_dir / "result.json"
         check_payload = _check_result(command, evidence_id=evidence_id)
-        result_path.write_text(
+        result_bytes = (
             json.dumps(
                 check_payload,
                 ensure_ascii=False,
                 sort_keys=True,
                 indent=2,
             )
-            + "\n",
-            encoding="utf-8",
+            + "\n"
+        ).encode("utf-8")
+        result_path.write_bytes(result_bytes)
+        check_payload["artifact_sha256"] = (
+            f"sha256:{hashlib.sha256(result_bytes).hexdigest()}"
         )
         relative = str(result_path.relative_to(paths.root))
         conn.execute(
@@ -1153,6 +1164,7 @@ def _finish_check_policy(
                 "config_key": command.get("config_key"),
                 "kind": command.get("kind"),
                 "argv": [str(part) for part in command.get("argv", [])],
+                "role_bindings": list(command.get("role_bindings", [])),
             }
             for command in commands
         ],
@@ -1172,6 +1184,8 @@ def _finish_check_policy(
 def _attach_finish_check_contracts(
     command: dict[str, Any],
     *,
+    paths: ProjectPaths,
+    target: dict[str, Any],
     input_manifest: dict[str, Any],
     finish_policy: dict[str, Any],
     timeout_seconds: int,
@@ -1192,13 +1206,23 @@ def _attach_finish_check_contracts(
         attempt_identity=identity,
         stability_evaluation={},
     )
+    execution_identity_sha256 = str(identity["execution_identity_sha256"])
+    history = load_compatible_check_history(
+        paths,
+        target_type=str(target["type"]),
+        target_id=str(target["id"]),
+        execution_identity_sha256=execution_identity_sha256,
+        maximum_attempts=FINISH_STABILITY_MAXIMUM_ATTEMPTS,
+    )
+    current_attempt = {
+        "attempt_identity": identity,
+        "assertion_result": provisional["assertion_result"],
+        "stratum": stability_stratum,
+    }
     stability = evaluate_stability(
         [
-            {
-                "attempt_identity": identity,
-                "assertion_result": provisional["assertion_result"],
-                "stratum": stability_stratum,
-            }
+            *(row["attempt"] for row in history["compatible"]),
+            current_attempt,
         ],
         minimum_consecutive_passes=FINISH_STABILITY_MINIMUM_CONSECUTIVE_PASSES,
         maximum_attempts=FINISH_STABILITY_MAXIMUM_ATTEMPTS,
@@ -1206,6 +1230,20 @@ def _attach_finish_check_contracts(
     command["attempt_identity"] = identity
     command["stability_stratum"] = stability_stratum
     command["stability_evaluation"] = stability
+    role_bindings = list(command.get("role_bindings", []))
+    command["reuse"] = {
+        "contract_version": CHECK_RESULT_REUSE_CONTRACT_VERSION,
+        "execution_identity_sha256": execution_identity_sha256,
+        "execution_source": "fresh",
+        "role_bindings": role_bindings,
+        "reused_role_count": max(0, len(role_bindings) - 1),
+        "compatible_history": [
+            row["public"] for row in history["compatible"]
+        ],
+        "history_rejections": history["rejections"],
+        "history_candidate_count": history["candidate_count"],
+        "history_scan_limit": history["scan_limit"],
+    }
 
 
 def _check_result(command: dict[str, Any], *, evidence_id: str) -> dict[str, Any]:
@@ -1215,6 +1253,18 @@ def _check_result(command: dict[str, Any], *, evidence_id: str) -> dict[str, Any
         attempt_identity=command["attempt_identity"],
         stability_evaluation=command["stability_evaluation"],
     )
+
+
+def _check_result_anchors(
+    check_rows: list[dict[str, Any]],
+) -> list[dict[str, str]]:
+    return [
+        {
+            "evidence_id": str(row["evidence_id"]),
+            "sha256": str(row["artifact_sha256"]),
+        }
+        for row in check_rows
+    ]
 
 
 def _matching_completion_packet(paths: ProjectPaths, *, target: dict[str, Any], repository: dict[str, Any]) -> dict[str, Any] | None:
@@ -1278,8 +1328,48 @@ def _manifest_summary(manifest: dict[str, Any]) -> dict[str, Any]:
 
 
 def _public_check_plan(command: dict[str, Any]) -> dict[str, Any]:
-    return {
+    result = {
         "id": command["id"], "config_key": str(command["raw_command"]).removeprefix("project.commands."),
         "command": command["resolved_command"], "safe_to_run": bool(command["safe_to_run"]),
         "blocked_reason": command["blocked_reason"],
     }
+    role_bindings = list(command.get("role_bindings", []))
+    if len(role_bindings) > 1:
+        result["role_bindings"] = role_bindings
+        result["reused_role_count"] = len(role_bindings) - 1
+    return result
+
+
+def _coalesce_finish_checks(
+    commands: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    unique: dict[tuple[str, str, tuple[str, ...]], dict[str, Any]] = {}
+    ordered: list[dict[str, Any]] = []
+    for command in commands:
+        config_key = _finish_config_key(command)
+        command["config_key"] = config_key
+        command["scope"] = "finish_checks"
+        binding = {
+            "check_id": str(command["id"]),
+            "config_key": config_key,
+        }
+        argv = tuple(str(part) for part in command.get("argv", []))
+        key = (
+            str(command.get("scope") or ""),
+            str(command.get("kind") or ""),
+            argv or (f"unresolved:{command.get('resolved_command')}",),
+        )
+        primary = unique.get(key)
+        if primary is None:
+            command["role_bindings"] = [binding]
+            unique[key] = command
+            ordered.append(command)
+        else:
+            primary["role_bindings"].append(binding)
+    return ordered
+
+
+def _finish_config_key(command: dict[str, Any]) -> str:
+    return str(command.get("raw_command") or "").removeprefix(
+        "project.commands."
+    )
