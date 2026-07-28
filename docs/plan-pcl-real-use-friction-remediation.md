@@ -29,6 +29,7 @@
 | P0-6 execution binding / progress receipt | implemented | `G-0071`, `T-0148`, `F-0077`, `E-0616`〜`E-0618`, `docs/evidence/0221-execution-binding-progress-receipt-validation.md` |
 | P0-6d finish timeout / recovery dogfood repair | implemented | `T-0149`, `F-0078`, `US-0078`〜`US-0079`, `TC-0174`〜`TC-0178` |
 | P0-7 operator contract | implemented | `G-0072`, `T-0150`, `F-0079`, `US-0080`〜`US-0081`, `TC-0179`〜`TC-0183` |
+| P1 finish progress / compact actual output | implemented | `9c4ca92`, `4f44616`, `G-0073`, `T-0151`, `F-0080`, `E-0659`〜`E-0668` |
 
 ## 1. 成功条件
 
@@ -311,7 +312,7 @@ P0 の Evidence-first 実装を壊さず、次を別判断で行う。
 
 - 先行sliceの計画:
   [finish progress visibility and compact actual output](plan-p1-finish-progress-compact-output.md)
-  （2026-07-28、計画のみ。Story意味承認と実装承認は未実施）
+  （2026-07-28、Story意味承認・実装・実dogfood・closeout完了）
 - OS sandbox / filesystem overlay / network policy backend
 - `completion-packet/v2` と incomplete attempt の正規 contract
 - runner ごとの structured reporter
@@ -459,4 +460,17 @@ P0 全体の release gate:
 
 | 観測 | 対応先 | 状態 |
 | --- | --- | --- |
-| 人間はP1全体実装ではなく、長時間`finish`の進捗表示と実結果のcompact出力についてStory・Test・実装計画を先行する方針を選択した | `FA`, `F7`, P1先行slice | `G-0073 / T-0151 / F-0080`へ計画を保存。DB migration、依存追加、実装、Cockpit自動ingestは未着手 |
+| 人間はP1全体実装ではなく、長時間`finish`の進捗表示と実結果のcompact出力についてStory・Test・実装計画を先行する方針を選択した | `FA`, `F7`, P1先行slice | `G-0073 / T-0151 / F-0080`へ計画を保存後、Ask `ask_0d3a7eef8133`で計画とStory意味を承認し実装開始 |
+
+### 2026-07-28: P1 finish progress / compact output 実装 dogfood
+
+| 観測 | 対応先 | 状態 |
+| --- | --- | --- |
+| 実`finish --summary --exclude-machine-state`は証拠anchorを保持したまま、従来48k token超だった出力を7,608 bytesの単一JSON行へ縮小した | `F7`, P1 output projection | 修正確認。no-flag公開JSON shapeとdry-run projectionは後方互換を維持 |
+| 928.21秒の明示Task finishで46件のordered JSONL progressと30件のheartbeatをstderrへ出し、stdoutは単一JSONのままだった | `FA`, P1 live progress | 修正確認。heartbeat gapは30.002〜30.013秒、delivery dropped countは0 |
+| Task closeoutは723.409秒・39 progress records・7,501 bytes、Goal closeoutは776.864秒・41 records・7,643 bytesで完了した | `FA`, `F7`, P1 dogfood | 修正確認。全progressと最終結果のbindingはそれぞれ`T-0151` / `G-0073`へ固定 |
+| progress stream追加だけではPCL event、Evidence、target stateが変化せず、delivery failureもauthoritative finish結果へ影響しない | `FA`, P1 live progress | 修正確認。永続progress / Cockpit自動ingestは対象外のまま |
+| Goal-bound completion packet `E-0666`発行後も`next --target G-0073`は同じ`finish`再実行を勧め、`goal close --evidence-id E-0666`へ誘導しなかった | `F9`, P1 closeout routing | 新規改善候補。exact targetの有効packetを解決し、再検証ではなく型適合するclose commandを提示する |
+| Goal closeの`--verification`は自由文でなくverification IDを要求するが、help表示では型が判別しにくく初回がfail-closedになった | `F9`, Evidence UX | 新規改善候補。metavarとhelpに`VERIFICATION_ID`を明記し、accepted proof typeとexact exampleを返す |
+| finish結果は`COMPLETED_WITH_RISK`だった | P1 residual risk | 検証失敗ではない。全check成功、strict error 0、既存warning 30件とrecord-only stabilityがrisk理由 |
+| stderr heartbeatは親finishが待機中であることだけを示し、child check内部のforward progressや再接続可能性は証明しない | `FA`, P1 residual | 想定どおり残存。structured reporter、durable attempt、Cockpit ingestは別の人間判断が必要 |

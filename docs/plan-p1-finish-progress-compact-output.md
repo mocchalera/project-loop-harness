@@ -1,6 +1,6 @@
 # P1 Plan: finish progress visibility and compact actual output
 
-Status: planned, implementation not authorized
+Status: implemented, verified, and closed
 
 Date: 2026-07-28
 
@@ -20,8 +20,8 @@ P0-6 / P0-7 dogfood:
 2. the actual finish result cannot use the existing dry-run projection flags
    and produced a single JSON line of more than about 48k tokens.
 
-This plan does not authorize implementation. Implementation starts only after
-the human confirms this plan and the Story semantics.
+Cockpit Ask `ask_0d3a7eef8133` approved both this plan and the Story semantics
+on 2026-07-28. Implementation then proceeded within the boundaries below.
 
 The slice must not add:
 
@@ -433,16 +433,44 @@ Stop and request a new human decision if any of the following becomes necessary:
 - Runner-specific structured output, flake quarantine, historical Evidence
   projection, and normalized attempts remain separate P1 decisions.
 
-## 11. Approval boundary
+## 11. Implementation and closeout record
 
-Plan completion means only:
+Human authorization:
 
-- this document is committed;
-- `US-0082` / `US-0083` remain draft;
-- `TC-0184`–`TC-0192` remain planned;
-- PCL validate/render succeed;
-- no production code or test implementation has started.
+- Cockpit Ask `ask_0d3a7eef8133`: “計画とStoryを承認し実装開始（推奨）”;
+- Stories `US-0082` / `US-0083`: approved before implementation;
+- Tests `TC-0184`–`TC-0192`: passing.
 
-Implementation requires an explicit human choice that approves both this plan
-and the Story semantics. A request to revise or hold leaves `T-0151` open and
-does not change code.
+Coherent implementation commits:
+
+- `9c4ca92` — compact actual finish output;
+- `4f44616` — streamed finish execution progress.
+
+Verification:
+
+- focused finish/progress regression: `41 passed in 76.06s`;
+- full repository suite: `1260 passed, 1 skipped in 1431.76s`;
+- `ruff check .`: passed;
+- strict validation: zero errors and 30 pre-existing warnings;
+- render: passed.
+
+Real-project dogfood:
+
+- the first explicitly task-bound finish completed in 928.21 seconds;
+- stdout was one 7,608-byte JSON line;
+- stderr contained 46 ordered progress records, including 30 heartbeats;
+- heartbeat gaps remained between 30.002 and 30.013 seconds;
+- every progress record and the final result stayed bound to `T-0151`;
+- task closeout completed in 723.409 seconds with 39 progress records and a
+  7,501-byte stdout result;
+- goal closeout completed in 776.864 seconds with 41 progress records and a
+  7,643-byte stdout result;
+- progress delivery was complete with zero dropped records in both closeouts;
+- completion packets `E-0663` and `E-0666` validated against
+  `completion-packet/v1`;
+- closeout bundle `E-0667` and completed progress receipt `E-0668` preserve
+  the final Task/Goal proof;
+- `T-0151` is `done`, `F-0080` is `done`, and `G-0073` is `closed`.
+
+No database migration, dependency addition, packet-version change, Cockpit
+auto-ingest, external write, push, PR, or publication was performed.
