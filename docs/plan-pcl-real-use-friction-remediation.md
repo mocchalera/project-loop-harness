@@ -22,7 +22,8 @@
 | P0-1 C1 isolated finish workspace | implemented | `19b7c0b`, `docs/evidence/0214-finish-isolated-workspace-validation.md` |
 | P0-2 result and stability contract | implemented | `92346bb`, `E-0599`〜`E-0601`, `docs/evidence/0215-finish-result-stability-validation.md` |
 | P0-3 shared terminal readiness | implemented | `f946277`, `63457ec`, `E-0602`, `docs/evidence/0216-shared-terminal-readiness-validation.md` |
-| P0-4 以降 | planned | 本書の依存順で継続 |
+| P0-4 start and router targeting | implemented | `3c6c019`, `E-0604`, `docs/evidence/0217-target-attach-routing-validation.md` |
+| P0-5 以降 | planned | 本書の依存順で継続 |
 
 ## 1. 成功条件
 
@@ -326,3 +327,13 @@ P0 全体の release gate:
 | 既存`completion_blockers`へStory/Test/Defect理由を混ぜるとDefect lifecycleの公開shapeを壊した | `F2`, P0-3 | 従来fieldはcompletion-policy専用に維持し、全理由を加算`terminal_readiness`へ分離 |
 | linked Taskへ完全readinessを一覧表示すると大量Task projectでJSONを増幅する | `F7`, P0-5 | `task list`はcompactな`derived_status`のみ、`task read` / `next` / `finish`は完全contractへ分離 |
 | baseline snapshotが加算`terminal_readiness`を意図変更として記録しておらず全体回帰で検出された | `F2`, P0-3 | snapshotとfixture READMEを同時更新し、既存action command/fieldは維持 |
+
+### 2026-07-28: P0-4 実装 dogfood
+
+| 観測 | 対応先 | 状態 |
+| --- | --- | --- |
+| `next --target T-0144` は対象外 `DEC-0014` を除外し、`pcl context pack --task T-0144 --json` を返した | `F4`, P0-4 | 修正確認。`routing_scope=target` と明示 `target_binding` を保持 |
+| `start --task T-0144` は既存 `G-0067 / T-0144` を再利用し、`created_ids` は `E-0603` と `EV-1B43DE29826E` のみだった | `F3`, `F6`, P0-4 | 修正確認。Taskは `in_progress`、Goal / Task重複なし |
+| `finish --emit-packet --dry-run --task T-0144` は同じTask/Goal bindingと既存`terminal-readiness/v1`を返した | `F2`, `F4`, P0-4 | 修正確認。finish独自のterminal判定は追加していない |
+| 同finish dry-runは無関係なlocal agent stateを含む261件の`changes`を返した | `F7`, P0-5 | 再現継続。summary / pagination / machine-state exclusionをP0-5で扱う |
+| 既に`in_progress`の同じTaskへ`start --task`を再実行すると、新しいstart receipt / eventを追加できる | `F8`, P0-5 | attach retry用idempotency keyまたは既存receipt再利用契約を検討 |
