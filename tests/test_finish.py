@@ -428,6 +428,121 @@ def test_finish_task_dry_run_uses_shared_target_binding_and_readiness(
     assert finish["terminal_readiness"]["contract_version"] == "terminal-readiness/v1"
 
 
+def test_finish_output_projection_summary_and_page_bound_display_without_weakening_snapshot(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    claude_state = tmp_path / ".claude" / "state"
+    claude_state.mkdir(parents=True)
+    (claude_state / "session.json").write_text('{"noise": true}\n', encoding="utf-8")
+    work_state = tmp_path / ".work"
+    work_state.mkdir()
+    (work_state / "trace.txt").write_text("local trace\n", encoding="utf-8")
+    command = [
+        "--root", str(tmp_path), "finish", "--emit-packet", "--dry-run",
+        "--task", "T-0001",
+    ]
+
+    assert main([*command, "--json"]) == 0
+    full = _finish_payload(capsys)
+    full_keys = set(full)
+    assert "output_projection" not in full
+    machine_changes = [
+        item
+        for item in full["changes"]
+        if item["path"].startswith((".claude/", ".work/"))
+    ]
+    assert len(machine_changes) == 2
+
+    assert main([
+        *command,
+        "--summary",
+        "--exclude-machine-state",
+        "--json",
+    ]) == 0
+    summary = _finish_payload(capsys)
+    projection = summary["output_projection"]
+
+    assert set(summary) == full_keys | {"output_projection"}
+    assert summary["changes"] == []
+    assert summary["harness_local_state"] == []
+    assert summary["repository"] == full["repository"]
+    assert projection["contract_version"] == "finish-output-projection/v1"
+    assert projection["mode"] == "summary"
+    assert projection["repository_snapshot"] == {
+        "scope": "complete",
+        "dirty": full["repository"]["dirty"],
+        "diff_sha256": full["repository"]["diff_sha256"],
+    }
+    assert projection["machine_state"]["excluded_from_display"] is True
+    assert projection["machine_state"]["omitted_count"] == 2
+    assert projection["machine_state"]["omitted_by_prefix"] == {
+        ".claude/": 1,
+        ".work/": 1,
+    }
+    assert projection["sections"]["changes"]["total_count"] == len(full["changes"])
+    assert projection["sections"]["changes"]["eligible_count"] == (
+        len(full["changes"]) - 2
+    )
+    assert projection["sections"]["changes"]["returned_count"] == 0
+    assert projection["sections"]["harness_local_state"]["total_count"] == len(
+        full["harness_local_state"]
+    )
+
+    assert main([
+        *command,
+        "--output-offset", "0",
+        "--output-limit", "1",
+        "--exclude-machine-state",
+        "--json",
+    ]) == 0
+    page = _finish_payload(capsys)
+    eligible_changes = [
+        item
+        for item in full["changes"]
+        if not item["path"].startswith((".claude/", ".work/"))
+    ]
+    assert page["changes"] == eligible_changes[:1]
+    assert page["harness_local_state"] == full["harness_local_state"][:1]
+    assert page["repository"] == full["repository"]
+    assert page["output_projection"]["mode"] == "page"
+    assert page["output_projection"]["pagination"] == {
+        "offset": 0,
+        "limit": 1,
+    }
+    assert page["output_projection"]["sections"]["changes"]["returned_count"] == (
+        min(1, len(eligible_changes))
+    )
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        ["--summary"],
+        ["--dry-run", "--summary", "--output-limit", "1"],
+        ["--dry-run", "--output-limit", "0"],
+        ["--dry-run", "--output-offset", "-1"],
+    ],
+)
+def test_finish_output_projection_flags_fail_closed_without_mutation(
+    tmp_path: Path,
+    capsys,
+    extra: list[str],
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    before = _state_counts(tmp_path)
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet",
+        "--task", "T-0001", *extra, "--json",
+    ]) == 2
+    payload = _json_output(capsys)
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert _state_counts(tmp_path) == before
+
+
 def test_finish_emit_packet_success_and_idempotent_rerun(tmp_path: Path, capsys) -> None:
     _create_packet_project(tmp_path, capsys)
 

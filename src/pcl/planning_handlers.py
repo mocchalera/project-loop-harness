@@ -8,6 +8,7 @@ from .commands import build_next_action, finish_plan, next_action
 from .errors import InvalidInputError
 from .exporters import export_csv
 from .finish_execution import emit_finish_packet, plan_finish_packet
+from .finish_output import project_finish_plan_output, validate_finish_output_flags
 from .kpi_report import report_kpi
 from .paths import ProjectPaths
 from .presentation import format_finish_summary, format_next_explanation, to_pretty_json
@@ -75,6 +76,13 @@ def handle_planning_command(
         return 0
 
     if args.command == "finish":
+        output_projection = validate_finish_output_flags(
+            dry_run=args.dry_run,
+            summary=args.summary,
+            output_offset=args.output_offset,
+            output_limit=args.output_limit,
+            exclude_machine_state=args.exclude_machine_state,
+        )
         packet_only_flags = any(
             [
                 args.dry_run,
@@ -82,6 +90,7 @@ def handle_planning_command(
                 args.base,
                 args.timeout != 120,
                 args.max_output_bytes != 1_048_576,
+                output_projection,
             ]
         )
         if args.execute and args.emit_packet:
@@ -101,6 +110,14 @@ def handle_planning_command(
                     task_id=args.task,
                     base_revision=args.base,
                 )
+                if output_projection:
+                    packet_payload = project_finish_plan_output(
+                        packet_payload,
+                        summary=args.summary,
+                        output_offset=args.output_offset,
+                        output_limit=args.output_limit,
+                        exclude_machine_state=args.exclude_machine_state,
+                    )
                 packet_payload["exit_code"] = 0
             else:
                 packet_payload = emit_finish_packet(

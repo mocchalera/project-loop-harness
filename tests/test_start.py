@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -10,6 +11,7 @@ from pcl.cli import main
 from pcl.db import connect
 from pcl.paths import resolve_paths
 from pcl.start import start_work
+from pcl.start_retry import load_compatible_start_retry
 
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures"
@@ -24,6 +26,15 @@ def _json_output(capsys) -> dict:
 def _init(root: Path, capsys) -> None:
     assert main(["init", "--target", str(root), "--json"]) == 0
     _json_output(capsys)
+
+
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", *args],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
 
 
 def _counts(root: Path) -> dict[str, int]:
@@ -126,6 +137,211 @@ def test_start_attaches_existing_task_without_duplicate_entities_and_activates_a
         {"event_type": "task_status_changed", "entity_id": "T-0001"},
         {"event_type": "work_started", "entity_id": "T-0001"},
     ]
+
+
+def test_start_active_task_exact_retry_reuses_anchored_receipt_without_mutation(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    assert main([
+        "--root", str(tmp_path), "goal", "create", "--title", "Existing goal",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "task", "create", "--title", "Existing task",
+        "--goal", "G-0001",
+    ]) == 0
+    capsys.readouterr()
+    command = [
+        "--root", str(tmp_path), "start", "Attach retry identity",
+        "--task", "T-0001", "--json",
+    ]
+
+    assert main(command) == 0
+    first = _json_output(capsys)
+    assert first["status"] == "started"
+    assert first["mutated"] is True
+    assert first["result"]["receipt"]["request_identity_sha256"].startswith(
+        "sha256:"
+    )
+    before_retry = _counts(tmp_path)
+
+    assert main(command) == 0
+    retry = _json_output(capsys)
+
+    assert retry["status"] == "already_started"
+    assert retry["mutated"] is False
+    assert retry["result"]["idempotent"] is True
+    assert retry["result"]["created_ids"] == {}
+    assert retry["result"]["reused_ids"] == {
+        "event": first["result"]["created_ids"]["event"],
+        "evidence": first["result"]["created_ids"]["evidence"],
+    }
+    assert retry["result"]["receipt"] == first["result"]["receipt"]
+    assert _counts(tmp_path) == before_retry
+
+    assert main([
+        "--root", str(tmp_path), "start", "Changed attach intent",
+        "--task", "T-0001", "--json",
+    ]) == 0
+    changed = _json_output(capsys)
+    assert changed["status"] == "started"
+    assert changed["mutated"] is True
+    assert changed["result"]["created_ids"]["event"] != (
+        first["result"]["created_ids"]["event"]
+    )
+    assert _counts(tmp_path)["events"] == before_retry["events"] + 1
+    assert _counts(tmp_path)["evidence"] == before_retry["evidence"] + 1
+
+
+def test_start_active_task_retry_identity_covers_head_and_skill_hashes(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    skill = tmp_path / "skills" / "retry" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("---\nname: retry\n---\nfirst\n", encoding="utf-8")
+    readme = tmp_path / "README.md"
+    readme.write_text("one\n", encoding="utf-8")
+    _git(tmp_path, "init", "-b", "main")
+    _git(tmp_path, "config", "user.email", "pcl@example.test")
+    _git(tmp_path, "config", "user.name", "PCL Test")
+    _git(tmp_path, "add", ".gitignore", "README.md", "skills/retry/SKILL.md")
+    _git(tmp_path, "commit", "-m", "baseline")
+    assert main([
+        "--root", str(tmp_path), "goal", "create", "--title", "Existing goal",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "task", "create", "--title", "Existing task",
+        "--goal", "G-0001",
+    ]) == 0
+    capsys.readouterr()
+    command = [
+        "--root", str(tmp_path), "start", "Attach with provenance",
+        "--task", "T-0001", "--skill", str(skill), "--json",
+    ]
+
+    assert main(command) == 0
+    first = _json_output(capsys)
+    before_retry = _counts(tmp_path)
+    assert main(command) == 0
+    retry = _json_output(capsys)
+    assert retry["status"] == "already_started"
+    assert retry["result"]["provenance"] == first["result"]["provenance"]
+    assert _counts(tmp_path) == before_retry
+
+    skill.write_text("---\nname: retry\n---\nsecond\n", encoding="utf-8")
+    assert main(command) == 0
+    skill_changed = _json_output(capsys)
+    assert skill_changed["status"] == "started"
+    assert skill_changed["mutated"] is True
+
+    readme.write_text("two\n", encoding="utf-8")
+    _git(tmp_path, "add", "README.md", "skills/retry/SKILL.md")
+    _git(tmp_path, "commit", "-m", "change retry identity")
+    assert main(command) == 0
+    head_changed = _json_output(capsys)
+    assert head_changed["status"] == "started"
+    assert head_changed["mutated"] is True
+
+
+def test_start_active_task_retry_fails_closed_for_broken_evidence_anchor(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    assert main([
+        "--root", str(tmp_path), "goal", "create", "--title", "Existing goal",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "task", "create", "--title", "Existing task",
+        "--goal", "G-0001",
+    ]) == 0
+    capsys.readouterr()
+    command = [
+        "--root", str(tmp_path), "start", "Anchored retry",
+        "--task", "T-0001", "--json",
+    ]
+
+    assert main(command) == 0
+    first = _json_output(capsys)
+    before_retry = _counts(tmp_path)
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        conn.execute(
+            "UPDATE evidence SET type = 'adhoc_artifact' WHERE id = ?",
+            (first["result"]["created_ids"]["evidence"],),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert main(command) == 0
+    retry = _json_output(capsys)
+
+    assert retry["status"] == "started"
+    assert retry["mutated"] is True
+    assert "idempotent" not in retry["result"]
+    assert retry["result"]["created_ids"]["event"] != (
+        first["result"]["created_ids"]["event"]
+    )
+    assert retry["result"]["created_ids"]["evidence"] != (
+        first["result"]["created_ids"]["evidence"]
+    )
+    assert _counts(tmp_path)["events"] == before_retry["events"] + 1
+    assert _counts(tmp_path)["evidence"] == before_retry["evidence"] + 1
+
+
+def test_load_start_retry_rejects_missing_receipt_anchor(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    assert main([
+        "--root", str(tmp_path), "goal", "create", "--title", "Existing goal",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "task", "create", "--title", "Existing task",
+        "--goal", "G-0001",
+    ]) == 0
+    capsys.readouterr()
+    command = [
+        "--root", str(tmp_path), "start", "Anchored retry",
+        "--task", "T-0001", "--json",
+    ]
+
+    assert main(command) == 0
+    first = _json_output(capsys)
+    receipt = first["result"]["receipt"]
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        row = conn.execute(
+            "SELECT payload_json FROM events WHERE id = ?",
+            (first["result"]["created_ids"]["event"],),
+        ).fetchone()
+        payload = json.loads(str(row["payload_json"]))
+        payload.pop("receipt")
+        conn.execute(
+            "UPDATE events SET payload_json = ? WHERE id = ?",
+            (
+                json.dumps(payload, ensure_ascii=False, sort_keys=True),
+                first["result"]["created_ids"]["event"],
+            ),
+        )
+        conn.commit()
+
+        assert load_compatible_start_retry(
+            resolve_paths(tmp_path),
+            conn,
+            task_id="T-0001",
+            request_identity_sha256=receipt["request_identity_sha256"],
+            repository_revision=receipt["repository_revision"],
+            skills=[],
+            receipt_contract_version="pcl-start/v1",
+        ) is None
+    finally:
+        conn.close()
 
 
 def test_start_goal_attach_reuses_goal_and_creates_only_active_child(

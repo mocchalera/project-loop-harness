@@ -32,6 +32,10 @@ from .target_resolver import (
     TaskGoalTargetNotFoundError,
     resolve_routing_target,
 )
+from .start_retry import (
+    build_start_request_identity,
+    load_compatible_start_retry,
+)
 from .tasks import create_task_in_transaction
 from .timeutil import utc_now_iso
 
@@ -136,12 +140,6 @@ def start_work(
         result = init_project(paths)
         project_initialized = result.created
 
-    if planned_skills:
-        try:
-            preflight_provenance_destination(paths)
-        except OSError as exc:
-            raise DataStoreError(f"Could not prepare execution provenance: {exc}") from exc
-
     started = _commit_start(
         paths,
         intent=intent,
@@ -153,18 +151,22 @@ def start_work(
     action = next_action(paths, target=selected_task_id)
 
     finish_warning = finish_check_configuration_warning(paths.root)
+    result = {
+        "intent": intent,
+        "project_initialized": project_initialized,
+        "initialization": None if init_plan is None else init_plan.to_dict(),
+        "created_ids": started["created_ids"],
+        "target": {"type": "task", "id": selected_task_id},
+        "receipt": started["receipt"],
+        "provenance": started["provenance"],
+    }
+    if started["idempotent"]:
+        result["idempotent"] = True
+        result["reused_ids"] = started["reused_ids"]
     return _payload(
-        status="started",
-        mutated=True,
-        result={
-            "intent": intent,
-            "project_initialized": project_initialized,
-            "initialization": None if init_plan is None else init_plan.to_dict(),
-            "created_ids": started["created_ids"],
-            "target": {"type": "task", "id": selected_task_id},
-            "receipt": started["receipt"],
-            "provenance": started["provenance"],
-        },
+        status="already_started" if started["idempotent"] else "started",
+        mutated=not started["idempotent"],
+        result=result,
         next_actions=[
             _next_action(
                 text="Review the task context and begin the requested work.",
@@ -289,6 +291,17 @@ def _commit_start(
     task_id: str | None,
     planned_skills: list[dict[str, str]],
 ) -> dict[str, Any]:
+    repository_revision = _repository_revision(paths.root)
+    request_identity_sha256 = (
+        build_start_request_identity(
+            intent=intent,
+            task_id=task_id,
+            repository_revision=repository_revision,
+            skills=planned_skills,
+        )
+        if task_id is not None
+        else None
+    )
     conn = connect_mutation(paths)
     artifact_path: Path | None = None
     try:
@@ -297,6 +310,27 @@ def _commit_start(
             target = _resolve_start_target(conn, task_id, expected_type="task")
             _require_startable_target(target)
             selected_task_id = target.id
+            if target.status == "in_progress":
+                retry = load_compatible_start_retry(
+                    paths,
+                    conn,
+                    task_id=selected_task_id,
+                    request_identity_sha256=str(request_identity_sha256),
+                    repository_revision=repository_revision,
+                    skills=planned_skills,
+                    receipt_contract_version=START_RECEIPT_CONTRACT_VERSION,
+                )
+                if retry is not None:
+                    return {
+                        "task_id": selected_task_id,
+                        "created_ids": {},
+                        "receipt": retry["receipt"],
+                        "provenance": retry["provenance"],
+                        "idempotent": True,
+                        "reused_ids": retry["reused_ids"],
+                    }
+            if planned_skills:
+                preflight_provenance_destination(paths)
             if target.status != "in_progress":
                 now = utc_now_iso()
                 conn.execute(
@@ -327,6 +361,8 @@ def _commit_start(
             )
             selected_task_id = str(task["id"])
             created_domain_ids["task"] = selected_task_id
+            if planned_skills:
+                preflight_provenance_destination(paths)
         else:
             selected_goal_id = create_goal_in_transaction(
                 conn,
@@ -344,16 +380,20 @@ def _commit_start(
             created_domain_ids.update(
                 {"goal": selected_goal_id, "task": selected_task_id}
             )
+            if planned_skills:
+                preflight_provenance_destination(paths)
 
         receipt = {
             "contract_version": START_RECEIPT_CONTRACT_VERSION,
             "generated_at": utc_now_iso(),
             "intent": intent,
             "actor": START_ACTOR,
-            "repository_revision": _repository_revision(paths.root),
+            "repository_revision": repository_revision,
             "created_ids": dict(created_domain_ids),
             "target": {"type": "task", "id": selected_task_id},
         }
+        if request_identity_sha256 is not None:
+            receipt["request_identity_sha256"] = request_identity_sha256
         evidence_id = record_inline_evidence(
             conn,
             evidence_type=START_RECEIPT_CONTRACT_VERSION,
@@ -420,6 +460,8 @@ def _commit_start(
                 "event_id": event_id,
             },
             "provenance": provenance,
+            "idempotent": False,
+            "reused_ids": None,
         }
     except BaseException as exc:
         committed = bool(getattr(conn, "_authoritative_commit_completed", False))
