@@ -474,3 +474,9 @@ P0 全体の release gate:
 | Goal closeの`--verification`は自由文でなくverification IDを要求するが、help表示では型が判別しにくく初回がfail-closedになった | `F9`, Evidence UX | 新規改善候補。metavarとhelpに`VERIFICATION_ID`を明記し、accepted proof typeとexact exampleを返す |
 | finish結果は`COMPLETED_WITH_RISK`だった | P1 residual risk | 検証失敗ではない。全check成功、strict error 0、既存warning 30件とrecord-only stabilityがrisk理由 |
 | stderr heartbeatは親finishが待機中であることだけを示し、child check内部のforward progressや再接続可能性は証明しない | `FA`, P1 residual | 想定どおり残存。structured reporter、durable attempt、Cockpit ingestは別の人間判断が必要 |
+
+### 2026-07-28: P1 closeout routing follow-up
+
+| 観測 | 対応先 | 状態 |
+| --- | --- | --- |
+| `next --target`が有効なGoal packetをclose proofとして再利用しない摩擦と、Goal close proof IDのhelp不足を次の小sliceへ固定した | `F9`, P1 closeout routing / Evidence UX | `G-0074 / T-0152 / F-0081`、draft Stories `US-0084`〜`US-0085`、planned Tests `TC-0193`〜`TC-0198`、`agent-tasks/0212-goal-close-packet-routing.md`へ保存。Story意味承認と実装は未実施 |
