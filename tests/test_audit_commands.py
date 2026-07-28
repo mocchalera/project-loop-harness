@@ -42,7 +42,13 @@ def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def _insert_pending_event(root: Path, event_id: str = "EV-PENDING") -> int:
+def _insert_pending_event(
+    root: Path,
+    event_id: str = "EV-PENDING",
+    *,
+    entity_type: str = "test",
+    entity_id: str | None = None,
+) -> int:
     db_path = root / ".project-loop" / "project.db"
     conn = connect(db_path)
     try:
@@ -52,9 +58,9 @@ def _insert_pending_event(root: Path, event_id: str = "EV-PENDING") -> int:
         conn.execute(
             """
             INSERT INTO events(id, sequence, event_type, entity_type, entity_id, payload_json, created_at)
-            VALUES (?, ?, 'fixture_pending', 'test', NULL, '{}', '2026-07-10T00:00:00Z')
+            VALUES (?, ?, 'fixture_pending', ?, ?, '{}', '2026-07-10T00:00:00Z')
             """,
-            (event_id, sequence),
+            (event_id, sequence, entity_type, entity_id),
         )
         conn.execute(
             """
@@ -76,6 +82,37 @@ def _anomaly_types(report: dict, classification: str) -> set[str]:
     return {item["type"] for item in report["anomalies"][classification]}
 
 
+def _create_goal_task(root: Path, capsys, *, suffix: str) -> tuple[str, str]:
+    assert main([
+        "--root", str(root), "goal", "create", "--title", f"Goal {suffix}", "--json",
+    ]) == 0
+    goal_id = _json_output(capsys)["id"]
+    assert main([
+        "--root", str(root), "task", "create", "--title", f"Task {suffix}",
+        "--goal", goal_id, "--json",
+    ]) == 0
+    task_id = _json_output(capsys)["id"]
+    return goal_id, task_id
+
+
+def _add_drifted_evidence(
+    root: Path,
+    capsys,
+    *,
+    name: str,
+    task_id: str,
+) -> dict:
+    source = root / name
+    source.write_text(f"{name} original\n", encoding="utf-8")
+    assert main([
+        "--root", str(root), "evidence", "add", "--file", name,
+        "--summary", name, "--copy", "--task", task_id, "--json",
+    ]) == 0
+    evidence = _json_output(capsys)["evidence"]
+    source.write_text(f"{name} changed\n", encoding="utf-8")
+    return evidence
+
+
 def test_audit_check_clean_is_read_only_and_stdout_pure(tmp_path: Path, capsys) -> None:
     _init(tmp_path, capsys)
     db_path = tmp_path / ".project-loop" / "project.db"
@@ -91,6 +128,14 @@ def test_audit_check_clean_is_read_only_and_stdout_pure(tmp_path: Path, capsys) 
     report = _json_output(capsys)
 
     assert report["contract_version"] == "audit-check/v1"
+    assert set(report) == {
+        "anomalies",
+        "contract_version",
+        "counts",
+        "hashes",
+        "ok",
+        "status",
+    }
     assert report["ok"] is True
     assert report["status"] == "clean"
     assert report["counts"]["db_events"] == report["counts"]["jsonl_events"]
@@ -503,6 +548,236 @@ def test_audit_check_classifies_evidence_mismatch_impact_without_mutation(
         "current_source_drift_with_healthy_copy": 1,
         "superseded_historical_drift": 1,
     }
+
+
+def test_audit_check_target_scope_excludes_unrelated_and_unbound_anomalies(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    selected_goal, selected_task = _create_goal_task(
+        tmp_path,
+        capsys,
+        suffix="selected",
+    )
+    _, unrelated_task = _create_goal_task(tmp_path, capsys, suffix="unrelated")
+    selected = _add_drifted_evidence(
+        tmp_path,
+        capsys,
+        name="selected.txt",
+        task_id=selected_task,
+    )
+    unrelated = _add_drifted_evidence(
+        tmp_path,
+        capsys,
+        name="unrelated.txt",
+        task_id=unrelated_task,
+    )
+    orphan = tmp_path / ".project-loop" / "evidence" / "unbound.tmp"
+    orphan.write_text("unbound\n", encoding="utf-8")
+    _insert_pending_event(
+        tmp_path,
+        "EV-SELECTED-PENDING",
+        entity_type="task",
+        entity_id=selected_task,
+    )
+    db_path = tmp_path / ".project-loop" / "project.db"
+    events_path = tmp_path / ".project-loop" / "events.jsonl"
+    before_hashes = (_sha256(db_path), _sha256(events_path))
+
+    assert main([
+        "--root", str(tmp_path), "audit", "check",
+        "--target", selected_task, "--json",
+    ]) == 6
+    report = _json_output(capsys)
+    assert (_sha256(db_path), _sha256(events_path)) == before_hashes
+
+    evidence_ids = {
+        item["details"].get("evidence_id")
+        for items in report["anomalies"].values()
+        for item in items
+    }
+    assert selected["id"] in evidence_ids
+    assert unrelated["id"] not in evidence_ids
+    assert "orphan_temp_evidence" not in {
+        item["type"]
+        for items in report["anomalies"].values()
+        for item in items
+    }
+    assert report["scope"]["contract_version"] == "audit-scope/v1"
+    assert report["scope"]["target_binding"] == {
+        "source": "explicit",
+        "target_id": selected_task,
+        "target_type": "task",
+    }
+    assert {
+        "outbox_pending",
+        "missing_jsonl_event",
+    }.issubset({
+        item["type"]
+        for items in report["anomalies"].values()
+        for item in items
+    })
+    assert report["scope"]["matched_anomalies"] == 3
+    assert report["scope"]["excluded_anomalies"] == 2
+
+    assert main([
+        "--root", str(tmp_path), "audit", "check",
+        "--target", selected_goal, "--summary", "--json",
+    ]) == 6
+    goal_report = _json_output(capsys)
+    assert goal_report["scope"]["target_binding"]["target_id"] == selected_goal
+    assert goal_report["summary"]["total"] == 3
+
+    assert main([
+        "--root", str(tmp_path), "audit", "check",
+        "--target", "T-9999", "--json",
+    ]) == 2
+    error = _json_output(capsys)["error"]
+    assert error["code"] == "audit_target_not_found"
+    assert error["details"]["target"] == "T-9999"
+
+
+def test_audit_check_since_event_and_time_boundaries_are_fail_closed(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    _, task_id = _create_goal_task(tmp_path, capsys, suffix="since")
+    before = _add_drifted_evidence(
+        tmp_path,
+        capsys,
+        name="before.txt",
+        task_id=task_id,
+    )
+    after = _add_drifted_evidence(
+        tmp_path,
+        capsys,
+        name="after.txt",
+        task_id=task_id,
+    )
+    boundary = next(
+        event for event in _events(tmp_path)
+        if event["entity_type"] == "evidence" and event["entity_id"] == after["id"]
+    )
+
+    assert main([
+        "--root", str(tmp_path), "audit", "check", "--target", task_id,
+        "--since", boundary["id"], "--json",
+    ]) == 6
+    report = _json_output(capsys)
+    evidence_ids = {
+        item["details"].get("evidence_id")
+        for items in report["anomalies"].values()
+        for item in items
+    }
+    assert after["id"] in evidence_ids
+    assert before["id"] not in evidence_ids
+    assert report["scope"]["since"] == {
+        "created_at": boundary["created_at"],
+        "event_id": boundary["id"],
+        "input": boundary["id"],
+        "kind": "event",
+        "sequence": boundary["sequence"],
+    }
+
+    assert main([
+        "--root", str(tmp_path), "audit", "check", "--target", task_id,
+        "--since", "2999-01-01T00:00:00Z", "--json",
+    ]) == 0
+    future = _json_output(capsys)
+    assert future["ok"] is True
+    assert future["counts"]["anomalies"] == 0
+    assert future["scope"]["since"]["kind"] == "time"
+
+    for invalid, code in (
+        ("EV-NOT-FOUND", "audit_since_event_not_found"),
+        ("not-a-time", "audit_since_invalid"),
+        ("2026-07-28T00:00:00", "audit_since_timezone_required"),
+    ):
+        assert main([
+            "--root", str(tmp_path), "audit", "check",
+            "--since", invalid, "--json",
+        ]) == 2
+        assert _json_output(capsys)["error"]["code"] == code
+
+
+def test_audit_check_summary_groups_scope_without_full_anomaly_rows(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    _, task_id = _create_goal_task(tmp_path, capsys, suffix="summary")
+    historical = _add_drifted_evidence(
+        tmp_path,
+        capsys,
+        name="historical.txt",
+        task_id=task_id,
+    )
+    replacement_path = tmp_path / "replacement.txt"
+    replacement_path.write_text("replacement\n", encoding="utf-8")
+    assert main([
+        "--root", str(tmp_path), "evidence", "add", "--file", "replacement.txt",
+        "--summary", "replacement", "--copy", "--task", task_id, "--json",
+    ]) == 0
+    replacement = _json_output(capsys)["evidence"]
+    assert main([
+        "--root", str(tmp_path), "evidence", "supersede", historical["id"],
+        "--with", replacement["id"], "--summary", "replace old proof", "--json",
+    ]) == 0
+    _json_output(capsys)
+    _add_drifted_evidence(
+        tmp_path,
+        capsys,
+        name="active.txt",
+        task_id=task_id,
+    )
+
+    assert main([
+        "--root", str(tmp_path), "audit", "check",
+        "--target", task_id, "--summary", "--json",
+    ]) == 6
+    report = _json_output(capsys)
+
+    assert "anomalies" not in report
+    assert report["summary"] == {
+        "contract_version": "audit-summary/v1",
+        "total": 2,
+        "by_proof_scope": {"active": 1, "historical": 1},
+        "by_classification": {"human_review": 2},
+        "by_severity": {"error": 2},
+        "by_failure_kind": {"evidence_metadata_file_mismatch": 2},
+        "by_target": {f"task:{task_id}": 2},
+    }
+    assert report["counts"]["anomalies"] == 2
+    assert report["scope"]["matched_anomalies"] == 2
+
+
+def test_audit_check_summary_preserves_unsupported_exit_semantics(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        conn.execute(
+            """
+            UPDATE events
+            SET sequence = sequence + 1
+            WHERE sequence = (SELECT MAX(sequence) FROM events)
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    assert main([
+        "--root", str(tmp_path), "audit", "check", "--summary", "--json",
+    ]) == 7
+    report = _json_output(capsys)
+    assert "anomalies" not in report
+    assert report["counts"]["anomalies_by_classification"]["unsupported"] > 0
+    assert report["summary"]["by_failure_kind"]["db_sequence_gap"] == 1
 
 
 def test_audit_internal_failure_uses_exit_8_and_json_stdout(

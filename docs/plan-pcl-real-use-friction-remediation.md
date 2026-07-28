@@ -23,7 +23,8 @@
 | P0-2 result and stability contract | implemented | `92346bb`, `E-0599`〜`E-0601`, `docs/evidence/0215-finish-result-stability-validation.md` |
 | P0-3 shared terminal readiness | implemented | `f946277`, `63457ec`, `E-0602`, `docs/evidence/0216-shared-terminal-readiness-validation.md` |
 | P0-4 start and router targeting | implemented | `3c6c019`, `E-0604`, `docs/evidence/0217-target-attach-routing-validation.md` |
-| P0-5 以降 | planned | 本書の依存順で継続 |
+| P0-5a scoped audit | in progress | `G-0068`, `T-0145`, `F-0074`, `US-0072`, `TC-0155`〜`TC-0158` |
+| P0-5b check reuse 以降 | planned | P0-5a の scoped output contract 後に継続 |
 
 ## 1. 成功条件
 
@@ -193,6 +194,24 @@ Feature / Story / Test の完了から Task の `ready_to_close` を派生表示
 - check attempt identity が同一なら、role ごとに再実行せず immutable result を参照する。
 - reuse 時も provenance と policy compatibility を検証する。
 - summary は active / historical、severity、failure kind、target を分離する。
+
+実装は次の依存順で分割する。
+
+1. **P0-5a scoped audit**: bare Task / Goal target を既存
+   `routing-target/v1` で fail-closed に解決し、event ID または ISO-8601
+   time の provenance anchor 境界、compact summary、flag 未指定時の
+   `audit-check/v1` 後方互換を固定する。audit は常に read-only とする。
+2. **P0-5b immutable check reuse**: P0-2 の
+   `verification-attempt-identity/v1` と P0-5a の scope を用いて compatible
+   result を参照し、provenance / policy 不一致時は再利用しない。真の
+   before / after finding-set delta はこの immutable result 間で計算する。
+3. **P0-5c output / retry friction**: finish dry-run の summary / pagination /
+   machine-state exclusion と、active Task への start attach retry
+   idempotency を個別の後方互換 contract として扱う。
+
+P0-5a は DB migration、依存追加、audit mutation を行わない。Story
+`US-0072` の意味承認は実装許可から推測せず、Tests `TC-0155`〜`TC-0158`
+とともに非 terminal のまま保持する。
 
 ### P0-6: Cross-system progress and execution binding
 

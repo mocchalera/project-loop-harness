@@ -194,6 +194,29 @@ separates anomalies into `repairable`, `human_review`, and `unsupported`.
 Exit 0 is clean, exit 6 means a supported or review-required issue, exit 7 means
 an unsupported format, and exit 8 means the check itself failed.
 
+For large projects, diagnose the findings introduced in one Task or Goal after
+a known mutation boundary without transferring every anomaly row:
+
+```bash
+pcl audit check --target T-XXXX --since EV-XXXXXXXXXXXX --summary --json
+pcl audit check --target G-XXXX --since 2026-07-28T00:00:00Z --summary --json
+```
+
+`--target` accepts only an existing bare Task or Goal ID and never infers a
+replacement. `--since` accepts an existing event ID or a timezone-aware
+ISO-8601 time and is inclusive. The boundary uses the related event or Evidence
+creation anchor; filesystem drift detection time is not inferred from mutable
+mtime. `audit-scope/v1` reports scanned, matched, excluded, and unanchored
+anomaly counts. `audit-summary/v1` omits the full anomaly rows and groups
+matched findings by active/historical proof scope, classification, severity,
+failure kind, and target. Repairable findings map to summary severity
+`warning`; human-review and unsupported findings map to `error`. Scoped output
+is a read-only diagnostic view; excluded or unanchored findings mean it does
+not replace the unfiltered project-wide audit required for final recovery
+review. With none of these flags, the original `audit-check/v1` shape and exit
+behavior are unchanged. True before/after finding-set comparison requires a
+saved compatible audit result and is handled by the later check-reuse slice.
+
 For a pending or retryable outbox suffix, preview before applying:
 
 ```bash

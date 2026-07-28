@@ -95,7 +95,27 @@ def add_control_parsers(sub) -> None:
     p_audit = sub.add_parser("audit", help="Manage the SQLite-backed audit projection")
     audit_sub = p_audit.add_subparsers(dest="audit_command", required=True)
     audit_sub.add_parser("flush", help="Project eligible committed events to events.jsonl")
-    audit_sub.add_parser("check", help="Read-only integrity check for audit and Evidence state")
+    p_audit_check = audit_sub.add_parser(
+        "check",
+        help="Read-only integrity check for audit and Evidence state",
+    )
+    p_audit_check.add_argument(
+        "--target",
+        dest="audit_target",
+        default=None,
+        help="Fail-closed Task or Goal scope as a bare T-XXXX or G-XXXX ID",
+    )
+    p_audit_check.add_argument(
+        "--since",
+        dest="audit_since",
+        default=None,
+        help="Include findings at or after an existing EV-... ID or timezone-aware ISO-8601 time",
+    )
+    p_audit_check.add_argument(
+        "--summary",
+        action="store_true",
+        help="Return deterministic grouped counts without full anomaly rows",
+    )
     p_audit_repair = audit_sub.add_parser(
         "repair",
         help="Preview or apply supported audit repairs; preview is the default",

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -7,7 +8,7 @@ import os
 from pathlib import Path
 import shutil
 import sqlite3
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from .db import connect_mutation, table_exists
 from .errors import PclError, ProjectionPendingError, ProjectNotInitializedError
@@ -22,9 +23,16 @@ from .locks import jsonl_projector_lock, project_operation_lock
 from .outbox import canonical_event_bytes, canonical_event_record, project_pending_events
 from .paths import ProjectPaths
 from .profile_bundle_store import assess_profile_output_evidence
+from .target_resolver import (
+    ResolvedRoutingTarget,
+    TaskGoalTargetNotFoundError,
+    resolve_routing_target,
+)
 
 
 AUDIT_CHECK_CONTRACT_VERSION = "audit-check/v1"
+AUDIT_SCOPE_CONTRACT_VERSION = "audit-scope/v1"
+AUDIT_SUMMARY_CONTRACT_VERSION = "audit-summary/v1"
 AUDIT_REPAIR_CONTRACT_VERSION = "audit-repair/v1"
 AUDIT_REBUILD_CONTRACT_VERSION = "audit-rebuild-jsonl/v1"
 EXIT_AUDIT_ISSUES = 6
@@ -43,13 +51,23 @@ class AuditCommandError(PclError):
     pass
 
 
-def audit_check(paths: ProjectPaths) -> dict[str, Any]:
+def audit_check(
+    paths: ProjectPaths,
+    *,
+    target_id: str | None = None,
+    since: str | None = None,
+    summary: bool = False,
+) -> dict[str, Any]:
     _require_initialized(paths)
     conn = _connect_read_only(paths.db_path)
     try:
         db_events = _read_db_events(conn)
         outbox_rows = _read_outbox(conn)
         evidence_rows = _read_evidence(conn)
+        scoped = target_id is not None or since is not None or summary
+        target = _resolve_audit_target(conn, target_id) if target_id is not None else None
+        since_boundary = _resolve_audit_since(db_events, since) if since is not None else None
+        evidence_target_refs = _read_evidence_target_refs(conn, evidence_rows) if scoped else {}
     finally:
         conn.close()
 
@@ -70,7 +88,7 @@ def audit_check(paths: ProjectPaths) -> dict[str, Any]:
         status: sum(1 for row in outbox_rows if row["status"] == status)
         for status in ["pending", "retry_wait", "delivered", "failed_needs_review"]
     }
-    return {
+    report = {
         "contract_version": AUDIT_CHECK_CONTRACT_VERSION,
         "ok": issue_count == 0,
         "status": "clean" if issue_count == 0 else "issues_found",
@@ -91,12 +109,28 @@ def audit_check(paths: ProjectPaths) -> dict[str, Any]:
         },
         "anomalies": anomalies,
     }
+    if not scoped:
+        return report
+    return _scope_audit_report(
+        report,
+        db_events=db_events,
+        jsonl_events=jsonl["events"],
+        evidence_rows=evidence_rows,
+        evidence_target_refs=evidence_target_refs,
+        target=target,
+        since_boundary=since_boundary,
+        summary=summary,
+    )
 
 
 def audit_check_exit_code(report: dict[str, Any]) -> int:
     if report["ok"]:
         return 0
-    if report["anomalies"]["unsupported"]:
+    if report.get("anomalies", {}).get("unsupported"):
+        return EXIT_AUDIT_UNSUPPORTED
+    if report.get("counts", {}).get("anomalies_by_classification", {}).get(
+        "unsupported", 0
+    ):
         return EXIT_AUDIT_UNSUPPORTED
     return EXIT_AUDIT_ISSUES
 
@@ -364,7 +398,11 @@ def _read_evidence(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     rows = [
         dict(row)
         for row in conn.execute(
-            "SELECT id, type, path FROM evidence ORDER BY created_at, id"
+            """
+            SELECT id, type, path, created_at, linked_task_id
+            FROM evidence
+            ORDER BY created_at, id
+            """
         ).fetchall()
     ]
     superseders: dict[str, str] = {}
@@ -382,6 +420,368 @@ def _read_evidence(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     for row in rows:
         row["superseded_by"] = superseders.get(str(row["id"]))
     return rows
+
+
+def _resolve_audit_target(
+    conn: sqlite3.Connection,
+    target_id: str,
+) -> ResolvedRoutingTarget:
+    try:
+        return resolve_routing_target(conn, target_id)
+    except TaskGoalTargetNotFoundError as exc:
+        label = "Task" if exc.target_type == "task" else "Goal"
+        raise AuditCommandError(
+            message=f"{label} {target_id} does not exist; audit scope was not inferred.",
+            code="audit_target_not_found",
+            exit_code=2,
+            details={"target": target_id, "target_type": exc.target_type},
+        ) from exc
+
+
+def _resolve_audit_since(
+    db_events: list[dict[str, Any]],
+    value: str,
+) -> dict[str, Any]:
+    if value.startswith("EV-"):
+        event = next((item for item in db_events if item["id"] == value), None)
+        if event is None:
+            raise AuditCommandError(
+                message=f"Audit boundary event {value} does not exist.",
+                code="audit_since_event_not_found",
+                exit_code=2,
+                details={"since": value},
+            )
+        return {
+            "kind": "event",
+            "input": value,
+            "event_id": value,
+            "sequence": int(event["sequence"]),
+            "created_at": str(event["created_at"]),
+        }
+
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise AuditCommandError(
+            message="--since must be an existing event ID or an ISO-8601 timestamp.",
+            code="audit_since_invalid",
+            exit_code=2,
+            details={"since": value, "accepted": ["EV-...", "ISO-8601 timestamp"]},
+        ) from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise AuditCommandError(
+            message="--since timestamps must include an explicit timezone.",
+            code="audit_since_timezone_required",
+            exit_code=2,
+            details={"since": value},
+        )
+    normalized = parsed.astimezone(timezone.utc).isoformat()
+    return {
+        "kind": "time",
+        "input": value,
+        "created_at": normalized,
+    }
+
+
+def _read_evidence_target_refs(
+    conn: sqlite3.Connection,
+    evidence_rows: list[dict[str, Any]],
+) -> dict[str, frozenset[tuple[str, str]]]:
+    refs: dict[str, set[tuple[str, str]]] = {
+        str(row["id"]): set() for row in evidence_rows
+    }
+    for row in evidence_rows:
+        linked_task_id = row.get("linked_task_id")
+        if linked_task_id:
+            refs[str(row["id"])].add(("task", str(linked_task_id)))
+    if table_exists(conn, "evidence_links"):
+        for row in conn.execute(
+            """
+            SELECT evidence_id, target_type, target_id
+            FROM evidence_links
+            ORDER BY evidence_id, target_type, target_id, link_role
+            """
+        ).fetchall():
+            evidence_id = str(row["evidence_id"])
+            refs.setdefault(evidence_id, set()).add(
+                (str(row["target_type"]), str(row["target_id"]))
+            )
+    return {
+        evidence_id: frozenset(target_refs)
+        for evidence_id, target_refs in refs.items()
+    }
+
+
+def _scope_audit_report(
+    report: dict[str, Any],
+    *,
+    db_events: list[dict[str, Any]],
+    jsonl_events: list[dict[str, Any]],
+    evidence_rows: list[dict[str, Any]],
+    evidence_target_refs: dict[str, frozenset[tuple[str, str]]],
+    target: ResolvedRoutingTarget | None,
+    since_boundary: dict[str, Any] | None,
+    summary: bool,
+) -> dict[str, Any]:
+    event_by_id = {str(event["id"]): event for event in jsonl_events}
+    event_by_id.update({str(event["id"]): event for event in db_events})
+    evidence_by_id = {str(row["id"]): row for row in evidence_rows}
+    evidence_events: dict[str, list[dict[str, Any]]] = {}
+    for event in db_events:
+        if event.get("entity_type") == "evidence" and event.get("entity_id"):
+            evidence_events.setdefault(str(event["entity_id"]), []).append(event)
+
+    scanned_count = sum(len(items) for items in report["anomalies"].values())
+    filtered: dict[str, list[dict[str, Any]]] = {
+        "repairable": [],
+        "human_review": [],
+        "unsupported": [],
+    }
+    contexts: list[dict[str, Any]] = []
+    unanchored_count = 0
+    for classification, items in report["anomalies"].items():
+        for anomaly in items:
+            context = _audit_anomaly_context(
+                anomaly,
+                event_by_id=event_by_id,
+                evidence_by_id=evidence_by_id,
+                evidence_events=evidence_events,
+                evidence_target_refs=evidence_target_refs,
+                selected_target=target,
+            )
+            if context["anchor_created_at"] is None:
+                unanchored_count += 1
+            if target is not None and not (
+                target.scope_refs & context["target_refs"]
+            ):
+                continue
+            if since_boundary is not None and not _audit_context_since(
+                context,
+                since_boundary,
+            ):
+                continue
+            filtered[classification].append(anomaly)
+            contexts.append(context)
+
+    classification_counts = {
+        classification: len(items)
+        for classification, items in filtered.items()
+    }
+    matched_count = sum(classification_counts.values())
+    counts = dict(report["counts"])
+    counts["anomalies"] = matched_count
+    counts["anomalies_by_classification"] = classification_counts
+    _recount_evidence_anomalies(counts, filtered)
+
+    scoped_report = {
+        **report,
+        "ok": matched_count == 0,
+        "status": "clean" if matched_count == 0 else "issues_found",
+        "counts": counts,
+        "scope": {
+            "contract_version": AUDIT_SCOPE_CONTRACT_VERSION,
+            "target_binding": (
+                target.binding(source="explicit") if target is not None else None
+            ),
+            "since": since_boundary,
+            "since_basis": "related_event_or_evidence_creation",
+            "scanned_anomalies": scanned_count,
+            "matched_anomalies": matched_count,
+            "excluded_anomalies": scanned_count - matched_count,
+            "unanchored_anomalies": unanchored_count,
+        },
+    }
+    if summary:
+        scoped_report.pop("anomalies", None)
+        scoped_report["summary"] = _audit_summary(contexts)
+    else:
+        scoped_report["anomalies"] = filtered
+    return scoped_report
+
+
+def _audit_anomaly_context(
+    anomaly: dict[str, Any],
+    *,
+    event_by_id: dict[str, dict[str, Any]],
+    evidence_by_id: dict[str, dict[str, Any]],
+    evidence_events: dict[str, list[dict[str, Any]]],
+    evidence_target_refs: dict[str, frozenset[tuple[str, str]]],
+    selected_target: ResolvedRoutingTarget | None,
+) -> dict[str, Any]:
+    details = anomaly.get("details", {})
+    target_refs: set[tuple[str, str]] = set()
+    anchor_candidates: list[tuple[int | None, str]] = []
+    event_id = details.get("event_id")
+    if isinstance(event_id, str):
+        event = event_by_id.get(event_id)
+        if event is not None:
+            _add_event_context(
+                event,
+                target_refs=target_refs,
+                anchor_candidates=anchor_candidates,
+                evidence_target_refs=evidence_target_refs,
+            )
+
+    evidence_id = details.get("evidence_id")
+    if isinstance(evidence_id, str):
+        target_refs.update(evidence_target_refs.get(evidence_id, ()))
+        for event in evidence_events.get(evidence_id, ()):
+            _add_event_context(
+                event,
+                target_refs=target_refs,
+                anchor_candidates=anchor_candidates,
+                evidence_target_refs=evidence_target_refs,
+            )
+        if not anchor_candidates:
+            row = evidence_by_id.get(evidence_id)
+            if row is not None and row.get("created_at"):
+                anchor_candidates.append((None, str(row["created_at"])))
+
+    anchor_sequence: int | None = None
+    anchor_created_at: str | None = None
+    if anchor_candidates:
+        ordered = sorted(
+            anchor_candidates,
+            key=lambda item: (
+                item[0] is None,
+                item[0] if item[0] is not None else 0,
+                item[1],
+            ),
+        )
+        anchor_sequence, anchor_created_at = ordered[0]
+
+    proof_scope = (
+        "historical"
+        if details.get("evidence_impact") == "superseded_historical_drift"
+        else "active"
+    )
+    classification = str(anomaly["classification"])
+    severity = "warning" if classification == "repairable" else "error"
+    if selected_target is not None:
+        target_key = f"{selected_target.type}:{selected_target.id}"
+    else:
+        target_key = _primary_audit_target(target_refs)
+    return {
+        "anchor_sequence": anchor_sequence,
+        "anchor_created_at": anchor_created_at,
+        "target_refs": frozenset(target_refs),
+        "target_key": target_key,
+        "proof_scope": proof_scope,
+        "classification": classification,
+        "severity": severity,
+        "failure_kind": str(anomaly["type"]),
+    }
+
+
+def _add_event_context(
+    event: dict[str, Any],
+    *,
+    target_refs: set[tuple[str, str]],
+    anchor_candidates: list[tuple[int | None, str]],
+    evidence_target_refs: dict[str, frozenset[tuple[str, str]]],
+) -> None:
+    entity_type = event.get("entity_type")
+    entity_id = event.get("entity_id")
+    if entity_type and entity_id:
+        entity_ref = (str(entity_type), str(entity_id))
+        target_refs.add(entity_ref)
+        if entity_ref[0] == "evidence":
+            target_refs.update(evidence_target_refs.get(entity_ref[1], ()))
+    created_at = event.get("created_at")
+    if created_at:
+        sequence = event.get("sequence")
+        anchor_candidates.append(
+            (int(sequence) if sequence is not None else None, str(created_at))
+        )
+
+
+def _audit_context_since(
+    context: dict[str, Any],
+    boundary: dict[str, Any],
+) -> bool:
+    anchor_created_at = context["anchor_created_at"]
+    if anchor_created_at is None:
+        return False
+    if boundary["kind"] == "event" and context["anchor_sequence"] is not None:
+        return int(context["anchor_sequence"]) >= int(boundary["sequence"])
+    return _parse_audit_datetime(anchor_created_at) >= _parse_audit_datetime(
+        str(boundary["created_at"])
+    )
+
+
+def _parse_audit_datetime(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+
+
+def _primary_audit_target(target_refs: set[tuple[str, str]]) -> str:
+    priority = {
+        "task": 0,
+        "goal": 1,
+        "feature": 2,
+        "test_case": 3,
+        "user_story": 4,
+    }
+    if not target_refs:
+        return "unbound"
+    target_type, target_id = sorted(
+        target_refs,
+        key=lambda ref: (priority.get(ref[0], 99), ref[0], ref[1]),
+    )[0]
+    return f"{target_type}:{target_id}"
+
+
+def _audit_summary(contexts: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "contract_version": AUDIT_SUMMARY_CONTRACT_VERSION,
+        "total": len(contexts),
+        "by_proof_scope": _sorted_counts(
+            context["proof_scope"] for context in contexts
+        ),
+        "by_classification": _sorted_counts(
+            context["classification"] for context in contexts
+        ),
+        "by_severity": _sorted_counts(context["severity"] for context in contexts),
+        "by_failure_kind": _sorted_counts(
+            context["failure_kind"] for context in contexts
+        ),
+        "by_target": _sorted_counts(context["target_key"] for context in contexts),
+    }
+
+
+def _sorted_counts(values: Iterable[object]) -> dict[str, int]:
+    counts = Counter(str(value) for value in values)
+    return {key: counts[key] for key in sorted(counts)}
+
+
+def _recount_evidence_anomalies(
+    counts: dict[str, Any],
+    anomalies: dict[str, list[dict[str, Any]]],
+) -> None:
+    items = [item for group in anomalies.values() for item in group]
+    counts["evidence_missing_files"] = sum(
+        item["type"] == "evidence_file_missing" for item in items
+    )
+    mismatches = [
+        item for item in items
+        if item["type"] == "evidence_metadata_file_mismatch"
+    ]
+    counts["evidence_mismatches"] = len(mismatches)
+    counts["evidence_mismatches_by_impact"] = {
+        impact: sum(
+            item.get("details", {}).get("evidence_impact") == impact
+            for item in mismatches
+        )
+        for impact in EVIDENCE_IMPACT_TYPES
+    }
+    orphan_count_keys = {
+        "orphan_temp_evidence": "orphan_temp_evidence",
+        "orphan_evidence_manifests": "orphan_evidence_manifest",
+        "orphan_completion_packets": "orphan_completion_packet",
+        "orphan_profile_bundle_staging": "orphan_profile_bundle_staging",
+        "orphan_profile_bundle_directories": "orphan_profile_bundle_directory",
+    }
+    for count_key, anomaly_type in orphan_count_keys.items():
+        counts[count_key] = sum(item["type"] == anomaly_type for item in items)
 
 
 def _scan_jsonl(path: Path) -> dict[str, Any]:

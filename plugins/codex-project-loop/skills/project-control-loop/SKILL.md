@@ -199,10 +199,16 @@ preceding command; do not invent IDs.
 
    ```bash
    pcl goal close G-XXXX --summary "..." --evidence-id E-PACKET
+   pcl audit check --target T-XXXX --since EV-XXXXXXXXXXXX --summary --json
    pcl audit check --json
    pcl validate --strict
    pcl render
    ```
+
+   Use the scoped audit form to diagnose findings introduced for the current
+   Task after a known mutation event. It is read-only and fail-closed for a
+   missing Task/Goal or event. Review its excluded and unanchored counts; it
+   does not replace the unfiltered project-wide audit.
 
    Do not ignore an `audit check` failure merely because validation passes.
    Inspect whether the mismatch affects current completion proof, a healthy

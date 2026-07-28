@@ -149,7 +149,15 @@ def handle_control_command(
         return 0 if result.ok else 6
 
     if args.command == "audit" and args.audit_command == "check":
-        result = audit_check_fn(paths)
+        if args.audit_target is None and args.audit_since is None and not args.summary:
+            result = audit_check_fn(paths)
+        else:
+            result = audit_check_fn(
+                paths,
+                target_id=args.audit_target,
+                since=args.audit_since,
+                summary=args.summary,
+            )
         _print_json(result) if json_output else print(to_pretty_json(result))
         return audit_check_exit_code(result)
 
