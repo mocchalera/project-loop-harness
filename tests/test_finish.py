@@ -369,6 +369,27 @@ def test_finish_emit_packet_dry_run_plans_without_mutation(tmp_path: Path, capsy
     assert _state_counts(tmp_path) == before
 
 
+def test_finish_task_dry_run_uses_shared_target_binding_and_readiness(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet", "--dry-run",
+        "--task", "T-0001", "--json",
+    ]) == 0
+    finish = _finish_payload(capsys)
+    assert finish["target"]["id"] == "T-0001"
+    assert finish["target"]["goal_id"] is None
+    assert finish["target_binding"] == {
+        "target_type": "task",
+        "target_id": "T-0001",
+        "source": "explicit",
+    }
+    assert finish["terminal_readiness"]["contract_version"] == "terminal-readiness/v1"
+
+
 def test_finish_emit_packet_success_and_idempotent_rerun(tmp_path: Path, capsys) -> None:
     _create_packet_project(tmp_path, capsys)
 

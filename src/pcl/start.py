@@ -6,8 +6,9 @@ import sqlite3
 import subprocess
 from typing import Any
 
-from .commands import active_workflow_next_action, create_goal, loop_status, next_action
-from .db import connect_mutation
+from .commands import active_workflow_next_action, loop_status, next_action
+from .command_domain import create_goal_in_transaction
+from .db import connect, connect_mutation
 from .evidence import (
     EXECUTION_PROVENANCE_CONTRACT_VERSION,
     EXECUTION_PROVENANCE_EVIDENCE_TYPE,
@@ -27,7 +28,11 @@ from .ids import next_prefixed_id
 from .init_project import init_project, plan_init_project
 from .paths import ProjectPaths
 from .project_config import finish_check_configuration_warning
-from .tasks import create_task
+from .target_resolver import (
+    TaskGoalTargetNotFoundError,
+    resolve_routing_target,
+)
+from .tasks import create_task_in_transaction
 from .timeutil import utc_now_iso
 
 
@@ -44,12 +49,26 @@ def start_work(
     no_init: bool = False,
     new: bool = False,
     skills: list[str] | None = None,
+    goal_id: str | None = None,
+    task_id: str | None = None,
 ) -> dict[str, Any]:
     if not intent.strip():
         raise InvalidInputError("intent must not be empty.", details={"field": "intent"})
+    if goal_id and task_id:
+        raise InvalidInputError(
+            "Choose only one of --goal or --task.",
+            details={"goal": goal_id, "task": task_id},
+        )
+    if new and (goal_id or task_id):
+        raise InvalidInputError(
+            "--new cannot be combined with --goal or --task.",
+            details={"new": True, "goal": goal_id, "task": task_id},
+        )
 
     planned_skills = inspect_skill_files(paths, skills or [])
     initialized = paths.db_path.is_file()
+    if (goal_id or task_id) and not initialized:
+        raise ProjectNotInitializedError(root=str(paths.root))
     if not initialized and no_init:
         raise ProjectNotInitializedError(root=str(paths.root))
 
@@ -77,18 +96,19 @@ def start_work(
                 ],
             )
 
-    if initialized and not new:
+    if initialized and not new and not (goal_id or task_id):
         active = _active_work(paths)
         if active is not None:
             return _active_payload(intent=intent, active=active)
 
-    if initialized and planned_skills:
-        try:
-            preflight_provenance_destination(paths)
-        except OSError as exc:
-            raise DataStoreError(f"Could not prepare execution provenance: {exc}") from exc
-
     if dry_run:
+        target, planned_entities = _plan_start_target(
+            paths,
+            intent=intent,
+            initialized=initialized,
+            goal_id=goal_id,
+            task_id=task_id,
+        )
         return _payload(
             status="planned",
             mutated=False,
@@ -96,19 +116,9 @@ def start_work(
                 "intent": intent,
                 "project_initialized": initialized,
                 "initialization": None if init_plan is None else init_plan.to_dict(),
-                "planned_entities": [
-                    {"type": "goal", "status": "open", "title": intent},
-                    {
-                        "type": "task",
-                        "status": "todo",
-                        "title": intent,
-                        "related_goal": "created_goal",
-                    },
-                    {"type": "evidence", "contract_version": START_RECEIPT_CONTRACT_VERSION},
-                    {"type": "event", "event_type": "work_started"},
-                ],
+                "planned_entities": planned_entities,
                 "created_ids": {},
-                "target": {"type": "task", "id": None},
+                "target": target,
                 "receipt": None,
                 "planned_provenance": public_skill_entries(planned_skills),
             },
@@ -126,25 +136,21 @@ def start_work(
         result = init_project(paths)
         project_initialized = result.created
 
-    goal_id = create_goal(paths, title=intent)
-    task = create_task(paths, title=intent, goal_id=goal_id)
-    task_id = str(task["id"])
-    action = next_action(paths, target=task_id)
-    receipt = {
-        "contract_version": START_RECEIPT_CONTRACT_VERSION,
-        "generated_at": utc_now_iso(),
-        "intent": intent,
-        "actor": START_ACTOR,
-        "repository_revision": _repository_revision(paths.root),
-        "created_ids": {"goal": goal_id, "task": task_id},
-        "target": {"type": "task", "id": task_id},
-    }
-    evidence_id, event_id, provenance = _record_start_receipt(
-        paths, receipt=receipt, planned_skills=planned_skills,
+    if planned_skills:
+        try:
+            preflight_provenance_destination(paths)
+        except OSError as exc:
+            raise DataStoreError(f"Could not prepare execution provenance: {exc}") from exc
+
+    started = _commit_start(
+        paths,
+        intent=intent,
+        goal_id=goal_id,
+        task_id=task_id,
+        planned_skills=planned_skills,
     )
-    created_ids = {"goal": goal_id, "task": task_id, "evidence": evidence_id, "event": event_id}
-    if provenance is not None:
-        created_ids["provenance_evidence"] = provenance["evidence_id"]
+    selected_task_id = str(started["task_id"])
+    action = next_action(paths, target=selected_task_id)
 
     finish_warning = finish_check_configuration_warning(paths.root)
     return _payload(
@@ -154,20 +160,82 @@ def start_work(
             "intent": intent,
             "project_initialized": project_initialized,
             "initialization": None if init_plan is None else init_plan.to_dict(),
-            "created_ids": created_ids,
-            "target": {"type": "task", "id": task_id},
-            "receipt": {**receipt, "evidence_id": evidence_id, "event_id": event_id},
-            "provenance": provenance,
+            "created_ids": started["created_ids"],
+            "target": {"type": "task", "id": selected_task_id},
+            "receipt": started["receipt"],
+            "provenance": started["provenance"],
         },
         next_actions=[
             _next_action(
                 text="Review the task context and begin the requested work.",
                 command=str(action["command"]),
-                target={"type": "task", "id": task_id},
+                target={"type": "task", "id": selected_task_id},
             )
         ],
         warnings=[] if finish_warning is None else [finish_warning],
     )
+
+
+def _plan_start_target(
+    paths: ProjectPaths,
+    *,
+    intent: str,
+    initialized: bool,
+    goal_id: str | None,
+    task_id: str | None,
+) -> tuple[dict[str, str | None], list[dict[str, Any]]]:
+    if not initialized or not (goal_id or task_id):
+        return (
+            {"type": "task", "id": None},
+            [
+                {"type": "goal", "status": "open", "title": intent},
+                {
+                    "type": "task",
+                    "status": "in_progress",
+                    "title": intent,
+                    "related_goal": "created_goal",
+                },
+                {"type": "evidence", "contract_version": START_RECEIPT_CONTRACT_VERSION},
+                {"type": "event", "event_type": "work_started"},
+            ],
+        )
+
+    conn = connect(paths.db_path)
+    try:
+        if task_id:
+            target = _resolve_start_target(conn, task_id, expected_type="task")
+            _require_startable_target(target)
+            planned = [
+                {
+                    "type": "task",
+                    "id": target.id,
+                    "status": "in_progress",
+                    "operation": "attach",
+                }
+            ]
+            selected_task_id: str | None = target.id
+        else:
+            target = _resolve_start_target(conn, str(goal_id), expected_type="goal")
+            _require_startable_target(target)
+            planned = [
+                {
+                    "type": "task",
+                    "id": None,
+                    "status": "in_progress",
+                    "title": intent,
+                    "related_goal": target.id,
+                }
+            ]
+            selected_task_id = None
+    finally:
+        conn.close()
+    planned.extend(
+        [
+            {"type": "evidence", "contract_version": START_RECEIPT_CONTRACT_VERSION},
+            {"type": "event", "event_type": "work_started"},
+        ]
+    )
+    return {"type": "task", "id": selected_task_id}, planned
 
 
 def _active_work(paths: ProjectPaths) -> dict[str, Any] | None:
@@ -213,12 +281,79 @@ def _active_payload(*, intent: str, active: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _record_start_receipt(
-    paths: ProjectPaths, *, receipt: dict[str, Any], planned_skills: list[dict[str, str]],
-) -> tuple[str, str, dict[str, Any] | None]:
+def _commit_start(
+    paths: ProjectPaths,
+    *,
+    intent: str,
+    goal_id: str | None,
+    task_id: str | None,
+    planned_skills: list[dict[str, str]],
+) -> dict[str, Any]:
     conn = connect_mutation(paths)
     artifact_path: Path | None = None
     try:
+        created_domain_ids: dict[str, str] = {}
+        if task_id:
+            target = _resolve_start_target(conn, task_id, expected_type="task")
+            _require_startable_target(target)
+            selected_task_id = target.id
+            if target.status != "in_progress":
+                now = utc_now_iso()
+                conn.execute(
+                    "UPDATE tasks SET status = 'in_progress', updated_at = ? WHERE id = ?",
+                    (now, selected_task_id),
+                )
+                append_event(
+                    conn=conn,
+                    events_path=paths.events_path,
+                    event_type="task_status_changed",
+                    entity_type="task",
+                    entity_id=selected_task_id,
+                    payload={
+                        "from_status": target.status,
+                        "to_status": "in_progress",
+                        "reason": "Explicitly attached by pcl start.",
+                    },
+                )
+        elif goal_id:
+            target = _resolve_start_target(conn, goal_id, expected_type="goal")
+            _require_startable_target(target)
+            task = create_task_in_transaction(
+                conn,
+                paths,
+                title=intent,
+                goal_id=target.id,
+                status="in_progress",
+            )
+            selected_task_id = str(task["id"])
+            created_domain_ids["task"] = selected_task_id
+        else:
+            selected_goal_id = create_goal_in_transaction(
+                conn,
+                paths,
+                title=intent,
+            )
+            task = create_task_in_transaction(
+                conn,
+                paths,
+                title=intent,
+                goal_id=selected_goal_id,
+                status="in_progress",
+            )
+            selected_task_id = str(task["id"])
+            created_domain_ids.update(
+                {"goal": selected_goal_id, "task": selected_task_id}
+            )
+
+        receipt = {
+            "contract_version": START_RECEIPT_CONTRACT_VERSION,
+            "generated_at": utc_now_iso(),
+            "intent": intent,
+            "actor": START_ACTOR,
+            "repository_revision": _repository_revision(paths.root),
+            "created_ids": dict(created_domain_ids),
+            "target": {"type": "task", "id": selected_task_id},
+        }
         evidence_id = record_inline_evidence(
             conn,
             evidence_type=START_RECEIPT_CONTRACT_VERSION,
@@ -269,7 +404,23 @@ def _record_start_receipt(
             payload=payload,
         )
         conn.commit()
-        return evidence_id, event_id, provenance
+        created_ids = {
+            **created_domain_ids,
+            "evidence": evidence_id,
+            "event": event_id,
+        }
+        if provenance is not None:
+            created_ids["provenance_evidence"] = provenance["evidence_id"]
+        return {
+            "task_id": selected_task_id,
+            "created_ids": created_ids,
+            "receipt": {
+                **receipt,
+                "evidence_id": evidence_id,
+                "event_id": event_id,
+            },
+            "provenance": provenance,
+        }
     except BaseException as exc:
         committed = bool(getattr(conn, "_authoritative_commit_completed", False))
         if not committed:
@@ -287,6 +438,51 @@ def _record_start_receipt(
         raise
     finally:
         conn.close()
+
+
+def _resolve_start_target(conn, target_id: str, *, expected_type: str):
+    try:
+        return resolve_routing_target(
+            conn,
+            target_id,
+            expected_type=expected_type,
+        )
+    except TaskGoalTargetNotFoundError as exc:
+        raise InvalidInputError(
+            f"Start target does not exist: {target_id}",
+            details={"target": target_id, "target_type": exc.target_type},
+        ) from exc
+
+
+def _require_startable_target(target) -> None:
+    allowed_statuses = (
+        {"todo", "ready", "in_progress"}
+        if target.type == "task"
+        else {"open", "active"}
+    )
+    if target.status not in allowed_statuses:
+        raise InvalidInputError(
+            f"Cannot attach start to {target.type} {target.id} in status {target.status}.",
+            details={
+                "target": target.id,
+                "target_type": target.type,
+                "status": target.status,
+            },
+        )
+    if (
+        target.type == "task"
+        and target.goal_row is not None
+        and str(target.goal_row["status"]) not in {"open", "active"}
+    ):
+        raise InvalidInputError(
+            f"Task {target.id} belongs to non-active Goal {target.goal_id}.",
+            details={
+                "target": target.id,
+                "target_type": "task",
+                "related_goal_id": target.goal_id,
+                "related_goal_status": str(target.goal_row["status"]),
+            },
+        )
 
 
 def _repository_revision(root: Path) -> str | None:

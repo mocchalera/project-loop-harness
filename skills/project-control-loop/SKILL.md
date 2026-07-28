@@ -39,6 +39,12 @@ When this skill is invoked:
 4. When the user has already supplied explicit implementation intent and no
    active work exists, pass that intent literally to `pcl start`; do not create
    an extra human gate merely to register it.
+   When that intent names an existing Task or Goal, attach it explicitly with
+   `pcl start "<intent>" --task T-XXXX` or
+   `pcl start "<intent>" --goal G-XXXX`. `--task` reuses both the Task and its
+   parent Goal; `--goal` reuses the Goal and creates only one active child Task.
+   Do not combine attach flags with `--new`, and do not guess after a missing,
+   terminal, or inconsistent target error.
 5. Perform the smallest valid next step.
 6. Record state through `pcl` commands.
 7. Run `pcl validate` after state changes.
@@ -119,10 +125,14 @@ one; workflow runs add queued jobs you must later close out.
 Follow this order. Replace every placeholder ID with the ID returned by the
 preceding command; do not invent IDs.
 
-1. Register the user's literal intent. `pcl start` creates the Goal and Task:
+1. Register the user's literal intent. With no target, `pcl start` creates the
+   Goal and active Task. When current intent already names a Task or Goal, use
+   the matching attach form so the existing target is not duplicated:
 
    ```bash
    pcl start "<literal user intent>"
+   pcl start "<literal user intent>" --task T-XXXX
+   pcl start "<literal user intent>" --goal G-XXXX
    ```
 
 2. Add the Feature, or use `pcl feature read F-XXXX` when it already exists:

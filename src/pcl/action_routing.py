@@ -16,7 +16,11 @@ from .links import linked_decisions_for_escalation
 from .locales import HUMAN_GATE_JA
 from .paths import ProjectPaths
 from .project_config import finish_check_configuration
-from .target_resolver import TaskGoalTargetNotFoundError, resolve_existing_task_goal
+from .target_resolver import (
+    ResolvedRoutingTarget,
+    TaskGoalTargetNotFoundError,
+    resolve_routing_target,
+)
 from .tasks import task_terminal_readiness_for_row
 from .terminal_readiness import feature_terminal_readiness
 from .workflow_proposals import next_reviewable_workflow_proposal
@@ -382,6 +386,9 @@ def next_action(paths: ProjectPaths, *, target: str | None = None) -> dict:
         return _targeted_next_action(paths, target_id=target)
 
     status = loop_status(paths)
+    target_selection = _ambiguous_next_target_action(paths)
+    if target_selection is not None:
+        return target_selection
     escalation = _open_escalation_next_action(paths)
     if escalation is not None:
         return escalation
@@ -415,9 +422,6 @@ def next_action(paths: ProjectPaths, *, target: str | None = None) -> dict:
     timeout_recovery = _finish_timeout_recovery_next_action(paths)
     if timeout_recovery is not None:
         return timeout_recovery
-    target_selection = _ambiguous_next_target_action(paths)
-    if target_selection is not None:
-        return target_selection
     task = _task_next_action(paths)
     if task is not None:
         return task
@@ -437,28 +441,24 @@ def next_action(paths: ProjectPaths, *, target: str | None = None) -> dict:
 
 
 def _targeted_next_action(paths: ProjectPaths, *, target_id: str) -> dict:
-    target = _resolve_next_target(paths, target_id=target_id)
-    binding = {
-        "target_type": target["type"],
-        "target_id": target["id"],
-        "source": "explicit",
-    }
+    resolved = _resolve_next_target(paths, target_id=target_id)
+    target = _next_target_payload(resolved)
+    binding = resolved.binding()
 
-    for detector in (
-        _open_escalation_next_action,
-        _open_decision_next_action,
-        _needs_human_escalation_next_action,
+    for action in (
+        _open_escalation_next_action(paths, target_scope=resolved),
+        _open_decision_next_action(paths, target_scope=resolved),
+        _needs_human_escalation_next_action(paths, goal_id=resolved.goal_id),
     ):
-        action = detector(paths)
         if action is not None:
-            return _bind_next_action(action, binding=binding, routing_scope="project_gate")
+            return _bind_next_action(action, binding=binding, routing_scope="target")
 
-    expired_leases = _expired_lease_next_action(paths)
+    expired_leases = _expired_lease_next_action(paths, goal_id=resolved.goal_id)
     if expired_leases is not None:
         return _bind_next_action(
             expired_leases,
             binding=binding,
-            routing_scope="project_gate",
+            routing_scope="target",
         )
 
     if target["status"] in {"done", "closed", "cancelled", "waived"}:
@@ -485,6 +485,10 @@ def _targeted_next_action(paths: ProjectPaths, *, target_id: str) -> dict:
         retry = _failed_executor_retry_next_action(paths, goal_id=str(goal_id))
         if retry is not None:
             return _bind_next_action(retry, binding=binding, routing_scope="target")
+
+    defect = _target_defect_next_action(paths, target_scope=resolved)
+    if defect is not None:
+        return _bind_next_action(defect, binding=binding, routing_scope="target")
 
     if target["type"] == "task":
         action = _explicit_task_next_action(paths, task=target)
@@ -513,55 +517,57 @@ def _targeted_next_action(paths: ProjectPaths, *, target_id: str) -> dict:
     return _bind_next_action(action, binding=binding, routing_scope="target")
 
 
-def _resolve_next_target(paths: ProjectPaths, *, target_id: str) -> dict[str, Any]:
+def _resolve_next_target(paths: ProjectPaths, *, target_id: str) -> ResolvedRoutingTarget:
     require_initialized(paths)
     conn = connect(paths.db_path)
     try:
         try:
-            resolved = resolve_existing_task_goal(conn, target_id)
+            return resolve_routing_target(conn, target_id)
         except TaskGoalTargetNotFoundError as exc:
             raise InvalidInputError(
                 f"Next target does not exist: {target_id}",
                 details={"target": target_id, "target_type": exc.target_type},
             ) from exc
+    finally:
+        conn.close()
 
-        row = resolved.row
-        if resolved.type == "task":
-            related_goal = conn.execute(
-                "SELECT status FROM goals WHERE id = ?",
-                (row["related_goal_id"],),
-            ).fetchone()
-            return {
-                "type": "task",
-                **{
-                    key: row[key]
-                    for key in (
-                        "id",
-                        "title",
-                        "description",
-                        "status",
-                        "priority",
-                        "owner",
-                        "risk",
-                        "effort",
-                        "related_goal_id",
-                        "related_feature_id",
-                        "related_defect_id",
-                        "created_at",
-                        "updated_at",
-                    )
-                },
-                "related_goal_status": related_goal["status"] if related_goal else None,
-            }
+
+def _next_target_payload(resolved: ResolvedRoutingTarget) -> dict[str, Any]:
+    row = resolved.row
+    if resolved.type == "task":
         return {
+            "type": "task",
+            **{
+                key: row[key]
+                for key in (
+                    "id",
+                    "title",
+                    "description",
+                    "status",
+                    "priority",
+                    "owner",
+                    "risk",
+                    "effort",
+                    "related_goal_id",
+                    "related_feature_id",
+                    "related_defect_id",
+                    "created_at",
+                    "updated_at",
+                )
+            },
+            "related_goal_status": (
+                resolved.goal_row["status"]
+                if resolved.goal_row is not None
+                else None
+            ),
+        }
+    return {
             "type": "goal",
             **{
                 key: row[key]
                 for key in ("id", "title", "status", "created_at", "updated_at")
             },
         }
-    finally:
-        conn.close()
 
 
 def _bind_next_action(action: dict, *, binding: dict, routing_scope: str) -> dict:
@@ -1073,21 +1079,26 @@ def _uncovered_feature_next_action(paths: ProjectPaths) -> dict | None:
         conn.close()
 
 
-def _open_escalation_next_action(paths: ProjectPaths) -> dict | None:
+def _open_escalation_next_action(
+    paths: ProjectPaths,
+    *,
+    target_scope: ResolvedRoutingTarget | None = None,
+) -> dict | None:
     conn = connect(paths.db_path)
     try:
-        row = conn.execute(
+        rows = conn.execute(
             """
-            SELECT id, workflow_run_id, severity, question, recommendation, status, created_at
+            SELECT escalations.id, escalations.workflow_run_id,
+                   escalations.severity, escalations.question,
+                   escalations.recommendation, escalations.status,
+                   escalations.created_at, workflow_runs.goal_id AS run_goal_id
             FROM escalations
-            WHERE status = 'open'
-            ORDER BY created_at DESC, id DESC
-            LIMIT 1
+            LEFT JOIN workflow_runs
+              ON workflow_runs.id = escalations.workflow_run_id
+            WHERE escalations.status = 'open'
+            ORDER BY escalations.created_at DESC, escalations.id DESC
             """
-        ).fetchone()
-        if row is None:
-            return None
-        escalation = dict(row)
+        ).fetchall()
         decisions = [
             dict(decision)
             for decision in conn.execute(
@@ -1098,46 +1109,76 @@ def _open_escalation_next_action(paths: ProjectPaths) -> dict | None:
                 """
             ).fetchall()
         ]
-        linked_decisions = linked_decisions_for_escalation(decisions, str(escalation["id"]))
-        linked_decision_ids = [str(decision["id"]) for decision in linked_decisions]
-        escalation["linked_decision_ids"] = linked_decision_ids
-        if linked_decision_ids:
-            decision_id = linked_decision_ids[0]
-            command = (
-                f"pcl escalation resolve {escalation['id']} --decision {decision_id} "
-                "--summary 'Record the outcome'"
+        for row in rows:
+            escalation = dict(row)
+            run_goal_id = escalation.pop("run_goal_id")
+            linked_decisions = linked_decisions_for_escalation(
+                decisions,
+                str(escalation["id"]),
             )
-            reason = "A human escalation is open and has a linked decision to record in the resolution."
-        else:
-            command = (
-                f"pcl decision open --escalation {escalation['id']} "
-                f"--question 'Record the human decision for {escalation['id']}' "
-                "--recommendation 'Choose the safe next step'"
+            if target_scope is not None:
+                run_matches = (
+                    target_scope.goal_id is not None
+                    and str(run_goal_id or "") == target_scope.goal_id
+                )
+                decision_matches = any(
+                    target_scope.decision_blocks(decision.get("blocks_json"))
+                    for decision in linked_decisions
+                )
+                if not run_matches and not decision_matches:
+                    continue
+            linked_decision_ids = [
+                str(decision["id"]) for decision in linked_decisions
+            ]
+            escalation["linked_decision_ids"] = linked_decision_ids
+            if linked_decision_ids:
+                decision_id = linked_decision_ids[0]
+                command = (
+                    f"pcl escalation resolve {escalation['id']} --decision {decision_id} "
+                    "--summary 'Record the outcome'"
+                )
+                reason = (
+                    "A human escalation is open and has a linked decision to record "
+                    "in the resolution."
+                )
+            else:
+                command = (
+                    f"pcl decision open --escalation {escalation['id']} "
+                    f"--question 'Record the human decision for {escalation['id']}' "
+                    "--recommendation 'Choose the safe next step'"
+                )
+                reason = (
+                    "A human escalation is open and needs a linked durable decision "
+                    "before resolution."
+                )
+            return build_next_action(
+                action_type="resolve_escalation",
+                command=command,
+                reason=reason,
+                target=escalation,
+                priority=10,
+                blocking=True,
+                requires_human=True,
+                safe_to_run=False,
+                expected_after=(
+                    "The escalation is resolved with the linked decision."
+                    if linked_decision_ids
+                    else "A linked decision exists for the escalation."
+                ),
             )
-            reason = "A human escalation is open and needs a linked durable decision before resolution."
-        return build_next_action(
-            action_type="resolve_escalation",
-            command=command,
-            reason=reason,
-            target=escalation,
-            priority=10,
-            blocking=True,
-            requires_human=True,
-            safe_to_run=False,
-            expected_after=(
-                "The escalation is resolved with the linked decision."
-                if linked_decision_ids
-                else "A linked decision exists for the escalation."
-            ),
-        )
+        return None
     finally:
         conn.close()
 
 
-def _open_decision_next_action(paths: ProjectPaths) -> dict | None:
+def _open_decision_next_action(
+    paths: ProjectPaths,
+    *,
+    target_scope: ResolvedRoutingTarget | None = None,
+) -> dict | None:
     conn = connect(paths.db_path)
     try:
-        row = conn.execute(
+        rows = conn.execute(
             """
             SELECT decisions.id, decisions.status, decisions.question,
                    decisions.recommendation, decisions.blocks_json,
@@ -1151,41 +1192,49 @@ def _open_decision_next_action(paths: ProjectPaths) -> dict | None:
             FROM decisions
             WHERE status = 'open'
             ORDER BY created_at DESC, id DESC
-            LIMIT 1
             """
-        ).fetchone()
-        if row is None:
-            return None
-        decision = dict(row)
-        profile_proposal = bool(decision.pop("profile_proposal"))
-        return build_next_action(
-            action_type="resolve_decision",
-            command=(
-                f"pcl decision proposal show {decision['id']} --json"
-                if profile_proposal
-                else (
-                    f"pcl decision resolve {decision['id']} "
-                    "--selected-option 'Record the selected option' "
-                    "--reason 'Explain the human decision'"
-                )
-            ),
-            reason="A human decision is open and blocks safe continuation.",
-            target=decision,
-            priority=20,
-            blocking=True,
-            requires_human=True,
-            safe_to_run=False,
-            expected_after=(
-                "The immutable proposal is shown before a human selects or declines it."
-                if profile_proposal
-                else "The decision is resolved or waived."
-            ),
-        )
+        ).fetchall()
+        for row in rows:
+            decision = dict(row)
+            if (
+                target_scope is not None
+                and not target_scope.decision_blocks(decision["blocks_json"])
+            ):
+                continue
+            profile_proposal = bool(decision.pop("profile_proposal"))
+            return build_next_action(
+                action_type="resolve_decision",
+                command=(
+                    f"pcl decision proposal show {decision['id']} --json"
+                    if profile_proposal
+                    else (
+                        f"pcl decision resolve {decision['id']} "
+                        "--selected-option 'Record the selected option' "
+                        "--reason 'Explain the human decision'"
+                    )
+                ),
+                reason="A human decision is open and blocks safe continuation.",
+                target=decision,
+                priority=20,
+                blocking=True,
+                requires_human=True,
+                safe_to_run=False,
+                expected_after=(
+                    "The immutable proposal is shown before a human selects or declines it."
+                    if profile_proposal
+                    else "The decision is resolved or waived."
+                ),
+            )
+        return None
     finally:
         conn.close()
 
 
-def _needs_human_escalation_next_action(paths: ProjectPaths) -> dict | None:
+def _needs_human_escalation_next_action(
+    paths: ProjectPaths,
+    *,
+    goal_id: str | None = None,
+) -> dict | None:
     conn = connect(paths.db_path)
     try:
         placeholders = ", ".join("?" for _ in ACTIVE_RUN_STATUSES)
@@ -1199,6 +1248,8 @@ def _needs_human_escalation_next_action(paths: ProjectPaths) -> dict | None:
             tuple(sorted(ACTIVE_RUN_STATUSES)),
         ).fetchall()
         for run in runs:
+            if goal_id is not None and str(run["goal_id"] or "") != goal_id:
+                continue
             verification = conn.execute(
                 """
                 SELECT
@@ -1323,8 +1374,31 @@ def _defect_next_action(defect: dict) -> dict:
     )
 
 
-def _expired_lease_next_action(paths: ProjectPaths) -> dict | None:
+def _expired_lease_next_action(
+    paths: ProjectPaths,
+    *,
+    goal_id: str | None = None,
+) -> dict | None:
     job_ids = expired_lease_job_ids(paths)
+    if job_ids and goal_id is not None:
+        placeholders = ", ".join("?" for _ in job_ids)
+        conn = connect(paths.db_path)
+        try:
+            rows = conn.execute(
+                f"""
+                SELECT agent_jobs.id
+                FROM agent_jobs
+                JOIN workflow_runs
+                  ON workflow_runs.id = agent_jobs.workflow_run_id
+                WHERE agent_jobs.id IN ({placeholders})
+                  AND workflow_runs.goal_id = ?
+                ORDER BY agent_jobs.id
+                """,
+                (*job_ids, goal_id),
+            ).fetchall()
+            job_ids = [str(row["id"]) for row in rows]
+        finally:
+            conn.close()
     if not job_ids:
         return None
     return build_next_action(
@@ -1338,6 +1412,37 @@ def _expired_lease_next_action(paths: ProjectPaths) -> dict | None:
         safe_to_run=True,
         expected_after="Expired leases are requeued or blocked with an escalation when attempts are exhausted.",
     )
+
+
+def _target_defect_next_action(
+    paths: ProjectPaths,
+    *,
+    target_scope: ResolvedRoutingTarget,
+) -> dict | None:
+    defect_ids = sorted(
+        target_id
+        for target_type, target_id in target_scope.scope_refs
+        if target_type == "defect"
+    )
+    if not defect_ids:
+        return None
+    placeholders = ", ".join("?" for _ in defect_ids)
+    conn = connect(paths.db_path)
+    try:
+        row = conn.execute(
+            f"""
+            SELECT id, feature_id, severity, status
+            FROM defects
+            WHERE id IN ({placeholders})
+              AND status NOT IN ('closed', 'waived')
+            ORDER BY id
+            LIMIT 1
+            """,
+            tuple(defect_ids),
+        ).fetchone()
+        return _defect_next_action(dict(row)) if row is not None else None
+    finally:
+        conn.close()
 
 
 def _workflow_proposal_review_next_action(paths: ProjectPaths) -> dict | None:

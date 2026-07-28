@@ -70,7 +70,7 @@ Want to see the result before adopting it? Run the isolated
 | Moment | Command | Purpose |
 | --- | --- | --- |
 | Adopt | `pcl init --dry-run --json`, then `pcl init` | Inspect and install local policy/state |
-| Start | `pcl start "<outcome>"` | Preserve literal intent as Goal and Task |
+| Start | `pcl start "<outcome>"` or `--task T-XXXX` / `--goal G-XXXX` | Create minimal active work or attach without duplicates |
 | Orient | `pcl next --json` or `pcl resume` | Continue or hand off safely |
 | Verify | `pcl finish --emit-packet --goal G-XXXX` | Rerun checks and pin evidence |
 | Review | `pcl render` | Generate the human dashboard |

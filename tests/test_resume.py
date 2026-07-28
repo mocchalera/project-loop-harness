@@ -104,7 +104,7 @@ def test_resume_active_target_is_valid_read_only_and_replayable(
 
     assert validate_handoff_packet(packet).ok is True
     assert packet["target"]["id"] == "T-0001"
-    assert packet["current_state"] == "TODO"
+    assert packet["current_state"] == "IN_PROGRESS"
     assert packet["verified"] == []
     assert packet["unverified"]
     assert "full_transcript" in packet["omitted_sections"]

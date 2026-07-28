@@ -9,6 +9,10 @@ from .events import append_event
 from .guards import require_initialized
 from .ids import next_prefixed_id
 from .paths import ProjectPaths
+from .target_resolver import (
+    TaskGoalTargetNotFoundError,
+    resolve_routing_target,
+)
 from .terminal_readiness import task_terminal_readiness
 from .timeutil import utc_now_iso
 
@@ -50,86 +54,120 @@ def create_task(
     defect_id: str | None = None,
 ) -> dict[str, Any]:
     require_initialized(paths)
-    _require_text(title, "--title is required to create a task.")
-    risk = _clean_optional(risk)
-    if risk is not None:
-        _require_task_risk(risk)
-    _validate_optional_identifier(goal_id, "goal_id")
-    _validate_optional_identifier(feature_id, "feature_id")
-    _validate_optional_identifier(defect_id, "defect_id")
-    now = utc_now_iso()
-
     conn = connect_mutation(paths)
     try:
-        if goal_id:
-            _get_entity(conn, "goals", goal_id, "Goal", "goal_id")
-        if feature_id:
-            _get_entity(conn, "features", feature_id, "Feature", "feature_id")
-        if defect_id:
-            _get_entity(conn, "defects", defect_id, "Defect", "defect_id")
-        task_id = next_prefixed_id(conn, "tasks", "T")
-        row = {
-            "id": task_id,
-            "title": title.strip(),
-            "description": description.strip(),
-            "status": "todo",
-            "priority": int(priority),
-            "owner": _clean_optional(owner),
-            "risk": risk,
-            "effort": _clean_optional(effort),
-            "related_goal_id": _clean_optional(goal_id),
-            "related_feature_id": _clean_optional(feature_id),
-            "related_defect_id": _clean_optional(defect_id),
-            "created_at": now,
-            "updated_at": now,
-        }
-        conn.execute(
-            """
-            INSERT INTO tasks(
-              id, title, description, status, priority, owner, risk, effort,
-              related_goal_id, related_feature_id, related_defect_id, created_at, updated_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                row["id"],
-                row["title"],
-                row["description"],
-                row["status"],
-                row["priority"],
-                row["owner"],
-                row["risk"],
-                row["effort"],
-                row["related_goal_id"],
-                row["related_feature_id"],
-                row["related_defect_id"],
-                row["created_at"],
-                row["updated_at"],
-            ),
-        )
-        append_event(
-            conn=conn,
-            events_path=paths.events_path,
-            event_type="task_created",
-            entity_type="task",
-            entity_id=task_id,
-            payload={
-                "title": row["title"],
-                "description": row["description"],
-                "status": row["status"],
-                "priority": row["priority"],
-                "owner": row["owner"],
-                "risk": row["risk"],
-                "effort": row["effort"],
-                "related_goal_id": row["related_goal_id"],
-                "related_feature_id": row["related_feature_id"],
-                "related_defect_id": row["related_defect_id"],
-            },
+        row = create_task_in_transaction(
+            conn,
+            paths,
+            title=title,
+            description=description,
+            priority=priority,
+            owner=owner,
+            risk=risk,
+            effort=effort,
+            goal_id=goal_id,
+            feature_id=feature_id,
+            defect_id=defect_id,
         )
         conn.commit()
         return {"ok": True, **row}
     finally:
         conn.close()
+
+
+def create_task_in_transaction(
+    conn,
+    paths: ProjectPaths,
+    *,
+    title: str,
+    description: str = "",
+    priority: int = 100,
+    owner: str = "",
+    risk: str | None = None,
+    effort: str = "",
+    goal_id: str | None = None,
+    feature_id: str | None = None,
+    defect_id: str | None = None,
+    status: str = "todo",
+) -> dict[str, Any]:
+    """Insert one Task and event into the caller-owned mutation transaction."""
+
+    _require_text(title, "--title is required to create a task.")
+    risk = _clean_optional(risk)
+    if risk is not None:
+        _require_task_risk(risk)
+    _require_task_status(status)
+    _validate_optional_identifier(goal_id, "goal_id")
+    _validate_optional_identifier(feature_id, "feature_id")
+    _validate_optional_identifier(defect_id, "defect_id")
+    now = utc_now_iso()
+
+    if goal_id:
+        _get_entity(conn, "goals", goal_id, "Goal", "goal_id")
+    if feature_id:
+        _get_entity(conn, "features", feature_id, "Feature", "feature_id")
+    if defect_id:
+        _get_entity(conn, "defects", defect_id, "Defect", "defect_id")
+    task_id = next_prefixed_id(conn, "tasks", "T")
+    row = {
+        "id": task_id,
+        "title": title.strip(),
+        "description": description.strip(),
+        "status": status,
+        "priority": int(priority),
+        "owner": _clean_optional(owner),
+        "risk": risk,
+        "effort": _clean_optional(effort),
+        "related_goal_id": _clean_optional(goal_id),
+        "related_feature_id": _clean_optional(feature_id),
+        "related_defect_id": _clean_optional(defect_id),
+        "created_at": now,
+        "updated_at": now,
+    }
+    conn.execute(
+        """
+        INSERT INTO tasks(
+          id, title, description, status, priority, owner, risk, effort,
+          related_goal_id, related_feature_id, related_defect_id, created_at, updated_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            row["id"],
+            row["title"],
+            row["description"],
+            row["status"],
+            row["priority"],
+            row["owner"],
+            row["risk"],
+            row["effort"],
+            row["related_goal_id"],
+            row["related_feature_id"],
+            row["related_defect_id"],
+            row["created_at"],
+            row["updated_at"],
+        ),
+    )
+    append_event(
+        conn=conn,
+        events_path=paths.events_path,
+        event_type="task_created",
+        entity_type="task",
+        entity_id=task_id,
+        payload={
+            "title": row["title"],
+            "description": row["description"],
+            "status": row["status"],
+            "priority": row["priority"],
+            "owner": row["owner"],
+            "risk": row["risk"],
+            "effort": row["effort"],
+            "related_goal_id": row["related_goal_id"],
+            "related_feature_id": row["related_feature_id"],
+            "related_defect_id": row["related_defect_id"],
+        },
+    )
+    return row
 
 
 def list_tasks(
@@ -181,7 +219,18 @@ def read_task(paths: ProjectPaths, task_id: str) -> dict[str, Any]:
     _validate_identifier(task_id, "task_id")
     conn = connect(paths.db_path)
     try:
-        task = dict(_get_task(conn, task_id))
+        try:
+            target = resolve_routing_target(
+                conn,
+                task_id,
+                expected_type="task",
+            )
+        except TaskGoalTargetNotFoundError as exc:
+            raise InvalidInputError(
+                f"Task does not exist: {task_id}",
+                details={"task_id": task_id},
+            ) from exc
+        task = dict(target.row)
         task["dependencies"] = _related_tasks(conn, task_id, direction="dependencies")
         task["dependents"] = _related_tasks(conn, task_id, direction="dependents")
         _attach_task_terminal_readiness(conn, task)

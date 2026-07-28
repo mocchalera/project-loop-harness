@@ -8,6 +8,8 @@ import pytest
 
 from pcl.cli import main
 from pcl.db import connect
+from pcl.paths import resolve_paths
+from pcl.start import start_work
 
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures"
@@ -48,7 +50,9 @@ def test_start_help_contract_and_profile_is_rejected(capsys) -> None:
         main(["start", "--help"])
     assert help_exit.value.code == 0
     help_output = capsys.readouterr().out
-    assert "usage: pcl start [-h] [--dry-run] [--no-init] [--new]" in help_output
+    assert "usage: pcl start" in help_output
+    assert "--goal GOAL" in help_output
+    assert "--task TASK" in help_output
     assert "intent" in help_output
     assert "--profile" not in help_output
 
@@ -56,6 +60,140 @@ def test_start_help_contract_and_profile_is_rejected(capsys) -> None:
         main(["start", "Ship it", "--profile", "direct"])
     assert profile_exit.value.code == 2
     assert "unrecognized arguments: --profile direct" in capsys.readouterr().err
+
+
+def test_start_attaches_existing_task_without_duplicate_entities_and_activates_atomically(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    _init(tmp_path, capsys)
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Existing goal"]) == 0
+    assert main([
+        "--root", str(tmp_path), "task", "create", "--title", "Existing task",
+        "--goal", "G-0001",
+    ]) == 0
+    capsys.readouterr()
+    before = _counts(tmp_path)
+
+    import pcl.start as start_module
+
+    def fail_receipt(*args, **kwargs):
+        raise RuntimeError("receipt failure")
+
+    monkeypatch.setattr(start_module, "record_inline_evidence", fail_receipt)
+    with pytest.raises(RuntimeError, match="receipt failure"):
+        start_work(
+            resolve_paths(tmp_path),
+            intent="Attach without drift",
+            task_id="T-0001",
+        )
+
+    assert _counts(tmp_path) == before
+    assert main(["--root", str(tmp_path), "task", "read", "T-0001", "--json"]) == 0
+    assert _json_output(capsys)["task"]["status"] == "todo"
+
+    monkeypatch.undo()
+    assert main([
+        "--root", str(tmp_path), "start", "Attach without drift",
+        "--task", "T-0001", "--json",
+    ]) == 0
+    payload = _json_output(capsys)
+
+    assert payload["status"] == "started"
+    assert payload["result"]["target"] == {"type": "task", "id": "T-0001"}
+    assert "goal" not in payload["result"]["created_ids"]
+    assert "task" not in payload["result"]["created_ids"]
+    assert payload["result"]["receipt"]["created_ids"] == {}
+    assert payload["next_actions"][0]["command"] == (
+        "pcl context pack --task T-0001 --json"
+    )
+    assert _counts(tmp_path)["goals"] == before["goals"]
+    assert _counts(tmp_path)["tasks"] == before["tasks"]
+
+    assert main(["--root", str(tmp_path), "task", "read", "T-0001", "--json"]) == 0
+    assert _json_output(capsys)["task"]["status"] == "in_progress"
+
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        events = conn.execute(
+            "SELECT event_type, entity_id FROM events "
+            "WHERE entity_id = 'T-0001' ORDER BY rowid"
+        ).fetchall()
+    finally:
+        conn.close()
+    assert [dict(row) for row in events[-2:]] == [
+        {"event_type": "task_status_changed", "entity_id": "T-0001"},
+        {"event_type": "work_started", "entity_id": "T-0001"},
+    ]
+
+
+def test_start_goal_attach_reuses_goal_and_creates_only_active_child(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Existing goal"]) == 0
+    capsys.readouterr()
+    before = _counts(tmp_path)
+
+    assert main([
+        "--root", str(tmp_path), "start", "Focused child work",
+        "--goal", "G-0001", "--json",
+    ]) == 0
+    payload = _json_output(capsys)
+
+    assert payload["result"]["created_ids"]["task"] == "T-0001"
+    assert "goal" not in payload["result"]["created_ids"]
+    assert payload["result"]["receipt"]["created_ids"] == {"task": "T-0001"}
+    assert payload["result"]["target"] == {"type": "task", "id": "T-0001"}
+    assert _counts(tmp_path)["goals"] == before["goals"]
+    assert _counts(tmp_path)["tasks"] == before["tasks"] + 1
+    assert main(["--root", str(tmp_path), "task", "read", "T-0001", "--json"]) == 0
+    task = _json_output(capsys)["task"]
+    assert task["related_goal_id"] == "G-0001"
+    assert task["status"] == "in_progress"
+
+
+def test_start_attach_fails_closed_for_conflicting_missing_and_terminal_targets(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Existing goal"]) == 0
+    assert main([
+        "--root", str(tmp_path), "task", "create", "--title", "Terminal task",
+        "--goal", "G-0001",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "task", "status", "T-0001", "cancelled",
+        "--reason", "Closed",
+    ]) == 0
+    capsys.readouterr()
+    before = _counts(tmp_path)
+
+    assert main([
+        "--root", str(tmp_path), "start", "Conflict",
+        "--goal", "G-0001", "--task", "T-0001", "--json",
+    ]) == 2
+    capsys.readouterr()
+    assert main([
+        "--root", str(tmp_path), "start", "Missing",
+        "--task", "T-9999", "--json",
+    ]) == 2
+    missing = _json_output(capsys)
+    assert missing["error"]["details"]["target"] == "T-9999"
+    assert main([
+        "--root", str(tmp_path), "start", "Terminal",
+        "--task", "T-0001", "--json",
+    ]) == 2
+    terminal = _json_output(capsys)
+    assert terminal["error"]["details"] == {
+        "target": "T-0001",
+        "target_type": "task",
+        "status": "cancelled",
+    }
+    assert _counts(tmp_path) == before
 
 
 def test_start_uninitialized_dry_run_lists_init_and_state_without_mutation(
@@ -140,7 +278,7 @@ def test_start_apply_auto_initializes_and_records_active_target_receipt_and_even
     task = _json_output(capsys)["task"]
     assert task["title"] == "Fix login timeout"
     assert task["related_goal_id"] == "G-0001"
-    assert task["status"] == "todo"
+    assert task["status"] == "in_progress"
 
     conn = connect(root / ".project-loop" / "project.db")
     try:

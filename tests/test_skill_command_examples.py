@@ -20,6 +20,8 @@ SKILL_COPIES = [
 
 SKILL_PARSER_CONTRACT_EXAMPLES = [
     'pcl start "<literal user intent>"',
+    'pcl start "<literal user intent>" --task T-XXXX',
+    'pcl start "<literal user intent>" --goal G-XXXX',
     'pcl feature add --name "..." --surface "..." --description "..."',
     'pcl story draft --feature F-XXXX --actor "..." --goal "..." --expected-behavior "..."',
     'pcl story approve US-XXXX --summary "..."',
@@ -137,6 +139,8 @@ def test_skill_documents_target_bound_next_instead_of_manual_intent_check() -> N
 
     assert "pcl next --target <T-XXXX|G-XXXX>" in skill
     assert "select_target" in skill
+    assert 'pcl start "<literal user intent>" --task T-XXXX' in skill
+    assert 'pcl start "<literal user intent>" --goal G-XXXX' in skill
     assert "compare the returned target and reason" not in skill
     assert "unrelated older work" not in skill
     assert 'pcl start --new "<literal intent>"' not in skill

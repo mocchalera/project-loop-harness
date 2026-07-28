@@ -50,6 +50,16 @@ def add_control_parsers(sub) -> None:
         help="Start separate work even when active work already exists",
     )
     p_start.add_argument(
+        "--goal",
+        default=None,
+        help="Attach to an existing Goal and create only its active child Task",
+    )
+    p_start.add_argument(
+        "--task",
+        default=None,
+        help="Attach to an existing Task without creating a duplicate Goal or Task",
+    )
+    p_start.add_argument(
         "--skill",
         action="append",
         default=[],

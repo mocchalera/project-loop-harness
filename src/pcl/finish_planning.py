@@ -6,6 +6,10 @@ from .errors import InvalidInputError
 from .guards import require_initialized
 from .lifecycle import ACTIVE_RUN_STATUSES
 from .paths import ProjectPaths
+from .target_resolver import (
+    TaskGoalTargetNotFoundError,
+    resolve_routing_target,
+)
 
 from .action_routing import (
     _active_workflow_next_action,
@@ -157,17 +161,21 @@ def _finish_workflow_run(conn, run_id: str):
 
 
 def _finish_goal_row(conn, goal_id: str):
-    row = conn.execute(
-        """
-        SELECT id, title, status
-        FROM goals
-        WHERE id = ?
-        """,
-        (goal_id,),
-    ).fetchone()
-    if row is None:
-        raise InvalidInputError(f"Goal does not exist: {goal_id}", details={"goal_id": goal_id})
-    return dict(row)
+    try:
+        resolved = resolve_routing_target(
+            conn,
+            goal_id,
+            expected_type="goal",
+        )
+    except TaskGoalTargetNotFoundError as exc:
+        raise InvalidInputError(
+            f"Goal does not exist: {goal_id}",
+            details={"goal_id": goal_id},
+        ) from exc
+    return {
+        key: resolved.row[key]
+        for key in ("id", "title", "status")
+    }
 
 
 def _latest_workflow_run_for_goal(conn, goal_id: str):

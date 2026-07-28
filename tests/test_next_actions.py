@@ -972,7 +972,7 @@ def test_next_target_rejects_invalid_ids_and_returns_terminal_action(
     assert terminal["target_binding"]["target_id"] == "T-0001"
 
 
-def test_next_target_keeps_project_wide_human_gate_precedence(
+def test_next_target_ignores_unrelated_decision_and_prioritizes_direct_blocker(
     tmp_path: Path,
     capsys,
 ) -> None:
@@ -982,6 +982,7 @@ def test_next_target_keeps_project_wide_human_gate_precedence(
         "--root", str(tmp_path), "task", "create", "--title", "Current task",
         "--goal", "G-0001",
     ]) == 0
+    capsys.readouterr()
     assert main([
         "--root", str(tmp_path), "decision", "open", "--question", "Choose safely",
         "--recommendation", "Review the gate",
@@ -990,9 +991,92 @@ def test_next_target_keeps_project_wide_human_gate_precedence(
 
     assert main(["--root", str(tmp_path), "next", "--target", "T-0001", "--json"]) == 0
     action = _json_output(capsys)
-    assert action["type"] == "resolve_decision"
-    assert action["routing_scope"] == "project_gate"
+    assert action["type"] == "work_on_task"
+    assert action["target"]["id"] == "T-0001"
+    assert action["routing_scope"] == "target"
     assert action["target_binding"]["target_id"] == "T-0001"
+
+    assert main([
+        "--root", str(tmp_path), "decision", "open", "--question", "Task choice",
+        "--recommendation", "Review the task gate",
+        "--blocks-json", '[{"type":"task","id":"T-0001"}]',
+    ]) == 0
+    capsys.readouterr()
+    assert main(["--root", str(tmp_path), "next", "--target", "T-0001", "--json"]) == 0
+    action = _json_output(capsys)
+    assert action["type"] == "resolve_decision"
+    assert action["target"]["id"] == "DEC-0002"
+    assert action["routing_scope"] == "target"
+    assert action["target_binding"]["target_id"] == "T-0001"
+
+
+def test_next_target_routes_only_its_related_defect(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    assert main(["--root", str(tmp_path), "goal", "create", "--title", "Repair"]) == 0
+    assert main([
+        "--root", str(tmp_path), "feature", "add", "--name", "Unrelated",
+        "--surface", "cli",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "defect", "open", "--feature", "F-0001",
+        "--severity", "medium", "--expected", "Expected", "--actual", "Actual",
+        "--reproduction", "Run unrelated case",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "task", "create", "--title", "Current task",
+        "--goal", "G-0001",
+    ]) == 0
+    capsys.readouterr()
+    assert main([
+        "--root", str(tmp_path), "next", "--target", "T-0001", "--json",
+    ]) == 0
+    unrelated = _json_output(capsys)
+    assert unrelated["type"] == "work_on_task"
+
+    assert main([
+        "--root", str(tmp_path), "task", "create", "--title", "Repair task",
+        "--goal", "G-0001", "--defect", "D-0001",
+    ]) == 0
+    capsys.readouterr()
+    assert main([
+        "--root", str(tmp_path), "next", "--target", "T-0002", "--json",
+    ]) == 0
+    related = _json_output(capsys)
+    assert related["type"] == "triage_defect"
+    assert related["target"]["id"] == "D-0001"
+    assert related["routing_scope"] == "target"
+    assert related["target_binding"]["target_id"] == "T-0002"
+
+
+def test_next_unbound_cross_goal_ambiguity_precedes_unrelated_global_decision(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path)]) == 0
+    for index in (1, 2):
+        assert main([
+            "--root", str(tmp_path), "goal", "create", "--title", f"Goal {index}",
+        ]) == 0
+        assert main([
+            "--root", str(tmp_path), "task", "create", "--title", f"Task {index}",
+            "--goal", f"G-{index:04d}",
+        ]) == 0
+    assert main([
+        "--root", str(tmp_path), "decision", "open", "--question", "Unrelated",
+        "--recommendation", "Hold",
+    ]) == 0
+    capsys.readouterr()
+
+    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
+    action = _json_output(capsys)
+    assert action["type"] == "select_target"
+    assert [item["id"] for item in action["target"]["candidates"]] == [
+        "T-0001",
+        "T-0002",
+    ]
 
 
 def test_next_strict_validation_still_precedes_explicit_target(tmp_path: Path, capsys) -> None:

@@ -29,6 +29,10 @@ from .ids import next_prefixed_id
 from .paths import ProjectPaths
 from .project_config import finish_check_configuration
 from .route_overrides import recorded_route_context
+from .target_resolver import (
+    TaskGoalTargetNotFoundError,
+    resolve_routing_target,
+)
 from .terminal_readiness import evaluate_terminal_readiness, finish_terminal_readiness
 from .timeutil import utc_now_iso
 from .tasks import task_terminal_readiness_for_row
@@ -99,7 +103,12 @@ def _plan_finish_packet(
     base_revision: str | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     require_initialized(paths)
-    target = _resolve_target(paths, run_id=run_id, goal_id=goal_id, task_id=task_id)
+    target, target_binding = _resolve_target(
+        paths,
+        run_id=run_id,
+        goal_id=goal_id,
+        task_id=task_id,
+    )
     repository = _repository_snapshot(paths, base_revision=base_revision)
     commands = plan_guarded_project_checks(paths)
     input_manifest = collect_verification_input_manifest(
@@ -143,6 +152,11 @@ def _plan_finish_packet(
         "execution_provenance": linked_task_provenance(paths, task_id=target["id"])
         if target["type"] == "task" else None,
     }
+    if target_binding is not None:
+        plan["target_binding"] = target_binding
+    blockers = _target_blockers(paths, target)
+    if blockers["target_readiness"] is not None:
+        plan["terminal_readiness"] = blockers["target_readiness"]
     return plan, input_manifest
 
 
@@ -432,18 +446,33 @@ def _resolve_target(
     run_id: str | None,
     goal_id: str | None,
     task_id: str | None,
-) -> dict[str, Any]:
+) -> tuple[dict[str, Any], dict[str, str] | None]:
     explicit = [value for value in (run_id, goal_id, task_id) if value]
     if len(explicit) > 1:
         raise InvalidInputError("Choose only one of --run, --goal, or --task.")
     conn = connect(paths.db_path)
     try:
         if task_id:
-            return _task_target(conn, task_id)
+            target = _task_target(conn, task_id)
+            return target, {
+                "target_type": "task",
+                "target_id": task_id,
+                "source": "explicit",
+            }
         planner = finish_plan(paths, run_id=run_id, goal_id=goal_id)
         selected_goal = planner["target"]["goal"]
         if selected_goal:
-            return _goal_target(conn, str(selected_goal), planner=planner)
+            target = _goal_target(conn, str(selected_goal), planner=planner)
+            binding = (
+                {
+                    "target_type": "goal",
+                    "target_id": str(selected_goal),
+                    "source": "explicit",
+                }
+                if goal_id
+                else None
+            )
+            return target, binding
         if run_id:
             raise InvalidInputError(
                 f"Workflow run {run_id} is not linked to a goal that completion-packet/v1 can target.",
@@ -459,7 +488,7 @@ def _resolve_target(
             """
         ).fetchone()
         if row is not None:
-            return _task_target(conn, str(row["id"]))
+            return _task_target(conn, str(row["id"])), None
     finally:
         conn.close()
     raise InvalidInputError(
@@ -469,27 +498,42 @@ def _resolve_target(
 
 
 def _task_target(conn: sqlite3.Connection, task_id: str) -> dict[str, Any]:
-    row = conn.execute(
-        "SELECT id, title, description, status, related_goal_id FROM tasks WHERE id = ?",
-        (task_id,),
-    ).fetchone()
-    if row is None:
-        raise InvalidInputError(f"Task does not exist: {task_id}", details={"task_id": task_id})
+    try:
+        resolved = resolve_routing_target(
+            conn,
+            task_id,
+            expected_type="task",
+        )
+    except TaskGoalTargetNotFoundError as exc:
+        raise InvalidInputError(
+            f"Task does not exist: {task_id}",
+            details={"task_id": task_id},
+        ) from exc
+    row = resolved.row
     return {
         "type": "task",
         "id": str(row["id"]),
         "intent": str(row["description"] or row["title"]),
         "status": str(row["status"]),
-        "goal_id": row["related_goal_id"],
+        "goal_id": resolved.goal_id,
         "work_brief_ref": None,
         "finish_plan": None,
     }
 
 
 def _goal_target(conn: sqlite3.Connection, goal_id: str, *, planner: dict[str, Any]) -> dict[str, Any]:
-    row = conn.execute("SELECT id, title, status FROM goals WHERE id = ?", (goal_id,)).fetchone()
-    if row is None:
-        raise InvalidInputError(f"Goal does not exist: {goal_id}", details={"goal_id": goal_id})
+    try:
+        resolved = resolve_routing_target(
+            conn,
+            goal_id,
+            expected_type="goal",
+        )
+    except TaskGoalTargetNotFoundError as exc:
+        raise InvalidInputError(
+            f"Goal does not exist: {goal_id}",
+            details={"goal_id": goal_id},
+        ) from exc
+    row = resolved.row
     return {
         "type": "goal",
         "id": str(row["id"]),
@@ -591,20 +635,21 @@ def _git_bytes(root: Path, args: list[str]) -> bytes:
 def _target_blockers(paths: ProjectPaths, target: dict[str, Any]) -> dict[str, Any]:
     conn = connect(paths.db_path)
     try:
+        try:
+            routing_target = resolve_routing_target(conn, str(target["id"]))
+        except TaskGoalTargetNotFoundError as exc:
+            raise InvalidInputError(
+                f"Finish target does not exist: {target['id']}",
+                details={
+                    "target": target["id"],
+                    "target_type": exc.target_type,
+                },
+            ) from exc
         decisions = []
         for row in conn.execute(
             "SELECT id, question, blocks_json FROM decisions WHERE status = 'open' ORDER BY id"
         ).fetchall():
-            try:
-                blocks = json.loads(str(row["blocks_json"] or "[]"))
-            except json.JSONDecodeError:
-                blocks = []
-            if any(
-                isinstance(item, dict)
-                and item.get("type") == target["type"]
-                and item.get("id") == target["id"]
-                for item in blocks
-            ):
+            if routing_target.decision_blocks(row["blocks_json"]):
                 decisions.append({"id": str(row["id"]), "question": str(row["question"])})
         budget_exhausted = False
         goal_id = target.get("goal_id")

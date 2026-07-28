@@ -46,27 +46,49 @@ def create_goal(paths: ProjectPaths, *, title: str, completion_json: str = "{}",
 
     conn = connect_mutation(paths)
     try:
-        goal_id = next_prefixed_id(conn, "goals", "G")
-        now = utc_now_iso()
-        conn.execute(
-            """
-            INSERT INTO goals(id, title, status, completion_json, stop_conditions_json, budget_json, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (goal_id, title, "open", completion_json, "{}", budget_json, now, now),
-        )
-        append_event(
-            conn=conn,
-            events_path=paths.events_path,
-            event_type="goal_created",
-            entity_type="goal",
-            entity_id=goal_id,
-            payload={"title": title},
+        goal_id = create_goal_in_transaction(
+            conn,
+            paths,
+            title=title,
+            completion_json=completion_json,
+            budget_json=budget_json,
         )
         conn.commit()
         return goal_id
     finally:
         conn.close()
+
+
+def create_goal_in_transaction(
+    conn,
+    paths: ProjectPaths,
+    *,
+    title: str,
+    completion_json: str = "{}",
+    budget_json: str = "{}",
+) -> str:
+    """Insert one Goal and event into the caller-owned mutation transaction."""
+
+    completion_json = _normalized_json_object(completion_json, "completion-json")
+    budget_json = _normalized_json_object(budget_json, "budget-json")
+    goal_id = next_prefixed_id(conn, "goals", "G")
+    now = utc_now_iso()
+    conn.execute(
+        """
+        INSERT INTO goals(id, title, status, completion_json, stop_conditions_json, budget_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (goal_id, title, "open", completion_json, "{}", budget_json, now, now),
+    )
+    append_event(
+        conn=conn,
+        events_path=paths.events_path,
+        event_type="goal_created",
+        entity_type="goal",
+        entity_id=goal_id,
+        payload={"title": title},
+    )
+    return goal_id
 
 
 def add_feature(

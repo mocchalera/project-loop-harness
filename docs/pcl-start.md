@@ -1,7 +1,7 @@
 # `pcl start` lite entry point
 
 `pcl start "<intent>"` creates the smallest work target that the current
-Project Loop state machine can route: one open Goal and one linked todo Task.
+Project Loop state machine can route: one open Goal and one linked active Task.
 It does not call an LLM, infer acceptance criteria, launch an agent, or execute
 the intent as shell text or a path.
 
@@ -12,6 +12,8 @@ pcl start "Fix login timeout"
 pcl start "Fix login timeout" --dry-run
 pcl start "Fix login timeout" --no-init
 pcl start "Separate follow-up" --new
+pcl start "Continue the selected task" --task T-0001
+pcl start "Add one child to this goal" --goal G-0001
 pcl start "Fix login timeout" --json
 ```
 
@@ -35,6 +37,16 @@ for creating a separate Goal and Task.
 Goal + Task is used instead of Task alone because current task routing joins a
 Task to an open or active Goal. An orphan Task would exist in storage but would
 not become the active `pcl next` target.
+
+`--task` and `--goal` are explicit attach modes:
+
+- `--task` reuses the existing Task and its parent Goal and creates neither.
+- `--goal` reuses the existing Goal and creates only one child Task.
+- the selected Task is `in_progress` when `work_started` becomes visible;
+  Task creation/status, receipt Evidence, and the event commit together.
+- `--new` cannot be combined with either attach mode.
+- missing, terminal, wrong-type, or parent-inconsistent targets return a typed
+  error without mutation.
 
 ## JSON contract
 
@@ -75,6 +87,6 @@ confirmation.
 Successful creation also records `start-receipt/v1` as inline Evidence and a
 `work_started` event through the normal mutation transaction and JSONL outbox.
 The receipt preserves the intent literally and records actor `pcl:start`, Git
-HEAD when available, the Goal and Task IDs, and the active Task target. The
-contract is deliberately small so future Work Brief and route fields can be
-added without changing the lite behavior.
+HEAD when available, only the newly created Goal/Task IDs, and the active Task
+target. Existing response fields remain unchanged; attach mode is observable
+through `created_ids` and `target`.

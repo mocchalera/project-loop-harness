@@ -99,6 +99,8 @@ def handle_control_command(
             no_init=args.no_init,
             new=args.new,
             skills=args.skill,
+            goal_id=args.goal,
+            task_id=args.task,
         )
         _print_json(payload) if json_output else print(format_start_summary(payload))
         return 1 if payload["status"] == "init_blocked" else 0

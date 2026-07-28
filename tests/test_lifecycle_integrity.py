@@ -654,7 +654,7 @@ def test_completed_packet_cannot_close_goal_with_incomplete_start_task(
     assert error["code"] == "goal_close_tasks_incomplete"
     assert error["details"] == {
         "goal_id": "G-0001",
-        "incomplete_tasks": [{"id": "T-0001", "status": "todo"}],
+        "incomplete_tasks": [{"id": "T-0001", "status": "in_progress"}],
     }
     assert _counts(tmp_path) == before_counts
     assert _goal_and_task_rows(tmp_path) == before_rows
