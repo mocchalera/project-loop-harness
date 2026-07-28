@@ -17,9 +17,24 @@ def add_entity_parsers(sub) -> None:
     p_goal_close.add_argument("goal_id")
     p_goal_close.add_argument("--summary", required=True)
     goal_evidence = p_goal_close.add_mutually_exclusive_group()
-    goal_evidence.add_argument("--evidence", default="")
-    goal_evidence.add_argument("--evidence-id", default=None)
-    p_goal_close.add_argument("--verification", default=None)
+    goal_evidence.add_argument(
+        "--evidence",
+        default="",
+        metavar="TEXT",
+        help="Raw inline Evidence compatibility input; it is not terminal Goal proof.",
+    )
+    goal_evidence.add_argument(
+        "--evidence-id",
+        default=None,
+        metavar="E-XXXX",
+        help="Completed goal-bound packet Evidence ID for a direct-route Goal.",
+    )
+    p_goal_close.add_argument(
+        "--verification",
+        default=None,
+        metavar="V-XXXX",
+        help="Approved Verification ID from a Workflow Run for this Goal.",
+    )
     p_goal_cancel = goal_sub.add_parser("cancel")
     p_goal_cancel.add_argument("goal_id")
     p_goal_cancel.add_argument("--summary", required=True)

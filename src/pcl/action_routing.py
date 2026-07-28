@@ -8,8 +8,11 @@ from .checkpoints import checkpoint_status
 from .contracts.completion_packet import validate_completion_packet
 from .db import connect
 from .dispatch import expired_lease_job_ids
+from .evidence import EvidenceAddError
 from .errors import InvalidInputError
 from .finish_recovery import completion_packet_timeout_action
+from .finish_repository import capture_finish_repository_snapshot
+from .goal_completion_packet import require_completed_goal_packet
 from .guards import require_initialized
 from .lifecycle import ACTIVE_JOB_STATUSES, ACTIVE_RUN_STATUSES, TERMINAL_JOB_STATUSES
 from .links import linked_decisions_for_escalation
@@ -852,6 +855,32 @@ def _terminal_direct_goal_next_action(
     if goal is None:
         return None
     target = dict(goal)
+    packet = _latest_reusable_goal_completion_packet(
+        paths,
+        goal_id=str(goal["id"]),
+    )
+    if packet is not None:
+        target["completion_packet_evidence_id"] = packet["evidence_id"]
+        target["packet_outcome"] = packet["outcome"]
+        return build_next_action(
+            action_type="close_goal",
+            command=(
+                f"pcl goal close {goal['id']} --summary 'Summarize completed goal' "
+                f"--evidence-id {packet['evidence_id']}"
+            ),
+            reason=(
+                "The newest exact-goal completion packet is healthy, completed, "
+                "low-risk, and current; close the direct-route Goal with that proof."
+            ),
+            target=target,
+            priority=50,
+            blocking=False,
+            requires_human=False,
+            safe_to_run=True,
+            expected_after=(
+                "The direct-route Goal is closed with the exact completed packet Evidence."
+            ),
+        )
     configuration = finish_check_configuration(paths.root)
     target["finish_checks"] = configuration
     if not configuration["configured"]:
@@ -886,6 +915,56 @@ def _terminal_direct_goal_next_action(
         safe_to_run=True,
         expected_after="Configured checks run and a goal-bound completion packet records the result.",
     )
+
+
+def _latest_reusable_goal_completion_packet(
+    paths: ProjectPaths,
+    *,
+    goal_id: str,
+) -> dict[str, str] | None:
+    conn = connect(paths.db_path)
+    try:
+        row = conn.execute(
+            """
+            SELECT evidence.id
+            FROM evidence_links
+            JOIN evidence ON evidence.id = evidence_links.evidence_id
+            WHERE evidence.type = 'completion_packet'
+              AND evidence_links.target_type = 'goal'
+              AND evidence_links.target_id = ?
+              AND evidence_links.link_role = 'completion_packet'
+            ORDER BY evidence.created_at DESC, evidence.id DESC
+            LIMIT 1
+            """,
+            (goal_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        evidence_id = str(row["id"])
+        try:
+            proof = require_completed_goal_packet(
+                paths,
+                conn,
+                goal_id=goal_id,
+                evidence_id=evidence_id,
+            )
+        except EvidenceAddError:
+            return None
+    finally:
+        conn.close()
+    try:
+        repository = capture_finish_repository_snapshot(paths)[
+            "packet_repository"
+        ]
+    except InvalidInputError:
+        return None
+    packet = proof["packet"]
+    if not isinstance(packet, dict) or packet.get("repository") != repository:
+        return None
+    return {
+        "evidence_id": evidence_id,
+        "outcome": str(proof["outcome"]),
+    }
 
 
 
