@@ -23,7 +23,7 @@
 | P0-2 result and stability contract | implemented | `92346bb`, `E-0599`〜`E-0601`, `docs/evidence/0215-finish-result-stability-validation.md` |
 | P0-3 shared terminal readiness | implemented | `f946277`, `63457ec`, `E-0602`, `docs/evidence/0216-shared-terminal-readiness-validation.md` |
 | P0-4 start and router targeting | implemented | `3c6c019`, `E-0604`, `docs/evidence/0217-target-attach-routing-validation.md` |
-| P0-5a scoped audit | in progress | `G-0068`, `T-0145`, `F-0074`, `US-0072`, `TC-0155`〜`TC-0158` |
+| P0-5a scoped audit | implemented | `6794ce9`, `E-0606`, `docs/evidence/0218-scoped-audit-validation.md` |
 | P0-5b check reuse 以降 | planned | P0-5a の scoped output contract 後に継続 |
 
 ## 1. 成功条件
@@ -356,3 +356,13 @@ P0 全体の release gate:
 | `finish --emit-packet --dry-run --task T-0144` は同じTask/Goal bindingと既存`terminal-readiness/v1`を返した | `F2`, `F4`, P0-4 | 修正確認。finish独自のterminal判定は追加していない |
 | 同finish dry-runは無関係なlocal agent stateを含む261件の`changes`を返した | `F7`, P0-5 | 再現継続。summary / pagination / machine-state exclusionをP0-5で扱う |
 | 既に`in_progress`の同じTaskへ`start --task`を再実行すると、新しいstart receipt / eventを追加できる | `F8`, P0-5 | attach retry用idempotency keyまたは既存receipt再利用契約を検討 |
+
+### 2026-07-28: P0-5a 実装 dogfood
+
+| 観測 | 対応先 | 状態 |
+| --- | --- | --- |
+| `audit check --target T-0145 --since EV-F70052078EA9 --summary` は全体77件をscanし、対象0件 / excluded 77件をcompactに返した | `F7`, P0-5a | 修正確認。明示targetとprovenance anchorを保持 |
+| flag未指定のauditは従来6-key `audit-check/v1` shapeとexit 6を維持した | `F7`, P0-5a | 後方互換確認 |
+| `--target T-9999` は `audit_target_not_found` / exit 2で停止した | `F7`, P0-5a | fail-closed確認。別target/rootを推測しない |
+| scoped auditは全scan後にfilterするため、出力量は減るがscan costは減らない | `F7`, P0-5b / scale | compatible immutable result reuseまで残存 |
+| `--since` はEvidence / event作成anchorであり、mutable source driftの発生時刻は推測しない | `F7`, P0-5b | true before/after deltaは保存済みresult比較で実装する |
