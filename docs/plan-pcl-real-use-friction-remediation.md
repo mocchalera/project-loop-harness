@@ -337,6 +337,7 @@ P0 全体の release gate:
 | 正常な耐久コピーEvidence追加後にaudit異常数が220→223へ増えたが、target / since / delta scopeがなく原因切り分けが難しかった | `F7`, P0-5 | `audit check --target --since --summary`と「今回mutationが増やしたfinding」の差分表示を受け入れ条件へ追加する |
 | integration worktreeのPCL照会は`not_initialized`で停止し、canonical checkoutへ手動で戻って状態確認した | `F10`, P0-6 | canonical DBを増殖させず、worktree実行からcanonical state rootとexecution rootをtyped bindingする |
 | 最新reportは旧SHA `c5ef0ba9` のaccepted結果を補強証拠として分離し、最終SHA `d9eab21f` のreview task `7242f774` と全緑CI `30291783362` を正式根拠として明記した | `F10`, P0-6 | exact SHA / review task / CI runをtyped execution bindingへ保持する必要性を再確認。監視側からadopter stateは変更していない |
+| `81812d6f` は `completed / latestSeq 13` 確認後、同じIDの incremental wait が「タスクが見つかりません」へ変わった | `F10`, P0-6 / Cockpit retention | 完了タスクがcontrol planeから消えても、PCL側progress receiptにtask ID、last sequence、terminal report ref、確認時刻を保持し、監視再開時に「新規reportなし」と「履歴消失」を区別する |
 
 ### 2026-07-28: P0-3 実装 dogfood
 
