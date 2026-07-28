@@ -309,6 +309,9 @@ guide を次の権限面に分離する。
 
 P0 の Evidence-first 実装を壊さず、次を別判断で行う。
 
+- 先行sliceの計画:
+  [finish progress visibility and compact actual output](plan-p1-finish-progress-compact-output.md)
+  （2026-07-28、計画のみ。Story意味承認と実装承認は未実施）
 - OS sandbox / filesystem overlay / network policy backend
 - `completion-packet/v2` と incomplete attempt の正規 contract
 - runner ごとの structured reporter
@@ -451,3 +454,9 @@ P0 全体の release gate:
 | `task status ... done`はlinked Testsがplannedのreadiness違反でも成功し、後から`in_progress`へ戻す必要があった | `F2`, P0-3 follow-up | 未修正。manual terminal mutationもshared terminal-readinessを強制し、overrideは人間判断付き別契約にする |
 | `pcl goal read`と`pcl status`は存在せずparser errorになり、近接entity間でread surfaceが非対称だった | `F9`, P0-7 / read UX | 未修正。guideには実在する`next --target`をexact recoveryとして載せ、将来のread surface整合化候補に保持 |
 | write-onceでない計画文書を`evidence add`した後に更新すると`E-0628`がactive hash mismatchとなった | `F9`, Evidence UX | 運用修正。terminal proofは`--copy`したimmutable artifactを使用。mutable plan snapshot用のsupersede guidanceを改善候補に保持 |
+
+### 2026-07-28: P1開始方針
+
+| 観測 | 対応先 | 状態 |
+| --- | --- | --- |
+| 人間はP1全体実装ではなく、長時間`finish`の進捗表示と実結果のcompact出力についてStory・Test・実装計画を先行する方針を選択した | `FA`, `F7`, P1先行slice | `G-0073 / T-0151 / F-0080`へ計画を保存。DB migration、依存追加、実装、Cockpit自動ingestは未着手 |
