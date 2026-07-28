@@ -367,3 +367,4 @@ P0 全体の release gate:
 | `--target T-9999` は `audit_target_not_found` / exit 2で停止した | `F7`, P0-5a | fail-closed確認。別target/rootを推測しない |
 | scoped auditは全scan後にfilterするため、出力量は減るがscan costは減らない | `F7`, P0-5b / scale | compatible immutable result reuseまで残存 |
 | `--since` はEvidence / event作成anchorであり、mutable source driftの発生時刻は推測しない | `F7`, P0-5b | true before/after deltaは保存済みresult比較で実装する |
+| `pcl start` 後に追加した `F-0074` を既存 `T-0145` へ結ぶ公開コマンドがなく、`related_feature_id=null` のためTask readiness / nextへStory・Test状態が接続されない | `F5`, P0-3 follow-up / P0-7 | `task relate --feature` または `feature add --task` のpreviewable・audited・fail-closed契約を追加し、既存関係の上書きは拒否する |
