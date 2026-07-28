@@ -24,7 +24,8 @@
 | P0-3 shared terminal readiness | implemented | `f946277`, `63457ec`, `E-0602`, `docs/evidence/0216-shared-terminal-readiness-validation.md` |
 | P0-4 start and router targeting | implemented | `3c6c019`, `E-0604`, `docs/evidence/0217-target-attach-routing-validation.md` |
 | P0-5a scoped audit | implemented | `6794ce9`, `E-0606`, `docs/evidence/0218-scoped-audit-validation.md` |
-| P0-5b check reuse 以降 | planned | P0-5a の scoped output contract 後に継続 |
+| P0-5b immutable check reuse | implemented | `230a454`, `E-0609`, `docs/evidence/0219-immutable-finish-check-reuse-validation.md` |
+| P0-5c 以降 | planned | P0-5b の immutable result contract 後に継続 |
 
 ## 1. 成功条件
 
