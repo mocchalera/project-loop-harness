@@ -62,6 +62,12 @@ def add_planning_parsers(sub) -> None:
         help="Maximum retained stdout and stderr bytes per check stream",
     )
     p_finish.add_argument(
+        "--progress",
+        choices=["text", "jsonl"],
+        default=None,
+        help="With actual packet emission, write bounded live progress to stderr",
+    )
+    p_finish.add_argument(
         "--summary",
         action="store_true",
         help="With packet emission, return compact counts and proof anchors",

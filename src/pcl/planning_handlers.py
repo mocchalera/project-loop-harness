@@ -13,6 +13,7 @@ from .finish_output import (
     project_finish_result_output,
     validate_finish_output_flags,
 )
+from .finish_progress import FinishProgressSink
 from .kpi_report import report_kpi
 from .paths import ProjectPaths
 from .presentation import format_finish_summary, format_next_explanation, to_pretty_json
@@ -80,6 +81,11 @@ def handle_planning_command(
         return 0
 
     if args.command == "finish":
+        if args.progress is not None and args.dry_run:
+            raise InvalidInputError(
+                "--progress is available only for actual finish packet execution.",
+                details={"field": "progress"},
+            )
         output_projection = validate_finish_output_flags(
             dry_run=args.dry_run,
             summary=args.summary,
@@ -94,6 +100,7 @@ def handle_planning_command(
                 args.base,
                 args.timeout != 120,
                 args.max_output_bytes != 1_048_576,
+                args.progress is not None,
                 output_projection,
             ]
         )
@@ -103,7 +110,8 @@ def handle_planning_command(
             )
         if packet_only_flags and not args.emit_packet:
             raise InvalidInputError(
-                "--dry-run, --task, --base, --timeout, and --max-output-bytes require --emit-packet."
+                "--dry-run, --task, --base, --timeout, --max-output-bytes, "
+                "--progress, and output projection flags require --emit-packet."
             )
         if args.emit_packet:
             if args.dry_run:
@@ -124,6 +132,11 @@ def handle_planning_command(
                     )
                 packet_payload["exit_code"] = 0
             else:
+                progress_sink = (
+                    FinishProgressSink(args.progress, output=sys.stderr)
+                    if args.progress is not None
+                    else None
+                )
                 packet_payload = emit_finish_packet(
                     paths,
                     run_id=args.run,
@@ -132,7 +145,15 @@ def handle_planning_command(
                     base_revision=args.base,
                     timeout_seconds=args.timeout,
                     max_output_bytes=args.max_output_bytes,
+                    progress_callback=(
+                        progress_sink.emit if progress_sink is not None else None
+                    ),
                 )
+                if progress_sink is not None:
+                    packet_payload = {
+                        **packet_payload,
+                        "progress_delivery": progress_sink.summary(),
+                    }
                 if output_projection:
                     packet_payload = project_finish_result_output(
                         packet_payload,

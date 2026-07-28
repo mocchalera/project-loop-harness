@@ -35,6 +35,18 @@ def _json_output(capsys) -> dict:
     return json.loads(captured.out)
 
 
+def _nested_keys(value: object) -> set[str]:
+    if isinstance(value, dict):
+        return set(value) | {
+            key
+            for item in value.values()
+            for key in _nested_keys(item)
+        }
+    if isinstance(value, list):
+        return {key for item in value for key in _nested_keys(item)}
+    return set()
+
+
 def _create_run(root: Path, capsys) -> None:
     assert main(["init", "--target", str(root)]) == 0
     assert main(["--root", str(root), "goal", "create", "--title", "Coverage"]) == 0
@@ -822,6 +834,110 @@ def test_finish_actual_summary_bounds_large_nested_sections() -> None:
     assert len(json.dumps(projected, ensure_ascii=False).encode("utf-8")) <= 16_384
 
 
+def test_finish_progress_jsonl_preserves_stdout_and_state_semantics(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    quiet_root = tmp_path / "quiet"
+    progress_root = tmp_path / "progress"
+    _create_packet_project(quiet_root, capsys)
+    _create_packet_project(progress_root, capsys)
+
+    assert main([
+        "--root", str(quiet_root), "finish", "--emit-packet",
+        "--task", "T-0001", "--summary", "--json",
+    ]) == 0
+    quiet_capture = capsys.readouterr()
+    quiet = json.loads(quiet_capture.out)["finish"]
+    assert quiet_capture.err == ""
+    assert "progress_delivery" not in quiet
+    quiet_counts = _state_counts(quiet_root)
+
+    assert main([
+        "--root", str(progress_root), "finish", "--emit-packet",
+        "--task", "T-0001", "--progress", "jsonl",
+        "--summary", "--json",
+    ]) == 0
+    progress_capture = capsys.readouterr()
+    progress_payload = json.loads(progress_capture.out)
+    progress = progress_payload["finish"]
+    records = [
+        json.loads(line)
+        for line in progress_capture.err.splitlines()
+        if line.strip()
+    ]
+
+    assert progress_payload["ok"] is True
+    assert _state_counts(progress_root) == quiet_counts
+    assert progress["packet"]["outcome"] == quiet["packet"]["outcome"]
+    assert progress["target_transition"] == quiet["target_transition"]
+    assert progress["progress_delivery"] == {
+        "contract_version": "finish-progress-delivery/v1",
+        "format": "jsonl",
+        "status": "complete",
+        "emitted_count": len(records),
+        "dropped_count": 0,
+    }
+    assert [record["sequence"] for record in records] == list(
+        range(1, len(records) + 1)
+    )
+    assert records[0]["event"] == "finish_started"
+    assert records[-1]["event"] == "finish_finished"
+    assert records[-1]["status"] == "completed"
+    assert any(record["event"] == "check_started" for record in records)
+    assert any(record["event"] == "check_finished" for record in records)
+    assert {
+        record["target_binding"]["target_id"]
+        for record in records
+    } == {"T-0001"}
+    progress_keys = _nested_keys(records)
+    for forbidden in ("argv", "command", "stdout", "stderr", "environment"):
+        assert forbidden not in progress_keys
+
+
+def test_finish_progress_reports_incomplete_terminal_for_failed_check(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_packet_project(tmp_path, capsys, failing=True)
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet",
+        "--task", "T-0001", "--progress", "jsonl", "--summary", "--json",
+    ]) == 1
+    captured = capsys.readouterr()
+    finish = json.loads(captured.out)["finish"]
+    records = [json.loads(line) for line in captured.err.splitlines()]
+
+    assert finish["packet"]["outcome"] == "INCOMPLETE_VALIDATION"
+    check_finished = [
+        record for record in records if record["event"] == "check_finished"
+    ]
+    assert len(check_finished) == 1
+    assert check_finished[0]["status"] == "failed"
+    assert records[-1]["event"] == "finish_finished"
+    assert records[-1]["status"] == "incomplete"
+    assert records[-1]["outcome"] == "INCOMPLETE_VALIDATION"
+
+
+def test_finish_progress_flags_fail_closed_before_mutation(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    before = _state_counts(tmp_path)
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet", "--dry-run",
+        "--task", "T-0001", "--progress", "jsonl", "--json",
+    ]) == 2
+    payload = _json_output(capsys)
+
+    assert payload["error"]["code"] == "invalid_input"
+    assert payload["error"]["details"]["field"] == "progress"
+    assert _state_counts(tmp_path) == before
+
+
 def test_finish_emit_packet_success_and_idempotent_rerun(tmp_path: Path, capsys) -> None:
     _create_packet_project(tmp_path, capsys)
 
@@ -1209,10 +1325,20 @@ def test_finish_timeout_exposes_bounded_retry_and_next_preserves_it(
     )
 
     assert main([
-        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001", "--json",
+        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001",
+        "--progress", "jsonl", "--json",
     ]) == 1
-    finish = _finish_payload(capsys)
+    captured = capsys.readouterr()
+    finish = json.loads(captured.out)["finish"]
+    progress = [json.loads(line) for line in captured.err.splitlines()]
     expected = "pcl finish --emit-packet --task T-0001 --timeout 600 --json"
+    assert [
+        record["status"]
+        for record in progress
+        if record["event"] == "check_finished"
+    ] == ["timed_out"]
+    assert progress[-1]["event"] == "finish_finished"
+    assert progress[-1]["status"] == "timed_out"
     assert finish["checks"][0]["status"] == "timed_out"
     assert finish["checks"][0]["runner_result"]["status"] == "timed_out"
     assert finish["checks"][0]["assertion_result"]["status"] == "not_evaluated"

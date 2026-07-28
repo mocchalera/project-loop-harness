@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 import hashlib
 import json
 from pathlib import Path
@@ -26,6 +27,7 @@ from .errors import DataStoreError, FinishChecksNotConfiguredError, InvalidInput
 from .events import append_event
 from .evidence import insert_evidence_link, linked_task_provenance
 from .finish_recovery import MAX_FINISH_TIMEOUT_SECONDS, finish_timeout_recovery
+from .finish_progress import FinishProgressReporter
 from .finish_workspace import isolated_finish_workspace
 from .guarded_process import DEFAULT_MAX_OUTPUT_BYTES
 from .guards import require_initialized
@@ -173,6 +175,7 @@ def emit_finish_packet(
     base_revision: str | None = None,
     timeout_seconds: int = 120,
     max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     if timeout_seconds < 1:
         raise InvalidInputError("--timeout must be at least 1 second.")
@@ -203,6 +206,20 @@ def emit_finish_packet(
         base_revision=base_revision,
     )
     target = plan["target"]
+    progress_reporter = (
+        FinishProgressReporter(
+            progress_callback,
+            target_binding=_progress_target_binding(plan, target),
+        )
+        if progress_callback is not None
+        else None
+    )
+    if progress_reporter is not None:
+        progress_reporter.emit(
+            event="finish_started",
+            phase="planning",
+            status="completed",
+        )
     existing = _matching_completion_packet(paths, target=target, repository=plan["repository"])
     if (
         existing is not None
@@ -219,7 +236,7 @@ def emit_finish_packet(
                     "details": {"outcome": existing["outcome"]},
                 }
             )
-        return {
+        result = {
             **plan,
             "dry_run": False,
             "changed": False,
@@ -233,6 +250,13 @@ def emit_finish_packet(
             "checks": [],
             "exit_code": 0,
         }
+        if progress_reporter is not None:
+            progress_reporter.finish(
+                status="completed",
+                outcome=str(existing["outcome"]),
+                exit_code=0,
+            )
+        return result
 
     commands = _coalesce_finish_checks(plan_guarded_project_checks(paths))
     if not commands:
@@ -252,6 +276,8 @@ def emit_finish_packet(
 
     stage_dir = _stage_check_dir(paths)
     try:
+        if progress_reporter is not None:
+            progress_reporter.phase_started("workspace_preparation")
         with isolated_finish_workspace(
             paths.root,
             input_manifest=input_manifest,
@@ -278,20 +304,48 @@ def emit_finish_packet(
                     "Canonical verification inputs changed while the isolated workspace was prepared.",
                     details={"materialization_effect": materialization},
                 )
+            if progress_reporter is not None:
+                progress_reporter.phase_finished("workspace_preparation")
             finish_policy = _finish_check_policy(
                 commands,
                 timeout_seconds=timeout_seconds,
                 max_output_bytes=max_output_bytes,
             )
-            for command in commands:
-                execute_planned_guarded_command(
-                    paths,
-                    command,
-                    run_dir=stage_dir,
-                    timeout_seconds=timeout_seconds,
-                    max_output_bytes=max_output_bytes,
-                    execution_root=workspace["root"],
+            if progress_reporter is not None:
+                progress_reporter.phase_started("checks")
+            for index, command in enumerate(commands, start=1):
+                heartbeat = (
+                    progress_reporter.start_check(
+                        index=index,
+                        count=len(commands),
+                        config_key=f"project.commands.{command['config_key']}",
+                    )
+                    if progress_reporter is not None
+                    else None
                 )
+                try:
+                    execute_planned_guarded_command(
+                        paths,
+                        command,
+                        run_dir=stage_dir,
+                        timeout_seconds=timeout_seconds,
+                        max_output_bytes=max_output_bytes,
+                        execution_root=workspace["root"],
+                    )
+                except Exception:
+                    if progress_reporter is not None and heartbeat is not None:
+                        progress_reporter.finish_check(
+                            heartbeat,
+                            status="failed",
+                            exit_code=None,
+                        )
+                    raise
+                if progress_reporter is not None and heartbeat is not None:
+                    progress_reporter.finish_check(
+                        heartbeat,
+                        status=_progress_check_status(command),
+                        exit_code=command.get("exit_code"),
+                    )
                 _attach_finish_check_contracts(
                     command,
                     paths=paths,
@@ -301,6 +355,8 @@ def emit_finish_packet(
                     timeout_seconds=timeout_seconds,
                     max_output_bytes=max_output_bytes,
                 )
+            if progress_reporter is not None:
+                progress_reporter.phase_finished("checks")
             workspace_after = collect_verification_input_manifest(
                 workspace["root"],
                 declared_output_patterns=FINISH_DECLARED_OUTPUT_PATTERNS,
@@ -316,8 +372,13 @@ def emit_finish_packet(
                 "input_after": _manifest_summary(workspace_after),
                 "effect": effect,
             }
+        if progress_reporter is not None:
+            progress_reporter.phase_started("repository_snapshot")
         after = _repository_snapshot(paths, base_revision=plan["repository"]["base_revision"])
         race_detected = _snapshot_identity(plan) != _snapshot_identity(after)
+        if progress_reporter is not None:
+            progress_reporter.phase_finished("repository_snapshot")
+            progress_reporter.phase_started("strict_validation")
         strict = validate_project(paths, strict=True)
         blockers = _target_blockers(paths, target)
         target_readiness = blockers.get("target_readiness")
@@ -354,7 +415,11 @@ def emit_finish_packet(
             stability_mode=plan["execution_plan"]["stability_policy"]["mode"],
             additional_requirements=effect_requirements,
         )
+        if progress_reporter is not None:
+            progress_reporter.phase_finished("strict_validation")
         if effect["classification"] in {"mutates_inputs", "unknown"}:
+            if progress_reporter is not None:
+                progress_reporter.phase_started("evidence_commit")
             committed_attempt = _commit_finish_attempt(
                 paths,
                 target=target,
@@ -369,6 +434,8 @@ def emit_finish_packet(
                 strict_warnings=list(strict.warnings),
                 race_detected=race_detected,
             )
+            if progress_reporter is not None:
+                progress_reporter.phase_finished("evidence_commit")
             result = {
                 **plan,
                 "dry_run": False,
@@ -401,12 +468,20 @@ def emit_finish_packet(
             )
             if recovery is not None:
                 result["timeout_recovery"] = recovery
+            if progress_reporter is not None:
+                progress_reporter.finish(
+                    status=_progress_terminal_status(result),
+                    outcome=str(committed_attempt["attempt"]["outcome"]),
+                    exit_code=1,
+                )
             return result
         outcome = _completion_outcome(
             changes=after["changes"],
             blockers=blockers,
             terminal_readiness=terminal_readiness,
         )
+        if progress_reporter is not None:
+            progress_reporter.phase_started("evidence_commit")
         committed = _commit_completion_packet(
             paths,
             target=target,
@@ -420,6 +495,16 @@ def emit_finish_packet(
             outcome=outcome,
             timeout_seconds=timeout_seconds,
         )
+        if progress_reporter is not None:
+            progress_reporter.phase_finished("evidence_commit")
+    except Exception:
+        if progress_reporter is not None:
+            progress_reporter.finish(
+                status="failed",
+                outcome=None,
+                exit_code=1,
+            )
+        raise
     finally:
         if stage_dir.exists():
             shutil.rmtree(stage_dir, ignore_errors=True)
@@ -451,7 +536,57 @@ def emit_finish_packet(
     )
     if recovery is not None:
         result["timeout_recovery"] = recovery
+    if progress_reporter is not None:
+        progress_reporter.finish(
+            status=_progress_terminal_status(result),
+            outcome=str(committed["packet"]["outcome"]),
+            exit_code=int(result["exit_code"]),
+        )
     return result
+
+
+def _progress_target_binding(
+    plan: dict[str, Any],
+    target: dict[str, Any],
+) -> dict[str, str]:
+    binding = plan.get("target_binding")
+    if isinstance(binding, dict):
+        return {
+            "target_type": str(binding["target_type"]),
+            "target_id": str(binding["target_id"]),
+            "source": str(binding["source"]),
+        }
+    return {
+        "target_type": str(target["type"]),
+        "target_id": str(target["id"]),
+        "source": "resolved",
+    }
+
+
+def _progress_check_status(command: dict[str, Any]) -> str:
+    if bool(command.get("timed_out")):
+        return "timed_out"
+    return "completed" if command.get("status") == "passed" else "failed"
+
+
+def _progress_terminal_status(result: dict[str, Any]) -> str:
+    checks = result.get("checks")
+    if isinstance(checks, list) and any(
+        isinstance(check, dict) and check.get("status") == "timed_out"
+        for check in checks
+    ):
+        return "timed_out"
+    reference = result.get("packet") or result.get("attempt")
+    outcome = (
+        str(reference.get("outcome") or "")
+        if isinstance(reference, dict)
+        else ""
+    )
+    if outcome in {"COMPLETED_VERIFIED", "COMPLETED_WITH_RISK"}:
+        return "completed"
+    if outcome.startswith("INCOMPLETE") or outcome == "NO_CHANGES":
+        return "incomplete"
+    return "completed" if int(result.get("exit_code") or 0) == 0 else "failed"
 
 
 def _resolve_target(
