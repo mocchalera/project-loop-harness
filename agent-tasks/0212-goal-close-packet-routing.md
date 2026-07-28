@@ -1,6 +1,6 @@
 # 0212: Goal completion-packet close routing
 
-- **Status:** Planned; Story approval and implementation authorization pending
+- **Status:** Completed and real-project verified
 - **Milestone:** P1 real-use friction follow-up
 - **Priority:** P1
 - **Size:** S
@@ -183,3 +183,33 @@ Stop and request a new human decision before:
 Planning completion means this file, draft Stories, planned Tests, PCL
 validation/render, and immutable plan Evidence exist. Implementation starts
 only after a human explicitly approves `US-0084`, `US-0085`, and this plan.
+
+## Implementation milestone
+
+- Human approval: Cockpit Ask `ask_8fbed60d3193`
+- Implementation commit: `5ba0b1b`
+- GREEN Evidence: `E-0675`
+- Targeted verification: `53 passed`
+- Full verification: `1268 passed, 1 skipped`
+- Ruff: passed
+- Schema/dependencies: unchanged
+
+The implementation shares both Goal completion-packet eligibility and finish
+repository snapshot logic with the existing lifecycle/finish paths. The public
+regression covers latest-only routing, unhealthy and high-risk rejection,
+repository drift, timeout precedence, no-packet compatibility, typed help, the
+recommended close command, and terminal explicit-target routing.
+
+## Real-project dogfood
+
+- Pre-packet route: `emit_completion_packet` for explicit `G-0074`
+- Completion packet: `E-0678`, `COMPLETED_WITH_RISK`
+- Checks: Ruff and full pytest passed
+- Progress: 29 JSONL events, 0 dropped, 30-second heartbeats
+- Compact result size: 7,661 bytes
+- Post-packet route: agent-safe `close_goal` with exact `E-0678`
+- Read-only proof: DB and event checksums unchanged across both `next` calls
+- Close result: `G-0074` closed with completion-packet proof
+- Terminal route: `target_terminal` for explicit `G-0074`
+- Dogfood Evidence bundle: `E-0679`
+- Final validate/render Evidence: `E-0680`
