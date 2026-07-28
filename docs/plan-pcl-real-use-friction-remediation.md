@@ -28,7 +28,7 @@
 | P0-5c output / retry friction | implemented | `1b45260`, `E-0611`〜`E-0613`, `docs/evidence/0220-finish-output-start-retry-validation.md` |
 | P0-6 execution binding / progress receipt | implemented | `G-0071`, `T-0148`, `F-0077`, `E-0616`〜`E-0618`, `docs/evidence/0221-execution-binding-progress-receipt-validation.md` |
 | P0-6d finish timeout / recovery dogfood repair | implemented | `T-0149`, `F-0078`, `US-0078`〜`US-0079`, `TC-0174`〜`TC-0178` |
-| P0-7 以降 | planned | P0-6 の target-bound progress orientation 後に継続 |
+| P0-7 operator contract | implemented | `G-0072`, `T-0150`, `F-0079`, `US-0080`〜`US-0081`, `TC-0179`〜`TC-0183` |
 
 ## 1. 成功条件
 
@@ -284,6 +284,27 @@ guide を次の権限面に分離する。
 
 各 terminal command に prerequisites、必要 Evidence、human semantic decision、失敗時の exact recovery を記載する。
 
+実装契約（2026-07-28）:
+
+- 既存 `command-guide/v1` のkeyとcommand templateを削除・変更せず、
+  authority / semantic decision / recovery情報をadditiveに保持する。
+- authority classは `read_only`、`pcl_local_state`、`repository_write`、
+  `external_write`、`terminal_transition` の5種類とする。
+- `mutates_state=false` は「副作用なし」を意味しない。`init` と `render` は
+  repository artifactを書くため `repository_write` と表示する。
+- terminal transitionはprerequisites、healthy Evidence要否、人間の意味判断
+  要否とreceipt、parser-validなread-only recovery commandを持つ。
+- local guideはexternal / production writeを実行候補に含めず、人間承認が
+  authorityを持つhost actionと同一ではないことを明記する。
+
+停止条件:
+
+- 新しい外部実行、権限昇格、telemetry、dependency、DB migrationを追加しない。
+- 既存guide commandを暗黙にstate-changingへ変えず、JSON field削除やrenameをしない。
+- Story意味承認、healthy Evidence、target bindingをagentが推測する契約にしない。
+- commandごとの副作用をruntime enforcementしたと過大主張せず、P0-7は
+  operator orientation contractとして完結させる。
+
 ## 5. P1
 
 P0 の Evidence-first 実装を壊さず、次を別判断で行う。
@@ -417,3 +438,16 @@ P0 全体の release gate:
 | scoped auditは全scan後にfilterするため、出力量は減るがscan costは減らない | `F7`, P0-5b / scale | compatible immutable result reuseまで残存 |
 | `--since` はEvidence / event作成anchorであり、mutable source driftの発生時刻は推測しない | `F7`, P0-5b | true before/after deltaは保存済みresult比較で実装する |
 | `pcl start` 後に追加した `F-0074` を既存 `T-0145` へ結ぶ公開コマンドがなく、`related_feature_id=null` のためTask readiness / nextへStory・Test状態が接続されない | `F5`, P0-3 follow-up / P0-7 | `task relate --feature` または `feature add --task` のpreviewable・audited・fail-closed契約を追加し、既存関係の上書きは拒否する |
+
+### 2026-07-28: P0-6 / P0-7 実装 dogfood
+
+| 観測 | 対応先 | 状態 |
+| --- | --- | --- |
+| 通常の全体pytestは829〜982秒で成功するが、旧finish recoveryは120秒から600秒への1回だけでretry不能になった | P0-6d | 修正済み。finish専用1200秒上限と600→1200 recoveryを追加 |
+| 明示対象付き`next`が最新timeout packetより一般Goal継続を優先した | P0-6d | 修正済み。target exact packetだけを先に解決し、terminal timeoutは診断へfail closed |
+| 実`finish`では`--summary` / `--exclude-machine-state`が拒否され、48k token超の単一行JSONになった | `F7`, P1 output projection | 未修正。dry-run限定projectionを実行結果にも適用し、Evidence ID / outcome / checks / transitionをcompact表示する |
+| 約10分の実`finish`中、check名・現在段階・経過receiptが一切返らなかった | `FA`, P1 live progress | 未修正。state mutationと分離したbounded progress streamまたはpollable attempt receiptが必要 |
+| Test terminal transitionはraw `completion_check` / `completion_packet`を拒否しadhoc bundleを要求する一方、Goal closeは同bundleを拒否してpacketを要求した | `F9`, P0-7 / Evidence UX | operator contractで型要件を明示。将来はエラーdetailsにaccepted Evidence typeとexact wrapping commandを返す |
+| `task status ... done`はlinked Testsがplannedのreadiness違反でも成功し、後から`in_progress`へ戻す必要があった | `F2`, P0-3 follow-up | 未修正。manual terminal mutationもshared terminal-readinessを強制し、overrideは人間判断付き別契約にする |
+| `pcl goal read`と`pcl status`は存在せずparser errorになり、近接entity間でread surfaceが非対称だった | `F9`, P0-7 / read UX | 未修正。guideには実在する`next --target`をexact recoveryとして載せ、将来のread surface整合化候補に保持 |
+| write-onceでない計画文書を`evidence add`した後に更新すると`E-0628`がactive hash mismatchとなった | `F9`, Evidence UX | 運用修正。terminal proofは`--copy`したimmutable artifactを使用。mutable plan snapshot用のsupersede guidanceを改善候補に保持 |

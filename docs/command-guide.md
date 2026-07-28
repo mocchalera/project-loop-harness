@@ -18,11 +18,24 @@ The supported topics are:
 - `dashboard`: validate, render, and prepare human review orientation;
 - `recover`: diagnose a stopped or resumed loop with read-only context.
 
-The `command-guide/v1` JSON contract returns ordered command templates. Each
-step states whether it mutates project state, whether a human decision is
-required, which placeholders must be supplied, and what should be true after
-the command. `human_required` does not authorize an agent to approve on a
-human's behalf.
+The `command-guide/v1` JSON contract returns ordered command templates. Existing
+keys and command templates remain stable. Additive operator-contract fields
+make the authority boundary explicit:
+
+- `authority_class` separates `read_only`, `pcl_local_state`,
+  `repository_write`, `external_write`, and `terminal_transition`;
+- `human_decision_required` and `human_decision_basis` distinguish a semantic
+  approval receipt from ordinary execution authority;
+- `evidence_requirement` states when healthy Evidence is a terminal
+  prerequisite;
+- `failure_recovery` supplies an exact read-only command instead of repeating a
+  failed terminal mutation.
+
+`human_required` and `human_decision_required` do not authorize an agent to
+approve on a human's behalf. Healthy Evidence also does not manufacture a
+semantic decision. The local guide contains no external or production write
+command, and its classification is orientation rather than an OS sandbox or
+runtime permission grant.
 
 The guide is available before `pcl init` and does not create `.project-loop`.
 It complements `pcl next --json`: use `guide` to learn a purpose-oriented route

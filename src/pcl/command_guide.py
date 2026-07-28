@@ -7,6 +7,33 @@ from .errors import InvalidInputError
 
 COMMAND_GUIDE_CONTRACT_VERSION = "command-guide/v1"
 COMMAND_GUIDE_TOPICS = ("start", "direct", "finish", "dashboard", "recover")
+COMMAND_GUIDE_AUTHORITY_CLASSES = (
+    {
+        "id": "read_only",
+        "description": "Inspects machine state without writing project or PCL artifacts.",
+        "human_authority_required": False,
+    },
+    {
+        "id": "pcl_local_state",
+        "description": "Writes only project-local PCL state or Evidence through a PCL command.",
+        "human_authority_required": False,
+    },
+    {
+        "id": "repository_write",
+        "description": "Creates or updates repository files or generated review artifacts.",
+        "human_authority_required": True,
+    },
+    {
+        "id": "external_write",
+        "description": "Changes an external or production system; the local guide never grants it.",
+        "human_authority_required": True,
+    },
+    {
+        "id": "terminal_transition",
+        "description": "Moves a lifecycle entity to a terminal state after its gates are satisfied.",
+        "human_authority_required": False,
+    },
+)
 
 
 def command_guide(topic: str | None = None) -> dict[str, Any]:
@@ -22,6 +49,7 @@ def command_guide(topic: str | None = None) -> dict[str, Any]:
         "ok": True,
         "contract_version": COMMAND_GUIDE_CONTRACT_VERSION,
         "requested_topic": topic,
+        "authority_classes": [dict(item) for item in COMMAND_GUIDE_AUTHORITY_CLASSES],
         "topics": topics,
     }
 
@@ -32,12 +60,22 @@ def render_command_guide(payload: dict[str, Any]) -> str:
     for topic in payload["topics"]:
         lines.extend(["", f"{topic['topic']}: {topic['purpose']}"])
         for step in topic["steps"]:
-            state = "writes state" if step["mutates_state"] else "read only"
+            state = (
+                "mutates PCL domain state"
+                if step["mutates_state"]
+                else "PCL domain state unchanged"
+            )
             lines.append(
                 f"  {step['order']}. {step['command']} "
-                f"[{step['run_policy']}; {state}]"
+                f"[{step['run_policy']}; {step['authority_class']}; {state}]"
             )
             lines.append(f"     {step['expected_after']}")
+            if step["human_decision_required"]:
+                lines.append(f"     Human decision: {step['human_decision_basis']}")
+            if step["evidence_requirement"]:
+                lines.append(f"     Evidence: {step['evidence_requirement']}")
+            if step["failure_recovery"]:
+                lines.append(f"     On failure: {step['failure_recovery']}")
     return "\n".join(lines) + "\n"
 
 
@@ -50,6 +88,8 @@ def _step(
     purpose: str,
     expected_after: str,
 ) -> dict[str, Any]:
+    authority_class = _authority_class(command, mutates_state=mutates_state)
+    human_decision_required = command.startswith("pcl story approve ")
     return {
         "command": command,
         "mutates_state": mutates_state,
@@ -57,7 +97,79 @@ def _step(
         "requires": requires,
         "purpose": purpose,
         "expected_after": expected_after,
+        "authority_class": authority_class,
+        "human_decision_required": human_decision_required,
+        "human_decision_basis": _human_decision_basis(
+            command,
+            authority_class=authority_class,
+        ),
+        "evidence_requirement": _evidence_requirement(
+            command,
+            authority_class=authority_class,
+        ),
+        "failure_recovery": _failure_recovery(
+            command,
+            authority_class=authority_class,
+        ),
     }
+
+
+def _authority_class(command: str, *, mutates_state: bool) -> str:
+    if command in {"pcl init --json", "pcl render --json"}:
+        return "repository_write"
+    if (
+        command.startswith("pcl story approve ")
+        or command.startswith("pcl test pass ")
+        or (
+            command.startswith("pcl feature status ")
+            and " --status done " in command
+        )
+        or (
+            command.startswith("pcl task status ")
+            and " done --reason " in command
+        )
+        or command.startswith("pcl goal close ")
+    ):
+        return "terminal_transition"
+    return "pcl_local_state" if mutates_state else "read_only"
+
+
+def _human_decision_basis(command: str, *, authority_class: str) -> str | None:
+    if command.startswith("pcl story approve "):
+        return "An explicit human approval receipt for this Story is required."
+    if authority_class == "terminal_transition":
+        return (
+            "No new semantic decision is inferred; the approved Story or literal task "
+            "intent and current terminal gates must already authorize this transition."
+        )
+    return None
+
+
+def _evidence_requirement(command: str, *, authority_class: str) -> str | None:
+    if "--evidence-id" in command:
+        return (
+            "A healthy, non-superseded Evidence ID accepted by the terminal "
+            "transition policy."
+        )
+    if authority_class == "terminal_transition" and command.startswith("pcl task status "):
+        return "Shared terminal-readiness/v1 must report terminal_allowed=true."
+    return None
+
+
+def _failure_recovery(command: str, *, authority_class: str) -> str | None:
+    if authority_class != "terminal_transition":
+        return None
+    if command.startswith("pcl story approve "):
+        return "pcl story read <story_id> --json"
+    if command.startswith("pcl test pass "):
+        return "pcl test read <test_case_id> --json"
+    if command.startswith("pcl feature status "):
+        return "pcl feature read <feature_id> --json"
+    if command.startswith("pcl task status "):
+        return "pcl task read <task_id> --json"
+    if command.startswith("pcl goal close "):
+        return "pcl next --target <goal_id> --json"
+    return None
 
 
 def _topic(topic: str, purpose: str, steps: list[dict[str, Any]]) -> dict[str, Any]:

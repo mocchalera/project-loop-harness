@@ -27,6 +27,31 @@ The harness should be useful locally before it is powerful externally.
 - max loop iterations;
 - max fix attempts.
 
+PCL guidance does not grant authority. The user's request, repository policy,
+and host approval boundary remain authoritative. `pcl guide` classifies each
+step with one of these operator-facing authority classes:
+
+| Class | Meaning | Default boundary |
+| --- | --- | --- |
+| `read_only` | Inspect machine state without writing project or PCL artifacts | Agent-safe within the selected project and target |
+| `pcl_local_state` | Mutate only project-local PCL state or Evidence through a PCL command | Agent-safe only when the user authorized the tracked workflow |
+| `repository_write` | Create or update source, configuration, or generated review artifacts | Requires repository/file-write authority from the user or task |
+| `external_write` | Change an external or production system | Always requires explicit human authority; the local guide does not propose it |
+| `terminal_transition` | Mark a Story, Test, Feature, Task, or Goal terminal | Requires satisfied lifecycle gates; some transitions also require an explicit human semantic decision |
+
+`mutates_state=false` in `command-guide/v1` means that the command does not
+mutate authoritative PCL domain state. It is not a general side-effect claim.
+For example, `pcl render` writes deterministic dashboard artifacts and is
+therefore `repository_write`; `pcl init` writes both project files and local PCL
+state.
+
+Human approval and host execution authority are separate. A Story approval
+receipt records a semantic decision; it does not grant authority for an
+external or production write. Conversely, repository-write authority does not
+let an agent approve a Story or waive terminal Evidence. When a command's
+prerequisites are missing, follow its read-only `failure_recovery` route instead
+of guessing, retrying a terminal mutation, or selecting another target.
+
 ## MCP guidance
 
 MCP should be an optional bridge to external services. It should not replace local CLI state mutation in the first implementation.
