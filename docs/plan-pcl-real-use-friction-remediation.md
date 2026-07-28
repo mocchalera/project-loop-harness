@@ -25,7 +25,8 @@
 | P0-4 start and router targeting | implemented | `3c6c019`, `E-0604`, `docs/evidence/0217-target-attach-routing-validation.md` |
 | P0-5a scoped audit | implemented | `6794ce9`, `E-0606`, `docs/evidence/0218-scoped-audit-validation.md` |
 | P0-5b immutable check reuse | implemented | `230a454`, `E-0609`, `docs/evidence/0219-immutable-finish-check-reuse-validation.md` |
-| P0-5c 以降 | planned | P0-5b の immutable result contract 後に継続 |
+| P0-5c output / retry friction | implemented | `1b45260`, `E-0611`〜`E-0613`, `docs/evidence/0220-finish-output-start-retry-validation.md` |
+| P0-6 以降 | planned | P0-5c の bounded projection / retry identity contract を前提に継続 |
 
 ## 1. 成功条件
 
