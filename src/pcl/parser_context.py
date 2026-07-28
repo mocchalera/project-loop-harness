@@ -5,6 +5,50 @@ from .context import DEFAULT_MAX_TOKENS
 
 
 def add_context_parsers(sub) -> None:
+    p_progress = sub.add_parser(
+        "progress",
+        help="Record target-bound execution progress receipts",
+    )
+    progress_sub = p_progress.add_subparsers(
+        dest="progress_command",
+        required=True,
+    )
+    p_progress_record = progress_sub.add_parser(
+        "record",
+        help="Record one immutable progress receipt without changing target status",
+    )
+    progress_target = p_progress_record.add_mutually_exclusive_group(required=True)
+    progress_target.add_argument(
+        "--task",
+        dest="task_id",
+        help="Exact task target for this progress receipt",
+    )
+    progress_target.add_argument(
+        "--goal",
+        dest="goal_id",
+        help="Exact goal target for this progress receipt",
+    )
+    p_progress_record.add_argument("--milestone", required=True)
+    p_progress_record.add_argument("--status", required=True)
+    p_progress_record.add_argument("--blocker", action="append", default=[])
+    p_progress_record.add_argument("--evidence-id", default=None)
+    p_progress_record.add_argument(
+        "--execution-root",
+        default=None,
+        help="Execution worktree root; defaults to the canonical PCL root",
+    )
+    p_progress_record.add_argument("--cockpit-task-id", default=None)
+    p_progress_record.add_argument(
+        "--cockpit-report-seq",
+        dest="cockpit_report_sequence",
+        type=int,
+        default=None,
+    )
+    p_progress_record.add_argument("--cockpit-report-ref", default=None)
+    p_progress_record.add_argument("--ci-provider", default=None)
+    p_progress_record.add_argument("--ci-run-id", default=None)
+    p_progress_record.add_argument("--ci-run-url", default=None)
+
     p_context = sub.add_parser("context", help="Build focused machine context packages")
     context_sub = p_context.add_subparsers(dest="context_command", required=True)
     p_context_pack = context_sub.add_parser(

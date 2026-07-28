@@ -12,6 +12,7 @@ from .contracts.intent_index import INTENT_INDEX_CONTRACT_VERSION
 from .contracts.profile_manifest import PROFILE_MANIFEST_CONTRACT_VERSION
 from .contracts.profile_output_bundle import PROFILE_OUTPUT_BUNDLE_CONTRACT_VERSION
 from .contracts.profile_run_request import PROFILE_RUN_REQUEST_CONTRACT_VERSION
+from .contracts.progress_receipt import PROGRESS_RECEIPT_CONTRACT_VERSION
 from .contracts.route_override import ROUTE_OVERRIDE_CONTRACT_VERSION
 from .contracts.route_recommendation import ROUTE_RECOMMENDATION_CONTRACT_VERSION
 from .contracts.verification_plan import VERIFICATION_PLAN_CONTRACT_VERSION
@@ -204,6 +205,7 @@ def add_work_input_parsers(sub) -> None:
             CLAIM_SET_CONTRACT_VERSION,
             VERIFICATION_PLAN_CONTRACT_VERSION,
             DECISION_PROPOSAL_CONTRACT_VERSION,
+            PROGRESS_RECEIPT_CONTRACT_VERSION,
         ],
         dest="contract_type",
     )

@@ -39,6 +39,7 @@ EXPECTED_COMMANDS = [
     "gap",
     "route",
     "policy",
+    "progress",
     "context",
     "receipt",
     "index",

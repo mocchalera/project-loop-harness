@@ -61,6 +61,10 @@ is a regression, not an automatic regeneration result.
 
 ## Intended changes since v0.3.1 freeze
 
+- 2026-07-28 — `snapshots/pcl-help.json` regenerated for P0-6 to include the
+  additive `progress record` command. It records a target-bound,
+  hash-anchored execution progress receipt and does not change target
+  lifecycle state or write to Cockpit/CI.
 - 2026-07-28 — `snapshots/representative-next-json.json` regenerated for
   P0-3 shared terminal readiness. Linked Task targets now expose additive
   `terminal-readiness/v1` reasons and a derived Task status; existing action

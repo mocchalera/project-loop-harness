@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop-harness.dev/schemas/progress-receipt-v1.schema.json",
+  "title": "Project Loop Harness progress-receipt/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version", "receipt_id", "producer", "generated_at", "target",
+    "milestone", "status", "execution_binding", "latest_valid_evidence",
+    "residual_blockers"
+  ],
+  "properties": {
+    "contract_version": {"const": "progress-receipt/v1"},
+    "receipt_id": {"type": "string", "pattern": "^pr-sha256:[0-9a-f]{64}$"},
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "version"],
+      "properties": {
+        "name": {"const": "project-loop-harness"},
+        "version": {"type": "string", "minLength": 1}
+      }
+    },
+    "generated_at": {"type": "string", "format": "date-time"},
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": {"enum": ["goal", "task"]},
+        "id": {"type": "string", "pattern": "^(G|T)-[0-9]{4,}$"}
+      }
+    },
+    "milestone": {"type": "string", "minLength": 1},
+    "status": {"enum": ["started", "completed", "blocked"]},
+    "execution_binding": {"$ref": "#/$defs/executionBinding"},
+    "latest_valid_evidence": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/evidenceRef"}
+      ]
+    },
+    "residual_blockers": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1}
+    }
+  },
+  "$defs": {
+    "executionBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract_version", "canonical_root", "execution_root", "git",
+        "cockpit", "ci"
+      ],
+      "properties": {
+        "contract_version": {"const": "execution-binding/v1"},
+        "canonical_root": {"type": "string", "minLength": 1},
+        "execution_root": {"type": "string", "minLength": 1},
+        "git": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "available", "worktree_root", "common_dir", "head_revision",
+            "branch", "detached", "relationship"
+          ],
+          "properties": {
+            "available": {"type": "boolean"},
+            "worktree_root": {"type": ["string", "null"]},
+            "common_dir": {"type": ["string", "null"]},
+            "head_revision": {"type": ["string", "null"]},
+            "branch": {"type": ["string", "null"]},
+            "detached": {"type": ["boolean", "null"]},
+            "relationship": {
+              "enum": ["same_worktree", "linked_worktree", "non_git"]
+            }
+          }
+        },
+        "cockpit": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["task_id", "report_sequence", "report_ref"],
+              "properties": {
+                "task_id": {"type": "string", "minLength": 1},
+                "report_sequence": {"type": ["integer", "null"], "minimum": 0},
+                "report_ref": {"type": ["string", "null"], "minLength": 1}
+              }
+            }
+          ]
+        },
+        "ci": {
+          "oneOf": [
+            {"type": "null"},
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["provider", "run_id", "run_url"],
+              "properties": {
+                "provider": {"type": "string", "minLength": 1},
+                "run_id": {"type": "string", "minLength": 1},
+                "run_url": {"type": ["string", "null"], "minLength": 1}
+              }
+            }
+          ]
+        }
+      }
+    },
+    "evidenceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_id", "type", "created_at", "link_role"],
+      "properties": {
+        "evidence_id": {"type": "string", "pattern": "^E-[0-9]{4,}$"},
+        "type": {"type": "string", "minLength": 1},
+        "created_at": {"type": "string", "format": "date-time"},
+        "link_role": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}

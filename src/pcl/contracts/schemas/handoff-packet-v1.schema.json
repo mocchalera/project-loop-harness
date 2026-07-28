@@ -93,6 +93,40 @@
         }
       }
     },
+    "progress": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status", "evidence_id", "artifact_health", "artifact_path",
+            "artifact_sha256", "receipt"
+          ],
+          "properties": {
+            "status": {"const": "valid"},
+            "evidence_id": {"type": "string", "pattern": "^E-[0-9]{4,}$"},
+            "artifact_health": {"const": "ok"},
+            "artifact_path": {"type": "string", "minLength": 1},
+            "artifact_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+            "receipt": {"type": "object"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "status", "evidence_id", "artifact_health", "artifact_path", "reason"
+          ],
+          "properties": {
+            "status": {"const": "invalid"},
+            "evidence_id": {"type": "string", "pattern": "^E-[0-9]{4,}$"},
+            "artifact_health": {"type": "string", "minLength": 1},
+            "artifact_path": {"type": "string", "minLength": 1},
+            "reason": {"type": "string", "minLength": 1}
+          }
+        }
+      ]
+    },
     "restart_context": {
       "type": "object",
       "additionalProperties": false,

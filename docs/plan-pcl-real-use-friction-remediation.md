@@ -26,7 +26,8 @@
 | P0-5a scoped audit | implemented | `6794ce9`, `E-0606`, `docs/evidence/0218-scoped-audit-validation.md` |
 | P0-5b immutable check reuse | implemented | `230a454`, `E-0609`, `docs/evidence/0219-immutable-finish-check-reuse-validation.md` |
 | P0-5c output / retry friction | implemented | `1b45260`, `E-0611`〜`E-0613`, `docs/evidence/0220-finish-output-start-retry-validation.md` |
-| P0-6 以降 | planned | P0-5c の bounded projection / retry identity contract を前提に継続 |
+| P0-6 execution binding / progress receipt | implemented | `G-0071`, `T-0148`, `F-0077`, `E-0616`〜`E-0617`, `docs/evidence/0221-execution-binding-progress-receipt-validation.md` |
+| P0-7 以降 | planned | P0-6 の target-bound progress orientation 後に継続 |
 
 ## 1. 成功条件
 
@@ -222,6 +223,25 @@ P0-5a は DB migration、依存追加、audit mutation を行わない。Story
 - `execution-binding/v1`: canonical root、worktree root、Git common dir、branch / detached state、Cockpit task ID、CI run identity を typed optional fieldsで記録する。
 - `progress-receipt/v1`: milestone、started / completed / blocked、target refs、latest valid Evidence、residual blockers を記録する。
 - `resume` と context pack は progress receipt を優先し、古い `updated_at` や空の `verified` 配列だけに依存しない。
+
+実装境界（2026-07-28）:
+
+- DB migrationを行わず、`pcl progress record` が既存Task / Goalへ
+  hash-bound Evidence、exact-target link、artifact SHA-256付きeventを同一mutationで記録する。
+- `execution-binding/v1` はcanonical PCL state rootと明示または現在の
+  execution rootを分離し、同一Git common dirへ解決できないroot関係は
+  推測せず拒否する。Cockpit / CI参照はtyped caller assertionとしてのみ保存し、
+  外部control planeを読み書きしない。
+- `progress-receipt/v1` はmilestone、`started` / `completed` / `blocked`、
+  exact target、任意のtarget-linked valid Evidence、ordered residual blockerを保持する。
+  `blocked` は最低1件のblockerを必須とする。
+- `resume` / Task context packは最新exact-target receiptを加算表示し、
+  progressをverified completion claimへ昇格しない。receipt未存在時の
+  `handoff-packet/v1` / `context-pack/v1` shapeは維持する。
+- 壊れた最新receiptは旧receiptへ黙ってfallbackせずinvalidとして表示し、
+  orientationへ採用しない。
+- Story `US-0076`〜`US-0077` はdraft、Tests `TC-0168`〜`TC-0173` は
+  plannedのまま開始し、実装許可を意味承認へ読み替えない。
 
 ### P0-7: Operator contract
 

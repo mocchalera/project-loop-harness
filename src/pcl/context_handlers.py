@@ -25,11 +25,14 @@ from .context_usage import record_context_pack_usage
 from .errors import InvalidInputError
 from .paths import ProjectPaths
 from .presentation import format_context_check_summary, impact_text_payload, to_pretty_json
+from .progress import record_progress
 from .receipt_show import receipt_summary_for_ref
 from .timeutil import utc_now_iso
 
 
-CONTEXT_COMMANDS = frozenset({"context", "receipt", "index", "code", "impact", "eval"})
+CONTEXT_COMMANDS = frozenset(
+    {"progress", "context", "receipt", "index", "code", "impact", "eval"}
+)
 
 
 def handle_context_command(
@@ -43,6 +46,37 @@ def handle_context_command(
 
     if args.command not in CONTEXT_COMMANDS:
         return None
+
+    if args.command == "progress" and args.progress_command == "record":
+        target_type = "task" if args.task_id is not None else "goal"
+        target_id = args.task_id if args.task_id is not None else args.goal_id
+        result = record_progress(
+            paths,
+            target_type=target_type,
+            target_id=target_id,
+            milestone=args.milestone,
+            status=args.status,
+            evidence_id=args.evidence_id,
+            blockers=args.blocker,
+            execution_root=args.execution_root,
+            cockpit_task_id=args.cockpit_task_id,
+            cockpit_report_sequence=args.cockpit_report_sequence,
+            cockpit_report_ref=args.cockpit_report_ref,
+            ci_provider=args.ci_provider,
+            ci_run_id=args.ci_run_id,
+            ci_run_url=args.ci_run_url,
+            now=now_factory(),
+        )
+        if json_output:
+            _print_json({"ok": True, "progress": result})
+        else:
+            receipt = result["receipt"]
+            print(
+                f"{receipt['target']['type']} {receipt['target']['id']}: "
+                f"{receipt['status']} {receipt['milestone']} "
+                f"({result['evidence_id']})"
+            )
+        return 0
 
     if args.command == "context" and args.context_command == "pack":
         now = now_factory()

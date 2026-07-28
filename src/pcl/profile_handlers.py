@@ -67,6 +67,11 @@ from .contracts.profile_run_request import (
     load_profile_run_request,
     validate_profile_run_request,
 )
+from .contracts.progress_receipt import (
+    PROGRESS_RECEIPT_CONTRACT_VERSION,
+    load_progress_receipt,
+    validate_progress_receipt,
+)
 from .contracts.route_override import (
     ROUTE_OVERRIDE_CONTRACT_VERSION,
     load_route_override,
@@ -587,6 +592,10 @@ def _validate_contract_file(
         DECISION_PROPOSAL_CONTRACT_VERSION: (
             load_decision_proposal,
             validate_decision_proposal,
+        ),
+        PROGRESS_RECEIPT_CONTRACT_VERSION: (
+            load_progress_receipt,
+            validate_progress_receipt,
         ),
     }
     load_packet, validate_packet = contract_handlers[contract_type]

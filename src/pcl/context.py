@@ -31,6 +31,7 @@ from .evidence import newest_linked_evidence_id
 from .guards import require_initialized
 from .links import enrich_decisions_with_links, enrich_escalations_with_links
 from .paths import ProjectPaths
+from .progress import latest_progress_context
 from .rubric import claims_rubric_v1
 from .tasks import COMPLETED_DEPENDENCY_STATUSES, read_task
 from .token_estimation import TOKEN_ESTIMATOR, estimate_token_count
@@ -49,6 +50,7 @@ MACHINE_CONTEXT_RULES_SECTION_ID = "machine_context_rules"
 CODE_CONTEXT_SAFETY_SECTION_ID = "code_context_safety"
 CODE_CONTEXT_DETAIL_SECTION_ID = "code_context_detail"
 CODE_CONTEXT_VERIFICATION_SECTION_ID = "code_context_verification_suggestions"
+PROGRESS_ORIENTATION_SECTION_ID = "progress_orientation"
 CODE_CONTEXT_LINK_ROLE = "code_context"
 TRUNCATION_NOTE = "_Context truncated. Increase `--max-tokens` to include omitted sections._\n"
 
@@ -108,6 +110,7 @@ JOB_SECTION_ORDER = [
 ]
 TASK_SECTION_ORDER = [
     "machine_context_rules",
+    PROGRESS_ORIENTATION_SECTION_ID,
     "target_task",
     "work_brief",
     "adaptive_route",
@@ -182,6 +185,7 @@ TASK_SECTION_PRIORITY_PROFILES = {
         "master_trace_context": 840,
         "work_brief": 850,
         "adaptive_route": 845,
+        PROGRESS_ORIENTATION_SECTION_ID: 10000,
     }
 }
 
@@ -388,6 +392,11 @@ def pack_context_for_task(
     approx_char_limit = max_tokens * LEGACY_APPROX_CHARS_PER_TOKEN
 
     target = {"type": "task", "id": task_id}
+    progress = latest_progress_context(
+        paths,
+        target_type=target["type"],
+        target_id=target["id"],
+    )
     code_context = (
         _latest_code_context_summary(
             paths,
@@ -449,6 +458,7 @@ def pack_context_for_task(
         linked_evidence=linked_evidence,
         work_brief=work_brief,
         adaptive_route=adaptive_route,
+        progress=progress,
         master_trace_context=(
             _master_trace_context_payload(master_trace_preflight)
             if master_trace_preflight is not None
@@ -471,6 +481,8 @@ def pack_context_for_task(
         source_paths.append(str(work_brief["path"]))
     if adaptive_route is not None:
         source_paths.append(str(adaptive_route["path"]))
+    if progress is not None:
+        source_paths.append(str(progress["artifact_path"]))
     if code_context:
         receipt_path = _code_context_receipt_path(code_context)
         if receipt_path:
@@ -509,6 +521,8 @@ def pack_context_for_task(
         pack["work_brief"] = _work_brief_context_payload(work_brief)
     if adaptive_route is not None:
         pack["adaptive_route"] = adaptive_route
+    if progress is not None:
+        pack["progress"] = progress
     if master_trace_preflight is not None:
         pack["master_trace_context"] = _master_trace_context_payload(
             master_trace_preflight
@@ -728,6 +742,7 @@ def _build_task_sections(
     linked_evidence: list[dict[str, Any]],
     work_brief: dict[str, Any] | None,
     adaptive_route: dict[str, Any] | None,
+    progress: dict[str, Any] | None,
     master_trace_context: dict[str, Any] | None,
     events: list[dict[str, Any]],
     code_context: dict[str, Any] | None,
@@ -748,6 +763,13 @@ def _build_task_sections(
             ),
         ),
     ]
+    if progress is not None:
+        sections.append(
+            (
+                PROGRESS_ORIENTATION_SECTION_ID,
+                _render_progress_orientation(progress),
+            )
+        )
     if code_context is not None:
         sections.extend(_code_context_sections(code_context))
     if master_trace_context is not None:
@@ -1549,6 +1571,35 @@ def _render_code_context_verification_section(summary: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _render_progress_orientation(progress: dict[str, Any]) -> str:
+    lines = ["## Progress Orientation", ""]
+    if progress["status"] == "invalid":
+        lines.extend(
+            [
+                "Latest progress receipt is invalid; do not use an older receipt.",
+                f"- Evidence: {progress['evidence_id']}",
+                f"- Health: {progress['artifact_health']}",
+                f"- Reason: {progress['reason']}",
+            ]
+        )
+        return "\n".join(lines)
+
+    receipt = progress["receipt"]
+    binding = receipt["execution_binding"]
+    lines.extend(
+        [
+            f"- Evidence: {progress['evidence_id']}",
+            f"- Milestone: {receipt['milestone']}",
+            f"- Status: {receipt['status']}",
+            f"- Root: {binding['execution_root']}",
+        ]
+    )
+    blockers = receipt["residual_blockers"]
+    if blockers:
+        lines.extend(f"- Blocker: {item}" for item in blockers)
+    return "\n".join(lines)
+
+
 def _render_code_context_detail_section(summary: dict[str, Any]) -> str:
     lines = [
         "## Code Context Detail",
@@ -1680,6 +1731,8 @@ def _required_section_ids(canonical_ids: list[str]) -> list[str]:
         required.append(MACHINE_CONTEXT_RULES_SECTION_ID)
     if CODE_CONTEXT_SAFETY_SECTION_ID in canonical_ids:
         required.append(CODE_CONTEXT_SAFETY_SECTION_ID)
+    if PROGRESS_ORIENTATION_SECTION_ID in canonical_ids:
+        required.append(PROGRESS_ORIENTATION_SECTION_ID)
     return required
 
 

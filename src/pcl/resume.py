@@ -22,6 +22,7 @@ from .db import connect
 from .errors import EXIT_USAGE, DataStoreError, InvalidInputError, PclError
 from .guards import require_initialized
 from .paths import ProjectPaths
+from .progress import latest_progress_context
 from .target_resolver import TaskGoalTargetNotFoundError, resolve_existing_task_goal
 from .timeutil import utc_now_iso
 from .work_briefs import current_approved_work_brief
@@ -63,6 +64,11 @@ def build_handoff_packet(
     conn = connect(paths.db_path)
     try:
         target = _resolve_target(conn, target_id=target_id)
+        progress = latest_progress_context(
+            paths,
+            target_type=target["type"],
+            target_id=target["id"],
+        )
         work_brief = current_approved_work_brief(
             paths,
             conn,
@@ -77,6 +83,7 @@ def build_handoff_packet(
             target=target,
             completion=completion,
             work_brief=work_brief,
+            progress=progress,
         )
         trace_context = _trace_handoff_context(paths, conn, target=target)
         packet = _packet_body(
@@ -84,6 +91,7 @@ def build_handoff_packet(
             target=target,
             completion=completion,
             work_brief=work_brief,
+            progress=progress,
             decisions=decisions,
             context_refs=context_refs,
             omitted_sections=omitted,
@@ -128,6 +136,32 @@ def render_handoff_markdown(packet: dict[str, Any]) -> str:
     lines.extend(_claim_lines(packet["verified"], verified=True))
     lines.extend(["", "## Unverified", ""])
     lines.extend(_claim_lines(packet["unverified"], verified=False))
+    progress = packet.get("progress")
+    if progress is not None:
+        lines.extend(["", "## Progress", ""])
+        if progress["status"] == "valid":
+            receipt = progress["receipt"]
+            lines.extend(
+                [
+                    f"- Milestone: {receipt['milestone']}",
+                    f"- Status: {receipt['status']}",
+                    f"- Evidence: {progress['evidence_id']}",
+                    f"- Execution root: {receipt['execution_binding']['execution_root']}",
+                ]
+            )
+            lines.extend(
+                f"- Residual blocker: {item}"
+                for item in receipt["residual_blockers"]
+            )
+        else:
+            lines.extend(
+                [
+                    "- Latest progress receipt is invalid.",
+                    f"- Evidence: {progress['evidence_id']}",
+                    f"- Artifact health: {progress['artifact_health']}",
+                    f"- Reason: {progress['reason']}",
+                ]
+            )
     lines.extend(["", "## Decisions", ""])
     if packet["decisions"]:
         lines.extend(
@@ -442,10 +476,24 @@ def _context_refs(
     target: dict[str, Any],
     completion: dict[str, Any] | None,
     work_brief: dict[str, Any] | None,
+    progress: dict[str, Any] | None,
 ) -> tuple[list[dict[str, Any]], list[str]]:
     refs: list[dict[str, Any]] = []
     omitted = ["full_transcript", "evidence_bodies"]
     selected_ids: set[str] = set()
+    if progress is not None and progress["status"] == "valid":
+        evidence_id = str(progress["evidence_id"])
+        selected_ids.add(evidence_id)
+        refs.append(
+            _context_ref(
+                paths,
+                evidence_id=evidence_id,
+                path=str(progress["artifact_path"]),
+                kind="progress-receipt/v1",
+                freshness="current",
+                sha256=f"sha256:{progress['artifact_sha256']}",
+            )
+        )
     if completion is not None:
         evidence_id = completion["evidence_id"]
         selected_ids.add(evidence_id)
@@ -530,6 +578,7 @@ def _packet_body(
     target: dict[str, Any],
     completion: dict[str, Any] | None,
     work_brief: dict[str, Any] | None,
+    progress: dict[str, Any] | None,
     decisions: list[dict[str, Any]],
     context_refs: list[dict[str, Any]],
     omitted_sections: list[str],
@@ -580,9 +629,20 @@ def _packet_body(
         for item in decisions
         if item["status"] == "open"
     )
+    if progress is not None:
+        if progress["status"] == "valid":
+            blockers.extend(
+                str(item)
+                for item in progress["receipt"]["residual_blockers"]
+            )
+        else:
+            blockers.append(
+                "Latest progress receipt "
+                f"{progress['evidence_id']} is invalid ({progress['artifact_health']})."
+            )
     if target.get("risk"):
         risks.append(f"Task risk is {target['risk']}.")
-    action = _next_safe_action(target, completion_packet, decisions)
+    action = _next_safe_action(target, completion_packet, decisions, progress)
     restart_context = _restart_context(
         target=target,
         completion=completion,
@@ -601,7 +661,7 @@ def _packet_body(
             "repository_revision": repository_revision,
         },
         "current_state": str(target["status"]).upper(),
-        "summary": _summary(target, completion_packet),
+        "summary": _summary(target, completion_packet, progress),
         "verified": verified,
         "unverified": unverified,
         "decisions": [
@@ -623,6 +683,8 @@ def _packet_body(
         ),
         "omitted_sections": omitted_sections,
     }
+    if progress is not None:
+        packet["progress"] = progress
     if trace_context is not None and trace_context["status"] == "present":
         for field in (
             "trace_claim_refs",
@@ -670,6 +732,7 @@ def _next_safe_action(
     target: dict[str, Any],
     completion_packet: dict[str, Any] | None,
     decisions: list[dict[str, Any]],
+    progress: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     open_decision = next((item for item in decisions if item["status"] == "open"), None)
     if open_decision:
@@ -677,6 +740,29 @@ def _next_safe_action(
             "text": f"Review and resolve decision {open_decision['id']} before continuing.",
             "command": f"pcl decision read {open_decision['id']} --json",
         }
+    if progress is not None and progress["status"] == "invalid":
+        return {
+            "text": "Inspect the invalid latest progress receipt before continuing.",
+            "command": f"pcl evidence show {progress['evidence_id']} --json",
+        }
+    if progress is not None and progress["status"] == "valid":
+        receipt = progress["receipt"]
+        if receipt["status"] == "blocked":
+            latest_evidence = receipt["latest_valid_evidence"]
+            if latest_evidence is not None:
+                return {
+                    "text": "Inspect the latest progress evidence and residual blockers.",
+                    "command": (
+                        "pcl evidence show "
+                        f"{latest_evidence['evidence_id']} --json"
+                    ),
+                }
+            return {
+                "text": "Review the target and resolve the recorded progress blocker.",
+                "command": (
+                    f"pcl {target['type']} read {target['id']} --json"
+                ),
+            }
     if completion_packet and completion_packet.get("next_action"):
         action = completion_packet["next_action"]
         return {"text": str(action["text"]), "command": action.get("command")}
@@ -916,7 +1002,24 @@ def _is_documentation_path(path: str) -> bool:
     return parts[0].lower() == "docs" or basename.startswith(("README", "CONTRIBUTING"))
 
 
-def _summary(target: dict[str, Any], completion_packet: dict[str, Any] | None) -> str:
+def _summary(
+    target: dict[str, Any],
+    completion_packet: dict[str, Any] | None,
+    progress: dict[str, Any] | None,
+) -> str:
+    if progress is not None and progress["status"] == "valid":
+        receipt = progress["receipt"]
+        return (
+            f"Progress milestone {receipt['milestone']} is {receipt['status']}; "
+            f"{target['type']} {target['id']} ({target['intent']}) remains "
+            f"{target['status']}."
+        )
+    if progress is not None:
+        return (
+            f"Latest progress receipt {progress['evidence_id']} is invalid "
+            f"({progress['artifact_health']}); {target['type']} {target['id']} "
+            f"({target['intent']}) remains {target['status']}."
+        )
     if completion_packet:
         return (
             f"{target['type'].title()} {target['id']} ({target['intent']}) is "

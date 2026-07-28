@@ -13,6 +13,7 @@ import re
 from typing import Any
 
 from ..token_estimation import TOKEN_ESTIMATOR, estimate_token_count
+from .progress_receipt import validate_progress_receipt
 
 
 HANDOFF_PACKET_CONTRACT_VERSION = "handoff-packet/v1"
@@ -43,6 +44,7 @@ _TOP_LEVEL_FIELDS = {
     "trace_claim_refs",
     "trace_claim_ref_omissions",
     "trace_claim_ref_budget",
+    "progress",
 }
 _REQUIRED_TOP_LEVEL_FIELDS = _TOP_LEVEL_FIELDS - {
     "intent_index_ref",
@@ -51,6 +53,7 @@ _REQUIRED_TOP_LEVEL_FIELDS = _TOP_LEVEL_FIELDS - {
     "trace_claim_refs",
     "trace_claim_ref_omissions",
     "trace_claim_ref_budget",
+    "progress",
 }
 _PACKET_ID = re.compile(r"^hp-sha256:[0-9a-f]{64}$")
 _EVIDENCE_REF = re.compile(r"^evidence:E-[0-9]{4,}$")
@@ -154,6 +157,9 @@ def validate_handoff_packet(packet: Any) -> HandoffPacketValidationResult:
     _string_array(packet.get("risks"), "$.risks", errors)
     _next_action(packet.get("next_safe_action"), errors)
     _context_refs(packet.get("context_refs"), errors)
+    progress = packet.get("progress")
+    if progress is not None:
+        _progress(progress, errors)
     claim_fields = (
         packet.get("trace_claim_refs"),
         packet.get("trace_claim_ref_omissions"),
@@ -288,6 +294,32 @@ def _context_refs(value: Any, errors: list[str]) -> None:
             if ref in seen:
                 errors.append(f"{path}.ref: duplicate context ref")
             seen.add(ref)
+
+
+def _progress(value: Any, errors: list[str]) -> None:
+    path = "$.progress"
+    if not _object(value, path, errors):
+        return
+    common = {"status", "evidence_id", "artifact_health", "artifact_path"}
+    status = value.get("status")
+    if status == "valid":
+        allowed = common | {"artifact_sha256", "receipt"}
+        _fields(value, path, allowed, allowed, errors)
+        _equal(value.get("artifact_health"), "ok", f"{path}.artifact_health", errors)
+        _string(value.get("artifact_sha256"), f"{path}.artifact_sha256", errors)
+        validation = validate_progress_receipt(value.get("receipt"))
+        errors.extend(f"{path}.receipt{error.removeprefix('$')}" for error in validation.errors)
+    elif status == "invalid":
+        allowed = common | {"reason"}
+        _fields(value, path, allowed, allowed, errors)
+        _string(value.get("artifact_health"), f"{path}.artifact_health", errors)
+        _string(value.get("reason"), f"{path}.reason", errors)
+    else:
+        errors.append(f"{path}.status: must be one of invalid, valid")
+        allowed = common | {"artifact_sha256", "receipt", "reason"}
+        _fields(value, path, common, allowed, errors)
+    _string(value.get("evidence_id"), f"{path}.evidence_id", errors, pattern=_EVIDENCE_ID)
+    _string(value.get("artifact_path"), f"{path}.artifact_path", errors)
 
 
 def _trace_claim_refs(value: Any, errors: list[str]) -> None:
