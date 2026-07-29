@@ -132,6 +132,7 @@ implement from the spec file, not from prompt summaries.
 | 0212 | Goal completion-packet close routing | P1 Real-use Friction Follow-up | P1 | done; real-project verified |
 | 0213 | v0.5.5 local release preparation | v0.5.5 Finish Reliability and Operability | P0 | done; local RC ready, not published |
 | 0214 | Non-HEAD Goal packet base routing | v0.5.5 RC correction | P0 | done; corrected local RC ready, not published |
+| 0215 | v0.5.5 release publication | v0.5.5 Finish Reliability and Operability | P0 | done; published and publicly verified |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
@@ -239,8 +240,12 @@ remain behind a separate publication authorization.
 Task **0214** corrects release-preparation dogfood where a valid Goal packet
 created with an explicit ancestor base was falsely treated as stale because
 `next` recaptured from HEAD. The corrected v0.5.5 local candidate passed the
-fail-closed routing regression and installed-wheel dogfood; publication
-remains separately authorized.
+fail-closed routing regression and installed-wheel dogfood. Task **0215** used
+the owner's separate authorization to require green CI on the corrected exact
+commit, publish the annotated tag and GitHub Release through Trusted
+Publishing, verify PyPI provenance and artifact hashes, run a normal public
+install plus strict independent consumer dogfood, and upgrade pipx. No release
+announcement or external adoption claim was made.
 
 ## Planned next (see growth plan for scope)
 
@@ -260,7 +265,7 @@ remains separately authorized.
 | v0.5.3 | published and publicly verified; strict copied-Evidence resolution → 0200 Gap Report contract → 0201 integrity hardening → 0202 local RC → 0203 publication closeout |
 | post-v0.5.3 | complete frozen CLI/commands refactor: 0204 → 0205 → 0206 → 0207 → 0208 → 0209 |
 | v0.5.4 | published and publicly verified; behavior-preserving CLI/commands maintainability release → 0210 local RC → 0211 publication closeout |
-| v0.5.5 | finish reliability and operability → P0 real-use friction remediation → P1 progress/compact output → 0212 exact Goal close routing → 0213 local RC → 0214 non-HEAD base correction |
+| v0.5.5 | published and publicly verified; finish reliability and operability → P0 real-use friction remediation → P1 progress/compact output → 0212 exact Goal close routing → 0213 local RC → 0214 non-HEAD base correction → 0215 publication closeout |
 
 Everything with an ID below 0102 is completed design history; see `TASKS.md`
 for the one-line summary of each.

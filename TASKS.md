@@ -221,6 +221,7 @@ Give these tasks to coding agents in this order:
 217. `agent-tasks/0212-goal-close-packet-routing.md` (post-v0.5.4 exact Goal completion-packet close routing, latest-only fail-closed reuse, and proof-ID CLI clarity)
 218. `agent-tasks/0213-v055-local-release-preparation.md` (v0.5.5 finish reliability and operability release, version/distribution alignment, local artifact Evidence, and no publication)
 219. `agent-tasks/0214-non-head-goal-packet-routing.md` (v0.5.5 RC correction preserving validated non-HEAD completion-packet base identity in exact Goal close routing)
+220. `agent-tasks/0215-v055-release-publication.md` (v0.5.5 authorized publication, corrective remote-CI gate, immutable tag chain, Trusted Publishing, PyPI provenance and hashes, public consumer dogfood, and pipx upgrade)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and
