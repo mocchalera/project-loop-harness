@@ -137,7 +137,7 @@ def handle_entity_command(
             _write_json(result, output)
         else:
             print(feature_id, file=output)
-            _print_mutation_tail_warning(result, error=error)
+        _print_mutation_tail_warning(result, error=error)
         return 0
 
     if args.command == "feature" and args.feature_command == "list":
@@ -600,8 +600,17 @@ def _print_mutation_tail_warning(result: dict, *, error: TextIO) -> None:
         return
     recovery = tail.get("recovery")
     command = recovery.get("command") if isinstance(recovery, dict) else None
+    diagnostics = tail.get("errors")
+    codes = ", ".join(
+        str(item.get("code"))
+        for item in diagnostics
+        if isinstance(item, dict) and item.get("code")
+    )
     print(
-        "WARNING: Mutation committed, but post-commit processing was partial. "
+        "WARNING: post_commit_status=partial mutation_committed=true "
+        "safe_to_retry_original=false"
+        + (f" diagnostics={codes}" if codes else "")
+        + ". Mutation committed, but post-commit processing was partial. "
         "Do not retry the original mutation."
         + (f" Inspect with: {command}" if command else ""),
         file=error,

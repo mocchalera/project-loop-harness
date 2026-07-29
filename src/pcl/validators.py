@@ -21,6 +21,7 @@ from .paths import ProjectPaths
 from .resources import read_text_resource
 from .project_config import (
     checkpoint_configuration,
+    dashboard_auto_render,
     finish_check_configuration,
     finish_check_configuration_warning,
     project_command_specs,
@@ -445,6 +446,7 @@ def validate_project(
                 repair_class="unsupported",
             )
         else:
+            _validate_dashboard_configuration(paths, result)
             _validate_checkpoint_configuration(paths, result)
             if include_config_advice:
                 _validate_pcl_yaml_advice(paths, result)
@@ -698,6 +700,23 @@ def _validate_checkpoint_configuration(
             entity={"type": "project", "id": str(paths.root)},
             repair_class="human_review",
             requires_human=True,
+        )
+
+
+def _validate_dashboard_configuration(
+    paths: ProjectPaths,
+    result: ValidationResult,
+) -> None:
+    try:
+        dashboard_auto_render(paths.root)
+    except InvalidInputError as exc:
+        result.add_error(
+            exc.message,
+            code="config_dashboard_auto_render_invalid",
+            entity={"type": "project", "id": str(paths.root)},
+            repair_class="human_review",
+            requires_human=True,
+            suggested_commands=[_pcl_json_command("validate", "--summary")],
         )
 
 

@@ -3,9 +3,10 @@ from __future__ import annotations
 from collections import Counter
 import hashlib
 import json
+import sqlite3
 from typing import Any
 
-from .db import connect
+from .db import connect_read_only
 from .errors import InvalidInputError
 from .paths import ProjectPaths
 from .target_resolver import (
@@ -42,6 +43,11 @@ TARGET_PROJECTABLE_CODE_PREFIXES = (
     "verification_",
     "workflow_run_",
 )
+GLOBAL_OPERATIONAL_SAFETY_CODES = {
+    "agent_concurrency_exceeded",
+    "agent_lease_expired",
+    "agent_retired_active_lease",
+}
 
 
 def project_validation_result(
@@ -54,7 +60,20 @@ def project_validation_result(
 ) -> dict[str, Any]:
     """Project a completed full-project validation without changing its verdict."""
 
-    resolved = _resolve_target(paths, target_id) if target_id is not None else None
+    resolved: ResolvedRoutingTarget | None = None
+    target: dict[str, str] | None = None
+    target_resolution: dict[str, str] | None = None
+    if target_id is not None:
+        target_type = _target_type(target_id)
+        target = {
+            "target_type": target_type,
+            "target_id": target_id,
+        }
+        resolved, target_resolution = _resolve_target(
+            paths,
+            target_id,
+            target_type=target_type,
+        )
     full_payload = result.to_dict()
     detailed: list[ValidationFinding] = []
     omitted: list[ValidationFinding] = []
@@ -74,7 +93,11 @@ def project_validation_result(
         omitted.append(finding)
 
     payload = {
-        "ok": result.ok,
+        "ok": result.ok
+        and not (
+            target_resolution is not None
+            and target_resolution["status"] == "unavailable"
+        ),
         "errors": [
             finding.message for finding in detailed if finding.severity == "error"
         ],
@@ -88,14 +111,8 @@ def project_validation_result(
             "contract_version": VALIDATION_PROJECTION_CONTRACT_VERSION,
             "active_only": active_only,
             "summary": summary,
-            "target": (
-                {
-                    "target_type": resolved.type,
-                    "target_id": resolved.id,
-                }
-                if resolved is not None
-                else None
-            ),
+            "target": target,
+            "target_resolution": target_resolution,
             "detailed_count": len(detailed),
             "historical": _aggregate_findings(historical),
             "omitted": _aggregate_findings(omitted),
@@ -114,18 +131,52 @@ def project_validation_result(
 def _resolve_target(
     paths: ProjectPaths,
     target_id: str,
-) -> ResolvedRoutingTarget:
-    conn = connect(paths.db_path)
+    *,
+    target_type: str,
+) -> tuple[ResolvedRoutingTarget | None, dict[str, str]]:
+    unavailable = {
+        "status": "unavailable",
+        "code": "validation_target_resolution_unavailable",
+        "message": (
+            f"Validation target {target_id} could not be resolved because the "
+            "project database is unavailable or incomplete."
+        ),
+    }
+    if not paths.db_path.is_file():
+        return None, unavailable
+
+    try:
+        conn = connect_read_only(paths.db_path)
+    except sqlite3.Error:
+        return None, unavailable
     try:
         try:
-            return resolve_routing_target(conn, target_id)
+            resolved = resolve_routing_target(conn, target_id)
         except TaskGoalTargetNotFoundError as exc:
             raise InvalidInputError(
                 f"Validation target does not exist: {target_id}",
                 details={"target": target_id, "target_type": exc.target_type},
             ) from exc
+        except sqlite3.Error:
+            return None, unavailable
+        return resolved, {
+            "status": "resolved",
+            "code": "validation_target_resolved",
+            "message": f"Validation target {target_id} resolved as {target_type}.",
+        }
     finally:
         conn.close()
+
+
+def _target_type(target_id: str) -> str:
+    if target_id.startswith("T-"):
+        return "task"
+    if target_id.startswith("G-"):
+        return "goal"
+    raise InvalidInputError(
+        "--target must be a task or goal ID.",
+        details={"target": target_id, "accepted_prefixes": ["T-", "G-"]},
+    )
 
 
 def _finding_is_in_scope(
@@ -148,6 +199,8 @@ def _finding_must_remain_visible(finding: ValidationFinding) -> bool:
     if finding.repair_class == "unsupported" or finding.entity is None:
         return True
     if finding.code.startswith(GLOBAL_CODE_PREFIXES):
+        return True
+    if finding.code in GLOBAL_OPERATIONAL_SAFETY_CODES:
         return True
     if not finding.code.startswith(TARGET_PROJECTABLE_CODE_PREFIXES):
         return True

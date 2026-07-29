@@ -240,7 +240,12 @@ def read_task(paths: ProjectPaths, task_id: str) -> dict[str, Any]:
 
 
 def set_task_status(paths: ProjectPaths, task_id: str, *, status: str, reason: str) -> dict[str, Any]:
-    require_initialized(paths)
+    require_initialized(
+        paths,
+        allowed_error_codes=frozenset(
+            {"config_dashboard_auto_render_invalid"}
+        ),
+    )
     _validate_identifier(task_id, "task_id")
     _require_task_status(status)
     now = utc_now_iso()

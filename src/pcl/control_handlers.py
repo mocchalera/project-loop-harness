@@ -127,7 +127,7 @@ def handle_control_command(
             )
             return _print_validation_projection(
                 payload,
-                ok=result.ok,
+                ok=bool(payload["ok"]),
                 json_output=json_output,
             )
         return _print_validation(result, json_output=json_output)

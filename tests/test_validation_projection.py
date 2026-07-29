@@ -13,6 +13,20 @@ def _json_output(capsys) -> dict:
     return json.loads(capsys.readouterr().out)
 
 
+def _filesystem_snapshot(root: Path) -> dict[str, tuple[str, str | None]]:
+    snapshot: dict[str, tuple[str, str | None]] = {}
+    for path in sorted(root.rglob("*")):
+        relative = str(path.relative_to(root))
+        if path.is_dir():
+            snapshot[relative] = ("directory", None)
+        else:
+            snapshot[relative] = (
+                "file",
+                hashlib.sha256(path.read_bytes()).hexdigest(),
+            )
+    return snapshot
+
+
 def _initialized_target(root: Path, capsys) -> None:
     assert main(["init", "--target", str(root)]) == 0
     assert (
@@ -169,6 +183,139 @@ def test_validate_target_keeps_real_global_audit_integrity_error(
     )
     assert payload["ok"] is False
     assert payload["full_validation"]["error_count"] > 0
+
+
+def test_validate_target_with_missing_database_is_typed_and_read_only(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    (tmp_path / ".project-loop").mkdir()
+    before = _filesystem_snapshot(tmp_path)
+
+    assert (
+        main(
+            [
+                "--root",
+                str(tmp_path),
+                "validate",
+                "--target",
+                "T-0001",
+                "--summary",
+                "--json",
+            ]
+        )
+        == 1
+    )
+    payload = _json_output(capsys)
+
+    assert _filesystem_snapshot(tmp_path) == before
+    assert payload["ok"] is False
+    assert payload["validation_projection"]["target"] == {
+        "target_id": "T-0001",
+        "target_type": "task",
+    }
+    assert payload["validation_projection"]["target_resolution"] == {
+        "code": "validation_target_resolution_unavailable",
+        "message": (
+            "Validation target T-0001 could not be resolved because the "
+            "project database is unavailable or incomplete."
+        ),
+        "status": "unavailable",
+    }
+    assert any(
+        finding["code"] == "installation_database_missing"
+        for finding in payload["findings"]
+    )
+    assert payload["full_validation"]["error_count"] == 1
+
+
+def test_validate_target_with_missing_tables_preserves_existing_files(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    loop_dir = tmp_path / ".project-loop"
+    loop_dir.mkdir()
+    (loop_dir / "project.db").write_bytes(b"")
+    (loop_dir / "events.jsonl").write_text("", encoding="utf-8")
+    before = _filesystem_snapshot(tmp_path)
+
+    assert (
+        main(
+            [
+                "--root",
+                str(tmp_path),
+                "validate",
+                "--target",
+                "G-0001",
+                "--summary",
+                "--json",
+            ]
+        )
+        == 1
+    )
+    payload = _json_output(capsys)
+
+    assert _filesystem_snapshot(tmp_path) == before
+    assert payload["validation_projection"]["target_resolution"]["status"] == (
+        "unavailable"
+    )
+    assert any(
+        finding["code"] == "schema_required_table_missing"
+        for finding in payload["findings"]
+    )
+    assert payload["full_validation"]["error_count"] > 0
+
+
+def test_validate_target_keeps_active_agent_operational_safety_finding(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    _initialized_target(tmp_path, capsys)
+    full = ValidationResult()
+    full.add_warning(
+        "Active agent A-0001 exceeds its concurrency limit.",
+        code="agent_concurrency_exceeded",
+        entity={"type": "agent", "id": "A-0001"},
+        related=[{"type": "agent_job", "id": "AJ-0002"}],
+        repair_class="inspect",
+        suggested_commands=["pcl agent list --json"],
+    )
+    monkeypatch.setattr(
+        "pcl.control_handlers.validate_project",
+        lambda *args, **kwargs: full,
+    )
+
+    assert (
+        main(
+            [
+                "--root",
+                str(tmp_path),
+                "validate",
+                "--target",
+                "T-0001",
+                "--summary",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    payload = _json_output(capsys)
+
+    assert payload["findings"] == [
+        {
+            "code": "agent_concurrency_exceeded",
+            "entity": {"id": "A-0001", "type": "agent"},
+            "message": "Active agent A-0001 exceeds its concurrency limit.",
+            "proof_scope": "active",
+            "related": [{"id": "AJ-0002", "type": "agent_job"}],
+            "repair_class": "inspect",
+            "requires_human": False,
+            "severity": "warning",
+            "suggested_commands": ["pcl agent list --json"],
+        }
+    ]
+    assert payload["validation_projection"]["omitted"]["count"] == 0
 
 
 def test_validate_target_is_fail_closed_after_full_evaluation(

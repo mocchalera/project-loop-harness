@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from .action_routing import next_action
-from .db import connect
+from .db import connect_read_only
 from .paths import ProjectPaths
 from .project_config import dashboard_auto_render
 from .renderer import render_dashboard
@@ -13,6 +13,16 @@ from .renderer import render_dashboard
 
 MUTATION_TAIL_CONTRACT_VERSION = "mutation-tail/v1"
 RENDER_RECEIPT_CONTRACT_VERSION = "render-receipt/v1"
+MAX_RENDER_ATTEMPTS = 2
+
+
+class RenderStateChangedError(RuntimeError):
+    def __init__(self, observations: list[dict[str, Any]]) -> None:
+        super().__init__(
+            "Project state changed during dashboard rendering after "
+            f"{len(observations)} bounded attempts."
+        )
+        self.observations = observations
 
 
 def apply_mutation_tail(
@@ -41,12 +51,27 @@ def apply_mutation_tail(
             "state_high_watermark": None,
             "artifact": None,
             "data_artifact": None,
+            "consistency": None,
             "error": None,
             "recovery": None,
         },
         "post_commit_status": "not_changed" if not changed else "complete",
         "errors": [],
     }
+
+    auto_render: bool | None = None
+    if changed:
+        try:
+            auto_render = dashboard_auto_render(paths.root)
+        except Exception as exc:
+            _record_render_failure(
+                tail,
+                phase="dashboard_config",
+                code="config_dashboard_auto_render_invalid",
+                error=exc,
+                recovery=recovery,
+            )
+            return _result_with_tail(payload, tail)
 
     try:
         tail["next_action"] = next_action(paths, target=target_id)
@@ -59,38 +84,58 @@ def apply_mutation_tail(
         )
 
     if not changed:
-        return {**payload, "mutation_tail": tail}
+        return _result_with_tail(payload, tail)
+
+    if not auto_render:
+        try:
+            tail["render"]["state_high_watermark"] = _state_high_watermark(paths)
+            tail["render"]["status"] = "disabled"
+        except Exception as exc:
+            _record_render_failure(
+                tail,
+                phase="render_receipt",
+                code="render_receipt_unavailable",
+                error=exc,
+                recovery=recovery,
+            )
+        return _result_with_tail(payload, tail)
 
     try:
-        high_watermark = _state_high_watermark(paths)
-        tail["render"]["state_high_watermark"] = high_watermark
-        if not dashboard_auto_render(paths.root):
-            tail["render"]["status"] = "disabled"
-            return {**payload, "mutation_tail": tail}
-
-        render_dashboard(paths)
+        render_result = _render_consistently(paths)
         tail["render"].update(
             {
                 "status": "rendered",
-                "artifact": _artifact_receipt(paths.dashboard_html),
-                "data_artifact": _artifact_receipt(paths.dashboard_data),
+                **render_result,
             }
         )
-    except Exception as exc:
-        tail["render"]["status"] = "failed"
-        tail["render"]["error"] = str(exc)
-        tail["render"]["recovery"] = recovery
-        _record_post_commit_failure(
+    except RenderStateChangedError as exc:
+        tail["render"]["consistency"] = {
+            "status": "unstable",
+            "attempts": len(exc.observations),
+            "observations": exc.observations,
+        }
+        if exc.observations:
+            tail["render"]["state_high_watermark"] = exc.observations[-1]["after"]
+        _record_render_failure(
             tail,
-            phase="render",
+            phase="render_consistency",
+            code="render_state_changed",
             error=exc,
             recovery=recovery,
         )
-    return {**payload, "mutation_tail": tail}
+    except Exception as exc:
+        _record_render_failure(
+            tail,
+            phase="render",
+            code="render_failed",
+            error=exc,
+            recovery=recovery,
+        )
+    return _result_with_tail(payload, tail)
 
 
 def _state_high_watermark(paths: ProjectPaths) -> dict[str, Any]:
-    conn = connect(paths.db_path)
+    conn = connect_read_only(paths.db_path)
     try:
         row = conn.execute(
             "SELECT id, sequence FROM events ORDER BY sequence DESC LIMIT 1"
@@ -103,6 +148,34 @@ def _state_high_watermark(paths: ProjectPaths) -> dict[str, Any]:
         }
     finally:
         conn.close()
+
+
+def _render_consistently(paths: ProjectPaths) -> dict[str, Any]:
+    observations: list[dict[str, Any]] = []
+    for attempt in range(1, MAX_RENDER_ATTEMPTS + 1):
+        before = _state_high_watermark(paths)
+        render_dashboard(paths)
+        after = _state_high_watermark(paths)
+        observations.append(
+            {
+                "attempt": attempt,
+                "before": before,
+                "after": after,
+            }
+        )
+        if before == after:
+            return {
+                "state_high_watermark": after,
+                "artifact": _artifact_receipt(paths.dashboard_html),
+                "data_artifact": _artifact_receipt(paths.dashboard_data),
+                "consistency": {
+                    "status": "stable",
+                    "attempts": attempt,
+                    "before": before,
+                    "after": after,
+                },
+            }
+    raise RenderStateChangedError(observations)
 
 
 def _artifact_receipt(path: Path) -> dict[str, Any]:
@@ -126,10 +199,56 @@ def _record_post_commit_failure(
     tail: dict[str, Any],
     *,
     phase: str,
+    code: str = "post_commit_failed",
     error: Exception,
     recovery: dict[str, Any],
 ) -> None:
     tail["post_commit_status"] = "partial"
     tail["safe_to_retry_original"] = False
-    tail["errors"].append({"phase": phase, "message": str(error)})
+    tail["errors"].append(
+        {
+            "phase": phase,
+            "code": code,
+            "message": str(error),
+        }
+    )
     tail["recovery"] = recovery
+
+
+def _record_render_failure(
+    tail: dict[str, Any],
+    *,
+    phase: str,
+    code: str,
+    error: Exception,
+    recovery: dict[str, Any],
+) -> None:
+    tail["render"]["status"] = "failed"
+    tail["render"]["error"] = str(error)
+    tail["render"]["recovery"] = recovery
+    _record_post_commit_failure(
+        tail,
+        phase=phase,
+        code=code,
+        error=error,
+        recovery=recovery,
+    )
+
+
+def _result_with_tail(
+    payload: dict[str, Any],
+    tail: dict[str, Any],
+) -> dict[str, Any]:
+    result = {**payload, "mutation_tail": tail}
+    if tail["post_commit_status"] != "partial":
+        return result
+    result.update(
+        {
+            "mutation_committed": tail["mutation_committed"],
+            "safe_to_retry_original": tail["safe_to_retry_original"],
+            "post_commit_status": "partial",
+            "post_commit_diagnostics": list(tail["errors"]),
+            "recovery": tail["recovery"],
+        }
+    )
+    return result

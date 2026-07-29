@@ -100,7 +100,14 @@ def add_feature(
     evidence: str = "",
     task_id: str | None = None,
 ) -> str:
-    require_initialized(paths)
+    require_initialized(
+        paths,
+        allowed_error_codes=(
+            frozenset({"config_dashboard_auto_render_invalid"})
+            if task_id
+            else frozenset()
+        ),
+    )
 
     conn = connect_mutation(paths)
     try:
