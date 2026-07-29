@@ -61,6 +61,8 @@ is a regression, not an automatic regeneration result.
 
 ## Intended changes since v0.3.1 freeze
 
+- 2026-07-29 — `snapshots/pcl-version.json` regenerated for the v0.5.5 local
+  release candidate bump (`0.5.4` → `0.5.5`).
 - 2026-07-28 — `snapshots/pcl-help.json` regenerated for P0-6 to include the
   additive `progress record` command. It records a target-bound,
   hash-anchored execution progress receipt and does not change target

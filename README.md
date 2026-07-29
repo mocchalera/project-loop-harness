@@ -136,7 +136,7 @@ first use in real repositories: time to healthy setup, time to a verified
 completion packet, maintainer interventions, safety violations, and voluntary
 reuse.
 
-As of v0.5.4, no version-current external cohort result has been recorded, so
+As of v0.5.5, no version-current external cohort result has been recorded, so
 the project does not claim external adoption. The
 [v0.5.2 Adoption Proof](docs/adoption-proof-v0.5.2.md) remains available as a
 historical study contract, not as current work or a successful outcome.

@@ -218,6 +218,8 @@ Give these tasks to coding agents in this order:
 214. `agent-tasks/0209-refactoring-integrated-verification.md` (post-v0.5.3 integrated source/wheel/sdist verification and PCL closeout)
 215. `agent-tasks/0210-v054-local-release-preparation.md` (v0.5.4 behavior-preserving maintainability release, version/distribution alignment, local artifact Evidence, and no publication)
 216. `agent-tasks/0211-v054-release-publication.md` (v0.5.4 authorized publication, immutable tag chain, Trusted Publishing, public artifact hashes, clean-install verification, and pipx upgrade)
+217. `agent-tasks/0212-goal-close-packet-routing.md` (post-v0.5.4 exact Goal completion-packet close routing, latest-only fail-closed reuse, and proof-ID CLI clarity)
+218. `agent-tasks/0213-v055-local-release-preparation.md` (v0.5.5 finish reliability and operability release, version/distribution alignment, local artifact Evidence, and no publication)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and

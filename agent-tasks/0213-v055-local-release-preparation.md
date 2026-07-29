@@ -1,6 +1,6 @@
 # 0213: v0.5.5 local release preparation
 
-- **Status:** Approved; preparation in progress
+- **Status:** Complete; local release candidate ready, not published
 - **Milestone:** v0.5.5 Finish Reliability and Operability
 - **Priority:** P0
 - **Size:** M

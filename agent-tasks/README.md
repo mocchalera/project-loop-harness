@@ -129,6 +129,8 @@ implement from the spec file, not from prompt summaries.
 | 0209 | Refactoring integrated verification | post-v0.5.3 maintainability | P1 | done |
 | 0210 | v0.5.4 local release preparation | v0.5.4 Maintainability | P0 | done; local RC ready, not published |
 | 0211 | v0.5.4 release publication | v0.5.4 Maintainability | P0 | done; published and publicly verified |
+| 0212 | Goal completion-packet close routing | P1 Real-use Friction Follow-up | P1 | done; real-project verified |
+| 0213 | v0.5.5 local release preparation | v0.5.5 Finish Reliability and Operability | P0 | done; local RC ready, not published |
 
 v0.3.0 dispatch order: **0113 + 0114 in parallel** (independent; different
 `evidence.py` surfaces) → **0108** (needs 0113 merged) → **0115** (freezes the
@@ -225,6 +227,14 @@ artifact Evidence. Task **0211** used the owner's separate authorization to
 publish and independently verify the annotated tag, GitHub Release, Trusted
 Publishing run, PyPI artifacts, clean public install, and pipx upgrade.
 
+v0.5.5 packages the completed finish-safety and operator-friction remediation:
+isolated checks, input/stability Evidence, immutable check reuse, shared
+terminal readiness, explicit attach/routing, scoped audit, bounded retry,
+execution binding, streaming progress, compact finish output, and current
+Goal-packet close routing. Task **0213** prepares and verifies the local
+candidate; push, tag, GitHub Release, PyPI, announcement, and pipx changes
+remain behind a separate publication authorization.
+
 ## Planned next (see growth plan for scope)
 
 | Milestone | Theme |
@@ -243,6 +253,7 @@ Publishing run, PyPI artifacts, clean public install, and pipx upgrade.
 | v0.5.3 | published and publicly verified; strict copied-Evidence resolution → 0200 Gap Report contract → 0201 integrity hardening → 0202 local RC → 0203 publication closeout |
 | post-v0.5.3 | complete frozen CLI/commands refactor: 0204 → 0205 → 0206 → 0207 → 0208 → 0209 |
 | v0.5.4 | published and publicly verified; behavior-preserving CLI/commands maintainability release → 0210 local RC → 0211 publication closeout |
+| v0.5.5 | finish reliability and operability → P0 real-use friction remediation → P1 progress/compact output → 0212 exact Goal close routing → 0213 local RC |
 
 Everything with an ID below 0102 is completed design history; see `TASKS.md`
 for the one-line summary of each.
