@@ -480,3 +480,10 @@ P0 全体の release gate:
 | 観測 | 対応先 | 状態 |
 | --- | --- | --- |
 | `next --target`が有効なGoal packetをclose proofとして再利用しない摩擦と、Goal close proof IDのhelp不足を次の小sliceへ固定した | `F9`, P1 closeout routing / Evidence UX | `G-0074 / T-0152 / F-0081`、draft Stories `US-0084`〜`US-0085`、planned Tests `TC-0193`〜`TC-0198`、`agent-tasks/0212-goal-close-packet-routing.md`へ保存。Story意味承認と実装は未実施 |
+
+### 2026-07-29: v0.5.5 local RC dogfood
+
+| 観測 | 対応先 | 状態 |
+| --- | --- | --- |
+| explicit ancestor `--base`で発行した有効なGoal packet `E-0686`は同baseでの再撮影と完全一致するが、`next --target G-0075`はHEAD基準で再撮影してstale扱いし、約13分のfinish再実行を案内した | `F9`, P1 closeout routing follow-up | `T-0154 / F-0083 / US-0087 / TC-0202`〜`TC-0203`へ保存し修正済み。packetの検証済み`base_revision`を共有snapshotへ渡し、sourceとinstalled wheelの実dogfoodでexact close routingを確認 |
+| `feature add --json`だけが新規IDをトップレベル`id`で返し、`story draft`等のentity object shapeを前提にした自動ID抽出が失敗した | `F9`, agent JSON ergonomics | 後続Story/Test mutationは空IDをfail-closedで拒否。公開JSONを壊さず共通ID抽出guidanceまたは加算entity objectを将来候補として保持 |

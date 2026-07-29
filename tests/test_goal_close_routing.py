@@ -8,6 +8,7 @@ import pytest
 
 from pcl.cli import main
 from pcl.contracts.completion_packet import with_computed_packet_id
+from pcl.errors import InvalidInputError
 
 
 def _json_output(capsys) -> dict:
@@ -36,6 +37,16 @@ def _git(root: Path, *args: str) -> None:
         capture_output=True,
         text=True,
     )
+
+
+def _git_stdout(root: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args],
+        cwd=root,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 def _prepare_terminal_goal(tmp_path: Path, capsys) -> None:
@@ -74,7 +85,14 @@ def _prepare_terminal_goal(tmp_path: Path, capsys) -> None:
     (tmp_path / "source.py").write_text("VALUE = 2\n", encoding="utf-8")
 
 
-def _emit_goal_packet(tmp_path: Path, capsys, *, timeout: int = 10) -> dict:
+def _emit_goal_packet(
+    tmp_path: Path,
+    capsys,
+    *,
+    timeout: int = 10,
+    base: str | None = None,
+) -> dict:
+    base_args = ["--base", base] if base is not None else []
     assert (
         main(
             [
@@ -86,6 +104,7 @@ def _emit_goal_packet(tmp_path: Path, capsys, *, timeout: int = 10) -> dict:
                 "G-0001",
                 "--timeout",
                 str(timeout),
+                *base_args,
                 "--json",
             ]
         )
@@ -184,6 +203,59 @@ def test_next_routes_current_goal_packet_to_agent_safe_close(
     assert terminal["type"] == "target_terminal"
     assert terminal["target"]["id"] == "G-0001"
     assert terminal["target"]["status"] == "closed"
+
+
+def test_next_routes_current_goal_packet_with_explicit_ancestor_base(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _prepare_terminal_goal(tmp_path, capsys)
+    base = _git_stdout(tmp_path, "rev-parse", "HEAD")
+    _git(tmp_path, "add", "source.py")
+    _git(tmp_path, "commit", "-m", "current head")
+    (tmp_path / "source.py").write_text("VALUE = 3\n", encoding="utf-8")
+    finish = _emit_goal_packet(tmp_path, capsys, base=base)
+    packet = finish["packet"]
+    packet_body = json.loads((tmp_path / packet["path"]).read_text(encoding="utf-8"))
+    events_before = (tmp_path / ".project-loop" / "events.jsonl").read_bytes()
+
+    action = _next_goal(tmp_path, capsys)
+
+    assert packet_body["repository"]["base_revision"] == base
+    assert packet_body["repository"]["head_revision"] != base
+    assert action["type"] == "close_goal"
+    assert action["command"].endswith(f"--evidence-id {packet['evidence_id']}")
+    assert action["target"]["completion_packet_evidence_id"] == packet["evidence_id"]
+    assert (tmp_path / ".project-loop" / "events.jsonl").read_bytes() == events_before
+
+
+def test_next_fails_closed_when_recorded_packet_base_cannot_be_recaptured(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    _prepare_terminal_goal(tmp_path, capsys)
+    base = _git_stdout(tmp_path, "rev-parse", "HEAD")
+    _git(tmp_path, "add", "source.py")
+    _git(tmp_path, "commit", "-m", "current head")
+    (tmp_path / "source.py").write_text("VALUE = 3\n", encoding="utf-8")
+    _emit_goal_packet(tmp_path, capsys, base=base)
+    observed_bases: list[str | None] = []
+
+    def reject_snapshot(paths, *, base_revision=None):
+        observed_bases.append(base_revision)
+        raise InvalidInputError("Recorded base cannot be resolved.")
+
+    monkeypatch.setattr(
+        "pcl.action_routing.capture_finish_repository_snapshot",
+        reject_snapshot,
+    )
+
+    action = _next_goal(tmp_path, capsys)
+
+    assert observed_bases == [base]
+    assert action["type"] == "emit_completion_packet"
+    assert action["command"] == "pcl finish --emit-packet --goal G-0001 --json"
 
 
 def test_next_does_not_fall_back_to_older_packet_when_latest_is_invalid(

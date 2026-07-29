@@ -952,14 +952,25 @@ def _latest_reusable_goal_completion_packet(
             return None
     finally:
         conn.close()
+    packet = proof["packet"]
+    if not isinstance(packet, dict):
+        return None
+    packet_repository = packet.get("repository")
+    if not isinstance(packet_repository, dict):
+        return None
+    base_revision = packet_repository.get("base_revision")
+    if not isinstance(base_revision, str) or not base_revision:
+        return None
     try:
-        repository = capture_finish_repository_snapshot(paths)[
+        repository = capture_finish_repository_snapshot(
+            paths,
+            base_revision=base_revision,
+        )[
             "packet_repository"
         ]
     except InvalidInputError:
         return None
-    packet = proof["packet"]
-    if not isinstance(packet, dict) or packet.get("repository") != repository:
+    if packet_repository != repository:
         return None
     return {
         "evidence_id": evidence_id,
