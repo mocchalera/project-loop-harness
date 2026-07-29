@@ -155,6 +155,8 @@ def _render_consistently(paths: ProjectPaths) -> dict[str, Any]:
     for attempt in range(1, MAX_RENDER_ATTEMPTS + 1):
         before = _state_high_watermark(paths)
         render_dashboard(paths)
+        artifact = _artifact_receipt(paths.dashboard_html)
+        data_artifact = _artifact_receipt(paths.dashboard_data)
         after = _state_high_watermark(paths)
         observations.append(
             {
@@ -166,8 +168,8 @@ def _render_consistently(paths: ProjectPaths) -> dict[str, Any]:
         if before == after:
             return {
                 "state_high_watermark": after,
-                "artifact": _artifact_receipt(paths.dashboard_html),
-                "data_artifact": _artifact_receipt(paths.dashboard_data),
+                "artifact": artifact,
+                "data_artifact": data_artifact,
                 "consistency": {
                     "status": "stable",
                     "attempts": attempt,

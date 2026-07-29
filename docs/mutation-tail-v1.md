@@ -31,9 +31,12 @@ The tail reads `dashboard.auto_render` from `pcl.yaml`.
 
 - `true`: a meaningful connected mutation renders after the authoritative
   commit and returns artifact paths, SHA-256 hashes, sizes, and the event
-  high-watermark. The renderer is bracketed by read-only event watermark
-  reads. A changed watermark causes one bounded rerender; a second change
-  fails the tail closed without returning artifact hashes.
+  high-watermark. Each attempt reads the pre-render event watermark, renders,
+  captures both artifact byte receipts, and only then reads the final
+  watermark. The captured receipts are published only when both watermarks
+  match. A changed watermark discards those receipts and causes one bounded
+  rerender; a second change fails the tail closed without returning artifact
+  hashes.
 - `false` or a missing setting: no render occurs.
 - invalid configuration or render failure: the mutation remains committed,
   `safe_to_retry_original=false`, and recovery is the exact read-only command

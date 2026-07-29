@@ -7,6 +7,7 @@ from pathlib import Path
 from pcl.cli import main
 from pcl.commands import add_feature
 from pcl.db import connect
+from pcl.paths import resolve_paths
 
 
 def _json_output(capsys) -> dict:
@@ -28,12 +29,22 @@ def _event_snapshot(root: Path) -> tuple[int, int]:
         conn.close()
 
 
-def _feature_event_count(root: Path) -> int:
+def _feature_event_count(root: Path, *, entity_id: str | None = None) -> int:
     conn = connect(root / ".project-loop" / "project.db")
     try:
-        row = conn.execute(
-            "SELECT COUNT(*) AS count FROM events WHERE event_type = 'feature_added'"
-        ).fetchone()
+        if entity_id is None:
+            row = conn.execute(
+                "SELECT COUNT(*) AS count FROM events WHERE event_type = 'feature_added'"
+            ).fetchone()
+        else:
+            row = conn.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM events
+                WHERE event_type = 'feature_added' AND entity_id = ?
+                """,
+                (entity_id,),
+            ).fetchone()
         return int(row["count"])
     finally:
         conn.close()
@@ -240,6 +251,61 @@ def test_render_receipt_retries_once_when_state_changes_during_render(
         "F-0001",
         "F-0002",
     ]
+
+
+def test_render_receipt_captures_artifacts_before_final_watermark_check(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    _initialized_direct_target(tmp_path, capsys, auto_render=True)
+    import pcl.mutation_tail as mutation_tail
+
+    original_artifact_receipt = mutation_tail._artifact_receipt
+    original_render = mutation_tail.render_dashboard
+    injected = False
+
+    def artifact_receipt_with_one_concurrent_render(path):
+        nonlocal injected
+        if not injected:
+            injected = True
+            paths = resolve_paths(tmp_path)
+            add_feature(
+                paths,
+                name="Receipt-window concurrent feature",
+                surface="test:receipt-window",
+            )
+            original_render(paths)
+        return original_artifact_receipt(path)
+
+    monkeypatch.setattr(
+        mutation_tail,
+        "_artifact_receipt",
+        artifact_receipt_with_one_concurrent_render,
+    )
+
+    assert main(_add_linked_feature(tmp_path)) == 0
+    payload = _json_output(capsys)
+    receipt = payload["mutation_tail"]["render"]
+    html = tmp_path / ".project-loop" / "dashboard" / "dashboard.html"
+    data = tmp_path / ".project-loop" / "dashboard" / "dashboard-data.json"
+    dashboard = json.loads(data.read_text(encoding="utf-8"))
+
+    assert injected is True
+    assert receipt["status"] == "rendered"
+    assert receipt["consistency"]["status"] == "stable"
+    assert receipt["consistency"]["attempts"] == 2
+    assert receipt["consistency"]["before"] == receipt["consistency"]["after"]
+    assert receipt["state_high_watermark"] == receipt["consistency"]["after"]
+    assert receipt["state_high_watermark"]["sequence"] == _event_snapshot(tmp_path)[1]
+    assert receipt["artifact"]["sha256"] == _sha256(html)
+    assert receipt["data_artifact"]["sha256"] == _sha256(data)
+    assert [feature["id"] for feature in dashboard["features"][:2]] == [
+        "F-0001",
+        "F-0002",
+    ]
+    assert _feature_event_count(tmp_path, entity_id="F-0001") == 1
+    assert _feature_event_count(tmp_path, entity_id="F-0002") == 1
 
 
 def test_render_receipt_fails_closed_after_bounded_state_changes(
