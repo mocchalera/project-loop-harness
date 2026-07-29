@@ -204,6 +204,7 @@ def test_sdist_manifest_and_ci_include_doc_contract_smoke() -> None:
     ]:
         assert expected in manifest
     assert '"build>=1"' in pyproject
+    assert 'select = ["E4", "E7", "E9", "F"]' in pyproject
     assert '"docs"' in verifier
     assert '"agent-adapter-contract.md"' in verifier
     assert "tests/test_agent_adapter_contract.py::test_agent_adapter_docs_match_contract" in verifier
