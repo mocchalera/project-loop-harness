@@ -22,7 +22,12 @@ from .contracts.completion_packet import (
     with_computed_packet_id,
 )
 from .db import connect, connect_mutation
-from .errors import DataStoreError, FinishChecksNotConfiguredError, InvalidInputError
+from .errors import (
+    DataStoreError,
+    FinishChecksNotConfiguredError,
+    FinishTargetReadinessChangedError,
+    InvalidInputError,
+)
 from .events import append_event
 from .evidence import insert_evidence_link, linked_task_provenance
 from .finish_recovery import MAX_FINISH_TIMEOUT_SECONDS, finish_timeout_recovery
@@ -163,7 +168,7 @@ def _plan_finish_packet(
     }
     if target_binding is not None:
         plan["target_binding"] = target_binding
-    blockers = _target_blockers(paths, target)
+    blockers = _target_blockers(paths, target, source="finish_plan")
     if blockers["target_readiness"] is not None:
         plan["terminal_readiness"] = blockers["target_readiness"]
     return plan, input_manifest
@@ -386,7 +391,7 @@ def emit_finish_packet(
             progress_reporter.phase_finished("repository_snapshot")
             progress_reporter.phase_started("strict_validation")
         strict = validate_project(paths, strict=True)
-        blockers = _target_blockers(paths, target)
+        blockers = _target_blockers(paths, target, source="finish_post_checks")
         target_readiness = blockers.get("target_readiness")
         effect_requirements = (
             list(target_readiness["reasons"])
@@ -500,6 +505,13 @@ def emit_finish_packet(
             blockers=blockers,
             outcome=outcome,
             timeout_seconds=timeout_seconds,
+            expected_target_readiness=plan.get("terminal_readiness"),
+            enforce_target_freshness=(
+                bool(plan.get("terminal_readiness", {}).get("terminal_allowed"))
+                and all(command.get("status") == "passed" for command in commands)
+                and not race_detected
+                and effect["classification"] not in {"mutates_inputs", "unknown"}
+            ),
         )
         if progress_reporter is not None:
             progress_reporter.phase_finished("evidence_commit")
@@ -533,6 +545,15 @@ def emit_finish_packet(
         "checks": committed["checks"],
         "packet": committed["packet"],
         "target_transition": committed["target_transition"],
+        **(
+            {
+                "target_terminal_readiness": committed[
+                    "target_terminal_readiness"
+                ]
+            }
+            if committed.get("target_terminal_readiness") is not None
+            else {}
+        ),
         "exit_code": 1 if outcome == "INCOMPLETE_VALIDATION" else 0,
     }
     recovery = finish_timeout_recovery(
@@ -700,9 +721,15 @@ def _goal_target(conn: sqlite3.Connection, goal_id: str, *, planner: dict[str, A
     }
 
 
-def _target_blockers(paths: ProjectPaths, target: dict[str, Any]) -> dict[str, Any]:
+def _target_blockers(
+    paths: ProjectPaths,
+    target: dict[str, Any],
+    *,
+    source: str,
+) -> dict[str, Any]:
     conn = connect(paths.db_path)
     try:
+        conn.execute("BEGIN")
         try:
             routing_target = resolve_routing_target(conn, str(target["id"]))
         except TaskGoalTargetNotFoundError as exc:
@@ -761,8 +788,10 @@ def _target_blockers(paths: ProjectPaths, target: dict[str, Any]) -> dict[str, A
             ).fetchone()
             if task is not None:
                 target_readiness = task_terminal_readiness_for_row(
+                    paths,
                     conn,
                     dict(task),
+                    source=source,
                 )
     finally:
         conn.close()
@@ -942,10 +971,58 @@ def _commit_completion_packet(
     commands: list[dict[str, Any]], stage_dir: Path, strict_errors: list[str],
     strict_warnings: list[str], race_detected: bool, blockers: dict[str, Any], outcome: str,
     timeout_seconds: int,
+    expected_target_readiness: dict[str, Any] | None,
+    enforce_target_freshness: bool,
 ) -> dict[str, Any]:
     conn = connect_mutation(paths)
     now = utc_now_iso().replace("+00:00", "Z")
     try:
+        fresh_target = dict(target)
+        fresh_target_readiness = None
+        if target["type"] == "task":
+            try:
+                routing_target = resolve_routing_target(
+                    conn,
+                    str(target["id"]),
+                    expected_type="task",
+                )
+            except TaskGoalTargetNotFoundError:
+                current = evaluate_terminal_readiness(
+                    target_type="task",
+                    target_id=str(target["id"]),
+                    requirements=[
+                        {
+                            "code": "finish_target_missing",
+                            "state": "blocked",
+                            "message": (
+                                f"Finish target Task {target['id']} no longer exists."
+                            ),
+                            "details": {"task_id": str(target["id"])},
+                        }
+                    ],
+                )
+                raise FinishTargetReadinessChangedError(
+                    target_id=str(target["id"]),
+                    expected=expected_target_readiness or {},
+                    current=current,
+                )
+            fresh_target["status"] = str(routing_target.row["status"])
+            fresh_target_readiness = task_terminal_readiness_for_row(
+                paths,
+                conn,
+                routing_target.row,
+                source="finish_commit",
+            )
+            if enforce_target_freshness and not _same_terminal_readiness_snapshot(
+                expected_target_readiness,
+                fresh_target_readiness,
+            ):
+                raise FinishTargetReadinessChangedError(
+                    target_id=str(target["id"]),
+                    expected=expected_target_readiness or {},
+                    current=fresh_target_readiness,
+                )
+
         check_rows = _store_check_evidence(
             paths,
             conn,
@@ -982,7 +1059,15 @@ def _commit_completion_packet(
             (packet_evidence_id, COMPLETION_PACKET_EVIDENCE_TYPE, relative_packet_path, "pcl finish --emit-packet", f"Completion packet {outcome} for {target['type']} {target['id']}", now),
         )
         insert_evidence_link(conn, evidence_id=packet_evidence_id, target_type=target["type"], target_id=target["id"], link_role=COMPLETION_PACKET_LINK_ROLE, created_at=now)
-        transition = _apply_terminal_transition(conn, paths, target=target, outcome=outcome, packet_evidence_id=packet_evidence_id, now=now)
+        transition = _apply_terminal_transition(
+            conn,
+            paths,
+            target=fresh_target,
+            outcome=outcome,
+            packet_evidence_id=packet_evidence_id,
+            now=now,
+            terminal_readiness=fresh_target_readiness,
+        )
         append_event(
             conn=conn, events_path=paths.events_path, event_type="completion_packet_created",
             entity_type=target["type"], entity_id=target["id"],
@@ -994,6 +1079,11 @@ def _commit_completion_packet(
                 "check_evidence_ids": [row["evidence_id"] for row in check_rows],
                 "check_results": _check_result_anchors(check_rows),
                 "target_transition": transition,
+                **(
+                    {"terminal_readiness": fresh_target_readiness}
+                    if fresh_target_readiness is not None
+                    else {}
+                ),
             },
         )
         conn.commit()
@@ -1001,7 +1091,11 @@ def _commit_completion_packet(
             "checks": check_rows,
             "packet": {"packet_id": packet["packet_id"], "evidence_id": packet_evidence_id, "path": relative_packet_path, "outcome": outcome},
             "target_transition": transition,
+            "target_terminal_readiness": fresh_target_readiness,
         }
+    except FinishTargetReadinessChangedError:
+        conn.rollback()
+        raise
     except (OSError, sqlite3.Error) as exc:
         conn.rollback()
         raise DataStoreError(f"Could not commit completion packet: {exc}") from exc
@@ -1200,18 +1294,59 @@ def _next_action(
 def _apply_terminal_transition(
     conn: sqlite3.Connection, paths: ProjectPaths, *, target: dict[str, Any], outcome: str,
     packet_evidence_id: str, now: str,
+    terminal_readiness: dict[str, Any] | None,
 ) -> dict[str, Any]:
     if outcome not in {"COMPLETED_VERIFIED", "COMPLETED_WITH_RISK"} or target["type"] != "task":
         return {"changed": False, "from_status": target["status"], "to_status": target["status"]}
     if target["status"] == "done":
         return {"changed": False, "from_status": "done", "to_status": "done"}
+    if terminal_readiness is None or not terminal_readiness["terminal_allowed"]:
+        raise FinishTargetReadinessChangedError(
+            target_id=str(target["id"]),
+            expected=terminal_readiness or {},
+            current=terminal_readiness or {},
+        )
     conn.execute("UPDATE tasks SET status = 'done', updated_at = ? WHERE id = ?", (now, target["id"]))
     append_event(
         conn=conn, events_path=paths.events_path, event_type="task_status_changed",
         entity_type="task", entity_id=target["id"],
-        payload={"from_status": target["status"], "to_status": "done", "reason": "Completion packet checks passed.", "evidence_id": packet_evidence_id},
+        payload={
+            "from_status": target["status"],
+            "to_status": "done",
+            "reason": "Completion packet checks passed.",
+            "evidence_id": packet_evidence_id,
+            "terminal_readiness": terminal_readiness,
+        },
     )
     return {"changed": True, "from_status": target["status"], "to_status": "done"}
+
+
+def _same_terminal_readiness_snapshot(
+    expected: dict[str, Any] | None,
+    current: dict[str, Any],
+) -> bool:
+    if not isinstance(expected, dict):
+        return False
+    expected_evaluation = expected.get("evaluation")
+    current_evaluation = current.get("evaluation")
+    if not isinstance(expected_evaluation, dict) or not isinstance(
+        current_evaluation,
+        dict,
+    ):
+        return False
+    expected_transition = expected.get("transition")
+    current_transition = current.get("transition")
+    return (
+        expected.get("terminal_allowed") is True
+        and current.get("terminal_allowed") is True
+        and expected_transition == current_transition
+        and expected_evaluation.get("evaluated_through_event_sequence")
+        == current_evaluation.get("evaluated_through_event_sequence")
+        and expected_evaluation.get("evaluated_through_event_id")
+        == current_evaluation.get("evaluated_through_event_id")
+        and expected_evaluation.get("input_sha256")
+        == current_evaluation.get("input_sha256")
+    )
 
 
 def _finish_check_policy(

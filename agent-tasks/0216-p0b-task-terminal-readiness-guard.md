@@ -1,0 +1,62 @@
+# 0216: P0-B Task terminal readiness guard
+
+- **Status:** Implemented locally; independent review pending
+- **Milestone:** P0-B terminal mutation safety
+- **Priority:** P0
+- **Size:** L
+- **Dependency:** P0-A mutation-tail commits through `c923a1e`
+- **Project Loop:** Goal `G-0002`, Task `T-0002`, Feature `F-0002`, Story
+  `US-0002`, Tests `TC-0014`–`TC-0016`
+- **Schema/dependencies:** unchanged
+
+## Approved contract
+
+Cockpit Ask `ask_adc40334f575` fixed these semantics:
+
+1. A Task related to a Feature requires that Feature to be `done` with healthy
+   acceptance Evidence; `ready_to_close` is insufficient.
+2. A standalone Task receives no new Evidence requirement.
+3. Findings use current proof closure. Historical findings outside it are
+   advisory; historical proof still referenced by the current closure is
+   rechecked and blocks. Global active error, unknown, and human-required
+   findings block.
+
+## Implementation
+
+- Direct Task `done` evaluates one deterministic `terminal-readiness/v1`
+  receipt after exact target resolution in the existing `BEGIN IMMEDIATE`.
+- Failure is typed exit 1 and zero-mutation across Task/event/outbox/JSONL and
+  dashboard bytes. It does not call the P0-A mutation tail.
+- Success records exactly one status event/outbox and stores the same receipt
+  in the result and event before the post-commit P0-A tail.
+- Task read/list/next/direct share the same event HWM and canonical input
+  digest.
+- Task-bound finish compares the pre-check Task/HWM/input receipt with a fresh
+  final-transaction receipt before creating check Evidence or packet files.
+- Existing normal check-failure attempts/packets and same-state Task no-ops are
+  unchanged.
+
+## Verification boundary
+
+Use source-tree execution only:
+
+```text
+PYTHONPATH=src pytest -q tests/test_terminal_readiness.py tests/test_task_terminal_guard.py
+PYTHONPATH=src pytest -q tests/test_finish.py
+PYTHONPATH=src pytest
+PYTHONPATH=src ruff check .
+git diff --check
+PYTHONPATH=src python -m pcl --root . --json validate --summary
+PYTHONPATH=src python -m pcl --root . --json render
+```
+
+Story `US-0002` remains draft and Tests `TC-0014`–`TC-0016` remain planned:
+implementation authority and the external Ask decisions are not fabricated as
+Story-approval provenance. Record immutable implementation Evidence without
+closing or removing the Task.
+
+## Stop conditions
+
+Do not add a migration, dependency, force/override path, automatic human
+approval, weakened Evidence/completion policy, push, release, publication, or
+external mutation.

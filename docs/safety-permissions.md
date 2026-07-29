@@ -52,6 +52,14 @@ let an agent approve a Story or waive terminal Evidence. When a command's
 prerequisites are missing, follow its read-only `failure_recovery` route instead
 of guessing, retrying a terminal mutation, or selecting another target.
 
+Task `done` has no force, override, lite-mode, configuration, or environment
+bypass. A linked Task requires its Feature to be explicitly `done` with healthy
+acceptance Evidence; `ready_to_close` is advisory projection only. Standalone
+Tasks do not acquire a new Evidence requirement. Both direct Task completion
+and Task-bound finish use the current `terminal-readiness/v1` proof snapshot.
+Their typed pre-commit failures preserve Task, event, outbox, audit JSONL, and
+dashboard bytes.
+
 ## MCP guidance
 
 MCP should be an optional bridge to external services. It should not replace local CLI state mutation in the first implementation.

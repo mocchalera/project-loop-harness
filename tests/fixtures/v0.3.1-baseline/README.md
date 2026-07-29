@@ -61,6 +61,10 @@ is a regression, not an automatic regeneration result.
 
 ## Intended changes since v0.3.1 freeze
 
+- 2026-07-30 — `snapshots/representative-next-json.json` regenerated for the
+  P0-B Task terminal guard. The existing target/action keys are unchanged;
+  linked Task readiness now adds the explicit Feature-`done` requirement,
+  transition intent, and canonical HWM/input-digest evaluation receipt.
 - 2026-07-30 — `snapshots/validate-help.json` regenerated for P0-A to
   include additive read-only `--target`, `--active-only`, and `--summary`
   validation projection flags. Validation still evaluates the full project;

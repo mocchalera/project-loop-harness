@@ -321,6 +321,12 @@ def test_targeted_next_routes_ready_to_close_task_to_verified_finish(
         "--summary", "Passed", "--evidence-id", evidence_id,
     ]) == 0
     capsys.readouterr()
+    assert main([
+        "--root", str(tmp_path), "feature", "status", "F-0001",
+        "--status", "done", "--summary", "Acceptance complete",
+        "--evidence-id", evidence_id,
+    ]) == 0
+    capsys.readouterr()
 
     assert main([
         "--root", str(tmp_path), "next", "--target", "T-0001", "--json",

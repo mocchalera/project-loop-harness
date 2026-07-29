@@ -94,6 +94,21 @@ calls `fsync`, and only then marks the outbox row delivered. Projection failure
 does not undo committed domain state; retry with `pcl audit flush` rather than
 re-running the mutation.
 
+Task completion adds a pre-update proof gate inside that same transaction.
+The exact `routing-target/v1` Task is re-read and evaluated through the shared
+`terminal-readiness/v1` collector before its row changes. The receipt binds the
+current event high-watermark and a canonical digest of dependencies, linked
+lifecycle entities, proof Evidence, Workflow/Goal state, formal findings, and
+human gates. A failed gate rolls back before event/outbox insertion and never
+reaches post-commit projection or rendering.
+
+Task-bound finish uses the same receipt on both sides of its long-running
+checks. Its final `BEGIN IMMEDIATE` re-resolves the exact Task and rejects a
+changed status, HWM, input digest, or blocked proof before storing check
+Evidence or writing a completion packet. This freshness gate is separate from
+ordinary failed-check Evidence, whose existing incomplete-attempt semantics
+remain authoritative.
+
 ## Why CLI first
 
 Agent Skills are instructions. They cannot reliably guarantee migrations, validation, deterministic rendering, or guarded state transitions by themselves.

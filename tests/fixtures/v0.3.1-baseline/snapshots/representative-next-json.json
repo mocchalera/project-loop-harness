@@ -37,6 +37,16 @@
       "terminal_readiness": {
         "contract_version": "terminal-readiness/v1",
         "derived_task_status": "todo",
+        "evaluation": {
+          "evaluated_through_event_id": "EV-XXXXXXXXXXXX",
+          "evaluated_through_event_sequence": 15,
+          "finding_counts": {
+            "active": 0,
+            "historical": 0
+          },
+          "input_sha256": "sha256:<HASH>",
+          "source": "next"
+        },
         "next_commands": [
           "pcl feature read F-0001 --json",
           "pcl test read TC-0001 --json"
@@ -57,6 +67,17 @@
             "message": "Feature F-0001 has missing or incomplete Stories.",
             "next_command": "pcl feature read F-0001 --json",
             "requires_human": true,
+            "state": "blocked"
+          },
+          {
+            "code": "task_done_feature_not_terminal",
+            "details": {
+              "feature_id": "F-0001",
+              "status": "needs_test"
+            },
+            "message": "Feature F-0001 is needs_test, not done.",
+            "next_command": "pcl feature read F-0001 --json",
+            "requires_human": false,
             "state": "blocked"
           },
           {
@@ -84,7 +105,11 @@
           "id": "T-0001",
           "type": "task"
         },
-        "terminal_allowed": false
+        "terminal_allowed": false,
+        "transition": {
+          "from_status": "todo",
+          "to_status": "done"
+        }
       },
       "title": "Inspect baseline context",
       "updated_at": "<TIMESTAMP>"

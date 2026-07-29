@@ -3,11 +3,15 @@ from __future__ import annotations
 from copy import deepcopy
 
 from pcl.terminal_readiness import (
+    canonical_terminal_readiness_input_sha256,
     evaluate_terminal_readiness,
     feature_terminal_readiness,
     finish_terminal_readiness,
     task_terminal_readiness,
 )
+from pcl.target_resolver import ResolvedRoutingTarget
+from pcl.tasks import _readiness_requirement_for_finding
+from pcl.validators import ValidationFinding
 
 
 def test_terminal_readiness_is_deterministic_and_side_effect_free() -> None:
@@ -69,6 +73,68 @@ def test_terminal_readiness_is_deterministic_and_side_effect_free() -> None:
         "pcl decision list --status open",
         "pcl validate --strict --json",
     ]
+
+
+def test_terminal_readiness_dedupes_exact_reasons_and_hashes_canonical_input() -> None:
+    requirement = {
+        "code": "duplicate",
+        "state": "blocked",
+        "message": "One exact blocker.",
+        "details": {"b": 2, "a": 1},
+    }
+
+    readiness = evaluate_terminal_readiness(
+        target_type="task",
+        target_id="T-0001",
+        requirements=[requirement, deepcopy(requirement)],
+    )
+
+    assert readiness["reasons"] == [
+        {
+            "code": "duplicate",
+            "state": "blocked",
+            "message": "One exact blocker.",
+            "requires_human": False,
+            "details": {"b": 2, "a": 1},
+        }
+    ]
+    assert canonical_terminal_readiness_input_sha256(
+        {"task": {"id": "T-0001"}, "dependencies": []}
+    ) == canonical_terminal_readiness_input_sha256(
+        {"dependencies": [], "task": {"id": "T-0001"}}
+    )
+    assert canonical_terminal_readiness_input_sha256(
+        {"task": {"id": "T-0001"}}
+    ) != canonical_terminal_readiness_input_sha256(
+        {"task": {"id": "T-0002"}}
+    )
+
+
+def test_unknown_global_finding_fails_closed() -> None:
+    finding = ValidationFinding(
+        code="new_unclassified_contract",
+        severity="warning",
+        message="A new finding family has no projection policy.",
+        entity=None,
+        repair_class="unsupported",
+        requires_human=False,
+    )
+    resolved = ResolvedRoutingTarget(
+        type="task",
+        row={"id": "T-0001", "status": "in_progress"},
+        goal_row=None,
+        scope_refs=frozenset({("task", "T-0001")}),
+    )
+
+    requirement = _readiness_requirement_for_finding(
+        finding,
+        resolved=resolved,
+        current_proof_refs=set(resolved.scope_refs),
+    )
+
+    assert requirement is not None
+    assert requirement["state"] == "blocked"
+    assert requirement["code"] == "new_unclassified_contract"
 
 
 def test_feature_readiness_preserves_lifecycle_reason_details() -> None:

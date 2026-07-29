@@ -14,7 +14,7 @@ from .audit import (
 )
 from .control_handlers import handle_control_command
 from .context_handlers import handle_context_command
-from .errors import DataStoreError, InvalidInputError, PclError
+from .errors import DataStoreError, InvalidInputError, PclError, TaskTerminalReadinessError
 from .entity_handlers import handle_entity_command
 from .execution_handlers import handle_execution_command
 from .paths import resolve_paths
@@ -57,6 +57,25 @@ def _print_error(error: PclError, *, json_output: bool = False) -> None:
         _print_json(error.to_dict())
         return
     print(f"ERROR: {error}", file=sys.stderr)
+    if isinstance(error, TaskTerminalReadinessError):
+        readiness = error.details.get("terminal_readiness")
+        reasons = readiness.get("reasons", []) if isinstance(readiness, dict) else []
+        for reason in reasons:
+            if not isinstance(reason, dict):
+                continue
+            print(
+                f"{str(reason.get('state') or 'blocked').upper()} "
+                f"{reason.get('code')}: {reason.get('message')}",
+                file=sys.stderr,
+            )
+        commands = (
+            readiness.get("next_commands", [])
+            if isinstance(readiness, dict)
+            else []
+        )
+        for command in commands:
+            print(f"NEXT: {command}", file=sys.stderr)
+        return
     allowed = error.details.get("allowed")
     if isinstance(allowed, list) and all(isinstance(value, str) for value in allowed):
         print(f"Allowed values: {', '.join(allowed)}", file=sys.stderr)

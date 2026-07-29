@@ -163,6 +163,12 @@ def test_task_read_projects_linked_feature_as_ready_to_close(
         "--summary", "Passed", "--evidence-id", evidence_id,
     ]) == 0
     capsys.readouterr()
+    assert main([
+        "--root", str(tmp_path), "feature", "status", "F-0001",
+        "--status", "done", "--summary", "Acceptance complete",
+        "--evidence-id", evidence_id,
+    ]) == 0
+    capsys.readouterr()
 
     assert main(["--root", str(tmp_path), "task", "read", task["id"], "--json"]) == 0
     projected = _json_output(capsys)["task"]
@@ -173,7 +179,9 @@ def test_task_read_projects_linked_feature_as_ready_to_close(
     assert main(["--root", str(tmp_path), "task", "list", "--json"]) == 0
     listed = _json_output(capsys)["tasks"][0]
     assert listed["derived_status"] == "ready_to_close"
-    assert "terminal_readiness" not in listed
+    assert listed["terminal_readiness"]["evaluation"]["input_sha256"] == (
+        projected["terminal_readiness"]["evaluation"]["input_sha256"]
+    )
 
 
 def test_task_status_transitions_require_reason(tmp_path: Path, capsys) -> None:
@@ -401,8 +409,6 @@ def test_task_validation_detects_warnings_cycles_and_missing_references(tmp_path
     _init(tmp_path, capsys)
     _create_task(tmp_path, capsys, title="Blocked done task")
     _create_task(tmp_path, capsys, title="Incomplete dependency")
-    assert main(["--root", str(tmp_path), "task", "depend", "T-0001", "--on", "T-0002", "--json"]) == 0
-    _json_output(capsys)
     assert main([
         "--root",
         str(tmp_path),
@@ -411,9 +417,11 @@ def test_task_validation_detects_warnings_cycles_and_missing_references(tmp_path
         "T-0001",
         "done",
         "--reason",
-        "operator override",
+        "standalone completion",
         "--json",
     ]) == 0
+    _json_output(capsys)
+    assert main(["--root", str(tmp_path), "task", "depend", "T-0001", "--on", "T-0002", "--json"]) == 0
     _json_output(capsys)
 
     assert main(["--root", str(tmp_path), "validate", "--json"]) == 0

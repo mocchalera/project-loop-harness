@@ -612,7 +612,8 @@ def _terminal_next_target_action(target: dict) -> dict:
 def _explicit_task_next_action(paths: ProjectPaths, *, task: dict) -> dict:
     conn = connect(paths.db_path)
     try:
-        enriched = _task_next_action_target(conn, dict(task))
+        conn.execute("BEGIN")
+        enriched = _task_next_action_target(paths, conn, dict(task))
     finally:
         conn.close()
     task_id = str(enriched["id"])
@@ -1604,13 +1605,14 @@ def _checkpoint_review_next_action(paths: ProjectPaths) -> dict | None:
 def _task_next_action(paths: ProjectPaths, *, goal_id: str | None = None) -> dict | None:
     conn = connect(paths.db_path)
     try:
+        conn.execute("BEGIN")
         in_progress = _next_considered_task(
             conn,
             statuses=("in_progress",),
             goal_id=goal_id,
         )
         if in_progress is not None:
-            task = _task_next_action_target(conn, dict(in_progress))
+            task = _task_next_action_target(paths, conn, dict(in_progress))
             task_id = str(task["id"])
             if task.get("derived_status") == "ready_to_close":
                 return _finish_ready_task_next_action(task)
@@ -1632,7 +1634,7 @@ def _task_next_action(paths: ProjectPaths, *, goal_id: str | None = None) -> dic
         actionable = _next_actionable_task(conn, goal_id=goal_id)
         if actionable is None:
             return None
-        task = _task_next_action_target(conn, dict(actionable))
+        task = _task_next_action_target(paths, conn, dict(actionable))
         task_id = str(task["id"])
         if task.get("derived_status") == "ready_to_close":
             return _finish_ready_task_next_action(task)
@@ -1762,7 +1764,19 @@ def _next_actionable_task_candidates(
     ).fetchall()
 
 
-def _task_next_action_target(conn, task: dict) -> dict:
+def _task_next_action_target(
+    paths: ProjectPaths,
+    conn,
+    task: dict,
+) -> dict:
+    if not conn.in_transaction:
+        conn.execute("BEGIN")
+    resolved = resolve_routing_target(
+        conn,
+        str(task["id"]),
+        expected_type="task",
+    )
+    task = {**task, **dict(resolved.row)}
     dependency_rows = conn.execute(
         """
         SELECT depends_on_task_id
@@ -1783,10 +1797,14 @@ def _task_next_action_target(conn, task: dict) -> dict:
     ).fetchall()
     task["dependency_ids"] = [str(row["depends_on_task_id"]) for row in dependency_rows]
     task["dependent_ids"] = [str(row["task_id"]) for row in dependent_rows]
-    if task.get("related_feature_id"):
-        readiness = task_terminal_readiness_for_row(conn, task)
-        task["terminal_readiness"] = readiness
-        task["derived_status"] = readiness["derived_task_status"]
+    readiness = task_terminal_readiness_for_row(
+        paths,
+        conn,
+        task,
+        source="next",
+    )
+    task["terminal_readiness"] = readiness
+    task["derived_status"] = readiness["derived_task_status"]
     return task
 
 

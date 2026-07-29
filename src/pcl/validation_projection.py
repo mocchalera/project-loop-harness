@@ -208,6 +208,19 @@ def _finding_must_remain_visible(finding: ValidationFinding) -> bool:
     return entity_type in GLOBAL_ENTITY_TYPES
 
 
+def finding_is_in_scope(
+    finding: ValidationFinding,
+    resolved: ResolvedRoutingTarget,
+) -> bool:
+    """Expose the canonical validation projection scope predicate."""
+    return _finding_is_in_scope(finding, resolved)
+
+
+def finding_must_remain_visible(finding: ValidationFinding) -> bool:
+    """Expose the canonical global-safety visibility predicate."""
+    return _finding_must_remain_visible(finding)
+
+
 def _aggregate_findings(findings: list[ValidationFinding]) -> dict[str, Any]:
     codes = Counter(finding.code for finding in findings)
     return {

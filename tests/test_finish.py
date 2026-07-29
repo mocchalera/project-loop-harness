@@ -1619,6 +1619,184 @@ def test_finish_detects_repository_change_during_checks(tmp_path: Path, capsys, 
     assert finish["target_transition"]["changed"] is False
 
 
+def test_finish_rechecks_task_hwm_before_creating_terminal_packet(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    from pcl import finish_execution
+    from pcl.tasks import create_task
+
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        before_terminal_events = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM events
+                WHERE entity_id = 'T-0001'
+                  AND event_type IN (
+                    'task_status_changed',
+                    'completion_packet_created'
+                  )
+                """
+            ).fetchone()[0]
+        )
+    finally:
+        conn.close()
+    execute = finish_execution.execute_planned_guarded_command
+    mutated = False
+
+    def execute_and_mutate_state(*args, **kwargs):
+        nonlocal mutated
+        execute(*args, **kwargs)
+        if not mutated:
+            mutated = True
+            create_task(
+                resolve_paths(tmp_path),
+                title="Concurrent HWM mutation",
+            )
+
+    monkeypatch.setattr(
+        finish_execution,
+        "execute_planned_guarded_command",
+        execute_and_mutate_state,
+    )
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet",
+        "--task", "T-0001", "--json",
+    ]) == 1
+    payload = _json_output(capsys)
+
+    assert payload["error"]["code"] == "finish_target_readiness_changed"
+    details = payload["error"]["details"]
+    assert details["mutation_committed"] is False
+    expected = details["expected_terminal_readiness"]["evaluation"]
+    current = details["terminal_readiness"]["evaluation"]
+    assert current["evaluated_through_event_sequence"] > (
+        expected["evaluated_through_event_sequence"]
+    )
+    assert current["input_sha256"] != expected["input_sha256"]
+
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        task = conn.execute(
+            "SELECT status FROM tasks WHERE id = 'T-0001'"
+        ).fetchone()
+        completion_events = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM events
+                WHERE entity_id = 'T-0001'
+                  AND event_type IN (
+                    'task_status_changed',
+                    'completion_packet_created'
+                  )
+                """
+            ).fetchone()[0]
+        )
+        completion_evidence = int(
+            conn.execute(
+                """
+                SELECT COUNT(*) FROM evidence
+                WHERE type IN ('completion_check', 'completion_packet')
+                """
+            ).fetchone()[0]
+        )
+    finally:
+        conn.close()
+    assert task["status"] == "in_progress"
+    assert completion_events == before_terminal_events
+    assert completion_evidence == 0
+    packet_dir = tmp_path / ".project-loop" / "evidence" / "completion-packets"
+    assert not packet_dir.exists() or not list(packet_dir.iterdir())
+
+
+def test_finish_rechecks_current_proof_input_without_hwm_change(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    assert main([
+        "--root", str(tmp_path), "feature", "add",
+        "--name", "Finish proof", "--surface", "cli:finish",
+        "--task", "T-0001",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "story", "draft", "--feature", "F-0001",
+        "--actor", "operator", "--goal", "finish safely",
+        "--expected-behavior", "proof remains healthy",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "story", "approve", "US-0001",
+        "--summary", "Approved",
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "test", "plan", "--feature", "F-0001",
+        "--story", "US-0001", "--type", "acceptance",
+        "--scenario", "Finish proof", "--expected", "passing",
+    ]) == 0
+    artifact = tmp_path / "finish-proof.txt"
+    artifact.write_text("passed\n", encoding="utf-8")
+    capsys.readouterr()
+    assert main([
+        "--root", str(tmp_path), "evidence", "add",
+        "--file", artifact.name, "--summary", "Finish acceptance",
+        "--copy", "--json",
+    ]) == 0
+    evidence = _json_output(capsys)["evidence"]
+    assert main([
+        "--root", str(tmp_path), "test", "pass", "TC-0001",
+        "--summary", "Passed", "--evidence-id", evidence["id"],
+    ]) == 0
+    assert main([
+        "--root", str(tmp_path), "feature", "status", "F-0001",
+        "--status", "done", "--summary", "Feature accepted",
+        "--evidence-id", evidence["id"],
+    ]) == 0
+    capsys.readouterr()
+    manifest_path = tmp_path / str(evidence["manifest_path"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    copied_path = tmp_path / str(manifest["members"][0]["stored_path"])
+
+    from pcl import finish_execution
+
+    execute = finish_execution.execute_planned_guarded_command
+    mutated = False
+
+    def execute_and_drift_proof(*args, **kwargs):
+        nonlocal mutated
+        execute(*args, **kwargs)
+        if not mutated:
+            mutated = True
+            copied_path.write_text("drifted\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        finish_execution,
+        "execute_planned_guarded_command",
+        execute_and_drift_proof,
+    )
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet",
+        "--task", "T-0001", "--json",
+    ]) == 1
+    details = _json_output(capsys)["error"]["details"]
+    expected = details["expected_terminal_readiness"]["evaluation"]
+    current = details["terminal_readiness"]["evaluation"]
+
+    assert details["mutation_committed"] is False
+    assert current["evaluated_through_event_sequence"] == (
+        expected["evaluated_through_event_sequence"]
+    )
+    assert current["input_sha256"] != expected["input_sha256"]
+    assert details["terminal_readiness"]["terminal_allowed"] is False
+    assert _evidence_count(tmp_path, "completion_packet") == 0
+    assert _evidence_count(tmp_path, "completion_check") == 0
+
+
 def test_finish_human_gate_emits_incomplete_packet_and_next_action(tmp_path: Path, capsys) -> None:
     _create_packet_project(tmp_path, capsys)
     assert main([

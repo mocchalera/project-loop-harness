@@ -30,6 +30,7 @@
 | P0-6d finish timeout / recovery dogfood repair | implemented | `T-0149`, `F-0078`, `US-0078`〜`US-0079`, `TC-0174`〜`TC-0178` |
 | P0-7 operator contract | implemented | `G-0072`, `T-0150`, `F-0079`, `US-0080`〜`US-0081`, `TC-0179`〜`TC-0183` |
 | P1 finish progress / compact actual output | implemented | `9c4ca92`, `4f44616`, `G-0073`, `T-0151`, `F-0080`, `E-0659`〜`E-0668` |
+| P0-B Task terminal mutation guard | implemented locally | `G-0002`, `T-0002`, `F-0002`, `TC-0014`〜`TC-0016`, `docs/terminal-readiness-v1.md`, `docs/evidence/0227-p0b-terminal-readiness-red.md` |
 
 ## 1. 成功条件
 
@@ -180,6 +181,13 @@ Feature / Story / Test の完了から Task の `ready_to_close` を派生表示
 - `next`、`finish`、Feature / Goal lifecycle guardが共有判定を使用する。
 - linked Taskは`task read`で完全な判定、`task list`でcompactな`derived_status`を返す。
 - P0-2の単発stabilityはP0-5のcompatible history/reuse実装まではrecord-only advisoryを維持する。
+- P0-BはTask read/list/next/direct statusへ同一HWM・canonical input digestを
+  追加し、linked Featureが`done`かつhealthy acceptance Evidenceを持つことを
+  direct `done`の必須条件にした。standalone TaskのEvidence条件は変更しない。
+- Task-bound finishは長時間check後のfinal `BEGIN IMMEDIATE`で同じreceiptを
+  再評価し、HWM/input/terminal stateの変化をpacket生成前にtyped failureへする。
+- findingはcurrent proof基準で評価し、proof外historicalはadvisory、
+  current proofが参照するhistoricalとglobal active error/unknown/humanはblockする。
 
 ### P0-4: Start and router targeting
 

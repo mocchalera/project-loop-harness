@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Iterable, Mapping
 from typing import Any
@@ -29,6 +30,7 @@ def evaluate_terminal_readiness(
         for requirement in requirements
         if str(requirement.get("state", "")).strip() != "satisfied"
     ]
+    reasons = _dedupe_reasons(reasons)
     reasons.sort(key=_reason_sort_key)
 
     states = {reason["state"] for reason in reasons}
@@ -298,6 +300,8 @@ def task_terminal_readiness(
     stories: Iterable[Mapping[str, Any]],
     tests: Iterable[Mapping[str, Any]],
     defects: Iterable[Mapping[str, Any]],
+    additional_requirements: Iterable[Mapping[str, Any]] = (),
+    evaluation: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized_task_id = _required_text(task_id, "task_id")
     normalized_task_status = _required_text(task_status, "task_status")
@@ -311,6 +315,7 @@ def task_terminal_readiness(
             defects=defects,
         )
         requirements.extend(feature_readiness["reasons"])
+    requirements.extend(additional_requirements)
     readiness = evaluate_terminal_readiness(
         target_type="task",
         target_id=normalized_task_id,
@@ -324,7 +329,23 @@ def task_terminal_readiness(
         and readiness["terminal_allowed"]
         else normalized_task_status
     )
+    readiness["transition"] = {
+        "from_status": normalized_task_status,
+        "to_status": "done",
+    }
+    if evaluation is not None:
+        readiness["evaluation"] = dict(evaluation)
     return readiness
+
+
+def canonical_terminal_readiness_input_sha256(payload: Mapping[str, Any]) -> str:
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(canonical).hexdigest()}"
 
 
 def goal_terminal_readiness(
@@ -390,6 +411,20 @@ def _reason_sort_key(reason: Mapping[str, Any]) -> tuple[int, str, str]:
         str(reason["code"]),
         json.dumps(reason["details"], ensure_ascii=False, sort_keys=True),
     )
+
+
+def _dedupe_reasons(reasons: Iterable[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    deduped: dict[str, dict[str, Any]] = {}
+    for reason in reasons:
+        normalized = dict(reason)
+        key = json.dumps(
+            normalized,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        deduped.setdefault(key, normalized)
+    return list(deduped.values())
 
 
 def _normalized_entity_rows(rows: Iterable[Mapping[str, Any]]) -> list[dict[str, str]]:

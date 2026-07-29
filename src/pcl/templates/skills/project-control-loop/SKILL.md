@@ -186,6 +186,15 @@ preceding command; do not invent IDs.
    pcl task status T-XXXX done --reason "..."
    ```
 
+   A Task linked to a Feature can become `done` only after that Feature is
+   explicitly `done` with healthy target-bound acceptance Evidence. A
+   `ready_to_close` projection is guidance, not terminal authority. The command
+   returns `task_terminal_readiness_failed` without changing the Task, event
+   log, outbox, audit JSONL, or dashboard when dependency, Feature, Story/Test,
+   Defect, Evidence/Evidence Set, Workflow, Goal, finding, or human-gate proof
+   is incomplete. Follow the ordered `terminal_readiness.next_commands`; do not
+   bypass the guard. Standalone Tasks retain their existing Evidence semantics.
+
 8. Emit a completion packet bound to the Goal. Continue only when its outcome
    is `COMPLETED_VERIFIED` or `COMPLETED_WITH_RISK`; keep the packet's returned
    Evidence ID, shown here as `E-PACKET`:
@@ -193,6 +202,12 @@ preceding command; do not invent IDs.
    ```bash
    pcl finish --emit-packet --goal G-XXXX
    ```
+
+   For a Task target, `finish` records the pre-check Task proof high-watermark
+   and canonical input digest, then re-evaluates the same
+   `terminal-readiness/v1` snapshot inside the final mutation transaction.
+   `finish_target_readiness_changed` means no terminal packet or Task terminal
+   event was committed; inspect the returned current receipt before retrying.
 
 9. Close the direct-route Goal with the completed packet Evidence, then
    audit, validate, and render:

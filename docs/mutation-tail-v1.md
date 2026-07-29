@@ -25,6 +25,13 @@ the shared tail.
 An idempotent Task status request with `changed=false` returns a
 `not_changed` receipt. It does not commit an event or render.
 
+A changed Task transition to `done` first evaluates the shared
+[`terminal-readiness/v1`](terminal-readiness-v1.md) receipt inside the same
+authoritative `BEGIN IMMEDIATE` transaction. A typed
+`task_terminal_readiness_failed` result is pre-commit: it invokes no mutation
+tail and changes neither authoritative nor derived artifacts. Only a successful
+Task commit reaches the existing post-commit next-action/render tail.
+
 ## Auto-render
 
 The tail reads `dashboard.auto_render` from `pcl.yaml`.

@@ -43,6 +43,7 @@ _UUID_RE = re.compile(
     r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
     r"[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b"
 )
+_EVENT_ID_RE = re.compile(r"\bEV-[0-9A-F]{12}\b")
 _HASH_RE = re.compile(r"\b(?:[0-9a-fA-F]{64}|[0-9a-fA-F]{40})\b")
 
 
@@ -194,6 +195,7 @@ def _normalize_string(value: str, *, project_root: Path | None) -> str:
         value = value.replace(str(project_root.resolve()), "<PROJECT_ROOT>")
     value = _ISO_TIMESTAMP_RE.sub("<TIMESTAMP>", value)
     value = _UUID_RE.sub("<UUID>", value)
+    value = _EVENT_ID_RE.sub("EV-XXXXXXXXXXXX", value)
     return _HASH_RE.sub("<HASH>", value)
 
 

@@ -307,6 +307,7 @@ def validate_project(
     *,
     strict: bool = False,
     include_config_advice: bool = False,
+    connection: sqlite3.Connection | None = None,
 ) -> ValidationResult:
     result = ValidationResult()
     if not paths.loop_dir.exists():
@@ -347,17 +348,21 @@ def validate_project(
                 suggested_commands=[_pcl_json_command("audit", "check")],
             )
 
-    try:
-        conn = connect(paths.db_path)
-    except sqlite3.Error as exc:
-        result.add_error(
-            f"Cannot open SQLite database at {paths.db_path}: {exc}",
-            code="installation_database_unreadable",
-            entity={"type": "project", "id": str(paths.root)},
-            repair_class="unsupported",
-            requires_human=True,
-        )
-        return result
+    owns_connection = connection is None
+    if connection is None:
+        try:
+            conn = connect(paths.db_path)
+        except sqlite3.Error as exc:
+            result.add_error(
+                f"Cannot open SQLite database at {paths.db_path}: {exc}",
+                code="installation_database_unreadable",
+                entity={"type": "project", "id": str(paths.root)},
+                repair_class="unsupported",
+                requires_human=True,
+            )
+            return result
+    else:
+        conn = connection
 
     try:
         missing_tables: list[str] = []
@@ -531,8 +536,17 @@ def validate_project(
             requires_human=True,
         )
     finally:
-        conn.close()
+        if owns_connection:
+            conn.close()
     return result
+
+
+def collect_terminal_readiness_findings(
+    paths: ProjectPaths,
+    conn: sqlite3.Connection,
+) -> list[ValidationFinding]:
+    """Collect current formal findings through the shared strict validator."""
+    return list(validate_project(paths, strict=True, connection=conn).findings)
 
 
 def _classify_finding_proof_scopes(

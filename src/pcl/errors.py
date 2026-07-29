@@ -64,6 +64,43 @@ class InvalidInputError(PclError):
         )
 
 
+class TaskTerminalReadinessError(PclError):
+    def __init__(self, *, task_id: str, readiness: dict[str, Any]) -> None:
+        super().__init__(
+            message=f"Task {task_id} is not ready for done.",
+            code="task_terminal_readiness_failed",
+            exit_code=EXIT_VALIDATION_FAILED,
+            details={
+                "task_id": task_id,
+                "mutation_committed": False,
+                "terminal_readiness": readiness,
+            },
+        )
+
+
+class FinishTargetReadinessChangedError(PclError):
+    def __init__(
+        self,
+        *,
+        target_id: str,
+        expected: dict[str, Any],
+        current: dict[str, Any],
+    ) -> None:
+        super().__init__(
+            message=(
+                f"Finish target {target_id} readiness changed while checks were running."
+            ),
+            code="finish_target_readiness_changed",
+            exit_code=EXIT_VALIDATION_FAILED,
+            details={
+                "target_id": target_id,
+                "mutation_committed": False,
+                "expected_terminal_readiness": expected,
+                "terminal_readiness": current,
+            },
+        )
+
+
 class FinishChecksNotConfiguredError(PclError):
     def __init__(self, *, details: dict[str, Any]) -> None:
         super().__init__(
