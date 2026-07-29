@@ -31,6 +31,7 @@ from .read_handlers import handle_doctor, handle_loop_status
 from .renderer import render_dashboard
 from .start import start_work
 from .validators import validate_project
+from .validation_projection import project_validation_result
 
 
 CONTROL_COMMANDS = frozenset(
@@ -116,6 +117,19 @@ def handle_control_command(
 
     if args.command == "validate":
         result = validate_project(paths, strict=args.strict)
+        if args.validation_target is not None or args.active_only or args.summary:
+            payload = project_validation_result(
+                paths,
+                result,
+                target_id=args.validation_target,
+                active_only=args.active_only,
+                summary=args.summary,
+            )
+            return _print_validation_projection(
+                payload,
+                ok=result.ok,
+                json_output=json_output,
+            )
         return _print_validation(result, json_output=json_output)
 
     if args.command == "migrate":
@@ -239,6 +253,30 @@ def _print_validation(result, *, json_output: bool = False) -> int:
         print("OK")
         return 0
     return 1
+
+
+def _print_validation_projection(
+    payload: dict,
+    *,
+    ok: bool,
+    json_output: bool,
+) -> int:
+    if json_output:
+        _print_json(payload)
+        return 0 if ok else 1
+    for warning in payload["warnings"]:
+        print(f"WARNING: {warning}")
+    for error in payload["errors"]:
+        print(f"ERROR: {error}")
+    projection = payload["validation_projection"]
+    full = payload["full_validation"]
+    print(
+        "Validation summary: "
+        f"detail={projection['detailed_count']} "
+        f"historical={projection['historical']['count']} "
+        f"full={full['finding_count']} digest={full['digest']}"
+    )
+    return 0 if ok else 1
 
 
 def _print_update_check(result, *, json_output: bool = False) -> int:

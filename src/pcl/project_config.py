@@ -72,6 +72,35 @@ def enabled_project_commands(root: Path) -> dict[str, str]:
     }
 
 
+def dashboard_auto_render(root: Path) -> bool:
+    config_path = root / "pcl.yaml"
+    if not config_path.exists():
+        return False
+    try:
+        values = _simple_yaml_section(
+            config_path.read_text(encoding="utf-8").splitlines(),
+            "dashboard",
+        )
+    except OSError as exc:
+        raise InvalidInputError(
+            f"Could not read dashboard configuration at {config_path}: {exc}",
+            details={"path": str(config_path)},
+        ) from exc
+    raw = values.get("auto_render", "false").strip().lower()
+    if raw == "true":
+        return True
+    if raw == "false":
+        return False
+    raise InvalidInputError(
+        "dashboard.auto_render must be true or false.",
+        details={
+            "field": "dashboard.auto_render",
+            "value": values.get("auto_render"),
+            "allowed": ["false", "true"],
+        },
+    )
+
+
 def finish_check_configuration(root: Path) -> dict[str, Any]:
     specs = project_command_specs(root)
     enabled = [key for key in FINISH_CHECK_COMMAND_KEYS if specs.get(key, {}).get("status") == "enabled"]

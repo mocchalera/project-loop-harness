@@ -76,6 +76,22 @@ def add_control_parsers(sub) -> None:
 
     p_validate = sub.add_parser("validate", help="Validate project-loop state")
     p_validate.add_argument("--strict", action="store_true")
+    p_validate.add_argument(
+        "--target",
+        dest="validation_target",
+        default=None,
+        help="Project output for one existing Task or Goal after full-project validation",
+    )
+    p_validate.add_argument(
+        "--active-only",
+        action="store_true",
+        help="Return active finding detail and aggregate historical findings by code",
+    )
+    p_validate.add_argument(
+        "--summary",
+        action="store_true",
+        help="Return compact projected detail with full-project totals and digest",
+    )
 
     p_migrate = sub.add_parser("migrate", help="Apply or inspect database migrations")
     p_migrate.add_argument(

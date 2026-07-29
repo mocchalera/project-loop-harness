@@ -6,5 +6,5 @@
   ],
   "exit_code": 0,
   "stderr": "",
-  "stdout": "usage: pcl validate [-h] [--strict] options: -h, --help show this help message and exit --strict"
+  "stdout": "usage: pcl validate [-h] [--strict] [--target VALIDATION_TARGET] [--active-only] [--summary] options: -h, --help show this help message and exit --strict --target VALIDATION_TARGET Project output for one existing Task or Goal after full-project validation --active-only Return active finding detail and aggregate historical findings by code --summary Return compact projected detail with full-project totals and digest"
 }

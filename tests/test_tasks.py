@@ -266,6 +266,7 @@ def test_task_status_same_state_is_idempotent(tmp_path: Path, capsys) -> None:
         "--json",
     ]) == 0
     no_op = _json_output(capsys)
+    tail = no_op.pop("mutation_tail")
     assert no_op == {
         "changed": False,
         "evidence_recorded": False,
@@ -275,6 +276,9 @@ def test_task_status_same_state_is_idempotent(tmp_path: Path, capsys) -> None:
         "status": "ready",
         "to_status": "ready",
     }
+    assert tail["contract_version"] == "mutation-tail/v1"
+    assert tail["mutation_committed"] is False
+    assert tail["render"]["status"] == "not_changed"
     assert _audit_counts(tmp_path) == before_no_op
 
     for _ in range(2):
@@ -289,8 +293,12 @@ def test_task_status_same_state_is_idempotent(tmp_path: Path, capsys) -> None:
             "still ready",
             "--json",
         ]) == 0
-        assert _json_output(capsys) == no_op
-        assert _audit_counts(tmp_path) == before_no_op
+        repeated = _json_output(capsys)
+        repeated_tail = repeated.pop("mutation_tail")
+        assert repeated == no_op
+        assert repeated_tail["mutation_committed"] is False
+        assert repeated_tail["render"]["status"] == "not_changed"
+    assert _audit_counts(tmp_path) == before_no_op
 
     assert main([
         "--root",

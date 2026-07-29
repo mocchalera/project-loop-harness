@@ -24,6 +24,7 @@ from .lifecycle import (
     waive_defect,
 )
 from .paths import ProjectPaths
+from .mutation_tail import apply_mutation_tail
 from .presentation import to_pretty_json
 from .relationship_repair import repair_test_links
 from .stories import (
@@ -124,9 +125,19 @@ def handle_entity_command(
             evidence=args.evidence,
             task_id=args.task,
         )
-        _write_json({"id": feature_id, "ok": True}, output) if json_output else print(
-            feature_id, file=output
-        )
+        result = {"id": feature_id, "ok": True}
+        if args.task is not None:
+            result = apply_mutation_tail(
+                paths,
+                result,
+                target_id=args.task,
+                changed=True,
+            )
+        if json_output:
+            _write_json(result, output)
+        else:
+            print(feature_id, file=output)
+            _print_mutation_tail_warning(result, error=error)
         return 0
 
     if args.command == "feature" and args.feature_command == "list":
@@ -431,6 +442,12 @@ def handle_entity_command(
 
     if args.command == "task" and args.task_command == "status":
         result = set_task_status(paths, args.task_id, status=args.new_status, reason=args.reason)
+        result = apply_mutation_tail(
+            paths,
+            result,
+            target_id=args.task_id,
+            changed=result.get("changed") is not False,
+        )
         if json_output:
             _write_json(result, output)
         elif result.get("changed") is False:
@@ -441,6 +458,7 @@ def handle_entity_command(
                 f"to {result['to_status']}",
                 file=output,
             )
+        _print_mutation_tail_warning(result, error=error)
         return 0
 
     if args.command == "task" and args.task_command == "depend":
@@ -574,3 +592,17 @@ def _print_test_plan_warnings(result: dict, *, error: TextIO) -> None:
             f"WARNING: {warning['message']} Suggested: {warning['suggested_command']}",
             file=error,
         )
+
+
+def _print_mutation_tail_warning(result: dict, *, error: TextIO) -> None:
+    tail = result.get("mutation_tail")
+    if not isinstance(tail, dict) or tail.get("post_commit_status") != "partial":
+        return
+    recovery = tail.get("recovery")
+    command = recovery.get("command") if isinstance(recovery, dict) else None
+    print(
+        "WARNING: Mutation committed, but post-commit processing was partial. "
+        "Do not retry the original mutation."
+        + (f" Inspect with: {command}" if command else ""),
+        file=error,
+    )
