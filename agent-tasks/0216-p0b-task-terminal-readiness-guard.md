@@ -1,6 +1,6 @@
 # 0216: P0-B Task terminal readiness guard
 
-- **Status:** Independent review remediation in progress
+- **Status:** Remediated locally; independent re-review pending
 - **Milestone:** P0-B terminal mutation safety
 - **Priority:** P0
 - **Size:** L
