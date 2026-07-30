@@ -11,6 +11,21 @@ Remediation implementation:
 Independent review:
 `1230d59b`
 
+## Subsequent independent re-review correction
+
+Independent re-review `c12dd3d9` found a Medium missed by this Evidence. The
+final freshness check was conditional on successful checks, no repository
+race, and a non-mutating effect classification. An Evidence Set coherent
+rewrite under `work/` could therefore change strict current proof while
+simultaneously setting `race_detected=true`; finish returned
+`INCOMPLETE_VALIDATION` and persisted check/packet Evidence and an event instead
+of returning typed `finish_target_readiness_changed` with zero mutation.
+
+Accordingly, this document's unconditional finish zero-mutation claim was
+incorrect for that overlap. This Evidence is superseded by the remediation
+Evidence that makes a terminally allowed pre-check receipt require an
+unconditional final Task/HWM/canonical strict-proof comparison.
+
 ## RED to GREEN
 
 The five fail-first regressions at the review base produced:
@@ -44,7 +59,8 @@ After remediation, the same five tests produced:
 - Strict current-proof findings are blocked before direct mutation or finish
   completion-check Evidence/packet files. The direct and finish regressions
   compare Task/event/outbox/JSONL/dashboard bytes and terminal packet/check
-  artifacts to prove zero mutation.
+  artifacts to prove zero mutation. This claim did not cover the later-found
+  repository-race overlap described above.
 - Manual Evidence assessment is retained only for unhealthy superseded history.
   Active unrelated warnings use formal validation projection, remain one risk,
   and do not create a standalone Evidence prerequisite. Current-proof warnings

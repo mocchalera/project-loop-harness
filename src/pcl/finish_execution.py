@@ -444,6 +444,7 @@ def emit_finish_packet(
                 strict_errors=list(strict.errors),
                 strict_warnings=list(strict.warnings),
                 race_detected=race_detected,
+                expected_target_readiness=plan.get("terminal_readiness"),
             )
             if progress_reporter is not None:
                 progress_reporter.phase_finished("evidence_commit")
@@ -506,12 +507,6 @@ def emit_finish_packet(
             outcome=outcome,
             timeout_seconds=timeout_seconds,
             expected_target_readiness=plan.get("terminal_readiness"),
-            enforce_target_freshness=(
-                bool(plan.get("terminal_readiness", {}).get("terminal_allowed"))
-                and all(command.get("status") == "passed" for command in commands)
-                and not race_detected
-                and effect["classification"] not in {"mutates_inputs", "unknown"}
-            ),
         )
         if progress_reporter is not None:
             progress_reporter.phase_finished("evidence_commit")
@@ -827,6 +822,71 @@ def _completion_outcome(
     )
 
 
+def _requires_target_freshness(
+    expected_target_readiness: dict[str, Any] | None,
+) -> bool:
+    return (
+        isinstance(expected_target_readiness, dict)
+        and expected_target_readiness.get("terminal_allowed") is True
+    )
+
+
+def _resolve_finish_task_snapshot(
+    paths: ProjectPaths,
+    conn: sqlite3.Connection,
+    *,
+    target: dict[str, Any],
+    expected_target_readiness: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    try:
+        routing_target = resolve_routing_target(
+            conn,
+            str(target["id"]),
+            expected_type="task",
+        )
+    except TaskGoalTargetNotFoundError:
+        current = evaluate_terminal_readiness(
+            target_type="task",
+            target_id=str(target["id"]),
+            requirements=[
+                {
+                    "code": "finish_target_missing",
+                    "state": "blocked",
+                    "message": (
+                        f"Finish target Task {target['id']} no longer exists."
+                    ),
+                    "details": {"task_id": str(target["id"])},
+                }
+            ],
+        )
+        raise FinishTargetReadinessChangedError(
+            target_id=str(target["id"]),
+            expected=expected_target_readiness or {},
+            current=current,
+        )
+
+    fresh_target = dict(target)
+    fresh_target["status"] = str(routing_target.row["status"])
+    fresh_target_readiness = task_terminal_readiness_for_row(
+        paths,
+        conn,
+        routing_target.row,
+        source="finish_commit",
+    )
+    if _requires_target_freshness(
+        expected_target_readiness
+    ) and not _same_terminal_readiness_snapshot(
+        expected_target_readiness,
+        fresh_target_readiness,
+    ):
+        raise FinishTargetReadinessChangedError(
+            target_id=str(target["id"]),
+            expected=expected_target_readiness or {},
+            current=fresh_target_readiness,
+        )
+    return fresh_target, fresh_target_readiness
+
+
 def _commit_finish_attempt(
     paths: ProjectPaths,
     *,
@@ -841,12 +901,22 @@ def _commit_finish_attempt(
     strict_errors: list[str],
     strict_warnings: list[str],
     race_detected: bool,
+    expected_target_readiness: dict[str, Any] | None,
 ) -> dict[str, Any]:
     for manifest in (input_manifest, workspace_before, workspace_after):
         canonical_verification_input_manifest_json(manifest)
     conn = connect_mutation(paths)
     now = utc_now_iso().replace("+00:00", "Z")
     try:
+        if target["type"] == "task" and _requires_target_freshness(
+            expected_target_readiness
+        ):
+            _resolve_finish_task_snapshot(
+                paths,
+                conn,
+                target=target,
+                expected_target_readiness=expected_target_readiness,
+            )
         check_rows = _store_check_evidence(
             paths,
             conn,
@@ -959,6 +1029,9 @@ def _commit_finish_attempt(
                 "effect_classification": execution["effect"]["classification"],
             },
         }
+    except FinishTargetReadinessChangedError:
+        conn.rollback()
+        raise
     except (OSError, sqlite3.Error) as exc:
         conn.rollback()
         raise DataStoreError(f"Could not commit finish attempt: {exc}") from exc
@@ -972,7 +1045,6 @@ def _commit_completion_packet(
     strict_warnings: list[str], race_detected: bool, blockers: dict[str, Any], outcome: str,
     timeout_seconds: int,
     expected_target_readiness: dict[str, Any] | None,
-    enforce_target_freshness: bool,
 ) -> dict[str, Any]:
     conn = connect_mutation(paths)
     now = utc_now_iso().replace("+00:00", "Z")
@@ -980,48 +1052,12 @@ def _commit_completion_packet(
         fresh_target = dict(target)
         fresh_target_readiness = None
         if target["type"] == "task":
-            try:
-                routing_target = resolve_routing_target(
-                    conn,
-                    str(target["id"]),
-                    expected_type="task",
-                )
-            except TaskGoalTargetNotFoundError:
-                current = evaluate_terminal_readiness(
-                    target_type="task",
-                    target_id=str(target["id"]),
-                    requirements=[
-                        {
-                            "code": "finish_target_missing",
-                            "state": "blocked",
-                            "message": (
-                                f"Finish target Task {target['id']} no longer exists."
-                            ),
-                            "details": {"task_id": str(target["id"])},
-                        }
-                    ],
-                )
-                raise FinishTargetReadinessChangedError(
-                    target_id=str(target["id"]),
-                    expected=expected_target_readiness or {},
-                    current=current,
-                )
-            fresh_target["status"] = str(routing_target.row["status"])
-            fresh_target_readiness = task_terminal_readiness_for_row(
+            fresh_target, fresh_target_readiness = _resolve_finish_task_snapshot(
                 paths,
                 conn,
-                routing_target.row,
-                source="finish_commit",
+                target=target,
+                expected_target_readiness=expected_target_readiness,
             )
-            if enforce_target_freshness and not _same_terminal_readiness_snapshot(
-                expected_target_readiness,
-                fresh_target_readiness,
-            ):
-                raise FinishTargetReadinessChangedError(
-                    target_id=str(target["id"]),
-                    expected=expected_target_readiness or {},
-                    current=fresh_target_readiness,
-                )
 
         check_rows = _store_check_evidence(
             paths,

@@ -110,5 +110,8 @@ the Task and re-evaluates readiness in its final `BEGIN IMMEDIATE`. A changed
 Task status, event high-watermark, canonical input digest, or newly blocked
 receipt returns exit 1 and typed `finish_target_readiness_changed` before
 completion-check Evidence, packet files, packet Evidence, or Task terminal
-events are created. Ordinary failed checks retain the existing incomplete
-attempt/packet behavior.
+events are created. When the pre-check receipt was terminally allowed, this
+fresh comparison is unconditional: check failure, repository-race detection,
+and input-effect classification cannot disable it. Freshness drift takes
+precedence when both conditions occur. A snapshot-stable failed check or
+repository race retains the existing incomplete attempt/packet behavior.

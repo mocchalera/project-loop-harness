@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import subprocess
 
 import pytest
@@ -159,7 +160,11 @@ def _terminal_artifact_snapshot(root: Path) -> dict:
                 """
                 SELECT id, type, path, command, summary, created_at
                 FROM evidence
-                WHERE type IN ('completion_check', 'completion_packet')
+                WHERE type IN (
+                    'completion_check',
+                    'completion_packet',
+                    'finish_attempt'
+                )
                 ORDER BY id
                 """
             ).fetchall()
@@ -167,7 +172,9 @@ def _terminal_artifact_snapshot(root: Path) -> dict:
     finally:
         conn.close()
     dashboard = root / ".project-loop" / "dashboard"
+    check_dir = root / ".project-loop" / "evidence" / "completion-checks"
     packet_dir = root / ".project-loop" / "evidence" / "completion-packets"
+    attempt_dir = root / ".project-loop" / "evidence" / "finish-attempts"
     return {
         "task": task,
         "events": events,
@@ -176,12 +183,26 @@ def _terminal_artifact_snapshot(root: Path) -> dict:
         "events_jsonl": (root / ".project-loop" / "events.jsonl").read_bytes(),
         "dashboard_html": (dashboard / "dashboard.html").read_bytes(),
         "dashboard_data": (dashboard / "dashboard-data.json").read_bytes(),
+        "checks": {
+            path.relative_to(check_dir).as_posix(): path.read_bytes()
+            for path in sorted(check_dir.rglob("*"))
+            if path.is_file()
+        }
+        if check_dir.exists()
+        else {},
         "packets": {
             path.name: path.read_bytes()
             for path in sorted(packet_dir.glob("*"))
             if path.is_file()
         }
         if packet_dir.exists()
+        else {},
+        "attempts": {
+            path.name: path.read_bytes()
+            for path in sorted(attempt_dir.glob("*"))
+            if path.is_file()
+        }
+        if attempt_dir.exists()
         else {},
     }
 
@@ -1869,6 +1890,130 @@ def _prepare_finish_current_proof(root: Path, capsys) -> dict:
     }
 
 
+def _record_finish_current_evidence_set(root: Path, capsys) -> dict[str, str]:
+    work_root = root / "work" / "finish-strict-set"
+    reports = work_root / "reports"
+    reports.mkdir(parents=True)
+    verdict = reports / "completion-verdict.json"
+    verdict.write_text(
+        json.dumps({"findings": [], "status": "complete"}, sort_keys=True),
+        encoding="utf-8",
+    )
+    manifest = reports / "report-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "contract_version": "evidence-report-manifest/v1",
+                "reports": [
+                    {
+                        "kind": "completion_verdict",
+                        "path": "reports/completion-verdict.json",
+                        "status": "pass",
+                    }
+                ],
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    assert main(
+        [
+            "--root",
+            str(root),
+            "evidence",
+            "add",
+            "--file",
+            str(verdict),
+            "--summary",
+            "Finish completion verdict",
+            "--json",
+        ]
+    ) == 0
+    report_evidence_id = str(_json_output(capsys)["evidence"]["id"])
+    assert main(
+        [
+            "--root",
+            str(root),
+            "evidence-set",
+            "record",
+            "--target",
+            "test_case:TC-0001",
+            "--work-root",
+            str(work_root),
+            "--manifest",
+            str(manifest),
+            "--required-kind",
+            "completion_verdict",
+            "--include",
+            f"completion_verdict={report_evidence_id}:verdict",
+            "--summary",
+            "Finish current Evidence Set",
+            "--json",
+        ]
+    ) == 0
+    evidence_set = _json_output(capsys)["evidence"]
+    policy = root / "finish-strict-completion-policy.json"
+    policy.write_text(
+        json.dumps(
+            {
+                "contract_version": "completion-policy/v1",
+                "policy_id": "finish-strict-current-proof",
+                "required_evidence_set_status": "complete",
+                "predicates": [
+                    {
+                        "id": "verdict-complete",
+                        "report_kind": "completion_verdict",
+                        "json_path": "$.status",
+                        "operator": "equals",
+                        "expected": "complete",
+                    }
+                ],
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    assert main(
+        [
+            "--root",
+            str(root),
+            "test",
+            "reverify",
+            "TC-0001",
+            "--summary",
+            "Adopt current Evidence Set",
+            "--evidence-id",
+            str(evidence_set["id"]),
+            "--completion-policy",
+            str(policy),
+            "--json",
+        ]
+    ) == 0
+    _json_output(capsys)
+    return {
+        "path": str(evidence_set["path"]),
+        "work_root": work_root.relative_to(root).as_posix(),
+    }
+
+
+def _coherently_rewrite_finish_evidence_set(
+    root: Path,
+    evidence_set: dict[str, str],
+) -> None:
+    original_work_root = root / evidence_set["work_root"]
+    replacement_work_root = original_work_root.with_name(
+        "finish-strict-set-rewritten"
+    )
+    shutil.copytree(original_work_root, replacement_work_root)
+    artifact_path = root / evidence_set["path"]
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    artifact["work_root"] = replacement_work_root.relative_to(root).as_posix()
+    artifact_path.write_text(
+        json.dumps(artifact, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_finish_rejects_coherent_proof_substitution_before_terminal_artifacts(
     tmp_path: Path,
     capsys,
@@ -1925,6 +2070,172 @@ def test_finish_rejects_coherent_proof_substitution_before_terminal_artifacts(
         reason["code"]
         for reason in details["terminal_readiness"]["reasons"]
     }
+    assert _terminal_artifact_snapshot(tmp_path) == before
+
+
+def test_finish_prioritizes_evidence_set_drift_over_repository_race(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    _prepare_finish_current_proof(tmp_path, capsys)
+    evidence_set = _record_finish_current_evidence_set(tmp_path, capsys)
+
+    from pcl import finish_execution
+
+    execute = finish_execution.execute_planned_guarded_command
+    substituted = False
+
+    def execute_and_substitute(*args, **kwargs):
+        nonlocal substituted
+        result = execute(*args, **kwargs)
+        if not substituted:
+            substituted = True
+            _coherently_rewrite_finish_evidence_set(tmp_path, evidence_set)
+        return result
+
+    monkeypatch.setattr(
+        finish_execution,
+        "execute_planned_guarded_command",
+        execute_and_substitute,
+    )
+    before = _terminal_artifact_snapshot(tmp_path)
+
+    assert main(
+        [
+            "--root",
+            str(tmp_path),
+            "finish",
+            "--emit-packet",
+            "--task",
+            "T-0001",
+            "--json",
+        ]
+    ) == 1
+    payload = _json_output(capsys)
+
+    assert payload["error"]["code"] == "finish_target_readiness_changed"
+    details = payload["error"]["details"]
+    assert details["mutation_committed"] is False
+    assert details["terminal_readiness"]["terminal_allowed"] is False
+    assert "strict_evidence_set_hash_mismatch" in {
+        reason["code"]
+        for reason in details["terminal_readiness"]["reasons"]
+    }
+    assert _terminal_artifact_snapshot(tmp_path) == before
+
+
+def test_finish_prioritizes_evidence_set_drift_over_failed_check(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    _prepare_finish_current_proof(tmp_path, capsys)
+    evidence_set = _record_finish_current_evidence_set(tmp_path, capsys)
+    (tmp_path / "test_sample.py").write_text(
+        "def test_sample():\n    assert False\n",
+        encoding="utf-8",
+    )
+
+    from pcl import finish_execution
+
+    execute = finish_execution.execute_planned_guarded_command
+    substituted = False
+
+    def execute_and_substitute(*args, **kwargs):
+        nonlocal substituted
+        result = execute(*args, **kwargs)
+        if not substituted:
+            substituted = True
+            _coherently_rewrite_finish_evidence_set(tmp_path, evidence_set)
+        return result
+
+    monkeypatch.setattr(
+        finish_execution,
+        "execute_planned_guarded_command",
+        execute_and_substitute,
+    )
+    before = _terminal_artifact_snapshot(tmp_path)
+
+    assert main(
+        [
+            "--root",
+            str(tmp_path),
+            "finish",
+            "--emit-packet",
+            "--task",
+            "T-0001",
+            "--json",
+        ]
+    ) == 1
+    payload = _json_output(capsys)
+
+    assert payload["error"]["code"] == "finish_target_readiness_changed"
+    assert payload["error"]["details"]["mutation_committed"] is False
+    assert _terminal_artifact_snapshot(tmp_path) == before
+
+
+def test_finish_prioritizes_evidence_set_drift_over_input_effect(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    _prepare_finish_current_proof(tmp_path, capsys)
+    evidence_set = _record_finish_current_evidence_set(tmp_path, capsys)
+    protected = tmp_path / "protected.txt"
+    protected.write_text("canonical\n", encoding="utf-8")
+    _git(tmp_path, "add", "protected.txt")
+    _git(tmp_path, "commit", "-m", "protected fixture")
+    (tmp_path / "test_sample.py").write_text(
+        "from pathlib import Path\n\n"
+        "def test_sample():\n"
+        "    Path('protected.txt').write_text("
+        "'mutated by check\\n', encoding='utf-8')\n"
+        "    assert True\n",
+        encoding="utf-8",
+    )
+
+    from pcl import finish_execution
+
+    execute = finish_execution.execute_planned_guarded_command
+    substituted = False
+
+    def execute_and_substitute(*args, **kwargs):
+        nonlocal substituted
+        result = execute(*args, **kwargs)
+        if not substituted:
+            substituted = True
+            _coherently_rewrite_finish_evidence_set(tmp_path, evidence_set)
+        return result
+
+    monkeypatch.setattr(
+        finish_execution,
+        "execute_planned_guarded_command",
+        execute_and_substitute,
+    )
+    before = _terminal_artifact_snapshot(tmp_path)
+
+    assert main(
+        [
+            "--root",
+            str(tmp_path),
+            "finish",
+            "--emit-packet",
+            "--task",
+            "T-0001",
+            "--json",
+        ]
+    ) == 1
+    payload = _json_output(capsys)
+
+    assert payload["error"]["code"] == "finish_target_readiness_changed"
+    details = payload["error"]["details"]
+    assert details["mutation_committed"] is False
+    assert "strict_evidence_set_hash_mismatch" in {
+        reason["code"]
+        for reason in details["terminal_readiness"]["reasons"]
+    }
+    assert protected.read_text(encoding="utf-8") == "canonical\n"
     assert _terminal_artifact_snapshot(tmp_path) == before
 
 

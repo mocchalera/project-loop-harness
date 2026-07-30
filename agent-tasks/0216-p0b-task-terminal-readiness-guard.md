@@ -6,7 +6,7 @@
 - **Size:** L
 - **Dependency:** P0-A mutation-tail commits through `c923a1e`
 - **Project Loop:** Goal `G-0002`, Task `T-0002`, Feature `F-0002`, Story
-  `US-0002`, Tests `TC-0014`–`TC-0018`
+  `US-0002`, Tests `TC-0014`–`TC-0019`
 - **Schema/dependencies:** unchanged
 
 ## Approved contract
@@ -53,6 +53,14 @@ remove manual active-Evidence blocking outside the current proof. Formal
 global error/unknown/human gates remain fail-closed; unrelated warnings remain
 risks.
 
+Independent re-review `c12dd3d9` then found that finish enabled its final
+freshness comparison only when checks passed without a repository race or
+mutating/unknown input effect. Evidence Set drift overlapping a repository race
+therefore persisted incomplete check/packet artifacts instead of taking the
+typed zero-mutation rollback. The final transaction must prioritize Task/HWM/
+canonical strict-proof freshness whenever the pre-check receipt was terminally
+allowed, while preserving snapshot-stable failure and race semantics.
+
 ## Verification boundary
 
 Use source-tree execution only:
@@ -67,7 +75,7 @@ PYTHONPATH=src python -m pcl --root . --json validate --summary
 PYTHONPATH=src python -m pcl --root . --json render
 ```
 
-Story `US-0002` remains draft and Tests `TC-0014`–`TC-0018` remain planned:
+Story `US-0002` remains draft and Tests `TC-0014`–`TC-0019` remain planned:
 implementation authority and the external Ask decisions are not fabricated as
 Story-approval provenance. Record immutable implementation Evidence without
 closing or removing the Task.
