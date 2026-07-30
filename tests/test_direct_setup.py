@@ -557,6 +557,41 @@ def test_direct_spec_rejects_duplicate_nonfinite_bom_and_invalid_json(
     assert _counts(tmp_path) == before
 
 
+def test_direct_spec_cli_normalizes_surrogate_and_huge_integer_errors(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    before = _counts(tmp_path)
+
+    surrogate = json.loads(json.dumps(VALID_SPEC))
+    surrogate["feature"]["name"] = "\ud800"
+    (tmp_path / "direct-spec.json").write_text(
+        json.dumps(surrogate, ensure_ascii=True),
+        encoding="utf-8",
+    )
+    rejected_surrogate = _subprocess_direct(tmp_path)
+    assert rejected_surrogate.returncode == 2
+    assert rejected_surrogate.stderr == ""
+    surrogate_error = json.loads(rejected_surrogate.stdout)
+    assert surrogate_error["error"]["code"] == "direct_spec_invalid"
+    assert surrogate_error["error"]["details"]["reason"] == "invalid_unicode"
+
+    raw = json.dumps(VALID_SPEC).replace(
+        json.dumps(VALID_SPEC["request_id"]),
+        "9" * 4_301,
+        1,
+    )
+    (tmp_path / "direct-spec.json").write_bytes(raw.encode("utf-8"))
+    rejected_integer = _subprocess_direct(tmp_path)
+    assert rejected_integer.returncode == 2
+    assert rejected_integer.stderr == ""
+    integer_error = json.loads(rejected_integer.stdout)
+    assert integer_error["error"]["code"] == "direct_spec_invalid"
+    assert integer_error["error"]["details"]["reason"] == "invalid_number"
+    assert _counts(tmp_path) == before
+
+
 def test_direct_spec_rejects_resource_bombs_and_unsafe_paths_without_mutation(
     tmp_path: Path,
     capsys,
@@ -592,6 +627,27 @@ def test_direct_spec_rejects_resource_bombs_and_unsafe_paths_without_mutation(
     status, symlink_error, _ = _invoke(tmp_path, capsys)
     assert status == 2
     assert symlink_error["error"]["code"] == "direct_spec_path_invalid"
+    assert _counts(tmp_path) == before
+
+
+def test_direct_spec_rejects_hardlinked_leaf_without_mutation(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _init(tmp_path, capsys)
+    spec_path = _write_spec(tmp_path)
+    before = _counts(tmp_path)
+    try:
+        os.link(spec_path, tmp_path / "direct-spec-hardlink.json")
+    except OSError:
+        pytest.skip("hardlinks are unavailable on this platform")
+
+    status, rejected, stderr = _invoke(tmp_path, capsys)
+
+    assert status == 2
+    assert stderr == ""
+    assert rejected["error"]["code"] == "direct_spec_path_invalid"
+    assert rejected["error"]["details"]["reason"] == "leaf_hardlink_not_allowed"
     assert _counts(tmp_path) == before
 
 
@@ -677,25 +733,98 @@ def test_direct_spec_detects_parent_swap_and_same_inode_overwrite(
     assert overwrite.value.details["reason"] == "leaf_identity_or_bytes_changed"
 
 
-def test_direct_spec_enforces_depth_and_node_limits(tmp_path: Path, capsys) -> None:
+def test_direct_spec_enforces_exact_depth_and_node_boundaries(
+    tmp_path: Path,
+    capsys,
+) -> None:
     _init(tmp_path, capsys)
     before = _counts(tmp_path)
 
-    deep = json.loads(json.dumps(VALID_SPEC))
-    deep["feature"]["extra"] = {"a": {"b": {"c": {"d": {"e": {"f": {}}}}}}}
-    _write_spec(tmp_path, deep)
-    status, depth_error, _ = _invoke(tmp_path, capsys)
+    def nested_value(maximum_depth: int) -> object:
+        value: object = "leaf"
+        for _ in range(maximum_depth - 2):
+            value = [value]
+        return value
+
+    depth_eight = json.loads(json.dumps(VALID_SPEC))
+    depth_eight["padding"] = nested_value(8)
+    _write_spec(tmp_path, depth_eight)
+    status, accepted_budget, _ = _invoke(tmp_path, capsys)
     assert status == 2
-    assert depth_error["error"]["code"] == "direct_spec_invalid"
+    assert accepted_budget["error"]["details"]["reason"] == "unknown_field"
+
+    depth_nine = json.loads(json.dumps(VALID_SPEC))
+    depth_nine["padding"] = nested_value(9)
+    _write_spec(tmp_path, depth_nine)
+    status, rejected_depth, _ = _invoke(tmp_path, capsys)
+    assert status == 2
+    assert rejected_depth["error"]["details"]["reason"] == "depth_limit"
+
+    def node_count(value: object) -> int:
+        if isinstance(value, dict):
+            return 1 + sum(node_count(item) for item in value.values())
+        if isinstance(value, list):
+            return 1 + sum(node_count(item) for item in value)
+        return 1
+
+    baseline = node_count(VALID_SPEC)
+    nodes_1024 = json.loads(json.dumps(VALID_SPEC))
+    nodes_1024["padding"] = [0] * (1_024 - baseline - 1)
+    assert node_count(nodes_1024) == 1_024
+    _write_spec(tmp_path, nodes_1024)
+    status, accepted_nodes, _ = _invoke(tmp_path, capsys)
+    assert status == 2
+    assert accepted_nodes["error"]["details"]["reason"] == "unknown_field"
+
+    nodes_1025 = json.loads(json.dumps(VALID_SPEC))
+    nodes_1025["padding"] = [0] * (1_025 - baseline - 1)
+    assert node_count(nodes_1025) == 1_025
+    _write_spec(tmp_path, nodes_1025)
+    status, rejected_nodes, _ = _invoke(tmp_path, capsys)
+    assert status == 2
+    assert rejected_nodes["error"]["details"]["reason"] == "node_limit"
     assert _counts(tmp_path) == before
 
-    many = json.loads(json.dumps(VALID_SPEC))
-    many["feature"]["extra"] = list(range(1_025))
-    _write_spec(tmp_path, many)
-    status, node_error, _ = _invoke(tmp_path, capsys)
-    assert status == 2
-    assert node_error["error"]["code"] == "direct_spec_invalid"
-    assert _counts(tmp_path) == before
+
+def test_direct_setup_root_swap_cannot_commit_old_spec_to_replacement_project(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import pcl.start as start_module
+
+    target = tmp_path / "target"
+    replacement = tmp_path / "replacement"
+    displaced = tmp_path / "displaced"
+    _init(target, capsys)
+    _init(replacement, capsys)
+    old_spec = json.loads(json.dumps(VALID_SPEC))
+    old_spec["request_id"] = "ds-old-root-request"
+    _write_spec(target, old_spec)
+    replacement_spec = json.loads(json.dumps(VALID_SPEC))
+    replacement_spec["request_id"] = "ds-new-root-request"
+    _write_spec(replacement, replacement_spec)
+    replacement_before = _counts(replacement)
+    original_validate = start_module.validate_project
+    swapped = False
+
+    def swap_root_then_validate(paths, *args, **kwargs):
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            target.rename(displaced)
+            replacement.rename(target)
+        return original_validate(paths, *args, **kwargs)
+
+    monkeypatch.setattr(start_module, "validate_project", swap_root_then_validate)
+
+    status, rejected, stderr = _invoke(target, capsys)
+
+    assert status == 1
+    assert stderr == ""
+    assert rejected["error"]["code"] == "direct_setup_root_changed"
+    assert _counts(target) == replacement_before
+    assert _counts(displaced)["goals"] == 0
 
 
 def test_direct_setup_rolls_back_at_every_event_insertion(
@@ -1137,6 +1266,78 @@ def test_direct_setup_deterministic_anchor_collision_never_falls_back(
     assert status == 1
     assert conflict["error"]["code"] == "direct_setup_anchor_collision"
     assert _counts(tmp_path) == before
+
+
+def test_direct_setup_anchor_uses_full_sha256() -> None:
+    from pcl.direct_setup import direct_setup_anchor_id
+
+    request_id = VALID_SPEC["request_id"]
+    expected = hashlib.sha256(
+        b"pcl:direct-setup-anchor:v1\0" + request_id.encode("utf-8")
+    ).hexdigest()
+
+    assert direct_setup_anchor_id(request_id) == f"EV-{expected.upper()}"
+
+
+def test_direct_setup_legacy_anchor_retry_does_not_block_new_prefix_collision(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import pcl.direct_setup as direct_setup_module
+
+    _init(tmp_path, capsys)
+    legacy_anchor = "EV-A1B2C3D4E5F6"
+    original_anchor = direct_setup_module.direct_setup_anchor_id
+    monkeypatch.setattr(
+        direct_setup_module,
+        "direct_setup_anchor_id",
+        lambda request_id: legacy_anchor,
+    )
+    first_spec = json.loads(json.dumps(VALID_SPEC))
+    first_spec["request_id"] = "ds-legacy-prefix-a"
+    _write_spec(tmp_path, first_spec)
+    first_status, first, _ = _invoke(tmp_path, capsys)
+    assert first_status == 0
+    assert first["result"]["receipt"]["event_id"] == legacy_anchor
+
+    monkeypatch.setattr(direct_setup_module, "direct_setup_anchor_id", original_anchor)
+    monkeypatch.setattr(
+        direct_setup_module,
+        "_legacy_direct_setup_anchor_id",
+        lambda request_id: legacy_anchor,
+    )
+    retry_status, retry, _ = _invoke(tmp_path, capsys)
+    assert retry_status == 0
+    assert retry["status"] == "already_started"
+    assert retry["result"]["reused_ids"]["event"] == legacy_anchor
+
+    second_spec = json.loads(json.dumps(VALID_SPEC))
+    second_spec["request_id"] = "ds-legacy-prefix-b"
+    _write_spec(tmp_path, second_spec)
+    second_status, second, _ = _invoke(tmp_path, capsys, intent="Ship another")
+    assert second_status == 1
+    assert second["error"]["code"] == "direct_setup_active_work_exists"
+
+    second_status = main(
+        [
+            "--root",
+            str(tmp_path),
+            "start",
+            "Ship another",
+            "--direct-spec",
+            "direct-spec.json",
+            "--new",
+            "--json",
+        ]
+    )
+    second = json.loads(capsys.readouterr().out)
+    assert second_status == 0
+    assert second["status"] == "started"
+    assert second["result"]["receipt"]["event_id"] == (
+        original_anchor(second_spec["request_id"])
+    )
+    assert original_anchor(second_spec["request_id"]) != legacy_anchor
 
 
 def test_authoritative_admission_uses_one_clock_snapshot(
@@ -1828,9 +2029,10 @@ def test_direct_tail_lock_hwm_mismatch_retries_before_single_render(
     )
     monkeypatch.setattr(tail_module, "_artifact_receipt", lambda path: {"path": str(path), "sha256": "0" * 64, "size_bytes": 0})
 
-    def render(paths):
+    def render(paths, **kwargs):
         nonlocal render_calls
         render_calls += 1
+        assert kwargs == {"operation_lock_held": True}
 
     monkeypatch.setattr(tail_module, "render_dashboard", render)
 

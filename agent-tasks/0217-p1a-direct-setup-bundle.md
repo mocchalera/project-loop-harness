@@ -1,6 +1,6 @@
 # 0217: P1-A Direct Setup Bundle
 
-- **Status:** Implemented and verified locally
+- **Status:** Independent review remediation implemented; re-verification pending
 - **Milestone:** P1-A one-call setup and bounded mutation tail
 - **Priority:** P1
 - **Size:** L
@@ -32,9 +32,13 @@ The final design and independent review fixed these boundaries:
 6. No two-file/process-crash dashboard atomicity, Story approval, P1-B terminal
    acceptance, or P1-C Skill router is claimed.
 
-The final design review reported High 0 / Medium 0. The user's final renderer
-decision supersedes the earlier staged-publish proposal: use the current
-renderer only after the exclusive-lock HWM recheck.
+The initial design review reported High 0 / Medium 0. Independent implementation
+review `bf15066b` later returned High 0 / Medium 5 / Low 2 and NO-GO. The
+remediation binds spec/root/DB identity, serializes every canonical renderer
+caller through one exclusive lock-aware wrapper, normalizes hostile parser
+errors, uses full-SHA-256 new anchors with a verified legacy retry path, rejects
+hardlinked specs, and adds exact resource-boundary tests. `E-0018` remains
+immutable and must be superseded by current reproducible proof.
 
 ## Failure and recovery
 

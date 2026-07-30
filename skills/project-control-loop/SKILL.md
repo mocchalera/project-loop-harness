@@ -138,6 +138,12 @@ a partial tail recovers through its exact-target read-only validation command.
 Direct Setup does not perform Test pass, Feature/Task terminal acceptance, or
 Goal close.
 
+Direct specs must be single-link project-local files; the retained root
+identity binds their bytes to authoritative DB admission. Every canonical
+renderer surface shares one exclusive project-operation lock. The Direct tail
+already holds that lock for its HWM recheck and therefore uses the renderer's
+lock-held internal path rather than reacquiring it.
+
 Follow this order. Replace every placeholder ID with the ID returned by the
 preceding command; do not invent IDs.
 

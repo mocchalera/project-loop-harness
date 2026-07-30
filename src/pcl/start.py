@@ -10,7 +10,7 @@ from .commands import active_workflow_next_action, loop_status, next_action
 from .command_domain import create_goal_in_transaction
 from .db import connect, connect_mutation
 from .direct_setup import commit_direct_setup
-from .direct_spec import load_direct_spec
+from .direct_spec import DirectSpecDocument, load_direct_spec
 from .evidence import (
     EXECUTION_PROVENANCE_CONTRACT_VERSION,
     EXECUTION_PROVENANCE_EVIDENCE_TYPE,
@@ -229,6 +229,26 @@ def _start_direct_work(
     if not paths.db_path.is_file():
         raise ProjectNotInitializedError(root=str(paths.root))
     spec = load_direct_spec(paths, direct_spec_path)
+    try:
+        return _start_loaded_direct_spec(
+            paths,
+            intent=intent,
+            spec=spec,
+            dry_run=dry_run,
+            new=new,
+        )
+    finally:
+        spec.close()
+
+
+def _start_loaded_direct_spec(
+    paths: ProjectPaths,
+    *,
+    intent: str,
+    spec: DirectSpecDocument,
+    dry_run: bool,
+    new: bool,
+) -> dict[str, Any]:
     validation = validate_project(paths)
     blocking = [
         finding.message

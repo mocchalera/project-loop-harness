@@ -13,6 +13,7 @@ from .evidence import EXECUTION_PROVENANCE_EVIDENCE_TYPE, provenance_presentatio
 from .links import enrich_decisions_with_links, enrich_escalations_with_links
 from .lifecycle import ACTIVE_RUN_STATUSES
 from .locales import dashboard_strings, resolve_dashboard_locale
+from .locks import project_operation_lock
 from .paths import ProjectPaths
 from .resources import read_text_resource
 from .validators import validate_project
@@ -297,7 +298,26 @@ def _goal_rows(conn) -> list[dict[str, Any]]:
     return rows
 
 
-def render_dashboard(paths: ProjectPaths, *, locale: str | None = None) -> None:
+def render_dashboard(
+    paths: ProjectPaths,
+    *,
+    locale: str | None = None,
+    operation_lock_held: bool = False,
+) -> None:
+    """Render canonical artifacts under the shared exclusive operation lock."""
+
+    if operation_lock_held:
+        _render_dashboard_unlocked(paths, locale=locale)
+        return
+    with project_operation_lock(paths.loop_dir, exclusive=True):
+        _render_dashboard_unlocked(paths, locale=locale)
+
+
+def _render_dashboard_unlocked(
+    paths: ProjectPaths,
+    *,
+    locale: str | None = None,
+) -> None:
     require_initialized(paths)
     resolved_locale = resolve_dashboard_locale(paths, locale)
     validation = validate_project(paths)

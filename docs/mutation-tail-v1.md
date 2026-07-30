@@ -115,6 +115,10 @@ are not changed during either phase.
 - With auto-render enabled, the tail acquires the existing exclusive
   project-operation lock, rechecks the same high-watermark, and only when it
   matches invokes the current canonical renderer once while the lock is held.
+  That internal call is explicitly lock-held and does not reacquire the same
+  advisory lock. All other canonical renderer callers—including standalone
+  CLI, MCP local-render, planning, workflow execution, and the normal mutation
+  tail—enter through the renderer's shared exclusive lock-aware wrapper.
   A pre-render mismatch consumes the bounded retry rather than rendering.
 
 The Direct bundle's deterministic event anchor makes

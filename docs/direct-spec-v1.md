@@ -16,16 +16,22 @@ evidence-backed lifecycle operations.
 ## Input contract
 
 The path is relative to the project root. Absolute paths, `.`, `..`, empty
-components, symlinks, and non-regular files are rejected. The runtime opens
-each component relative to a retained root descriptor with `O_NOFOLLOW`, opens
-the leaf once, and performs two bounded reads from that same descriptor with
-identity checks. Platforms without those capabilities fail closed.
+components, symlinks, non-regular files, and leaves with `st_nlink != 1` are
+rejected. Rejecting hardlinks makes project-local provenance unambiguous. The
+runtime opens each component relative to a retained root descriptor with
+`O_NOFOLLOW`, opens the leaf once, and performs two bounded reads from that
+same descriptor with identity checks. The root descriptor and its device/inode
+identity remain live through authoritative admission. The mutation connection,
+DB target, pre-commit barrier, and projector paths are bound to that same root;
+rename or replacement of the requested root fails closed before commit.
+Platforms without those capabilities fail closed.
 
 The raw and canonical JSON representations are each limited to 65,536 bytes.
 The path is limited to 1,024 UTF-8 bytes and each component to 255 bytes. JSON
-is strict: UTF-8 without BOM, no duplicate object keys at any depth, no
-trailing content, no `NaN`/infinity, maximum depth 8 with the root at 1, and
-maximum 1,024 nodes.
+is strict: UTF-8 without BOM or unpaired surrogates, no duplicate object keys
+at any depth, no trailing content, no `NaN`/infinity, maximum depth 8 with the
+root at 1, and maximum 1,024 nodes. Parser limit errors, including Python's
+large-integer digit guard, are normalized to typed Direct-spec errors.
 
 ```json
 {
@@ -119,10 +125,11 @@ SHA-256 values, the initial Git revision when available, all bundle/event/
 outbox IDs, and the exact event range. A canonical SHA-256 binding covers the
 namespace. The `work_started` event and start Evidence store the same receipt.
 
-Request uniqueness is anchored only by the existing `events.id` primary key:
+New request uniqueness is anchored only by the existing `events.id` primary
+key:
 
 ```text
-EV- + uppercase first 12 hex characters of
+EV- + all 64 uppercase hex characters of
 SHA256("pcl:direct-setup-anchor:v1\0" + request_id UTF-8 bytes)
 ```
 
@@ -131,6 +138,12 @@ request identity, event range, one-to-one delivered outbox records, and domain
 state, then returns `status: already_started`, `mutated: false`. Payload scans
 are diagnostic only. Collision, ambiguity, corruption, or changed input fails
 without creating a fallback bundle.
+
+Bundles created by the initial P1-A implementation may have the former
+12-hex/48-bit anchor. That ID is consulted only as a legacy exact-retry
+candidate and must pass the complete receipt/identity verification. A valid
+legacy anchor for a different request that shares the same 48-bit prefix does
+not block the new request's full-SHA-256 anchor.
 
 The initial revision is stored identity. A later current HEAD is returned as a
 separate observation and does not invalidate a healthy retry.
@@ -152,9 +165,12 @@ pcl validate --target T-XXXX --summary --json
 If validation and routing remain stable and auto-render is enabled, the tail
 acquires the existing exclusive project-operation lock, rechecks the
 high-watermark, and calls the current canonical renderer at most once while
-holding that lock. A mismatch retries the complete attempt once; a second
-mismatch is partial and does not render. This contract does not claim
-two-dashboard-file or process-crash atomic publication.
+holding that lock. The lock-held call uses the renderer's non-reentrant
+internal path. Standalone CLI, MCP local-render, planning, workflow, and normal
+mutation-tail render calls all enter through the same exclusive lock-aware
+wrapper. A mismatch retries the complete attempt once; a second mismatch is
+partial and does not render. This contract does not claim two-dashboard-file
+or process-crash atomic publication.
 
 Renderer failure remains a committed partial result without success artifact
 hashes. A pre-existing pending outbox or a projector failure returns exit 6

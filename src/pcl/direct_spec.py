@@ -8,7 +8,13 @@ import os
 from pathlib import Path
 import re
 import stat
+import sys
 from typing import Any
+
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - secure open is unsupported without it
+    fcntl = None  # type: ignore[assignment]
 
 from .errors import DirectSpecError
 from .paths import ProjectPaths
@@ -27,6 +33,74 @@ _REQUEST_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]*$")
 _REFERENCE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
 
 
+@dataclass
+class DirectSpecRootBinding:
+    descriptor: int
+    requested_root: Path
+    identity: tuple[int, int, int]
+    _closed: bool = False
+
+    def current_matches(self, paths: ProjectPaths) -> bool:
+        if self._closed or paths.root != self.requested_root:
+            return False
+        try:
+            held = os.fstat(self.descriptor)
+            current = os.stat(paths.root, follow_symlinks=False)
+        except OSError:
+            return False
+        return (
+            stat.S_ISDIR(held.st_mode)
+            and _directory_identity(held) == self.identity
+            and _directory_identity(current) == self.identity
+        )
+
+    def bound_paths(self) -> ProjectPaths:
+        if self._closed:
+            raise DirectSpecError(
+                "Direct spec project-root binding is closed.",
+                code="direct_spec_path_changed",
+                details={"reason": "root_binding_closed"},
+            )
+        if sys.platform == "darwin" and fcntl is not None:
+            raw = fcntl.fcntl(self.descriptor, 50, b"\0" * 1_024)
+            root = Path(raw.split(b"\0", 1)[0].decode("utf-8"))
+        elif Path("/proc/self/fd").is_dir():
+            root = Path(f"/proc/self/fd/{self.descriptor}")
+        else:  # pragma: no cover - secure-open platforms currently expose one route
+            raise DirectSpecError(
+                "A descriptor-bound project-root path is unavailable.",
+                code="direct_spec_secure_open_unsupported",
+                details={"required": ["F_GETPATH or /proc/self/fd"]},
+            )
+        try:
+            current = os.stat(root, follow_symlinks=True)
+        except OSError as exc:
+            raise DirectSpecError(
+                "Direct spec project-root binding cannot be resolved.",
+                code="direct_spec_path_changed",
+                details={"reason": "root_binding_unresolved"},
+            ) from exc
+        if _directory_identity(current) != self.identity:
+            raise DirectSpecError(
+                "Direct spec project-root binding changed.",
+                code="direct_spec_path_changed",
+                details={"reason": "root_binding_identity_changed"},
+            )
+        return ProjectPaths(root=root)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            os.close(self.descriptor)
+        except OSError:
+            pass
+
+    def __del__(self) -> None:  # pragma: no cover - deterministic callers close explicitly
+        self.close()
+
+
 @dataclass(frozen=True)
 class DirectSpecDocument:
     relative_path: str
@@ -34,6 +108,7 @@ class DirectSpecDocument:
     value: dict[str, Any]
     raw_sha256: str
     canonical_sha256: str
+    root_binding: DirectSpecRootBinding
 
     @property
     def request_id(self) -> str:
@@ -46,34 +121,45 @@ class DirectSpecDocument:
             for key in ("contract_version", "feature", "stories", "tests")
         }
 
+    def close(self) -> None:
+        self.root_binding.close()
+
 
 class _DuplicateKeyError(ValueError):
     pass
 
 
 def load_direct_spec(paths: ProjectPaths, relative_path: str) -> DirectSpecDocument:
-    raw = _secure_read_project_file(paths, relative_path)
-    value = _parse_and_validate(raw)
-    canonical = _canonical_bytes(value)
-    if len(canonical) > DIRECT_SPEC_MAX_BYTES:
-        raise DirectSpecError(
-            "Canonical direct spec exceeds the byte limit.",
-            code="direct_spec_too_large",
-            details={
-                "limit_bytes": DIRECT_SPEC_MAX_BYTES,
-                "representation": "canonical",
-            },
+    raw, root_binding = _secure_read_project_file(paths, relative_path)
+    try:
+        value = _parse_and_validate(raw)
+        canonical = _canonical_bytes(value)
+        if len(canonical) > DIRECT_SPEC_MAX_BYTES:
+            raise DirectSpecError(
+                "Canonical direct spec exceeds the byte limit.",
+                code="direct_spec_too_large",
+                details={
+                    "limit_bytes": DIRECT_SPEC_MAX_BYTES,
+                    "representation": "canonical",
+                },
+            )
+        return DirectSpecDocument(
+            relative_path=relative_path,
+            raw=raw,
+            value=value,
+            raw_sha256=_sha256(raw),
+            canonical_sha256=_sha256(canonical),
+            root_binding=root_binding,
         )
-    return DirectSpecDocument(
-        relative_path=relative_path,
-        raw=raw,
-        value=value,
-        raw_sha256=_sha256(raw),
-        canonical_sha256=_sha256(canonical),
-    )
+    except BaseException:
+        root_binding.close()
+        raise
 
 
-def _secure_read_project_file(paths: ProjectPaths, relative_path: str) -> bytes:
+def _secure_read_project_file(
+    paths: ProjectPaths,
+    relative_path: str,
+) -> tuple[bytes, DirectSpecRootBinding]:
     parts = _validate_relative_path(relative_path)
     _require_secure_open_capabilities()
     directory_flags = (
@@ -93,12 +179,14 @@ def _secure_read_project_file(paths: ProjectPaths, relative_path: str) -> bytes:
     try:
         root_fd = os.open(paths.root, directory_flags)
         descriptors.append(root_fd)
-        if not stat.S_ISDIR(os.fstat(root_fd).st_mode):
+        root_stat = os.fstat(root_fd)
+        if not stat.S_ISDIR(root_stat.st_mode):
             raise DirectSpecError(
                 "Project root is not a directory.",
                 code="direct_spec_path_invalid",
                 details={"reason": "root_not_directory"},
             )
+        root_identity = _directory_identity(root_stat)
         parent_fd = root_fd
         for component in parts[:-1]:
             child_fd = os.open(component, directory_flags, dir_fd=parent_fd)
@@ -123,6 +211,12 @@ def _secure_read_project_file(paths: ProjectPaths, relative_path: str) -> bytes:
                 "Direct spec path is not a regular file.",
                 code="direct_spec_path_invalid",
                 details={"reason": "leaf_not_regular"},
+            )
+        if before.st_nlink != 1:
+            raise DirectSpecError(
+                "Direct spec file must have exactly one hard link.",
+                code="direct_spec_path_invalid",
+                details={"reason": "leaf_hardlink_not_allowed"},
             )
         if before.st_mode & 0o444 == 0:
             raise DirectSpecError(
@@ -159,7 +253,26 @@ def _secure_read_project_file(paths: ProjectPaths, relative_path: str) -> bytes:
                     code="direct_spec_path_changed",
                     details={"reason": "directory_component_changed"},
                 )
-        return first
+        try:
+            current_root = os.stat(paths.root, follow_symlinks=False)
+        except OSError as exc:
+            raise DirectSpecError(
+                "Project root changed while the Direct spec was read.",
+                code="direct_spec_path_changed",
+                details={"reason": "root_identity_changed"},
+            ) from exc
+        if _directory_identity(current_root) != root_identity:
+            raise DirectSpecError(
+                "Project root changed while the Direct spec was read.",
+                code="direct_spec_path_changed",
+                details={"reason": "root_identity_changed"},
+            )
+        descriptors.remove(root_fd)
+        return first, DirectSpecRootBinding(
+            descriptor=root_fd,
+            requested_root=paths.root,
+            identity=root_identity,
+        )
     except DirectSpecError:
         raise
     except (FileNotFoundError, NotADirectoryError) as exc:
@@ -294,7 +407,13 @@ def _parse_and_validate(raw: bytes) -> dict[str, Any]:
             object_pairs_hook=_reject_duplicate_keys,
             parse_constant=_reject_non_finite,
         )
-    except (UnicodeDecodeError, json.JSONDecodeError, _DuplicateKeyError, RecursionError) as exc:
+    except (
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        _DuplicateKeyError,
+        RecursionError,
+        ValueError,
+    ) as exc:
         raise DirectSpecError(
             "Direct spec is not valid strict JSON.",
             details={"reason": _json_error_reason(exc)},
@@ -333,9 +452,13 @@ def _validate_resource_budget(value: Any) -> None:
                 details={"reason": "depth_limit", "limit": DIRECT_SPEC_MAX_DEPTH},
             )
         if isinstance(current, dict):
+            for key in current:
+                _require_valid_unicode(key)
             stack.extend((item, depth + 1) for item in current.values())
         elif isinstance(current, list):
             stack.extend((item, depth + 1) for item in current)
+        elif isinstance(current, str):
+            _require_valid_unicode(current)
 
 
 def _normalize_schema(value: Any) -> dict[str, Any]:
@@ -524,7 +647,10 @@ def _require_string(
     if type(value) is not str:
         _invalid(path, "string_required")
     cleaned = value.strip()
-    size = len(cleaned.encode("utf-8"))
+    try:
+        size = len(cleaned.encode("utf-8"))
+    except UnicodeEncodeError:
+        _invalid(path, "invalid_unicode")
     if not minimum_bytes <= size <= maximum_bytes:
         _invalid(
             path,
@@ -584,4 +710,18 @@ def _json_error_reason(error: Exception) -> str:
         return "duplicate_key_or_non_finite_number"
     if isinstance(error, RecursionError):
         return "recursion_limit"
+    if isinstance(error, json.JSONDecodeError):
+        return "invalid_json"
+    if isinstance(error, ValueError):
+        return "invalid_number"
     return "invalid_json"
+
+
+def _require_valid_unicode(value: str) -> None:
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise DirectSpecError(
+            "Direct spec contains invalid Unicode.",
+            details={"reason": "invalid_unicode"},
+        ) from None

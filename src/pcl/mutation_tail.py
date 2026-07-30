@@ -236,7 +236,7 @@ def apply_direct_setup_tail(
                     phase="render_lock_consistency",
                 )
             try:
-                render_dashboard(paths)
+                render_dashboard(paths, operation_lock_held=True)
                 artifact = _artifact_receipt(paths.dashboard_html)
                 data_artifact = _artifact_receipt(paths.dashboard_data)
                 lock_after = _state_high_watermark(paths)

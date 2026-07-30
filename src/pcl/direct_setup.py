@@ -44,8 +44,11 @@ def commit_direct_setup(
 ) -> dict[str, Any]:
     """Commit one Direct Setup bundle or return its verified idempotent receipt."""
 
-    conn = connect_mutation(paths, exclusive=True)
+    _require_bound_root(spec, paths, phase="before_authoritative_connection")
+    mutation_paths = spec.root_binding.bound_paths()
+    conn = connect_mutation(mutation_paths, exclusive=True)
     try:
+        _require_bound_root(spec, paths, phase="authoritative_admission")
         admission_now = utc_now_iso()
         try:
             admission = collect_authoritative_admission_findings(
@@ -84,6 +87,18 @@ def commit_direct_setup(
             """,
             (anchor_id,),
         ).fetchone()
+        legacy_anchor_id = _legacy_direct_setup_anchor_id(spec.request_id)
+        legacy_anchor = None
+        if legacy_anchor_id != anchor_id:
+            legacy_anchor = conn.execute(
+                """
+                SELECT id, sequence, event_type, entity_type, entity_id, payload_json
+                     , created_at
+                FROM events
+                WHERE id = ?
+                """,
+                (legacy_anchor_id,),
+            ).fetchone()
         ambiguous_ids = _matching_request_event_ids(
             conn,
             request_id=spec.request_id,
@@ -95,11 +110,28 @@ def commit_direct_setup(
                 intent=intent,
                 spec=spec,
                 new=new,
-                current_repository_revision=_repository_revision(paths),
+                current_repository_revision=_repository_revision(mutation_paths),
                 ambiguous_ids=ambiguous_ids,
             )
             conn.rollback()
             return retry
+        if legacy_anchor is not None:
+            try:
+                retry = _load_verified_retry(
+                    conn,
+                    anchor=legacy_anchor,
+                    intent=intent,
+                    spec=spec,
+                    new=new,
+                    current_repository_revision=_repository_revision(mutation_paths),
+                    ambiguous_ids=[legacy_anchor_id],
+                )
+            except DirectSetupConflictError as exc:
+                if exc.code != "direct_setup_idempotency_conflict":
+                    raise
+            else:
+                conn.rollback()
+                return retry
         if ambiguous_ids:
             raise DirectSetupConflictError(
                 "Direct setup request has an ambiguous non-anchor event.",
@@ -118,7 +150,7 @@ def commit_direct_setup(
                     details={"active": active},
                 )
 
-        current_repository_revision = _repository_revision(paths)
+        current_repository_revision = _repository_revision(mutation_paths)
         if current_repository_revision != preflight_repository_revision:
             raise DirectSetupConflictError(
                 "Repository revision changed before Direct Setup admission.",
@@ -200,13 +232,14 @@ def commit_direct_setup(
         }
         _insert_bundle(
             conn,
-            paths,
+            mutation_paths,
             spec=spec,
             ids=ids,
             event_plan=event_plan,
             receipt=receipt,
             now=admission_now,
         )
+        _require_bound_root(spec, paths, phase="before_authoritative_commit")
         conn.commit()
         return {
             "task_id": ids["task"],
@@ -245,7 +278,32 @@ def direct_setup_anchor_id(request_id: str) -> str:
     digest = hashlib.sha256(
         b"pcl:direct-setup-anchor:v1\0" + request_id.encode("utf-8")
     ).hexdigest()
+    return f"EV-{digest.upper()}"
+
+
+def _legacy_direct_setup_anchor_id(request_id: str) -> str:
+    digest = hashlib.sha256(
+        b"pcl:direct-setup-anchor:v1\0" + request_id.encode("utf-8")
+    ).hexdigest()
     return f"EV-{digest[:12].upper()}"
+
+
+def _require_bound_root(
+    spec: DirectSpecDocument,
+    paths: ProjectPaths,
+    *,
+    phase: str,
+) -> None:
+    if spec.root_binding.current_matches(paths):
+        return
+    raise DirectSetupConflictError(
+        "Project root changed after the Direct spec was read.",
+        code="direct_setup_root_changed",
+        details={
+            "phase": phase,
+            "root": str(paths.root),
+        },
+    )
 
 
 def _require_delivered_outbox(conn: sqlite3.Connection) -> None:
