@@ -134,17 +134,20 @@ Feature, draft Stories, planned Tests, start receipt, events, and outbox rows.
 Reuse the same mandatory `request_id` for an exact retry. Do not add approval
 fields, infer Story approval, or execute spec text; returned human actions have
 `command: null`. A pending projection recovers with `pcl audit flush --json`;
-a partial tail recovers through its exact-target read-only validation command.
-Direct Setup does not perform Test pass, Feature/Task terminal acceptance, or
-Goal close.
+a partial tail exits 6 and returns a command-null exact-target read-only plan
+bound to the retained root device/inode. Never retry the original pathname from
+that result. Direct Setup does not perform Test pass, Feature/Task terminal
+acceptance, or Goal close.
 
 Direct specs must be single-link project-local files; the retained root
 capability binds their bytes through DB commit, projection, and tail. Linux Git
 children inherit the verified root descriptor; Darwin uses its stable file-ID
-path. Every public canonical renderer surface shares one exclusive
-project-operation lock. The Direct tail already holds that lock for its HWM
-recheck and uses a private renderer route that requires the live, same-root
-exclusive-lock capability rather than reacquiring it.
+path. Read-only DB helpers must preserve that capability path without resolving
+it back to a pathname. Every public canonical renderer surface shares one
+exclusive project-operation lock. The Direct tail already holds that lock for
+its HWM recheck and uses a private renderer route that requires live ownership
+bound to the same root, loop directory, and lock-file identity rather than
+reacquiring it.
 
 Follow this order. Replace every placeholder ID with the ID returned by the
 preceding command; do not invent IDs.

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 import errno
 import os
 from pathlib import Path
+import threading
 import time
 from typing import Iterator
 
@@ -21,17 +23,37 @@ except ImportError:  # pragma: no cover - exercised through platform mocks
     msvcrt = None  # type: ignore[assignment]
 
 
-class _ExclusiveProjectOperationCapability:
-    __slots__ = ("_lock", "_loop_identity")
+_CAPABILITY_ISSUER = object()
 
-    def __init__(
-        self,
-        lock: AdvisoryLock,
-        *,
-        loop_identity: tuple[int, int, int],
-    ) -> None:
-        self._lock = lock
-        self._loop_identity = loop_identity
+
+class _ExclusiveProjectOperationCapability:
+    __slots__ = ()
+
+    def __new__(cls, issuer: object = None) -> _ExclusiveProjectOperationCapability:
+        if issuer is not _CAPABILITY_ISSUER:
+            raise TypeError(
+                "Exclusive project-operation capabilities are issued only by "
+                "project_operation_lock()."
+            )
+        return super().__new__(cls)
+
+
+@dataclass(frozen=True)
+class _ActiveExclusiveProjectOperation:
+    capability: _ExclusiveProjectOperationCapability
+    lock: AdvisoryLock
+    descriptor: int
+    owner_pid: int
+    owner_thread_id: int
+    root_identity: tuple[int, int, int]
+    loop_identity: tuple[int, int, int]
+    lock_identity: tuple[int, int, int]
+
+
+_ACTIVE_EXCLUSIVE_PROJECT_OPERATIONS: dict[
+    int,
+    _ActiveExclusiveProjectOperation,
+] = {}
 
 
 class AdvisoryLock:
@@ -56,12 +78,26 @@ class AdvisoryLock:
                 details={"path": str(self.path), "capability": "fcntl.flock"},
             )
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        capability_identity = (
-            _directory_identity(os.stat(self.path.parent, follow_symlinks=True))
-            if self.exclusive and self.path.name == "project.lock"
+        issues_capability = self.exclusive and self.path.name == "project.lock"
+        capability_root_identity = (
+            _directory_identity(
+                os.stat(self.path.parent.parent, follow_symlinks=True)
+            )
+            if issues_capability
             else None
         )
-        fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
+        capability_loop_identity = (
+            _directory_identity(os.stat(self.path.parent, follow_symlinks=True))
+            if issues_capability
+            else None
+        )
+        open_flags = (
+            os.O_CREAT
+            | os.O_RDWR
+            | getattr(os, "O_CLOEXEC", 0)
+            | getattr(os, "O_NOFOLLOW", 0)
+        )
+        fd = os.open(self.path, open_flags, 0o600)
         operation = None
         if not windows:
             assert fcntl is not None
@@ -79,11 +115,50 @@ class AdvisoryLock:
                         fcntl.flock(fd, operation)
                     self._fd = fd
                     self._backend = "msvcrt" if windows else "fcntl"
-                    if capability_identity is not None:
-                        self._capability = _ExclusiveProjectOperationCapability(
-                            self,
-                            loop_identity=capability_identity,
+                    if (
+                        capability_root_identity is not None
+                        and capability_loop_identity is not None
+                    ):
+                        current_root_identity = _directory_identity(
+                            os.stat(
+                                self.path.parent.parent,
+                                follow_symlinks=True,
+                            )
                         )
+                        current_loop_identity = _directory_identity(
+                            os.stat(self.path.parent, follow_symlinks=True)
+                        )
+                        held_lock_identity = _file_identity(os.fstat(fd))
+                        current_lock_identity = _file_identity(
+                            os.stat(self.path, follow_symlinks=False)
+                        )
+                        if (
+                            current_root_identity != capability_root_identity
+                            or current_loop_identity != capability_loop_identity
+                            or current_lock_identity != held_lock_identity
+                        ):
+                            raise DataStoreError(
+                                "Project identity changed while acquiring the "
+                                "project-operation lock.",
+                                details={"path": str(self.path)},
+                            )
+                        capability = _ExclusiveProjectOperationCapability(
+                            _CAPABILITY_ISSUER
+                        )
+                        active_operation = _ActiveExclusiveProjectOperation(
+                            capability=capability,
+                            lock=self,
+                            descriptor=fd,
+                            owner_pid=os.getpid(),
+                            owner_thread_id=threading.get_ident(),
+                            root_identity=capability_root_identity,
+                            loop_identity=capability_loop_identity,
+                            lock_identity=held_lock_identity,
+                        )
+                        _ACTIVE_EXCLUSIVE_PROJECT_OPERATIONS[id(capability)] = (
+                            active_operation
+                        )
+                        self._capability = capability
                     return
                 except OSError as exc:
                     if exc.errno not in {errno.EACCES, errno.EAGAIN}:
@@ -99,6 +174,14 @@ class AdvisoryLock:
                         ) from exc
                     time.sleep(0.05)
         except BaseException:
+            capability = self._capability
+            self._capability = None
+            self._fd = None
+            self._backend = None
+            if capability is not None:
+                active = _ACTIVE_EXCLUSIVE_PROJECT_OPERATIONS.get(id(capability))
+                if active is not None and active.capability is capability:
+                    _ACTIVE_EXCLUSIVE_PROJECT_OPERATIONS.pop(id(capability), None)
             os.close(fd)
             raise
 
@@ -107,7 +190,12 @@ class AdvisoryLock:
             return
         fd, self._fd, backend = self._fd, None, self._backend
         self._backend = None
+        capability = self._capability
         self._capability = None
+        if capability is not None:
+            active = _ACTIVE_EXCLUSIVE_PROJECT_OPERATIONS.get(id(capability))
+            if active is not None and active.capability is capability:
+                _ACTIVE_EXCLUSIVE_PROJECT_OPERATIONS.pop(id(capability), None)
         try:
             if backend == "msvcrt":
                 assert msvcrt is not None
@@ -145,19 +233,35 @@ def require_live_exclusive_project_operation_capability(
 ) -> None:
     if not isinstance(capability, _ExclusiveProjectOperationCapability):
         raise _invalid_project_operation_capability(loop_dir)
-    lock = capability._lock
+    active = _ACTIVE_EXCLUSIVE_PROJECT_OPERATIONS.get(id(capability))
+    if active is None or active.capability is not capability:
+        raise _invalid_project_operation_capability(loop_dir)
+    lock = active.lock
     try:
-        current_identity = _directory_identity(
+        current_root_identity = _directory_identity(
+            os.stat(loop_dir.parent, follow_symlinks=True)
+        )
+        current_loop_identity = _directory_identity(
             os.stat(loop_dir, follow_symlinks=True)
+        )
+        held_lock_identity = _file_identity(os.fstat(active.descriptor))
+        current_lock_identity = _file_identity(
+            os.stat(loop_dir / "project.lock", follow_symlinks=False)
         )
     except OSError as exc:
         raise _invalid_project_operation_capability(loop_dir) from exc
     if (
-        lock._fd is None
+        lock._fd != active.descriptor
         or not lock.exclusive
         or lock._capability is not capability
         or lock.path.name != "project.lock"
-        or current_identity != capability._loop_identity
+        or lock._backend is None
+        or active.owner_pid != os.getpid()
+        or active.owner_thread_id != threading.get_ident()
+        or current_root_identity != active.root_identity
+        or current_loop_identity != active.loop_identity
+        or held_lock_identity != active.lock_identity
+        or current_lock_identity != active.lock_identity
     ):
         raise _invalid_project_operation_capability(loop_dir)
 
@@ -177,6 +281,10 @@ def jsonl_projector_lock(
 
 
 def _directory_identity(value: os.stat_result) -> tuple[int, int, int]:
+    return (value.st_dev, value.st_ino, value.st_mode & 0o170000)
+
+
+def _file_identity(value: os.stat_result) -> tuple[int, int, int]:
     return (value.st_dev, value.st_ino, value.st_mode & 0o170000)
 
 

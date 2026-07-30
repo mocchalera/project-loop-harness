@@ -1,6 +1,6 @@
 # 0217: P1-A Direct Setup Bundle
 
-- **Status:** Second independent rereview remediation implemented and re-verified
+- **Status:** Third independent rereview remediation implemented and re-verified
 - **Milestone:** P1-A one-call setup and bounded mutation tail
 - **Priority:** P1
 - **Size:** L
@@ -52,6 +52,14 @@ actual same-request ambiguity. `E-0018`, `E-0019`, their sources, and their
 durable copies remain immutable. `E-0029` supersedes `E-0019` with current
 proof.
 
+The third rereview reproduced a post-commit tail pathname rebind and a renderer
+root/lock-file ABA. The remediation keeps read-only SQLite opens on the retained
+root path without a second path resolution, returns every Direct partial as
+exit 6 with no original-path retry claim, and emits only a command-null,
+root-file-identity-bound exact-target recovery plan. Renderer capabilities now
+bind project-root, loop-directory, and open lock-file identities plus issuing
+process/thread and live registry ownership.
+
 ## Failure and recovery
 
 - Parse, admission, collision, or pre-commit helper failure rolls the complete
@@ -62,9 +70,12 @@ proof.
 - Exact retries are no-ops; changed input, ambiguous/corrupt anchor state, or
   inconsistent receipts fail closed.
 - Stable validation failure is partial, skips routing/render, returns no
-  artifact hashes, and uses exact-target read-only validation recovery.
+  artifact hashes, exits 6, and uses command-null, retained-root-file-identity
+  exact-target read-only recovery.
 - A second HWM drift is partial and does not render. Renderer failure returns
-  no success hashes.
+  no success hashes. All Direct partials use `safe_to_retry_original=false`;
+  `mutation_committed` distinguishes changed from idempotent `changed=false`
+  tail failure.
 
 ## Verification boundary
 
@@ -79,17 +90,18 @@ PYTHONPATH=src python -m pcl start --help
 git diff --check
 ```
 
-The exact focused result is `260 passed, 1 skipped in 28.02s`; the full result
-is `1382 passed, 2 skipped in 327.85s`; Ruff passes. The skips are the
+The third-review attack set is `19 passed in 5.18s`. The exact focused result is
+`277 passed, 1 skipped in 39.87s`; the full result is
+`1399 passed, 2 skipped in 401.52s`; Ruff passes. The skips are the
 Linux-only Direct Git E2E on the Darwin verification host and the prohibited
 optional MCP SDK. The portable production POSIX Git subprocess regression
-passes. External MCP conformance is `8 passed, 1 skipped in 0.88s`.
+passes. External MCP conformance is `8 passed, 1 skipped in 0.97s`.
 
-All four Project Control Loop Skill copies are byte-identical. A fresh
+All four Project Control Loop Skill copies are byte-identical at SHA-256
+`65f4c904b4f8891c70ea16ee18e2a016dea35b323723c0b3143b6639a246b5d1`. A fresh
 initialized-project smoke covered success, exact retry, changed-input conflict,
 stored Git revision, strict validation, clean audit, and render. Exact results
-are recorded in
-`docs/evidence/0237-p1a-retained-capability-remediation-green.md`.
+will be pinned in the third-review current-proof Evidence.
 
 `TC-0020`–`TC-0024` each pass a target-bound completion policy through
 `E-0030`–`E-0034`; `F-0003` and `T-0003` are done. Strict doctor/validate and

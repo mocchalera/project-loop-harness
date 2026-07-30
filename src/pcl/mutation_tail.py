@@ -19,6 +19,7 @@ RENDER_RECEIPT_CONTRACT_VERSION = "render-receipt/v1"
 MAX_RENDER_ATTEMPTS = 2
 DIRECT_TAIL_VALIDATION_CONTRACT_VERSION = "mutation-tail-validation/v1"
 DIRECT_TAIL_CONSISTENCY_CONTRACT_VERSION = "event-hwm-consistency/v1"
+DIRECT_TAIL_RECOVERY_CONTRACT_VERSION = "direct-tail-recovery/v1"
 
 
 class RenderStateChangedError(RuntimeError):
@@ -36,15 +37,23 @@ def apply_direct_setup_tail(
     *,
     target_id: str,
     changed: bool,
+    root_identity: tuple[int, int, int] | None = None,
 ) -> dict[str, Any]:
     """Run the bounded Direct Setup validation/routing/locked-render tail."""
 
     target = {"type": "task", "id": target_id}
-    recovery = _read_only_recovery(target_id)
+    recovery = _read_only_recovery(
+        target_id,
+        direct_root_identity=(
+            root_identity
+            if root_identity is not None
+            else _root_file_identity(paths.root)
+        ),
+    )
     tail: dict[str, Any] = {
         "contract_version": MUTATION_TAIL_CONTRACT_VERSION,
         "mutation_committed": changed,
-        "safe_to_retry_original": True,
+        "safe_to_retry_original": False,
         "retry_recommended": False,
         "target": target,
         "validation": None,
@@ -469,12 +478,78 @@ def _read_only_recovery(
     target_id: str,
     *,
     retry_original: bool = False,
+    direct_root_identity: tuple[int, int, int] | None = None,
 ) -> dict[str, Any]:
+    if direct_root_identity is not None:
+        return {
+            "contract_version": DIRECT_TAIL_RECOVERY_CONTRACT_VERSION,
+            "authority": "retained_root_file_identity",
+            "root_identity": {
+                "device": direct_root_identity[0],
+                "inode": direct_root_identity[1],
+                "file_type": "directory",
+            },
+            "target": {"type": "task", "id": target_id},
+            "operation": {
+                "kind": "validate_exact_target",
+                "arguments": {
+                    "target": target_id,
+                    "active_only": False,
+                    "summary": True,
+                },
+            },
+            "command": None,
+            "retry_original": False,
+        }
     return {
         "authority": "read_only",
         "command": f"pcl validate --target {target_id} --summary --json",
         "retry_original": retry_original,
     }
+
+
+def direct_setup_tail_exception_result(
+    payload: dict[str, Any],
+    *,
+    target_id: str,
+    changed: bool,
+    root_identity: tuple[int, int, int],
+    error: Exception,
+) -> dict[str, Any]:
+    recovery = _read_only_recovery(
+        target_id,
+        direct_root_identity=root_identity,
+    )
+    tail = {
+        "contract_version": MUTATION_TAIL_CONTRACT_VERSION,
+        "mutation_committed": changed,
+        "safe_to_retry_original": False,
+        "retry_recommended": False,
+        "target": {"type": "task", "id": target_id},
+        "validation": None,
+        "next_action": None,
+        "render": {
+            **_direct_render_receipt("failed"),
+            "error": str(error),
+            "recovery": recovery,
+        },
+        "consistency": None,
+        "post_commit_status": "partial",
+        "errors": [
+            {
+                "phase": "direct_setup_tail",
+                "code": "post_commit_failed",
+                "message": str(error),
+            }
+        ],
+        "recovery": recovery,
+    }
+    return _result_with_tail(payload, tail)
+
+
+def _root_file_identity(root: Path) -> tuple[int, int, int]:
+    current = root.stat()
+    return (current.st_dev, current.st_ino, current.st_mode & 0o170000)
 
 
 def _direct_render_receipt(status: str) -> dict[str, Any]:

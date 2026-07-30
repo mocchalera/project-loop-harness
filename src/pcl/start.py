@@ -36,7 +36,10 @@ from .ids import next_prefixed_id
 from .init_project import init_project, plan_init_project
 from .paths import ProjectPaths
 from .project_config import finish_check_configuration_warning
-from .mutation_tail import apply_direct_setup_tail
+from .mutation_tail import (
+    apply_direct_setup_tail,
+    direct_setup_tail_exception_result,
+)
 from .target_resolver import (
     TaskGoalTargetNotFoundError,
     resolve_routing_target,
@@ -374,12 +377,23 @@ def _start_loaded_direct_spec(
         ],
         warnings=[],
     )
-    return apply_direct_setup_tail(
-        authority_paths,
-        payload,
-        target_id=selected_task_id,
-        changed=not started["idempotent"],
-    )
+    changed = not started["idempotent"]
+    try:
+        return apply_direct_setup_tail(
+            authority_paths,
+            payload,
+            target_id=selected_task_id,
+            changed=changed,
+            root_identity=spec.root_binding.identity,
+        )
+    except Exception as exc:
+        return direct_setup_tail_exception_result(
+            payload,
+            target_id=selected_task_id,
+            changed=changed,
+            root_identity=spec.root_binding.identity,
+            error=exc,
+        )
 
 
 def _direct_story_action(story_id: str) -> dict[str, Any]:

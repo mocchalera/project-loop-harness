@@ -102,7 +102,9 @@ SQLite commit, projection, and the optional tail. Linux Git revision resolution
 inherits the verified root descriptor; Darwin uses its stable file-ID path.
 The DB, projector, and tail do not return to the original pathname, so root
 rename/replacement cannot mix an old-root spec with a replacement-root
-database. It then uses the existing project-operation lock exclusively and
+database. In particular, read-only SQLite URIs preserve the retained
+file-ID/descriptor path without a second `resolve()` or `realpath()` step. It
+then uses the existing project-operation lock exclusively and
 performs schema-8/integrity/event/outbox/active-work admission in the same
 `BEGIN IMMEDIATE` snapshot. A request-derived full-SHA-256 `work_started` event
 primary key is the idempotency anchor; the event and Evidence carry the same
@@ -115,9 +117,13 @@ read-only and checked against one event high-watermark. Canonical rendering is
 allowed only after acquiring the existing exclusive project-operation lock and
 rechecking that watermark, then the current renderer is called at most once.
 The private Direct lock-held call avoids re-entry and requires a live exclusive
-capability bound to the same root; every public canonical renderer caller uses
-the same exclusive lock-aware wrapper. The renderer remains a derived two-file
-writer; this is not a claim of two-file or process-crash atomic publication.
+capability bound to the same project root, loop directory, and open lock-file
+identity. The capability is valid only for its issuing process/thread and live
+registry entry; root/path ABA, lock-file replacement, forged/expired/reused
+tokens, and a token from another root are rejected. Every public canonical
+renderer caller uses the same exclusive lock-aware wrapper. The renderer
+remains a derived two-file writer; this is not a claim of two-file or
+process-crash atomic publication.
 
 Task completion adds a pre-update proof gate inside that same transaction.
 The exact `routing-target/v1` Task is re-read and evaluated through the shared

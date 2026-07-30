@@ -164,29 +164,40 @@ exact-target routing while leaving canonical dashboard files unchanged, with
 event high-watermark checks after each phase.
 
 A stable validation failure is `partial`: `next_action` is null, routing and
-rendering are skipped, artifact hashes are null, and recovery is exactly:
-
-```bash
-pcl validate --target T-XXXX --summary --json
-```
+rendering are skipped, artifact hashes are null, and the command exits 6.
+Recovery is a `direct-tail-recovery/v1` read-only plan bound to the retained
+root device/inode and exact Task. Its `command` is null and
+`retry_original=false`: an operator must first reopen the intended project root
+and verify that file identity, then perform the represented
+`validate_exact_target` operation. The response never turns the stable
+file-ID/descriptor path back into the original pathname.
 
 If validation and routing remain stable and auto-render is enabled, the tail
 acquires the existing exclusive project-operation lock, rechecks the
 high-watermark, and calls the current canonical renderer at most once while
 holding that lock. The private lock-held route requires a live exclusive
 capability bound to the same project root; booleans, forged or expired
-capabilities, and capabilities for another root are rejected. Standalone CLI,
-MCP local-render, planning, workflow, and normal mutation-tail render calls all
-enter through the public exclusive lock-aware wrapper. A mismatch retries the
-complete attempt once; a second mismatch is partial and does not render. This
-contract does not claim two-dashboard-file or process-crash atomic publication.
+capabilities, capabilities for another root, replaced lock files, reused
+tokens, and root/path ABA are rejected. The token is bound to project-root,
+loop-directory, and open lock-file identities plus its issuing process/thread
+and live registry entry. Standalone CLI, MCP local-render, planning, workflow,
+and normal mutation-tail render calls all enter through the public exclusive
+lock-aware wrapper. A mismatch retries the complete attempt once; a second
+mismatch is partial and does not render. This contract does not claim
+two-dashboard-file or process-crash atomic publication.
 
 Renderer failure remains a committed partial result without success artifact
-hashes. A pre-existing pending outbox returns exit 6 with no mutation tail. If
+hashes and exits 6. Every Direct partial or unexpected tail exception exits 6
+and reports `safe_to_retry_original: false`. Complete and `not_changed` Direct
+tails also keep that field false because an idempotency proof for one root does
+not prove that the original pathname still names it. A changed request reports
+`mutation_committed: true`; an idempotent `changed=false` tail failure reports
+`mutation_committed: false` without converting the result into a pre-commit
+error. A pre-existing pending outbox returns exit 6 with no mutation tail. If
 SQLite committed but projection or retained-root binding is then lost, the
 typed exit-6 result states `mutation_committed: true` and
 `safe_to_retry_original: false`; it is not reclassified as a pre-commit input
-error. Recovery is:
+error. Projection recovery remains:
 
 ```bash
 pcl audit flush --json

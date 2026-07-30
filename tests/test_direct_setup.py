@@ -983,6 +983,323 @@ def test_direct_setup_root_capability_spans_commit_projection_and_tail(
     assert _counts(target) == replacement_before
 
 
+@pytest.mark.parametrize(
+    "barrier",
+    (
+        "tail_hwm_before",
+        "tail_hwm_after",
+        "tail_validation",
+        "tail_validation_projection",
+        "tail_routing",
+        "tail_render",
+        "tail_recovery_target",
+        "tail_partial_result",
+    ),
+)
+def test_direct_setup_root_capability_spans_tail_production_boundaries(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    barrier: str,
+) -> None:
+    import pcl.mutation_tail as tail_module
+    from pcl.validators import ValidationResult
+
+    target = tmp_path / "target"
+    replacement = tmp_path / "replacement"
+    displaced = tmp_path / "displaced"
+    _init(target, capsys)
+    _init(replacement, capsys)
+    spec = json.loads(json.dumps(VALID_SPEC))
+    spec["request_id"] = f"ds-tail-production-{barrier}"
+    _write_spec(target, spec)
+    _write_spec(replacement, spec)
+    target_before = _counts(target)
+    replacement_before = _counts(replacement)
+    swapped = False
+
+    def swap_roots() -> None:
+        nonlocal swapped
+        if swapped:
+            return
+        swapped = True
+        target.rename(displaced)
+        replacement.rename(target)
+
+    if barrier in {"tail_hwm_before", "tail_hwm_after"}:
+        original = tail_module._state_high_watermark
+
+        def high_watermark(paths):
+            if barrier == "tail_hwm_before":
+                swap_roots()
+            result = original(paths)
+            if barrier == "tail_hwm_after":
+                swap_roots()
+            return result
+
+        monkeypatch.setattr(tail_module, "_state_high_watermark", high_watermark)
+    elif barrier == "tail_validation":
+        original = tail_module.validate_project
+
+        def validate(paths, *args, **kwargs):
+            swap_roots()
+            return original(paths, *args, **kwargs)
+
+        monkeypatch.setattr(tail_module, "validate_project", validate)
+    elif barrier == "tail_validation_projection":
+        original = tail_module.project_validation_result
+
+        def project(*args, **kwargs):
+            swap_roots()
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(tail_module, "project_validation_result", project)
+    elif barrier == "tail_routing":
+        original = tail_module.next_action
+
+        def route(*args, **kwargs):
+            swap_roots()
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(tail_module, "next_action", route)
+    elif barrier == "tail_render":
+        original = tail_module._render_dashboard_with_lock
+
+        def render(*args, **kwargs):
+            swap_roots()
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(tail_module, "_render_dashboard_with_lock", render)
+    elif barrier == "tail_recovery_target":
+        original = tail_module._read_only_recovery
+
+        def recovery(*args, **kwargs):
+            swap_roots()
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(tail_module, "_read_only_recovery", recovery)
+    else:
+        failed_validation = ValidationResult()
+        failed_validation.add_error(
+            "Injected post-commit validation failure.",
+            code="injected_post_commit_validation_failure",
+            entity={"type": "task", "id": "T-0001"},
+        )
+        monkeypatch.setattr(
+            tail_module,
+            "validate_project",
+            lambda *args, **kwargs: failed_validation,
+        )
+        original = tail_module._result_with_tail
+
+        def partial_result(*args, **kwargs):
+            swap_roots()
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(tail_module, "_result_with_tail", partial_result)
+
+    status, result, stderr = _invoke(target, capsys)
+
+    assert swapped is True
+    assert result["status"] == "started"
+    assert result["mutated"] is True
+    assert result["mutation_tail"]["mutation_committed"] is True
+    assert result["mutation_tail"]["safe_to_retry_original"] is False
+    assert _counts(displaced)["goals"] - target_before["goals"] == 1
+    assert _counts(displaced)["tasks"] - target_before["tasks"] == 1
+    assert _counts(target) == replacement_before
+    if barrier == "tail_partial_result":
+        assert status == 6
+        assert result["post_commit_status"] == "partial"
+        assert result["mutation_committed"] is True
+        assert result["safe_to_retry_original"] is False
+        assert "mutation_committed=true" in stderr
+    else:
+        assert status == 0
+        assert stderr == ""
+
+
+@pytest.mark.parametrize("swap_timing", ("before_open", "after_open"))
+def test_direct_setup_tail_read_only_db_open_cannot_rebind_resolved_path(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    swap_timing: str,
+) -> None:
+    import pcl.db as db_module
+    import pcl.mutation_tail as tail_module
+    from pcl.validators import ValidationResult
+
+    target = tmp_path / "target"
+    replacement = tmp_path / "replacement"
+    displaced = tmp_path / "displaced"
+    _init(target, capsys)
+    _init(replacement, capsys)
+    spec = json.loads(json.dumps(VALID_SPEC))
+    spec["request_id"] = "ds-tail-read-only-db-root-swap"
+    _write_spec(target, spec)
+    _write_spec(replacement, spec)
+    target_before = _counts(target)
+    replacement_before = _counts(replacement)
+    failed_validation = ValidationResult()
+    failed_validation.add_error(
+        "Injected post-commit validation failure.",
+        code="injected_post_commit_validation_failure",
+        entity={"type": "task", "id": "T-0001"},
+    )
+    monkeypatch.setattr(
+        tail_module,
+        "validate_project",
+        lambda *args, **kwargs: failed_validation,
+    )
+    original_connect = db_module.sqlite3.connect
+    swapped = False
+
+    def connect_after_uri_construction(database, *args, **kwargs):
+        nonlocal swapped
+        should_swap = (
+            not swapped
+            and isinstance(database, str)
+            and database.startswith("file:")
+            and "mode=ro" in database
+        )
+        if should_swap and swap_timing == "before_open":
+            swapped = True
+            target.rename(displaced)
+            replacement.rename(target)
+        connection = original_connect(database, *args, **kwargs)
+        if should_swap and swap_timing == "after_open":
+            swapped = True
+            target.rename(displaced)
+            replacement.rename(target)
+        return connection
+
+    monkeypatch.setattr(db_module.sqlite3, "connect", connect_after_uri_construction)
+
+    status, result, stderr = _invoke(target, capsys)
+
+    assert swapped is True
+    assert status == 6
+    assert result["status"] == "started"
+    assert result["mutated"] is True
+    assert result["post_commit_status"] == "partial"
+    assert result["mutation_committed"] is True
+    assert result["safe_to_retry_original"] is False
+    recovery = result["recovery"]
+    displaced_stat = os.stat(displaced, follow_symlinks=False)
+    assert recovery == {
+        "contract_version": "direct-tail-recovery/v1",
+        "authority": "retained_root_file_identity",
+        "command": None,
+        "operation": {
+            "arguments": {
+                "active_only": False,
+                "summary": True,
+                "target": "T-0001",
+            },
+            "kind": "validate_exact_target",
+        },
+        "retry_original": False,
+        "root_identity": {
+            "device": displaced_stat.st_dev,
+            "file_type": "directory",
+            "inode": displaced_stat.st_ino,
+        },
+        "target": {"id": "T-0001", "type": "task"},
+    }
+    assert "mutation_committed=true" in stderr
+    assert _counts(displaced)["goals"] - target_before["goals"] == 1
+    assert _counts(displaced)["tasks"] - target_before["tasks"] == 1
+    assert _counts(target) == replacement_before
+
+
+def test_direct_setup_changed_false_tail_exception_is_exit6_bound_partial(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import pcl.mutation_tail as tail_module
+
+    _init(tmp_path, capsys)
+    _write_spec(tmp_path)
+    status, started, stderr = _invoke(tmp_path, capsys)
+    assert status == 0
+    assert started["mutated"] is True
+    assert stderr == ""
+    before = _counts(tmp_path)
+
+    monkeypatch.setattr(
+        tail_module,
+        "_state_high_watermark",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            OSError("injected idempotent tail failure")
+        ),
+    )
+
+    status, partial, stderr = _invoke(tmp_path, capsys)
+
+    assert status == 6
+    assert partial["status"] == "already_started"
+    assert partial["mutated"] is False
+    assert partial["post_commit_status"] == "partial"
+    assert partial["mutation_committed"] is False
+    assert partial["safe_to_retry_original"] is False
+    assert partial["mutation_tail"]["errors"] == [
+        {
+            "code": "post_commit_failed",
+            "message": "injected idempotent tail failure",
+            "phase": "direct_setup_tail",
+        }
+    ]
+    assert partial["recovery"]["authority"] == "retained_root_file_identity"
+    assert partial["recovery"]["command"] is None
+    assert partial["recovery"]["target"] == {"id": "T-0001", "type": "task"}
+    assert "mutation_committed=false" in stderr
+    assert "safe_to_retry_original=false" in stderr
+    assert _counts(tmp_path) == before
+
+
+def test_direct_setup_changed_true_tail_exception_is_exit6_bound_partial(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import pcl.mutation_tail as tail_module
+
+    _init(tmp_path, capsys)
+    _write_spec(tmp_path)
+    before = _counts(tmp_path)
+    monkeypatch.setattr(
+        tail_module,
+        "_state_high_watermark",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            OSError("injected committed tail failure")
+        ),
+    )
+
+    status, partial, stderr = _invoke(tmp_path, capsys)
+
+    assert status == 6
+    assert partial["status"] == "started"
+    assert partial["mutated"] is True
+    assert partial["post_commit_status"] == "partial"
+    assert partial["mutation_committed"] is True
+    assert partial["safe_to_retry_original"] is False
+    assert partial["mutation_tail"]["errors"] == [
+        {
+            "code": "post_commit_failed",
+            "message": "injected committed tail failure",
+            "phase": "direct_setup_tail",
+        }
+    ]
+    assert partial["recovery"]["authority"] == "retained_root_file_identity"
+    assert partial["recovery"]["command"] is None
+    assert "mutation_committed=true" in stderr
+    assert "safe_to_retry_original=false" in stderr
+    assert _counts(tmp_path)["goals"] - before["goals"] == 1
+    assert _counts(tmp_path)["tasks"] - before["tasks"] == 1
+
+
 def test_direct_spec_root_fd_resolves_git_revision_after_rename(
     tmp_path: Path,
 ) -> None:
@@ -2075,7 +2392,7 @@ def test_direct_tail_stable_validation_failure_skips_routing_and_render(
     tail = result["mutation_tail"]
 
     assert tail["post_commit_status"] == "partial"
-    assert tail["safe_to_retry_original"] is True
+    assert tail["safe_to_retry_original"] is False
     assert tail["retry_recommended"] is False
     assert tail["validation"]["status"] == "failed"
     assert tail["next_action"] is None
@@ -2287,11 +2604,19 @@ def test_direct_tail_render_failure_has_no_success_hashes(
     assert tail["render"]["artifact"] is None
     assert tail["render"]["data_artifact"] is None
     assert tail["render"]["error"] == "injected render"
-    assert tail["recovery"] == {
-        "authority": "read_only",
-        "command": "pcl validate --target T-0001 --summary --json",
-        "retry_original": False,
+    assert tail["recovery"]["contract_version"] == "direct-tail-recovery/v1"
+    assert tail["recovery"]["authority"] == "retained_root_file_identity"
+    assert tail["recovery"]["target"] == {"id": "T-0001", "type": "task"}
+    assert tail["recovery"]["operation"] == {
+        "arguments": {
+            "active_only": False,
+            "summary": True,
+            "target": "T-0001",
+        },
+        "kind": "validate_exact_target",
     }
+    assert tail["recovery"]["command"] is None
+    assert tail["recovery"]["retry_original"] is False
 
 
 def test_direct_tail_lock_hwm_mismatch_retries_before_single_render(

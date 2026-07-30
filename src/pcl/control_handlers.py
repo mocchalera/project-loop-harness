@@ -109,6 +109,12 @@ def handle_control_command(
         warning = mutation_tail_warning(payload)
         if warning is not None:
             print(warning, file=sys.stderr)
+        if (
+            args.direct_spec is not None
+            and isinstance(payload.get("mutation_tail"), dict)
+            and payload["mutation_tail"].get("post_commit_status") == "partial"
+        ):
+            return 6
         return 1 if payload["status"] == "init_blocked" else 0
 
     if args.command == "doctor":

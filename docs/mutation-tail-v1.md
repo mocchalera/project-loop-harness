@@ -107,7 +107,8 @@ are not changed during either phase.
 - Validation drift discards that attempt. Stable validation failure stops
   immediately as `partial`, with `next_action: null`,
   `render.status: skipped_validation_failed`, no artifact hashes, and exact
-  read-only target validation recovery.
+  read-only target validation recovery bound to the retained root file
+  identity.
 - Routing drift discards the complete attempt. Two drifting attempts return
   `partial`, do not render, and return no artifact hashes.
 - `changed=false` returns `not_changed` without rendering.
@@ -116,19 +117,27 @@ are not changed during either phase.
   project-operation lock, rechecks the same high-watermark, and only when it
   matches invokes the current canonical renderer once while the lock is held.
   That private internal call requires a live exclusive-lock capability bound
-  to the same project root and does not reacquire the advisory lock. A boolean,
-  forged or expired capability, or a capability from another root is rejected.
+  to the same project root, loop directory, and open lock-file identity and does
+  not reacquire the advisory lock. The issuing process/thread and live registry
+  entry must also match. A boolean, forged, expired, reused, another-root,
+  replaced-lock-file, or root/path-ABA capability is rejected.
   All public canonical renderer callers—including standalone CLI, MCP
   local-render, planning, workflow execution, and the normal mutation tail—
   enter through the renderer's shared exclusive lock-aware wrapper.
   A pre-render mismatch consumes the bounded retry rather than rendering.
 
-The Direct bundle's deterministic event anchor makes
-`safe_to_retry_original=true`, while `retry_recommended=false` keeps the
-read-only recovery command primary. Renderer failure is a committed partial
-result with null hashes. `ProjectionPendingError` occurs before normal service
-return, so it has no tail and recovers through `pcl audit flush --json`. When
-SQLite has committed, that typed error reports `mutation_committed: true` and
+The Direct bundle still verifies deterministic idempotency on a new invocation,
+but it does not claim that the original pathname still names the same root.
+Every Direct tail response therefore uses `safe_to_retry_original=false` and
+`retry_recommended=false`. A partial or unexpected tail exception exits 6.
+Changed requests report `mutation_committed=true`; an idempotent
+`changed=false` tail failure reports `mutation_committed=false`. Recovery is a
+`direct-tail-recovery/v1` command-null plan naming the exact target and retained
+root device/inode, not an executable command against the original pathname.
+Renderer failure is a committed partial result with null hashes.
+`ProjectionPendingError` occurs before normal service return, so it has no tail
+and recovers through `pcl audit flush --json`. When SQLite has committed, that
+typed error reports `mutation_committed: true` and
 `safe_to_retry_original: false`.
 
 This contract binds the success receipt to a stable governed event watermark

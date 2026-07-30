@@ -106,7 +106,8 @@ def connect(db_path: Path) -> sqlite3.Connection:
 
 
 def connect_read_only(db_path: Path) -> sqlite3.Connection:
-    uri = f"file:{quote(str(db_path.resolve()), safe='/')}?mode=ro"
+    absolute_path = db_path if db_path.is_absolute() else Path.cwd() / db_path
+    uri = f"file:{quote(str(absolute_path), safe='/')}?mode=ro"
     conn = sqlite3.connect(
         uri,
         uri=True,

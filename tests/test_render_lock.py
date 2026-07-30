@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import contextlib
+from concurrent.futures import ThreadPoolExecutor
 import io
 import json
 import multiprocessing
+import os
 from pathlib import Path
 import queue
 
@@ -71,6 +73,12 @@ def _public_render_worker(root: str, attempting, results) -> None:
         results.put(("public", type(exc).__name__, str(exc)))
     else:
         results.put(("public", "ok", None))
+
+
+def _exclusive_lock_holder(loop_dir: str, acquired, release) -> None:
+    with project_operation_lock(Path(loop_dir), exclusive=True):
+        acquired.set()
+        release.wait(timeout=20)
 
 
 def test_cli_and_mcp_render_processes_share_direct_exclusive_lock(
@@ -168,3 +176,162 @@ def test_lock_held_renderer_requires_live_matching_capability(
 
     with pytest.raises(DataStoreError):
         _render_dashboard_with_lock(paths, capability=capability)
+
+
+def test_lock_held_renderer_rejects_root_aba_and_replaced_lock_file(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    from pcl.renderer import _render_dashboard_with_lock
+
+    target = tmp_path / "target"
+    replacement = tmp_path / "replacement"
+    displaced = tmp_path / "displaced"
+    replacement_loop = tmp_path / "replacement-loop"
+    assert main(["init", "--target", str(target), "--json"]) == 0
+    capsys.readouterr()
+    assert main(["init", "--target", str(replacement), "--json"]) == 0
+    capsys.readouterr()
+    paths = resolve_paths(target)
+    original_root_identity = os.stat(target, follow_symlinks=False)
+    context = multiprocessing.get_context("spawn")
+    acquired = context.Event()
+    release = context.Event()
+    holder = None
+
+    with project_operation_lock(paths.loop_dir, exclusive=True) as capability:
+        target.rename(displaced)
+        replacement.rename(target)
+        (target / ".project-loop").rename(replacement_loop)
+        (displaced / ".project-loop").rename(target / ".project-loop")
+        held_lock_path = target / ".project-loop" / "project.lock"
+        held_lock_path.rename(target / ".project-loop" / "project.lock.capability-held")
+        holder = context.Process(
+            target=_exclusive_lock_holder,
+            args=(str(target / ".project-loop"), acquired, release),
+        )
+        holder.start()
+        assert acquired.wait(timeout=10)
+        assert holder.is_alive()
+        replacement_root_identity = os.stat(target, follow_symlinks=False)
+        assert (
+            original_root_identity.st_dev,
+            original_root_identity.st_ino,
+        ) != (
+            replacement_root_identity.st_dev,
+            replacement_root_identity.st_ino,
+        )
+
+        try:
+            with pytest.raises(DataStoreError):
+                _render_dashboard_with_lock(
+                    resolve_paths(target),
+                    capability=capability,
+                )
+        finally:
+            release.set()
+
+    assert holder is not None
+    holder.join(timeout=20)
+    assert holder.exitcode == 0
+
+
+def test_lock_held_renderer_accepts_same_root_identity_after_rename(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    from pcl.renderer import _render_dashboard_with_lock
+
+    original = tmp_path / "original"
+    renamed = tmp_path / "renamed"
+    assert main(["init", "--target", str(original), "--json"]) == 0
+    capsys.readouterr()
+    paths = resolve_paths(original)
+
+    with project_operation_lock(paths.loop_dir, exclusive=True) as capability:
+        original.rename(renamed)
+        _render_dashboard_with_lock(
+            resolve_paths(renamed),
+            capability=capability,
+        )
+
+    assert (renamed / ".project-loop" / "dashboard" / "dashboard.html").is_file()
+
+
+def test_private_capability_constructor_cannot_forge_live_ownership(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    from pcl.locks import _ExclusiveProjectOperationCapability
+    from pcl.renderer import _render_dashboard_with_lock
+
+    assert main(["init", "--target", str(tmp_path), "--json"]) == 0
+    capsys.readouterr()
+    paths = resolve_paths(tmp_path)
+
+    with AdvisoryLock(
+        paths.loop_dir / "project.lock",
+        exclusive=True,
+    ) as lock:
+        capability = lock._capability
+        assert capability is not None
+        loop_stat = os.stat(paths.loop_dir, follow_symlinks=True)
+        try:
+            forged = _ExclusiveProjectOperationCapability(
+                lock,
+                loop_identity=(
+                    loop_stat.st_dev,
+                    loop_stat.st_ino,
+                    loop_stat.st_mode & 0o170000,
+                ),
+            )
+        except TypeError:
+            return
+        lock._capability = forged
+        with pytest.raises(DataStoreError):
+            _render_dashboard_with_lock(paths, capability=forged)
+
+
+def test_reacquired_lock_rejects_reused_expired_capability(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    from pcl.renderer import _render_dashboard_with_lock
+
+    assert main(["init", "--target", str(tmp_path), "--json"]) == 0
+    capsys.readouterr()
+    paths = resolve_paths(tmp_path)
+
+    with project_operation_lock(paths.loop_dir, exclusive=True) as expired:
+        assert expired is not None
+    with project_operation_lock(paths.loop_dir, exclusive=True) as current:
+        with pytest.raises(DataStoreError):
+            _render_dashboard_with_lock(paths, capability=expired)
+        _render_dashboard_with_lock(paths, capability=current)
+
+
+def test_lock_held_renderer_rejects_capability_from_non_owner_thread(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    from pcl.renderer import _render_dashboard_with_lock
+
+    assert main(["init", "--target", str(tmp_path), "--json"]) == 0
+    capsys.readouterr()
+    paths = resolve_paths(tmp_path)
+
+    def render_from_another_thread(capability):
+        try:
+            _render_dashboard_with_lock(paths, capability=capability)
+        except Exception as exc:
+            return exc
+        return None
+
+    with project_operation_lock(paths.loop_dir, exclusive=True) as capability:
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            result = executor.submit(
+                render_from_another_thread,
+                capability,
+            ).result(timeout=10)
+
+    assert isinstance(result, DataStoreError)
