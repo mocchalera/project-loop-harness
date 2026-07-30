@@ -1,6 +1,6 @@
 # 0217: P1-A Direct Setup Bundle
 
-- **Status:** Implemented locally; repository-wide verification pending
+- **Status:** Implemented and verified locally
 - **Milestone:** P1-A one-call setup and bounded mutation tail
 - **Priority:** P1
 - **Size:** L
@@ -8,6 +8,8 @@
 - **Project Loop:** Goal `G-0003`, Task `T-0003`, Feature `F-0003`, Stories
   `US-0003`–`US-0004`, Tests `TC-0020`–`TC-0024`
 - **Schema/dependencies:** unchanged at schema 8 with no runtime dependency
+- **Evidence:** `E-0017` / `docs/evidence/0233-p1a-direct-setup-red.md`,
+  `E-0018` / `docs/evidence/0234-p1a-direct-setup-green.md`
 
 ## Approved contract
 
@@ -60,9 +62,10 @@ PYTHONPATH=src python -m pcl start --help
 git diff --check
 ```
 
-Also verify all four Project Control Loop Skill copies are byte-identical and
-run a fresh initialized-project smoke test for success, exact retry, conflict,
-strict validation, and render.
+All four Project Control Loop Skill copies are byte-identical. A fresh
+initialized-project smoke covered success, exact retry, changed-input conflict,
+strict validation, clean audit, and render. Exact results are recorded in
+`docs/evidence/0234-p1a-direct-setup-green.md`.
 
 ## Stop conditions
 
