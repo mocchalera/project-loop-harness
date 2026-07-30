@@ -1,0 +1,54 @@
+{
+  "contract_version": "p1a-retained-capability-remediation-verification/v1",
+  "status": "pass",
+  "findings": [],
+  "review": {
+    "task_id": "bf15066b",
+    "reviewed_head": "b54340e19f7a39cb65e5bf9106db0dfe645f6415",
+    "verdict": "NO-GO",
+    "high": 1,
+    "medium": 3,
+    "low": 0
+  },
+  "remediation": {
+    "head": "dfc55144732a6e6a121868ffe7be5984bdbed57a",
+    "schema_version": 8,
+    "runtime_dependency_count": 0,
+    "focused": {
+      "command": "PYTHONPATH=src python -m pytest -q tests/test_direct_setup.py tests/test_render_lock.py tests/test_mutation_tail.py tests/test_start.py tests/test_event_outbox.py tests/test_mcp_server.py tests/test_dashboard.py tests/test_workflow_executor.py tests/test_workflows.py tests/test_workflow_proposals.py tests/test_locks.py tests/test_validation.py tests/test_command_guide.py tests/test_cli_init.py",
+      "exit_code": 0,
+      "result": "260 passed, 1 skipped in 28.02s"
+    },
+    "full_pytest": {
+      "command": "PYTHONPATH=src python -m pytest -q",
+      "exit_code": 0,
+      "result": "1382 passed, 2 skipped in 327.85s (0:05:27)"
+    },
+    "ruff": {
+      "command": "PYTHONPATH=src python -m ruff check .",
+      "exit_code": 0,
+      "result": "All checks passed!"
+    },
+    "mcp_external_conformance": {
+      "command": "PYTHONPATH=src python -m pytest -q tests/mcp/test_external_conformance.py",
+      "exit_code": 0,
+      "result": "8 passed, 1 skipped in 0.88s",
+      "skip": "official MCP Python SDK unavailable; dependency addition prohibited"
+    },
+    "posix_git": {
+      "portable_production_subprocess": "pass",
+      "linux_e2e": "present; skipped on Darwin"
+    },
+    "fresh_smoke": {
+      "root": "/tmp/pcl-p1a-retained-capability-smoke.bycu91",
+      "git_head": "dfd0f64ca5a30b911a26c36a24b48599069ddcde",
+      "first_start": "started",
+      "exact_retry": "already_started",
+      "changed_input": "direct_setup_idempotency_conflict",
+      "strict_validate": "clean",
+      "audit": "clean",
+      "render": "ok"
+    },
+    "skill_copy_sha256": "3f2489684eef46456d3136ef19a9bb80c25ff2fb3a69ce2a9f8e2846208e2409"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "contract_version": "completion-policy/v1",
+  "policy_id": "p1a-retained-capability-remediation",
+  "required_evidence_set_status": "complete",
+  "predicates": [
+    {
+      "id": "findings-empty",
+      "report_kind": "current_verification",
+      "json_path": "$.findings",
+      "operator": "empty"
+    },
+    {
+      "id": "verification-passed",
+      "report_kind": "current_verification",
+      "json_path": "$.status",
+      "operator": "equals",
+      "expected": "pass"
+    }
+  ]
+}
