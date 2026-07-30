@@ -97,24 +97,27 @@ re-running the mutation.
 Direct Setup (`pcl start --direct-spec`) is an additive one-call bundle for a
 Goal, Task, Feature, draft Stories, planned Tests, and the start receipt. It
 securely fixes a project-local, single-link spec to one descriptor buffer and
-retains the root directory device/inode binding through DB admission and the
-pre-commit barrier. Root rename/replacement fails closed instead of mixing an
-old-root spec with a replacement-root database. It then uses the existing
-project-operation lock exclusively and performs schema-8/integrity/event/
-outbox/active-work admission in the same `BEGIN IMMEDIATE` snapshot. A
-request-derived full-SHA-256 `work_started` event primary key is the
-idempotency anchor; the event and Evidence carry the same hash-bound receipt.
-The former 48-bit form is a verified legacy-retry read path only. No new schema
-or uniqueness table is required.
+retains the root directory device/inode capability through DB admission,
+SQLite commit, projection, and the optional tail. Linux Git revision resolution
+inherits the verified root descriptor; Darwin uses its stable file-ID path.
+The DB, projector, and tail do not return to the original pathname, so root
+rename/replacement cannot mix an old-root spec with a replacement-root
+database. It then uses the existing project-operation lock exclusively and
+performs schema-8/integrity/event/outbox/active-work admission in the same
+`BEGIN IMMEDIATE` snapshot. A request-derived full-SHA-256 `work_started` event
+primary key is the idempotency anchor; the event and Evidence carry the same
+hash-bound receipt. The former 48-bit form is an exact-singleton, fully
+verified legacy-retry read path only. No new schema or uniqueness table is
+required.
 
 After a successful Direct commit, validation and exact-target routing are
 read-only and checked against one event high-watermark. Canonical rendering is
 allowed only after acquiring the existing exclusive project-operation lock and
 rechecking that watermark, then the current renderer is called at most once.
-The Direct lock-held call avoids re-entry; every other canonical renderer
-caller uses the same exclusive lock-aware wrapper. The renderer remains a
-derived two-file writer; this is not a claim of two-file or process-crash
-atomic publication.
+The private Direct lock-held call avoids re-entry and requires a live exclusive
+capability bound to the same root; every public canonical renderer caller uses
+the same exclusive lock-aware wrapper. The renderer remains a derived two-file
+writer; this is not a claim of two-file or process-crash atomic publication.
 
 Task completion adds a pre-update proof gate inside that same transaction.
 The exact `routing-target/v1` Task is re-read and evaluated through the shared

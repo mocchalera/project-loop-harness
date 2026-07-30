@@ -139,10 +139,12 @@ Direct Setup does not perform Test pass, Feature/Task terminal acceptance, or
 Goal close.
 
 Direct specs must be single-link project-local files; the retained root
-identity binds their bytes to authoritative DB admission. Every canonical
-renderer surface shares one exclusive project-operation lock. The Direct tail
-already holds that lock for its HWM recheck and therefore uses the renderer's
-lock-held internal path rather than reacquiring it.
+capability binds their bytes through DB commit, projection, and tail. Linux Git
+children inherit the verified root descriptor; Darwin uses its stable file-ID
+path. Every public canonical renderer surface shares one exclusive
+project-operation lock. The Direct tail already holds that lock for its HWM
+recheck and uses a private renderer route that requires the live, same-root
+exclusive-lock capability rather than reacquiring it.
 
 Follow this order. Replace every placeholder ID with the ID returned by the
 preceding command; do not invent IDs.

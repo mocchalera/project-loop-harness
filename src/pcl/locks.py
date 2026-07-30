@@ -21,6 +21,19 @@ except ImportError:  # pragma: no cover - exercised through platform mocks
     msvcrt = None  # type: ignore[assignment]
 
 
+class _ExclusiveProjectOperationCapability:
+    __slots__ = ("_lock", "_loop_identity")
+
+    def __init__(
+        self,
+        lock: AdvisoryLock,
+        *,
+        loop_identity: tuple[int, int, int],
+    ) -> None:
+        self._lock = lock
+        self._loop_identity = loop_identity
+
+
 class AdvisoryLock:
     def __init__(self, path: Path, *, exclusive: bool, timeout_ms: int = SQLITE_BUSY_TIMEOUT_MS) -> None:
         self.path = path
@@ -28,6 +41,7 @@ class AdvisoryLock:
         self.timeout_ms = timeout_ms
         self._fd: int | None = None
         self._backend: str | None = None
+        self._capability: _ExclusiveProjectOperationCapability | None = None
 
     def acquire(self) -> None:
         windows = os.name == "nt"
@@ -42,6 +56,11 @@ class AdvisoryLock:
                 details={"path": str(self.path), "capability": "fcntl.flock"},
             )
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        capability_identity = (
+            _directory_identity(os.stat(self.path.parent, follow_symlinks=True))
+            if self.exclusive and self.path.name == "project.lock"
+            else None
+        )
         fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
         operation = None
         if not windows:
@@ -60,6 +79,11 @@ class AdvisoryLock:
                         fcntl.flock(fd, operation)
                     self._fd = fd
                     self._backend = "msvcrt" if windows else "fcntl"
+                    if capability_identity is not None:
+                        self._capability = _ExclusiveProjectOperationCapability(
+                            self,
+                            loop_identity=capability_identity,
+                        )
                     return
                 except OSError as exc:
                     if exc.errno not in {errno.EACCES, errno.EAGAIN}:
@@ -83,6 +107,7 @@ class AdvisoryLock:
             return
         fd, self._fd, backend = self._fd, None, self._backend
         self._backend = None
+        self._capability = None
         try:
             if backend == "msvcrt":
                 assert msvcrt is not None
@@ -108,9 +133,33 @@ def project_operation_lock(
     *,
     exclusive: bool,
     timeout_ms: int = SQLITE_BUSY_TIMEOUT_MS,
-) -> Iterator[AdvisoryLock]:
+) -> Iterator[_ExclusiveProjectOperationCapability | None]:
     with AdvisoryLock(loop_dir / "project.lock", exclusive=exclusive, timeout_ms=timeout_ms) as lock:
-        yield lock
+        yield lock._capability
+
+
+def require_live_exclusive_project_operation_capability(
+    capability: object,
+    *,
+    loop_dir: Path,
+) -> None:
+    if not isinstance(capability, _ExclusiveProjectOperationCapability):
+        raise _invalid_project_operation_capability(loop_dir)
+    lock = capability._lock
+    try:
+        current_identity = _directory_identity(
+            os.stat(loop_dir, follow_symlinks=True)
+        )
+    except OSError as exc:
+        raise _invalid_project_operation_capability(loop_dir) from exc
+    if (
+        lock._fd is None
+        or not lock.exclusive
+        or lock._capability is not capability
+        or lock.path.name != "project.lock"
+        or current_identity != capability._loop_identity
+    ):
+        raise _invalid_project_operation_capability(loop_dir)
 
 
 @contextmanager
@@ -125,3 +174,14 @@ def jsonl_projector_lock(
         timeout_ms=timeout_ms,
     ) as lock:
         yield lock
+
+
+def _directory_identity(value: os.stat_result) -> tuple[int, int, int]:
+    return (value.st_dev, value.st_ino, value.st_mode & 0o170000)
+
+
+def _invalid_project_operation_capability(loop_dir: Path) -> DataStoreError:
+    return DataStoreError(
+        "A live exclusive project-operation lock capability is required.",
+        details={"loop_dir": str(loop_dir)},
+    )

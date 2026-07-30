@@ -34,14 +34,43 @@ class MutationConnection(sqlite3.Connection):
                     operation_lock_held=True,
                 )
             except Exception as exc:
-                self.projection_result = pending_projection_result(
-                    self._paths,
-                    error=str(exc),
-                )
+                try:
+                    self.projection_result = pending_projection_result(
+                        self._paths,
+                        error=str(exc),
+                    )
+                except Exception as diagnostic_exc:
+                    from .errors import ProjectionPendingError
+
+                    raise ProjectionPendingError(
+                        details={
+                            "committed": True,
+                            "projection": "unknown",
+                            "delivered": 0,
+                            "pending_count": None,
+                            "first_pending_sequence": None,
+                            "event_id": None,
+                            "event_sequence": None,
+                            "safe_next_action": (
+                                "Run `pcl audit flush --json`; do not retry the "
+                                "committed mutation."
+                            ),
+                            "error": str(exc),
+                            "diagnostic_error": str(diagnostic_exc),
+                            "mutation_committed": True,
+                            "safe_to_retry_original": False,
+                        }
+                    ) from exc
             if not self.projection_result.ok:
                 from .errors import ProjectionPendingError
 
-                raise ProjectionPendingError(details=self.projection_result.to_dict())
+                raise ProjectionPendingError(
+                    details={
+                        **self.projection_result.to_dict(),
+                        "mutation_committed": True,
+                        "safe_to_retry_original": False,
+                    }
+                )
         finally:
             self._release_operation_lock()
 

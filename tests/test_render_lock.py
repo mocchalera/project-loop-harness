@@ -7,7 +7,10 @@ import multiprocessing
 from pathlib import Path
 import queue
 
+import pytest
+
 from pcl.cli import main
+from pcl.errors import DataStoreError
 from pcl.locks import AdvisoryLock, project_operation_lock
 from pcl.mcp_server import APPROVAL_LOCAL_RENDER, ProjectLoopMcpServer
 from pcl.paths import resolve_paths
@@ -58,6 +61,18 @@ def _mcp_render_worker(root: str, attempting, results) -> None:
     results.put(("mcp", initialized, rendered))
 
 
+def _public_render_worker(root: str, attempting, results) -> None:
+    from pcl.renderer import render_dashboard
+
+    _install_lock_probe(attempting)
+    try:
+        render_dashboard(resolve_paths(root))
+    except Exception as exc:  # pragma: no cover - diagnostic process boundary
+        results.put(("public", type(exc).__name__, str(exc)))
+    else:
+        results.put(("public", "ok", None))
+
+
 def test_cli_and_mcp_render_processes_share_direct_exclusive_lock(
     tmp_path: Path,
     capsys,
@@ -101,3 +116,55 @@ def test_cli_and_mcp_render_processes_share_direct_exclusive_lock(
     assert "result" in received["mcp"][1]
     assert (tmp_path / ".project-loop" / "dashboard" / "dashboard.html").is_file()
     assert (tmp_path / ".project-loop" / "dashboard" / "dashboard-data.json").is_file()
+
+
+def test_public_renderer_blocks_on_another_process_exclusive_lock(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path), "--json"]) == 0
+    capsys.readouterr()
+    context = multiprocessing.get_context("spawn")
+    results = context.Queue()
+    attempting = context.Event()
+    worker = context.Process(
+        target=_public_render_worker,
+        args=(str(tmp_path), attempting, results),
+    )
+
+    with project_operation_lock(tmp_path / ".project-loop", exclusive=True):
+        worker.start()
+        assert attempting.wait(timeout=10)
+        assert worker.is_alive()
+
+    worker.join(timeout=20)
+    assert worker.exitcode == 0
+    assert results.get(timeout=5) == ("public", "ok", None)
+
+
+def test_lock_held_renderer_requires_live_matching_capability(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    from pcl.renderer import _render_dashboard_with_lock, render_dashboard
+
+    other_root = tmp_path / "other"
+    assert main(["init", "--target", str(tmp_path), "--json"]) == 0
+    capsys.readouterr()
+    assert main(["init", "--target", str(other_root), "--json"]) == 0
+    capsys.readouterr()
+    paths = resolve_paths(tmp_path)
+    other_paths = resolve_paths(other_root)
+
+    with pytest.raises(TypeError):
+        render_dashboard(paths, operation_lock_held=True)
+
+    with project_operation_lock(paths.loop_dir, exclusive=True) as capability:
+        _render_dashboard_with_lock(paths, capability=capability)
+        with pytest.raises(DataStoreError):
+            _render_dashboard_with_lock(paths, capability=object())
+        with pytest.raises(DataStoreError):
+            _render_dashboard_with_lock(other_paths, capability=capability)
+
+    with pytest.raises(DataStoreError):
+        _render_dashboard_with_lock(paths, capability=capability)

@@ -9,7 +9,7 @@ from typing import Any
 from .commands import active_workflow_next_action, loop_status, next_action
 from .command_domain import create_goal_in_transaction
 from .db import connect, connect_mutation
-from .direct_setup import commit_direct_setup
+from .direct_setup import _require_bound_root, commit_direct_setup
 from .direct_spec import DirectSpecDocument, load_direct_spec
 from .evidence import (
     EXECUTION_PROVENANCE_CONTRACT_VERSION,
@@ -249,7 +249,10 @@ def _start_loaded_direct_spec(
     dry_run: bool,
     new: bool,
 ) -> dict[str, Any]:
-    validation = validate_project(paths)
+    authority_paths = spec.root_binding.bound_paths()
+    _require_bound_root(spec, paths, phase="before_preflight_validation")
+    validation = validate_project(authority_paths)
+    _require_bound_root(spec, paths, phase="after_preflight_validation")
     blocking = [
         finding.message
         for finding in validation.findings
@@ -335,7 +338,7 @@ def _start_loaded_direct_spec(
         intent=intent,
         spec=spec,
         new=new,
-        preflight_repository_revision=_repository_revision(paths.root),
+        preflight_repository_revision=spec.root_binding.repository_revision(),
     )
     selected_task_id = str(started["task_id"])
     direct = started["receipt"]["direct_setup"]
@@ -372,7 +375,7 @@ def _start_loaded_direct_spec(
         warnings=[],
     )
     return apply_direct_setup_tail(
-        paths,
+        authority_paths,
         payload,
         target_id=selected_task_id,
         changed=not started["idempotent"],

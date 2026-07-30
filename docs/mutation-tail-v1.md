@@ -115,17 +115,21 @@ are not changed during either phase.
 - With auto-render enabled, the tail acquires the existing exclusive
   project-operation lock, rechecks the same high-watermark, and only when it
   matches invokes the current canonical renderer once while the lock is held.
-  That internal call is explicitly lock-held and does not reacquire the same
-  advisory lock. All other canonical renderer callers—including standalone
-  CLI, MCP local-render, planning, workflow execution, and the normal mutation
-  tail—enter through the renderer's shared exclusive lock-aware wrapper.
+  That private internal call requires a live exclusive-lock capability bound
+  to the same project root and does not reacquire the advisory lock. A boolean,
+  forged or expired capability, or a capability from another root is rejected.
+  All public canonical renderer callers—including standalone CLI, MCP
+  local-render, planning, workflow execution, and the normal mutation tail—
+  enter through the renderer's shared exclusive lock-aware wrapper.
   A pre-render mismatch consumes the bounded retry rather than rendering.
 
 The Direct bundle's deterministic event anchor makes
 `safe_to_retry_original=true`, while `retry_recommended=false` keeps the
 read-only recovery command primary. Renderer failure is a committed partial
 result with null hashes. `ProjectionPendingError` occurs before normal service
-return, so it has no tail and recovers through `pcl audit flush --json`.
+return, so it has no tail and recovers through `pcl audit flush --json`. When
+SQLite has committed, that typed error reports `mutation_committed: true` and
+`safe_to_retry_original: false`.
 
 This contract binds the success receipt to a stable governed event watermark
 and exclusive render interval. It does not claim atomic publication across the

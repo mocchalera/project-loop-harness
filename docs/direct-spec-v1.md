@@ -21,9 +21,14 @@ rejected. Rejecting hardlinks makes project-local provenance unambiguous. The
 runtime opens each component relative to a retained root descriptor with
 `O_NOFOLLOW`, opens the leaf once, and performs two bounded reads from that
 same descriptor with identity checks. The root descriptor and its device/inode
-identity remain live through authoritative admission. The mutation connection,
-DB target, pre-commit barrier, and projector paths are bound to that same root;
-rename or replacement of the requested root fails closed before commit.
+identity remain live through validation, the mutation connection, SQLite
+commit, projection, and the optional mutation tail. Linux uses a verified
+`/proc/self/fd/<fd>` root proxy and passes that retained descriptor to the Git
+revision child; Darwin uses the descriptor's stable `/.vol/<device>/<inode>`
+file-ID path. The DB, projector, and tail never resolve the original requested
+path again. A rename or replacement before the final pre-commit identity check
+fails closed; after that check, the operation remains authoritative for the
+retained root and cannot commit a second bundle to a same-named replacement.
 Platforms without those capabilities fail closed.
 
 The raw and canonical JSON representations are each limited to 65,536 bytes.
@@ -141,9 +146,12 @@ without creating a fallback bundle.
 
 Bundles created by the initial P1-A implementation may have the former
 12-hex/48-bit anchor. That ID is consulted only as a legacy exact-retry
-candidate and must pass the complete receipt/identity verification. A valid
-legacy anchor for a different request that shares the same 48-bit prefix does
-not block the new request's full-SHA-256 anchor.
+candidate. The same request is accepted only when the actual authority is an
+exact singleton legacy event that passes complete receipt, identity, range,
+outbox, and domain verification. Additional same-request candidates,
+corruption, or multiple authority candidates are conflicts. Only a completely
+verified legacy anchor for a different request that shares the same 48-bit
+prefix is ignored before creating the new request's full-SHA-256 anchor.
 
 The initial revision is stored identity. A later current HEAD is returned as a
 separate observation and does not invalidate a healthy retry.
@@ -165,16 +173,20 @@ pcl validate --target T-XXXX --summary --json
 If validation and routing remain stable and auto-render is enabled, the tail
 acquires the existing exclusive project-operation lock, rechecks the
 high-watermark, and calls the current canonical renderer at most once while
-holding that lock. The lock-held call uses the renderer's non-reentrant
-internal path. Standalone CLI, MCP local-render, planning, workflow, and normal
-mutation-tail render calls all enter through the same exclusive lock-aware
-wrapper. A mismatch retries the complete attempt once; a second mismatch is
-partial and does not render. This contract does not claim two-dashboard-file
-or process-crash atomic publication.
+holding that lock. The private lock-held route requires a live exclusive
+capability bound to the same project root; booleans, forged or expired
+capabilities, and capabilities for another root are rejected. Standalone CLI,
+MCP local-render, planning, workflow, and normal mutation-tail render calls all
+enter through the public exclusive lock-aware wrapper. A mismatch retries the
+complete attempt once; a second mismatch is partial and does not render. This
+contract does not claim two-dashboard-file or process-crash atomic publication.
 
 Renderer failure remains a committed partial result without success artifact
-hashes. A pre-existing pending outbox or a projector failure returns exit 6
-with no mutation tail:
+hashes. A pre-existing pending outbox returns exit 6 with no mutation tail. If
+SQLite committed but projection or retained-root binding is then lost, the
+typed exit-6 result states `mutation_committed: true` and
+`safe_to_retry_original: false`; it is not reclassified as a pre-commit input
+error. Recovery is:
 
 ```bash
 pcl audit flush --json

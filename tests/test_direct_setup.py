@@ -152,6 +152,31 @@ def _subprocess_direct(
     )
 
 
+def _git_repository(root: Path) -> str:
+    root.mkdir(parents=True, exist_ok=True)
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "config", "user.email", "pcl-test@example.invalid"],
+        check=True,
+    )
+    subprocess.run(
+        ["git", "-C", str(root), "config", "user.name", "PCL Test"],
+        check=True,
+    )
+    (root / "tracked.txt").write_text("root capability\n", encoding="utf-8")
+    subprocess.run(["git", "-C", str(root), "add", "tracked.txt"], check=True)
+    subprocess.run(
+        ["git", "-C", str(root), "commit", "-q", "-m", "root capability"],
+        check=True,
+    )
+    return subprocess.run(
+        ["git", "-C", str(root), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
 def test_start_help_exposes_direct_spec_without_changing_legacy_flags(capsys) -> None:
     with pytest.raises(SystemExit) as help_exit:
         main(["start", "--help"])
@@ -827,6 +852,174 @@ def test_direct_setup_root_swap_cannot_commit_old_spec_to_replacement_project(
     assert _counts(displaced)["goals"] == 0
 
 
+@pytest.mark.parametrize(
+    "barrier",
+    (
+        "before_db_connect",
+        "after_db_connect",
+        "after_precommit_check",
+        "after_sqlite_commit_before_projector",
+        "after_projection_before_tail",
+    ),
+)
+def test_direct_setup_root_capability_spans_commit_projection_and_tail(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    barrier: str,
+) -> None:
+    import pcl.direct_setup as direct_setup_module
+    import pcl.outbox as outbox_module
+    import pcl.start as start_module
+
+    target = tmp_path / "target"
+    replacement = tmp_path / "replacement"
+    displaced = tmp_path / "displaced"
+    _init(target, capsys)
+    _init(replacement, capsys)
+    spec = json.loads(json.dumps(VALID_SPEC))
+    spec["request_id"] = f"ds-root-capability-{barrier}"
+    _write_spec(target, spec)
+    _write_spec(replacement, spec)
+    target_before = _counts(target)
+    replacement_before = _counts(replacement)
+    swapped = False
+
+    def swap_roots() -> None:
+        nonlocal swapped
+        if swapped:
+            return
+        swapped = True
+        target.rename(displaced)
+        replacement.rename(target)
+
+    original_connect = direct_setup_module.connect_mutation
+    if barrier == "before_db_connect":
+
+        def connect_after_swap(paths, *args, **kwargs):
+            swap_roots()
+            return original_connect(paths, *args, **kwargs)
+
+        monkeypatch.setattr(
+            direct_setup_module,
+            "connect_mutation",
+            connect_after_swap,
+        )
+    elif barrier == "after_db_connect":
+
+        def connect_then_swap(paths, *args, **kwargs):
+            conn = original_connect(paths, *args, **kwargs)
+            swap_roots()
+            return conn
+
+        monkeypatch.setattr(
+            direct_setup_module,
+            "connect_mutation",
+            connect_then_swap,
+        )
+    elif barrier == "after_precommit_check":
+        original_require = direct_setup_module._require_bound_root
+
+        def require_then_swap(spec_document, paths, *, phase):
+            original_require(spec_document, paths, phase=phase)
+            if phase == "before_authoritative_commit":
+                swap_roots()
+
+        monkeypatch.setattr(
+            direct_setup_module,
+            "_require_bound_root",
+            require_then_swap,
+        )
+    elif barrier == "after_sqlite_commit_before_projector":
+        original_project = outbox_module.project_pending_events
+
+        def swap_then_project(paths, *args, **kwargs):
+            swap_roots()
+            return original_project(paths, *args, **kwargs)
+
+        monkeypatch.setattr(
+            outbox_module,
+            "project_pending_events",
+            swap_then_project,
+        )
+    else:
+        original_tail = start_module.apply_direct_setup_tail
+
+        def swap_then_tail(paths, payload, *args, **kwargs):
+            swap_roots()
+            return original_tail(paths, payload, *args, **kwargs)
+
+        monkeypatch.setattr(
+            start_module,
+            "apply_direct_setup_tail",
+            swap_then_tail,
+        )
+
+    status, result, stderr = _invoke(target, capsys)
+
+    assert stderr == ""
+    assert swapped is True
+    if barrier in {"before_db_connect", "after_db_connect"}:
+        assert status == 1
+        assert result["error"]["code"] == "direct_setup_root_changed"
+        assert _counts(displaced) == target_before
+        assert _counts(target) == replacement_before
+        return
+
+    assert status == 0
+    assert result["status"] == "started"
+    assert result["mutated"] is True
+    assert _counts(displaced)["goals"] - target_before["goals"] == 1
+    assert _counts(displaced)["tasks"] - target_before["tasks"] == 1
+    assert _counts(displaced)["events"] - target_before["events"] == 8
+    assert _counts(displaced)["outbox_records"] - target_before["outbox_records"] == 8
+    assert _counts(target) == replacement_before
+
+    retry_status, retry, retry_stderr = _invoke(displaced, capsys)
+    assert retry_status == 0
+    assert retry_stderr == ""
+    assert retry["status"] == "already_started"
+    assert retry["mutated"] is False
+    assert _counts(target) == replacement_before
+
+
+def test_direct_spec_root_fd_resolves_git_revision_after_rename(
+    tmp_path: Path,
+) -> None:
+    from pcl.direct_spec import load_direct_spec
+
+    target = tmp_path / "target"
+    displaced = tmp_path / "displaced"
+    replacement = tmp_path / "replacement"
+    revision = _git_repository(target)
+    _write_spec(target)
+    document = load_direct_spec(ProjectPaths(root=target), "direct-spec.json")
+    try:
+        target.rename(displaced)
+        replacement.mkdir()
+
+        assert document.root_binding.repository_revision() == revision
+    finally:
+        document.close()
+
+
+@pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="Linux-only /proc root-capability Direct Setup E2E",
+)
+def test_direct_setup_git_revision_linux_e2e(tmp_path: Path, capsys) -> None:
+    revision = _git_repository(tmp_path)
+    _init(tmp_path, capsys)
+    _write_spec(tmp_path)
+
+    status, started, stderr = _invoke(tmp_path, capsys)
+
+    assert status == 0
+    assert stderr == ""
+    assert started["result"]["receipt"]["repository_revision"] == revision
+    assert started["result"]["repository_revision"]["initial"] == revision
+
+
 def test_direct_setup_rolls_back_at_every_event_insertion(
     tmp_path: Path,
     capsys,
@@ -975,6 +1168,66 @@ def test_direct_setup_crash_boundary_is_zero_or_full_bundle_with_flush_recovery(
     assert retry.returncode == 0, retry.stderr or retry.stdout
     assert json.loads(retry.stdout)["status"] == "already_started"
     assert _counts(postcommit_root) == postcommit_after
+
+
+def test_direct_setup_postcommit_projection_failure_is_typed_committed(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import pcl.outbox as outbox_module
+
+    _init(tmp_path, capsys)
+    _write_spec(tmp_path)
+    before = _counts(tmp_path)
+
+    def fail_projection(*args, **kwargs):
+        raise OSError("projection root capability unavailable")
+
+    monkeypatch.setattr(outbox_module, "project_pending_events", fail_projection)
+
+    status, pending, stderr = _invoke(tmp_path, capsys)
+
+    assert status == 6
+    assert stderr == ""
+    assert pending["error"]["code"] == "audit_projection_pending"
+    details = pending["error"]["details"]
+    assert details["mutation_committed"] is True
+    assert details["safe_to_retry_original"] is False
+    assert _counts(tmp_path)["goals"] - before["goals"] == 1
+
+
+def test_direct_setup_postcommit_binding_and_diagnostic_loss_is_typed_committed(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import pcl.outbox as outbox_module
+
+    _init(tmp_path, capsys)
+    _write_spec(tmp_path)
+    before = _counts(tmp_path)
+
+    def fail_projection(*args, **kwargs):
+        raise OSError("projection root capability unavailable")
+
+    def fail_diagnostic(*args, **kwargs):
+        raise OSError("pending diagnostic root capability unavailable")
+
+    monkeypatch.setattr(outbox_module, "project_pending_events", fail_projection)
+    monkeypatch.setattr(outbox_module, "pending_projection_result", fail_diagnostic)
+
+    status, pending, stderr = _invoke(tmp_path, capsys)
+
+    assert status == 6
+    assert stderr == ""
+    assert pending["error"]["code"] == "audit_projection_pending"
+    details = pending["error"]["details"]
+    assert details["mutation_committed"] is True
+    assert details["safe_to_retry_original"] is False
+    assert details["projection"] == "unknown"
+    assert "pending diagnostic root capability unavailable" in details["diagnostic_error"]
+    assert _counts(tmp_path)["goals"] - before["goals"] == 1
 
 
 def test_direct_setup_retry_is_noop_and_changed_input_is_conflict(
@@ -1338,6 +1591,66 @@ def test_direct_setup_legacy_anchor_retry_does_not_block_new_prefix_collision(
         original_anchor(second_spec["request_id"])
     )
     assert original_anchor(second_spec["request_id"]) != legacy_anchor
+
+
+def test_direct_setup_legacy_retry_rejects_same_request_ambiguity(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import pcl.direct_setup as direct_setup_module
+    from pcl.db import connect_mutation
+    from pcl.events import append_event
+
+    _init(tmp_path, capsys)
+    legacy_anchor = "EV-112233445566"
+    original_anchor = direct_setup_module.direct_setup_anchor_id
+    monkeypatch.setattr(
+        direct_setup_module,
+        "direct_setup_anchor_id",
+        lambda request_id: legacy_anchor,
+    )
+    spec = json.loads(json.dumps(VALID_SPEC))
+    spec["request_id"] = "ds-legacy-real-ambiguity"
+    _write_spec(tmp_path, spec)
+    first_status, first, _ = _invoke(tmp_path, capsys)
+    assert first_status == 0
+
+    monkeypatch.setattr(direct_setup_module, "direct_setup_anchor_id", original_anchor)
+    monkeypatch.setattr(
+        direct_setup_module,
+        "_legacy_direct_setup_anchor_id",
+        lambda request_id: legacy_anchor,
+    )
+    stored_receipt = dict(first["result"]["receipt"])
+    evidence_id = stored_receipt.pop("evidence_id")
+    stored_receipt.pop("event_id")
+    paths = ProjectPaths(root=tmp_path.resolve())
+    conn = connect_mutation(paths)
+    try:
+        append_event(
+            conn=conn,
+            events_path=paths.events_path,
+            event_type="work_started",
+            entity_type="task",
+            entity_id=first["result"]["target"]["id"],
+            payload={
+                "evidence_id": evidence_id,
+                "receipt": stored_receipt,
+            },
+            event_id="EV-LEGACYAMBIG",
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    before_retry = _counts(tmp_path)
+
+    retry_status, conflict, stderr = _invoke(tmp_path, capsys)
+
+    assert retry_status == 1
+    assert stderr == ""
+    assert conflict["error"]["code"] == "direct_setup_anchor_collision"
+    assert _counts(tmp_path) == before_retry
 
 
 def test_authoritative_admission_uses_one_clock_snapshot(
@@ -1957,7 +2270,7 @@ def test_direct_tail_render_failure_has_no_success_hashes(
     )
     monkeypatch.setattr(
         tail_module,
-        "render_dashboard",
+        "_render_dashboard_with_lock",
         lambda *args, **kwargs: (_ for _ in ()).throw(OSError("injected render")),
     )
 
@@ -2032,9 +2345,10 @@ def test_direct_tail_lock_hwm_mismatch_retries_before_single_render(
     def render(paths, **kwargs):
         nonlocal render_calls
         render_calls += 1
-        assert kwargs == {"operation_lock_held": True}
+        assert set(kwargs) == {"capability"}
+        assert kwargs["capability"] is not None
 
-    monkeypatch.setattr(tail_module, "render_dashboard", render)
+    monkeypatch.setattr(tail_module, "_render_dashboard_with_lock", render)
 
     result = tail_module.apply_direct_setup_tail(
         tail_module.ProjectPaths(root=tmp_path.resolve()),

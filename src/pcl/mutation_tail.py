@@ -9,7 +9,7 @@ from .db import connect_read_only
 from .locks import project_operation_lock
 from .paths import ProjectPaths
 from .project_config import dashboard_auto_render
-from .renderer import render_dashboard
+from .renderer import _render_dashboard_with_lock, render_dashboard
 from .validation_projection import project_validation_result
 from .validators import validate_project
 
@@ -221,7 +221,10 @@ def apply_direct_setup_tail(
             )
             return _result_with_tail(payload, tail)
 
-        with project_operation_lock(paths.loop_dir, exclusive=True):
+        with project_operation_lock(
+            paths.loop_dir,
+            exclusive=True,
+        ) as render_capability:
             lock_before = _state_high_watermark(paths)
             observation["lock_before"] = lock_before
             if lock_before != before:
@@ -236,7 +239,10 @@ def apply_direct_setup_tail(
                     phase="render_lock_consistency",
                 )
             try:
-                render_dashboard(paths, operation_lock_held=True)
+                _render_dashboard_with_lock(
+                    paths,
+                    capability=render_capability,
+                )
                 artifact = _artifact_receipt(paths.dashboard_html)
                 data_artifact = _artifact_receipt(paths.dashboard_data)
                 lock_after = _state_high_watermark(paths)

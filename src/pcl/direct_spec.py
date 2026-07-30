@@ -8,13 +8,9 @@ import os
 from pathlib import Path
 import re
 import stat
+import subprocess
 import sys
 from typing import Any
-
-try:
-    import fcntl
-except ImportError:  # pragma: no cover - secure open is unsupported without it
-    fcntl = None  # type: ignore[assignment]
 
 from .errors import DirectSpecError
 from .paths import ProjectPaths
@@ -61,16 +57,15 @@ class DirectSpecRootBinding:
                 code="direct_spec_path_changed",
                 details={"reason": "root_binding_closed"},
             )
-        if sys.platform == "darwin" and fcntl is not None:
-            raw = fcntl.fcntl(self.descriptor, 50, b"\0" * 1_024)
-            root = Path(raw.split(b"\0", 1)[0].decode("utf-8"))
+        if sys.platform == "darwin":
+            root = Path("/.vol") / str(self.identity[0]) / str(self.identity[1])
         elif Path("/proc/self/fd").is_dir():
             root = Path(f"/proc/self/fd/{self.descriptor}")
         else:  # pragma: no cover - secure-open platforms currently expose one route
             raise DirectSpecError(
                 "A descriptor-bound project-root path is unavailable.",
                 code="direct_spec_secure_open_unsupported",
-                details={"required": ["F_GETPATH or /proc/self/fd"]},
+                details={"required": ["Darwin file-ID path or /proc/self/fd"]},
             )
         try:
             current = os.stat(root, follow_symlinks=True)
@@ -87,6 +82,55 @@ class DirectSpecRootBinding:
                 details={"reason": "root_binding_identity_changed"},
             )
         return ProjectPaths(root=root)
+
+    def repository_revision(self) -> str | None:
+        if self._closed:
+            raise DirectSpecError(
+                "Direct spec project-root binding is closed.",
+                code="direct_spec_path_changed",
+                details={"reason": "root_binding_closed"},
+            )
+        if os.name != "posix":  # pragma: no cover - secure open is POSIX-only
+            raise DirectSpecError(
+                "Descriptor-bound repository revision is unsupported.",
+                code="direct_spec_secure_open_unsupported",
+                details={"required": ["POSIX pass_fds and fchdir"]},
+            )
+        held = os.fstat(self.descriptor)
+        if (
+            not stat.S_ISDIR(held.st_mode)
+            or _directory_identity(held) != self.identity
+        ):
+            raise DirectSpecError(
+                "Direct spec project-root binding changed.",
+                code="direct_spec_path_changed",
+                details={"reason": "root_binding_identity_changed"},
+            )
+        launcher = (
+            "import os,sys;"
+            "fd=int(sys.argv[1]);"
+            "os.fchdir(fd);"
+            "os.execvp(sys.argv[2],sys.argv[2:])"
+        )
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                launcher,
+                str(self.descriptor),
+                "git",
+                "rev-parse",
+                "HEAD",
+            ],
+            pass_fds=(self.descriptor,),
+            capture_output=True,
+            check=False,
+            text=True,
+        )
+        if completed.returncode != 0:
+            return None
+        revision = completed.stdout.strip()
+        return revision or None
 
     def close(self) -> None:
         if self._closed:

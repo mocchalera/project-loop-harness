@@ -4,7 +4,6 @@ import hashlib
 import json
 import re
 import sqlite3
-import subprocess
 from typing import Any
 import uuid
 
@@ -110,12 +109,17 @@ def commit_direct_setup(
                 intent=intent,
                 spec=spec,
                 new=new,
-                current_repository_revision=_repository_revision(mutation_paths),
+                current_repository_revision=spec.root_binding.repository_revision(),
                 ambiguous_ids=ambiguous_ids,
             )
             conn.rollback()
             return retry
         if legacy_anchor is not None:
+            legacy_ambiguity = (
+                ambiguous_ids
+                if legacy_anchor_id in ambiguous_ids
+                else [legacy_anchor_id]
+            )
             try:
                 retry = _load_verified_retry(
                     conn,
@@ -123,8 +127,10 @@ def commit_direct_setup(
                     intent=intent,
                     spec=spec,
                     new=new,
-                    current_repository_revision=_repository_revision(mutation_paths),
-                    ambiguous_ids=[legacy_anchor_id],
+                    current_repository_revision=(
+                        spec.root_binding.repository_revision()
+                    ),
+                    ambiguous_ids=legacy_ambiguity,
                 )
             except DirectSetupConflictError as exc:
                 if exc.code != "direct_setup_idempotency_conflict":
@@ -150,7 +156,7 @@ def commit_direct_setup(
                     details={"active": active},
                 )
 
-        current_repository_revision = _repository_revision(mutation_paths)
+        current_repository_revision = spec.root_binding.repository_revision()
         if current_repository_revision != preflight_repository_revision:
             raise DirectSetupConflictError(
                 "Repository revision changed before Direct Setup admission.",
@@ -776,12 +782,6 @@ def _load_verified_retry(
         None,
     )
     expected_without_revision.pop("initial_repository_revision")
-    if stored_without_revision != expected_without_revision:
-        raise DirectSetupConflictError(
-            "Direct Setup request identity conflicts with the stored request.",
-            code="direct_setup_idempotency_conflict",
-            details={"request_id": spec.request_id},
-        )
     expected_identity = _canonical_sha256(
         {
             "contract_version": DIRECT_SETUP_IDENTITY_CONTRACT_VERSION,
@@ -834,6 +834,12 @@ def _load_verified_retry(
         expected_created_at=str(receipt["generated_at"]),
     )
     _verify_bundle_entities(conn, request=request, bundle=bundle)
+    if stored_without_revision != expected_without_revision:
+        raise DirectSetupConflictError(
+            "Direct Setup request identity conflicts with the stored request.",
+            code="direct_setup_idempotency_conflict",
+            details={"request_id": spec.request_id},
+        )
     return {
         "task_id": str(bundle["task"]),
         "created_ids": {},
@@ -1218,19 +1224,6 @@ def _canonical_sha256(value: dict[str, Any]) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return f"sha256:{hashlib.sha256(encoded).hexdigest()}"
-
-
-def _repository_revision(paths: ProjectPaths) -> str | None:
-    completed = subprocess.run(
-        ["git", "-C", str(paths.root), "rev-parse", "HEAD"],
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-    if completed.returncode != 0:
-        return None
-    revision = completed.stdout.strip()
-    return revision or None
 
 
 def _random_id(prefix: str) -> str:

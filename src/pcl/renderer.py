@@ -13,7 +13,10 @@ from .evidence import EXECUTION_PROVENANCE_EVIDENCE_TYPE, provenance_presentatio
 from .links import enrich_decisions_with_links, enrich_escalations_with_links
 from .lifecycle import ACTIVE_RUN_STATUSES
 from .locales import dashboard_strings, resolve_dashboard_locale
-from .locks import project_operation_lock
+from .locks import (
+    project_operation_lock,
+    require_live_exclusive_project_operation_capability,
+)
 from .paths import ProjectPaths
 from .resources import read_text_resource
 from .validators import validate_project
@@ -302,22 +305,27 @@ def render_dashboard(
     paths: ProjectPaths,
     *,
     locale: str | None = None,
-    operation_lock_held: bool = False,
 ) -> None:
     """Render canonical artifacts under the shared exclusive operation lock."""
 
-    if operation_lock_held:
-        _render_dashboard_unlocked(paths, locale=locale)
-        return
-    with project_operation_lock(paths.loop_dir, exclusive=True):
-        _render_dashboard_unlocked(paths, locale=locale)
+    with project_operation_lock(paths.loop_dir, exclusive=True) as capability:
+        _render_dashboard_with_lock(
+            paths,
+            locale=locale,
+            capability=capability,
+        )
 
 
-def _render_dashboard_unlocked(
+def _render_dashboard_with_lock(
     paths: ProjectPaths,
     *,
     locale: str | None = None,
+    capability: object,
 ) -> None:
+    require_live_exclusive_project_operation_capability(
+        capability,
+        loop_dir=paths.loop_dir,
+    )
     require_initialized(paths)
     resolved_locale = resolve_dashboard_locale(paths, locale)
     validation = validate_project(paths)
