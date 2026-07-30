@@ -24,7 +24,7 @@ from .lifecycle import (
     waive_defect,
 )
 from .paths import ProjectPaths
-from .mutation_tail import apply_mutation_tail
+from .mutation_tail import apply_mutation_tail, mutation_tail_warning
 from .presentation import to_pretty_json
 from .relationship_repair import repair_test_links
 from .stories import (
@@ -595,23 +595,6 @@ def _print_test_plan_warnings(result: dict, *, error: TextIO) -> None:
 
 
 def _print_mutation_tail_warning(result: dict, *, error: TextIO) -> None:
-    tail = result.get("mutation_tail")
-    if not isinstance(tail, dict) or tail.get("post_commit_status") != "partial":
-        return
-    recovery = tail.get("recovery")
-    command = recovery.get("command") if isinstance(recovery, dict) else None
-    diagnostics = tail.get("errors")
-    codes = ", ".join(
-        str(item.get("code"))
-        for item in diagnostics
-        if isinstance(item, dict) and item.get("code")
-    )
-    print(
-        "WARNING: post_commit_status=partial mutation_committed=true "
-        "safe_to_retry_original=false"
-        + (f" diagnostics={codes}" if codes else "")
-        + ". Mutation committed, but post-commit processing was partial. "
-        "Do not retry the original mutation."
-        + (f" Inspect with: {command}" if command else ""),
-        file=error,
-    )
+    warning = mutation_tail_warning(result)
+    if warning is not None:
+        print(warning, file=error)

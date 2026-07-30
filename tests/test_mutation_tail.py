@@ -174,6 +174,52 @@ def test_idempotent_task_status_adds_no_event_or_render(
     assert (_sha256(html), _sha256(data)) == before_artifacts
 
 
+def test_idempotent_tail_failure_reports_no_commit_and_safe_retry(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    _initialized_direct_target(tmp_path, capsys, auto_render=True)
+    import pcl.mutation_tail as mutation_tail
+
+    monkeypatch.setattr(
+        mutation_tail,
+        "next_action",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("injected read-side failure")
+        ),
+    )
+
+    assert (
+        main(
+            [
+                "--root",
+                str(tmp_path),
+                "task",
+                "status",
+                "T-0001",
+                "in_progress",
+                "--reason",
+                "Exact no-op retry",
+                "--json",
+            ]
+        )
+        == 0
+    )
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+
+    assert payload["post_commit_status"] == "partial"
+    assert payload["mutation_committed"] is False
+    assert payload["safe_to_retry_original"] is True
+    assert payload["recovery"]["retry_original"] is True
+    assert "mutation_committed=false" in captured.err
+    assert "safe_to_retry_original=true" in captured.err
+    assert "No authoritative mutation was committed" in captured.err
+    assert "mutation_committed=true" not in captured.err
+    assert "Mutation committed" not in captured.err
+
+
 def test_render_failure_reports_committed_state_and_read_only_recovery(
     tmp_path: Path,
     capsys,

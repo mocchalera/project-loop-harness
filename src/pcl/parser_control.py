@@ -65,6 +65,14 @@ def add_control_parsers(sub) -> None:
         default=[],
         help="Readable Skill file to hash before mutation; repeatable",
     )
+    p_start.add_argument(
+        "--direct-spec",
+        default=None,
+        help=(
+            "Project-relative direct-spec/v1 JSON for atomic Goal, Task, Feature, "
+            "draft Story, and planned Test setup"
+        ),
+    )
 
     p_doctor = sub.add_parser("doctor", help="Check project-loop installation health")
     p_doctor.add_argument("--strict", action="store_true")

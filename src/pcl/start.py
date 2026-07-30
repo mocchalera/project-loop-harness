@@ -9,6 +9,8 @@ from typing import Any
 from .commands import active_workflow_next_action, loop_status, next_action
 from .command_domain import create_goal_in_transaction
 from .db import connect, connect_mutation
+from .direct_setup import commit_direct_setup
+from .direct_spec import load_direct_spec
 from .evidence import (
     EXECUTION_PROVENANCE_CONTRACT_VERSION,
     EXECUTION_PROVENANCE_EVIDENCE_TYPE,
@@ -23,11 +25,18 @@ from .evidence import (
     write_provenance_artifact,
 )
 from .events import append_event
-from .errors import DataStoreError, InvalidInputError, ProjectNotInitializedError
+from .errors import (
+    DataStoreError,
+    DirectSpecError,
+    InvalidInputError,
+    ProjectNotInitializedError,
+    ProjectValidationError,
+)
 from .ids import next_prefixed_id
 from .init_project import init_project, plan_init_project
 from .paths import ProjectPaths
 from .project_config import finish_check_configuration_warning
+from .mutation_tail import apply_direct_setup_tail
 from .target_resolver import (
     TaskGoalTargetNotFoundError,
     resolve_routing_target,
@@ -38,6 +47,7 @@ from .start_retry import (
 )
 from .tasks import create_task_in_transaction
 from .timeutil import utc_now_iso
+from .validators import validate_project
 
 
 START_CONTRACT_VERSION = "pcl-start/v1"
@@ -55,6 +65,7 @@ def start_work(
     skills: list[str] | None = None,
     goal_id: str | None = None,
     task_id: str | None = None,
+    direct_spec_path: str | None = None,
 ) -> dict[str, Any]:
     if not intent.strip():
         raise InvalidInputError("intent must not be empty.", details={"field": "intent"})
@@ -67,6 +78,18 @@ def start_work(
         raise InvalidInputError(
             "--new cannot be combined with --goal or --task.",
             details={"new": True, "goal": goal_id, "task": task_id},
+        )
+    if direct_spec_path is not None:
+        return _start_direct_work(
+            paths,
+            intent=intent,
+            direct_spec_path=direct_spec_path,
+            dry_run=dry_run,
+            no_init=no_init,
+            new=new,
+            skills=skills or [],
+            goal_id=goal_id,
+            task_id=task_id,
         )
 
     planned_skills = inspect_skill_files(paths, skills or [])
@@ -176,6 +199,180 @@ def start_work(
         ],
         warnings=[] if finish_warning is None else [finish_warning],
     )
+
+
+def _start_direct_work(
+    paths: ProjectPaths,
+    *,
+    intent: str,
+    direct_spec_path: str,
+    dry_run: bool,
+    no_init: bool,
+    new: bool,
+    skills: list[str],
+    goal_id: str | None,
+    task_id: str | None,
+) -> dict[str, Any]:
+    del no_init  # Direct Setup never initializes, so this flag is already its default.
+    incompatible = {
+        "--goal": goal_id,
+        "--task": task_id,
+        "--skill": skills or None,
+    }
+    selected = sorted(flag for flag, value in incompatible.items() if value)
+    if selected:
+        raise DirectSpecError(
+            "--direct-spec cannot be combined with attach or Skill provenance flags.",
+            code="direct_setup_option_conflict",
+            details={"flags": selected},
+        )
+    if not paths.db_path.is_file():
+        raise ProjectNotInitializedError(root=str(paths.root))
+    spec = load_direct_spec(paths, direct_spec_path)
+    validation = validate_project(paths)
+    blocking = [
+        finding.message
+        for finding in validation.findings
+        if finding.severity == "error"
+        and finding.code != "config_dashboard_auto_render_invalid"
+    ]
+    classified = {
+        finding.message
+        for finding in validation.findings
+        if finding.severity == "error"
+    }
+    blocking.extend(error for error in validation.errors if error not in classified)
+    if blocking:
+        raise ProjectValidationError(
+            errors=blocking,
+            warnings=validation.warnings,
+        )
+    if dry_run:
+        planned_entities = [
+            {"type": "goal", "status": "open", "title": intent},
+            {
+                "type": "task",
+                "status": "in_progress",
+                "title": intent,
+                "related_goal": "created_goal",
+            },
+            {
+                "type": "feature",
+                "status": "needs_test",
+                **spec.value["feature"],
+            },
+            *(
+                {
+                    "type": "user_story",
+                    "status": "draft",
+                    "ref": story["ref"],
+                }
+                for story in spec.value["stories"]
+            ),
+            *(
+                {
+                    "type": "test_case",
+                    "status": "planned",
+                    "ref": test["ref"],
+                    "story_ref": test["story_ref"],
+                }
+                for test in spec.value["tests"]
+            ),
+            {"type": "evidence", "contract_version": START_RECEIPT_CONTRACT_VERSION},
+        ]
+        return _payload(
+            status="planned",
+            mutated=False,
+            result={
+                "intent": intent,
+                "project_initialized": False,
+                "initialization": None,
+                "planned_entities": planned_entities,
+                "created_ids": {},
+                "target": {"type": "task", "id": None},
+                "receipt": None,
+                "provenance": None,
+                "direct_spec": {
+                    "contract_version": spec.value["contract_version"],
+                    "request_id": spec.request_id,
+                    "raw_sha256": spec.raw_sha256,
+                    "canonical_sha256": spec.canonical_sha256,
+                },
+                "requires_human": True,
+                "human_actions": [],
+            },
+            next_actions=[
+                _next_action(
+                    text="Apply this Direct Setup plan by rerunning without --dry-run.",
+                    command=None,
+                    target=None,
+                )
+            ],
+        )
+
+    started = commit_direct_setup(
+        paths,
+        intent=intent,
+        spec=spec,
+        new=new,
+        preflight_repository_revision=_repository_revision(paths.root),
+    )
+    selected_task_id = str(started["task_id"])
+    direct = started["receipt"]["direct_setup"]
+    story_ids = list(direct["bundle_created_ids"]["stories"])
+    result = {
+        "intent": intent,
+        "project_initialized": False,
+        "initialization": None,
+        "created_ids": started["created_ids"],
+        "target": {"type": "task", "id": selected_task_id},
+        "receipt": started["receipt"],
+        "provenance": None,
+        "repository_revision": started["repository_revision"],
+        "requires_human": True,
+        "human_actions": [_direct_story_action(story_id) for story_id in story_ids],
+    }
+    if started["idempotent"]:
+        result["idempotent"] = True
+        result["reused_ids"] = started["reused_ids"]
+    payload = _payload(
+        status="already_started" if started["idempotent"] else "started",
+        mutated=not started["idempotent"],
+        result=result,
+        next_actions=[
+            _next_action(
+                text=(
+                    "Review the draft Stories through an authenticated human decision "
+                    "channel, then begin the requested work."
+                ),
+                command=None,
+                target={"type": "task", "id": selected_task_id},
+            )
+        ],
+        warnings=[],
+    )
+    return apply_direct_setup_tail(
+        paths,
+        payload,
+        target_id=selected_task_id,
+        changed=not started["idempotent"],
+    )
+
+
+def _direct_story_action(story_id: str) -> dict[str, Any]:
+    return {
+        "action_kind": "review_story",
+        "target": {"type": "user_story", "id": story_id},
+        "requires_human": True,
+        "reason": (
+            "Story approval was not supplied by an authenticated human decision "
+            "channel and is not inferred."
+        ),
+        "expected_after": (
+            "A human separately decides whether the Story should be approved or waived."
+        ),
+        "command": None,
+    }
 
 
 def _plan_start_target(

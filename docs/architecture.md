@@ -94,6 +94,22 @@ calls `fsync`, and only then marks the outbox row delivered. Projection failure
 does not undo committed domain state; retry with `pcl audit flush` rather than
 re-running the mutation.
 
+Direct Setup (`pcl start --direct-spec`) is an additive one-call bundle for a
+Goal, Task, Feature, draft Stories, planned Tests, and the start receipt. It
+securely fixes a project-local spec to one descriptor buffer before mutation,
+then uses the existing project-operation lock exclusively and performs
+schema-8/integrity/event/outbox/active-work admission in the same
+`BEGIN IMMEDIATE` snapshot. A request-derived `work_started` event primary key
+is the idempotency anchor; the event and Evidence carry the same hash-bound
+receipt. No new schema or uniqueness table is required.
+
+After a successful Direct commit, validation and exact-target routing are
+read-only and checked against one event high-watermark. Canonical rendering is
+allowed only after acquiring the existing exclusive project-operation lock and
+rechecking that watermark, then the current renderer is called at most once.
+The renderer remains a derived two-file writer; this is not a claim of
+two-file or process-crash atomic publication.
+
 Task completion adds a pre-update proof gate inside that same transaction.
 The exact `routing-target/v1` Task is re-read and evaluated through the shared
 `terminal-readiness/v1` collector before its row changes. The receipt binds the

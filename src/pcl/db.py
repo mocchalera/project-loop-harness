@@ -90,10 +90,14 @@ def connect_read_only(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
-def connect_mutation(paths: Any) -> MutationConnection:
+def connect_mutation(
+    paths: Any,
+    *,
+    exclusive: bool = False,
+) -> MutationConnection:
     from .locks import AdvisoryLock
 
-    lock = AdvisoryLock(paths.loop_dir / "project.lock", exclusive=False)
+    lock = AdvisoryLock(paths.loop_dir / "project.lock", exclusive=exclusive)
     lock.acquire()
     try:
         conn = sqlite3.connect(

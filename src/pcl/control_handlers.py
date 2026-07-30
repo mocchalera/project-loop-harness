@@ -24,6 +24,7 @@ from .lifecycle_repair import (
     render_lifecycle_repair_plan,
 )
 from .migrations import apply_migrations, migration_status
+from .mutation_tail import mutation_tail_warning
 from .outbox import project_pending_events
 from .paths import ProjectPaths
 from .presentation import format_start_summary, to_pretty_json
@@ -102,8 +103,12 @@ def handle_control_command(
             skills=args.skill,
             goal_id=args.goal,
             task_id=args.task,
+            direct_spec_path=args.direct_spec,
         )
         _print_json(payload) if json_output else print(format_start_summary(payload))
+        warning = mutation_tail_warning(payload)
+        if warning is not None:
+            print(warning, file=sys.stderr)
         return 1 if payload["status"] == "init_blocked" else 0
 
     if args.command == "doctor":

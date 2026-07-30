@@ -64,6 +64,38 @@ class InvalidInputError(PclError):
         )
 
 
+class DirectSpecError(PclError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str = "direct_spec_invalid",
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            code=code,
+            exit_code=EXIT_USAGE,
+            details=details or {},
+        )
+
+
+class DirectSetupConflictError(PclError):
+    def __init__(
+        self,
+        message: str,
+        *,
+        code: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(
+            message=message,
+            code=code,
+            exit_code=EXIT_VALIDATION_FAILED,
+            details=details or {},
+        )
+
+
 class TaskTerminalReadinessError(PclError):
     def __init__(self, *, task_id: str, readiness: dict[str, Any]) -> None:
         super().__init__(
@@ -153,11 +185,18 @@ class DataStoreError(PclError):
 
 class ProjectionPendingError(PclError):
     def __init__(self, *, details: dict[str, Any]) -> None:
+        mutation_committed = details.get("mutation_committed") is not False
+        message = (
+            "The SQLite mutation committed, but events.jsonl projection is pending. "
+            "Do not retry the mutation; run `pcl audit flush --json`."
+            if mutation_committed
+            else (
+                "A pre-existing events.jsonl projection is pending; this command did "
+                "not commit a mutation. Run `pcl audit flush --json` before retrying."
+            )
+        )
         super().__init__(
-            message=(
-                "The SQLite mutation committed, but events.jsonl projection is pending. "
-                "Do not retry the mutation; run `pcl audit flush --json`."
-            ),
+            message=message,
             code="audit_projection_pending",
             exit_code=EXIT_RECOVERABLE_PENDING,
             details=details,

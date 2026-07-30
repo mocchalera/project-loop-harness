@@ -18,9 +18,11 @@ def append_event(
     entity_id: str | None,
     payload: dict[str, Any],
     event_id: str | None = None,
+    outbox_id: str | None = None,
+    created_at: str | None = None,
 ) -> str:
     event_id = event_id or f"EV-{uuid.uuid4().hex[:12].upper()}"
-    created_at = utc_now_iso()
+    created_at = created_at or utc_now_iso()
     del events_path  # retained in the public signature for caller compatibility
     sequence = int(conn.execute("SELECT COALESCE(MAX(sequence), 0) + 1 FROM events").fetchone()[0])
     conn.execute(
@@ -38,7 +40,7 @@ def append_event(
             created_at,
         ),
     )
-    outbox_id = f"OB-{uuid.uuid4().hex[:12].upper()}"
+    outbox_id = outbox_id or f"OB-{uuid.uuid4().hex[:12].upper()}"
     conn.execute(
         """
         INSERT INTO outbox_records(

@@ -510,14 +510,23 @@ def record_inline_evidence(
     summary: str,
     context: str,
     command: str | None = None,
+    evidence_id: str | None = None,
+    created_at: str | None = None,
 ) -> str:
-    evidence_id = next_prefixed_id(conn, "evidence", "E")
+    evidence_id = evidence_id or next_prefixed_id(conn, "evidence", "E")
     conn.execute(
         """
         INSERT INTO evidence(id, type, path, command, summary, created_at)
         VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (evidence_id, evidence_type, f"inline:{context}", command, summary, utc_now_iso()),
+        (
+            evidence_id,
+            evidence_type,
+            f"inline:{context}",
+            command,
+            summary,
+            created_at or utc_now_iso(),
+        ),
     )
     return evidence_id
 

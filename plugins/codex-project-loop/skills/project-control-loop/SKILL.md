@@ -122,6 +122,22 @@ For a single well-scoped implementation task, the durable-state path below is
 sufficient. Do not start a workflow run just because `pcl next` recommends
 one; workflow runs add queued jobs you must later close out.
 
+When the user has already supplied an exact Feature, Story, and Test bundle and
+asks for one-call setup, use a reviewed project-local `direct-spec/v1` file:
+
+```bash
+pcl start "<literal user intent>" --direct-spec path/to/direct-spec.json --json
+```
+
+Direct Setup is initialized-project-only and atomic across its Goal, Task,
+Feature, draft Stories, planned Tests, start receipt, events, and outbox rows.
+Reuse the same mandatory `request_id` for an exact retry. Do not add approval
+fields, infer Story approval, or execute spec text; returned human actions have
+`command: null`. A pending projection recovers with `pcl audit flush --json`;
+a partial tail recovers through its exact-target read-only validation command.
+Direct Setup does not perform Test pass, Feature/Task terminal acceptance, or
+Goal close.
+
 Follow this order. Replace every placeholder ID with the ID returned by the
 preceding command; do not invent IDs.
 

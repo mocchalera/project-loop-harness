@@ -72,6 +72,21 @@ before any cancellation.
 | Audit-log integrity failure | DB/outbox/`events.jsonl` disagree, JSONL is invalid, or event order differs | Stop normal work and run `pcl audit check --json`. Apply only a fully supported preview; otherwise preserve the report and use the reviewed rebuild path. |
 | Repeated workflow failure | The same run or defect repair keeps failing | Open an escalation instead of retrying indefinitely. |
 
+For Direct Setup, distinguish the authoritative result from its post-commit
+tail:
+
+- `audit_projection_pending` (exit 6) has no tail. Run
+  `pcl audit flush --json`; do not create another request ID to bypass it.
+- a stable post-commit validation failure is a committed `partial` result.
+  Run only the returned
+  `pcl validate --target T-XXXX --summary --json` recovery first.
+- a state-drift or render `partial` result contains no trusted artifact hashes.
+  Inspect the same exact-target validation result; an exact original retry is
+  idempotent but is not the recommended diagnostic.
+- `direct_setup_anchor_collision`, `direct_setup_anchor_corrupt`, or
+  `direct_setup_anchor_ambiguous` requires integrity review. Do not delete the
+  anchor, edit its payload, or choose a new request ID to manufacture success.
+
 ## Safe Repairs
 
 ### Plan lifecycle repair for existing projects

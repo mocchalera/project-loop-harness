@@ -150,6 +150,8 @@ historical study contract, not as current work or a successful outcome.
 - [Golden Path](docs/golden-path.md) — complete direct and workflow examples.
 - [Architecture](docs/architecture.md) — state, events, evidence, and execution
   boundaries.
+- [Direct Setup Bundle v1](docs/direct-spec-v1.md) — strict one-call
+  Goal/Task/Feature/Story/Test setup and idempotent recovery.
 - [CLI Guide](docs/command-guide.md) — task-oriented command discovery.
 - [Recovery Playbook](docs/recovery-playbook.md) — safe diagnosis and repair.
 - [MCP compatibility](docs/mcp-compatibility.md) — optional client boundary.

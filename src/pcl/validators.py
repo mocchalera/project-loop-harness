@@ -67,6 +67,127 @@ VERSIONED_REQUIRED_TABLES = {
         "evidence_links",
     ],
 }
+AUTHORITATIVE_ADMISSION_TABLES = [
+    *REQUIRED_TABLES,
+    "schema_migrations",
+    "outbox_records",
+    *(table for tables in VERSIONED_REQUIRED_TABLES.values() for table in tables),
+]
+AUTHORITATIVE_ADMISSION_REQUIRED_COLUMNS = {
+    "metadata": {"key", "value"},
+    "schema_migrations": {"version", "name", "checksum", "applied_at"},
+    "events": {
+        "id",
+        "sequence",
+        "event_type",
+        "entity_type",
+        "entity_id",
+        "payload_json",
+        "created_at",
+    },
+    "outbox_records": {
+        "id",
+        "event_id",
+        "sink",
+        "idempotency_key",
+        "status",
+        "attempts",
+        "next_attempt_at",
+        "last_error",
+        "created_at",
+        "updated_at",
+        "delivered_at",
+    },
+    "goals": {
+        "id",
+        "title",
+        "status",
+        "completion_json",
+        "stop_conditions_json",
+        "budget_json",
+        "created_at",
+        "updated_at",
+    },
+    "tasks": {
+        "id",
+        "title",
+        "description",
+        "status",
+        "priority",
+        "owner",
+        "risk",
+        "effort",
+        "related_goal_id",
+        "related_feature_id",
+        "related_defect_id",
+        "created_at",
+        "updated_at",
+    },
+    "features": {
+        "id",
+        "name",
+        "surface",
+        "description",
+        "status",
+        "confidence",
+        "created_at",
+        "updated_at",
+    },
+    "user_stories": {
+        "id",
+        "feature_id",
+        "actor",
+        "goal",
+        "benefit",
+        "expected_behavior",
+        "status",
+        "created_at",
+        "updated_at",
+    },
+    "test_cases": {
+        "id",
+        "feature_id",
+        "story_id",
+        "type",
+        "scenario",
+        "expected",
+        "status",
+        "last_run_id",
+        "evidence_id",
+        "created_at",
+        "updated_at",
+    },
+    "evidence": {
+        "id",
+        "type",
+        "path",
+        "command",
+        "summary",
+        "created_at",
+        "linked_task_id",
+    },
+    "agent_jobs": {
+        "id",
+        "workflow_run_id",
+        "role",
+        "status",
+        "assigned_agent_id",
+        "lease_expires_at",
+        "last_heartbeat_at",
+        "attempts",
+    },
+    "agents": {
+        "id",
+        "name",
+        "role",
+        "adapter",
+        "max_concurrency",
+        "status",
+        "metadata_json",
+        "created_at",
+        "updated_at",
+    },
+}
 
 ACTIVE_RUN_STATUSES = ("blocked", "queued", "running")
 TERMINAL_GOAL_STATUSES = ("cancelled", "closed")
@@ -290,6 +411,219 @@ class LifecycleFinding:
     entity_type: str
     entity_id: str
     details: dict[str, Any] = field(default_factory=dict)
+
+
+def collect_authoritative_admission_findings(
+    conn: sqlite3.Connection,
+    *,
+    now: str,
+) -> ValidationResult:
+    """Validate DB-authoritative admission invariants in one caller snapshot."""
+
+    result = ValidationResult()
+    missing_tables: set[str] = set()
+    invalid_column_tables: set[str] = set()
+    for table in AUTHORITATIVE_ADMISSION_TABLES:
+        if table in missing_tables or table_exists(conn, table):
+            continue
+        missing_tables.add(table)
+        result.add_error(
+            f"Missing table: {table}",
+            code="schema_required_table_missing",
+            entity={"type": "schema_table", "id": table},
+            repair_class="unsupported",
+            requires_human=True,
+        )
+    for table, required_columns in AUTHORITATIVE_ADMISSION_REQUIRED_COLUMNS.items():
+        if table in missing_tables:
+            continue
+        columns = {
+            str(row["name"])
+            for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        absent = sorted(required_columns - columns)
+        if absent:
+            invalid_column_tables.add(table)
+            result.add_error(
+                f"Table {table} is missing required columns: {', '.join(absent)}.",
+                code="schema_required_column_missing",
+                entity={"type": "schema_table", "id": table},
+                repair_class="unsupported",
+                requires_human=True,
+            )
+    integrity_rows = conn.execute("PRAGMA integrity_check").fetchall()
+    integrity_messages = [str(row[0]) for row in integrity_rows]
+    if integrity_messages != ["ok"]:
+        for message in integrity_messages:
+            result.add_error(
+                f"SQLite integrity check failed: {message}",
+                code="database_integrity_check_failed",
+                entity={"type": "project_database", "id": "project.db"},
+                repair_class="unsupported",
+                requires_human=True,
+            )
+    if "metadata" not in missing_tables and "metadata" not in invalid_column_tables:
+        row = conn.execute(
+            "SELECT value FROM metadata WHERE key = 'schema_version'"
+        ).fetchone()
+        version = None if row is None else str(row["value"])
+        if version != "8":
+            result.add_error(
+                f"Direct setup requires metadata.schema_version 8; found {version!r}.",
+                code="schema_direct_setup_version_mismatch",
+                entity={"type": "schema_metadata", "id": "schema_version"},
+                repair_class="unsupported",
+                requires_human=True,
+            )
+    if "events" not in missing_tables:
+        _validate_authoritative_events(conn, result)
+    if "events" not in missing_tables and "outbox_records" not in missing_tables:
+        _validate_authoritative_outbox(conn, result)
+    if not missing_tables and not invalid_column_tables:
+        _validate_foreign_keys(conn, result)
+        _validate_task_invariants(conn, result)
+        if _agent_jobs_has_lease_columns(conn):
+            _validate_agent_registry_invariants(conn, result, now=now)
+        _validate_verification_rubrics(
+            conn,
+            result,
+            strict=True,
+            check_evidence=True,
+        )
+        _validate_verification_feedback_references(conn, result)
+        _validate_passed_workflow_runs(conn, result)
+        _validate_verified_or_closed_defects(conn, result)
+        _validate_terminal_test_cases(conn, result)
+        _validate_duplicate_active_runs(conn, result)
+        _validate_terminal_parent_children(conn, result)
+        _validate_decision_block_links(conn, result)
+    return result
+
+
+def _validate_authoritative_events(
+    conn: sqlite3.Connection,
+    result: ValidationResult,
+) -> None:
+    required = {
+        "id",
+        "sequence",
+        "event_type",
+        "entity_type",
+        "entity_id",
+        "payload_json",
+        "created_at",
+    }
+    columns = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA table_info(events)").fetchall()
+    }
+    if not required <= columns:
+        result.add_error(
+            "The events table does not satisfy the schema 8 event contract.",
+            code="schema_events_columns_invalid",
+            entity={"type": "schema_table", "id": "events"},
+            repair_class="unsupported",
+            requires_human=True,
+        )
+        return
+    rows = conn.execute(
+        "SELECT id, sequence, payload_json FROM events ORDER BY sequence"
+    ).fetchall()
+    sequences = [int(row["sequence"]) for row in rows]
+    if sequences != list(range(1, len(sequences) + 1)):
+        result.add_error(
+            "SQLite event sequence is not contiguous from 1.",
+            code="audit_sequence_noncontiguous",
+            entity={"type": "schema_table", "id": "events"},
+            repair_class="unsupported",
+            requires_human=True,
+        )
+    for row in rows:
+        try:
+            payload = json.loads(str(row["payload_json"]))
+        except json.JSONDecodeError:
+            payload = None
+        if not isinstance(payload, dict):
+            result.add_error(
+                f"SQLite event {row['id']} payload_json is not a JSON object.",
+                code="audit_event_payload_invalid",
+                entity={"type": "event", "id": str(row["id"])},
+                repair_class="unsupported",
+                requires_human=True,
+            )
+
+
+def _validate_authoritative_outbox(
+    conn: sqlite3.Connection,
+    result: ValidationResult,
+) -> None:
+    required = {
+        "id",
+        "event_id",
+        "sink",
+        "idempotency_key",
+        "status",
+        "created_at",
+        "updated_at",
+    }
+    columns = {
+        str(row["name"])
+        for row in conn.execute("PRAGMA table_info(outbox_records)").fetchall()
+    }
+    if not required <= columns:
+        result.add_error(
+            "The outbox_records table does not satisfy the schema 8 outbox contract.",
+            code="schema_outbox_columns_invalid",
+            entity={"type": "schema_table", "id": "outbox_records"},
+            repair_class="unsupported",
+            requires_human=True,
+        )
+        return
+    rows = conn.execute(
+        """
+        SELECT
+          events.id AS event_id,
+          COUNT(outbox_records.id) AS outbox_count,
+          MIN(outbox_records.sink) AS sink,
+          MIN(outbox_records.idempotency_key) AS idempotency_key,
+          MIN(outbox_records.status) AS status
+        FROM events
+        LEFT JOIN outbox_records ON outbox_records.event_id = events.id
+        GROUP BY events.id
+        ORDER BY events.sequence
+        """
+    ).fetchall()
+    for row in rows:
+        event_id = str(row["event_id"])
+        if (
+            int(row["outbox_count"]) != 1
+            or str(row["sink"]) != "jsonl"
+            or str(row["idempotency_key"]) != f"jsonl:{event_id}"
+        ):
+            result.add_error(
+                f"Event {event_id} does not have exactly one canonical JSONL outbox record.",
+                code="audit_event_outbox_mismatch",
+                entity={"type": "event", "id": event_id},
+                repair_class="unsupported",
+                requires_human=True,
+            )
+    orphans = conn.execute(
+        """
+        SELECT outbox_records.id
+        FROM outbox_records
+        LEFT JOIN events ON events.id = outbox_records.event_id
+        WHERE events.id IS NULL
+        ORDER BY outbox_records.id
+        """
+    ).fetchall()
+    for row in orphans:
+        result.add_error(
+            f"Outbox record {row['id']} references a missing event.",
+            code="audit_outbox_orphan",
+            entity={"type": "outbox", "id": str(row["id"])},
+            repair_class="unsupported",
+            requires_human=True,
+        )
 
 
 def _strict_warning_remains_warning(warning: str) -> bool:
@@ -2835,11 +3169,17 @@ def _agent_jobs_has_lease_columns(conn: sqlite3.Connection) -> bool:
     } <= columns
 
 
-def _validate_agent_registry_invariants(conn: sqlite3.Connection, result: ValidationResult) -> None:
+def _validate_agent_registry_invariants(
+    conn: sqlite3.Connection,
+    result: ValidationResult,
+    *,
+    now: str | None = None,
+) -> None:
+    snapshot_now = now or utc_now_iso()
     _validate_job_agent_references(conn, result)
-    _validate_expired_running_leases(conn, result)
-    _validate_retired_agent_active_leases(conn, result)
-    _validate_agent_concurrency(conn, result)
+    _validate_expired_running_leases(conn, result, now=snapshot_now)
+    _validate_retired_agent_active_leases(conn, result, now=snapshot_now)
+    _validate_agent_concurrency(conn, result, now=snapshot_now)
 
 
 def _validate_job_agent_references(conn: sqlite3.Connection, result: ValidationResult) -> None:
@@ -2864,8 +3204,13 @@ def _validate_job_agent_references(conn: sqlite3.Connection, result: ValidationR
         )
 
 
-def _validate_expired_running_leases(conn: sqlite3.Connection, result: ValidationResult) -> None:
-    now = utc_now_iso()
+def _validate_expired_running_leases(
+    conn: sqlite3.Connection,
+    result: ValidationResult,
+    *,
+    now: str | None = None,
+) -> None:
+    now = now or utc_now_iso()
     rows = conn.execute(
         """
         SELECT id, assigned_agent_id, lease_expires_at
@@ -2890,9 +3235,12 @@ def _validate_expired_running_leases(conn: sqlite3.Connection, result: Validatio
 
 
 def _validate_retired_agent_active_leases(
-    conn: sqlite3.Connection, result: ValidationResult
+    conn: sqlite3.Connection,
+    result: ValidationResult,
+    *,
+    now: str | None = None,
 ) -> None:
-    now = utc_now_iso()
+    now = now or utc_now_iso()
     rows = conn.execute(
         """
         SELECT agent_jobs.id AS job_id, agents.id AS agent_id
@@ -2918,8 +3266,13 @@ def _validate_retired_agent_active_leases(
         )
 
 
-def _validate_agent_concurrency(conn: sqlite3.Connection, result: ValidationResult) -> None:
-    now = utc_now_iso()
+def _validate_agent_concurrency(
+    conn: sqlite3.Connection,
+    result: ValidationResult,
+    *,
+    now: str | None = None,
+) -> None:
+    now = now or utc_now_iso()
     rows = conn.execute(
         """
         SELECT

@@ -17,10 +17,11 @@ Both surfaces have an exact Task target. Their JSON result adds
 - a `render-receipt/v1` result;
 - read-only recovery when next-action or render work fails after commit.
 
-Other mutation handlers are intentionally unchanged in P0-A. `pcl start`
-retains its existing `pcl-start/v1` next-actions contract, and Workflow,
-governance, Evidence, terminal, and unrelated entity mutations do not yet use
-the shared tail.
+`pcl start ... --direct-spec ...` also returns this additive tail, with a
+stricter Direct Setup consistency branch described below. Legacy `pcl start`
+retains its existing `pcl-start/v1` next-actions contract. Workflow,
+governance, Evidence, terminal, and unrelated entity mutations do not use the
+shared tail.
 
 An idempotent Task status request with `changed=false` returns a
 `not_changed` receipt. It does not commit an event or render.
@@ -56,8 +57,11 @@ high-watermarks are equal to the receipt watermark.
 Post-commit failures preserve top-level `ok=true` and exit zero for the
 authoritative mutation. They add top-level `mutation_committed`,
 `safe_to_retry_original`, `post_commit_status`, `post_commit_diagnostics`, and
-`recovery` fields. Text and JSON commands also emit an explicit stderr warning
-that the original mutation must not be retried.
+`recovery` fields. Text and JSON commands also emit an explicit stderr warning.
+The warning uses the actual `mutation_committed` and
+`safe_to_retry_original` values: a failed read-side tail after `changed=false`
+does not claim that a mutation committed and reports that the idempotent retry
+remains safe.
 
 `dashboard.auto_render` is validated as a global configuration finding.
 Selected mutation services allow only that post-commit configuration finding
@@ -92,3 +96,33 @@ Missing or malformed Task/Goal targets in a valid database still fail closed.
 
 With no projection flags, JSON keys, text output, ordering, strict behavior,
 and exit status retain the previous contract.
+
+## Direct Setup consistency
+
+The Direct Setup tail starts each of at most two attempts with full validation
+and exact-Task projection. It checks the event high-watermark after validation,
+then performs exact-target routing and checks again. Canonical dashboard files
+are not changed during either phase.
+
+- Validation drift discards that attempt. Stable validation failure stops
+  immediately as `partial`, with `next_action: null`,
+  `render.status: skipped_validation_failed`, no artifact hashes, and exact
+  read-only target validation recovery.
+- Routing drift discards the complete attempt. Two drifting attempts return
+  `partial`, do not render, and return no artifact hashes.
+- `changed=false` returns `not_changed` without rendering.
+- With auto-render disabled, the stable receipt is `disabled`.
+- With auto-render enabled, the tail acquires the existing exclusive
+  project-operation lock, rechecks the same high-watermark, and only when it
+  matches invokes the current canonical renderer once while the lock is held.
+  A pre-render mismatch consumes the bounded retry rather than rendering.
+
+The Direct bundle's deterministic event anchor makes
+`safe_to_retry_original=true`, while `retry_recommended=false` keeps the
+read-only recovery command primary. Renderer failure is a committed partial
+result with null hashes. `ProjectionPendingError` occurs before normal service
+return, so it has no tail and recovers through `pcl audit flush --json`.
+
+This contract binds the success receipt to a stable governed event watermark
+and exclusive render interval. It does not claim atomic publication across the
+two dashboard files or across a process crash.
