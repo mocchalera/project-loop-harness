@@ -8,9 +8,9 @@
 - **Project Loop:** Goal `G-0003`, Task `T-0003`, Feature `F-0003`, Stories
   `US-0003`–`US-0004`, Tests `TC-0020`–`TC-0024`
 - **Schema/dependencies:** unchanged at schema 8 with no runtime dependency
-- **Evidence:** fail-first `E-0017`; superseded proofs `E-0018` and `E-0019`;
-  second-review RED `E-0025`; current proof `E-0029`; exact-target Test
-  Evidence Sets `E-0030`–`E-0034`
+- **Evidence:** fail-first `E-0017`; superseded proofs `E-0018`, `E-0019`, and
+  `E-0029`; second-review RED `E-0025`; third-review RED `E-0039`; current
+  proof `E-0040`; exact-target Test Evidence Sets `E-0041`–`E-0045`
 
 ## Approved contract
 
@@ -50,7 +50,8 @@ descriptor-bound Git inherits the verified FD; the private renderer route
 requires a live same-root exclusive capability; and legacy retries reject
 actual same-request ambiguity. `E-0018`, `E-0019`, their sources, and their
 durable copies remain immutable. `E-0029` supersedes `E-0019` with current
-proof.
+proof for that review stage; the third-review proof `E-0040` now supersedes
+`E-0029` without modifying its bytes.
 
 The third rereview reproduced a post-commit tail pathname rebind and a renderer
 root/lock-file ABA. The remediation keeps read-only SQLite opens on the retained
@@ -101,10 +102,10 @@ All four Project Control Loop Skill copies are byte-identical at SHA-256
 `65f4c904b4f8891c70ea16ee18e2a016dea35b323723c0b3143b6639a246b5d1`. A fresh
 initialized-project smoke covered success, exact retry, changed-input conflict,
 stored Git revision, strict validation, clean audit, and render. Exact results
-will be pinned in the third-review current-proof Evidence.
+are pinned in third-review RED `E-0039` and current proof `E-0040`.
 
 `TC-0020`–`TC-0024` each pass a target-bound completion policy through
-`E-0030`–`E-0034`; `F-0003` and `T-0003` are done. Strict doctor/validate and
+`E-0041`–`E-0045`; `F-0003` and `T-0003` are done. Strict doctor/validate and
 the audit scoped to `T-0003` since `EV-E71D510409F1` are clean. The root audit
 continues to report only the separately known superseded historical drift for
 `E-0013` and `E-0014`.
