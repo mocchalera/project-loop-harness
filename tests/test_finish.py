@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -123,6 +124,66 @@ def _state_counts(root: Path) -> dict[str, int]:
         conn.close()
     counts["events_jsonl"] = len((root / ".project-loop" / "events.jsonl").read_text(encoding="utf-8").splitlines())
     return counts
+
+
+def _terminal_artifact_snapshot(root: Path) -> dict:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        task = dict(conn.execute("SELECT * FROM tasks WHERE id = 'T-0001'").fetchone())
+        events = [
+            tuple(row)
+            for row in conn.execute(
+                """
+                SELECT id, sequence, event_type, entity_type, entity_id,
+                       payload_json, created_at
+                FROM events
+                ORDER BY sequence
+                """
+            ).fetchall()
+        ]
+        outbox = [
+            tuple(row)
+            for row in conn.execute(
+                """
+                SELECT id, event_id, sink, idempotency_key, status, attempts,
+                       next_attempt_at, last_error, created_at, updated_at,
+                       delivered_at
+                FROM outbox_records
+                ORDER BY id
+                """
+            ).fetchall()
+        ]
+        completion_evidence = [
+            tuple(row)
+            for row in conn.execute(
+                """
+                SELECT id, type, path, command, summary, created_at
+                FROM evidence
+                WHERE type IN ('completion_check', 'completion_packet')
+                ORDER BY id
+                """
+            ).fetchall()
+        ]
+    finally:
+        conn.close()
+    dashboard = root / ".project-loop" / "dashboard"
+    packet_dir = root / ".project-loop" / "evidence" / "completion-packets"
+    return {
+        "task": task,
+        "events": events,
+        "outbox": outbox,
+        "completion_evidence": completion_evidence,
+        "events_jsonl": (root / ".project-loop" / "events.jsonl").read_bytes(),
+        "dashboard_html": (dashboard / "dashboard.html").read_bytes(),
+        "dashboard_data": (dashboard / "dashboard-data.json").read_bytes(),
+        "packets": {
+            path.name: path.read_bytes()
+            for path in sorted(packet_dir.glob("*"))
+            if path.is_file()
+        }
+        if packet_dir.exists()
+        else {},
+    }
 
 
 def _finish_payload(capsys) -> dict:
@@ -1718,48 +1779,8 @@ def test_finish_rechecks_current_proof_input_without_hwm_change(
     capsys,
     monkeypatch,
 ) -> None:
-    _create_packet_project(tmp_path, capsys)
-    assert main([
-        "--root", str(tmp_path), "feature", "add",
-        "--name", "Finish proof", "--surface", "cli:finish",
-        "--task", "T-0001",
-    ]) == 0
-    assert main([
-        "--root", str(tmp_path), "story", "draft", "--feature", "F-0001",
-        "--actor", "operator", "--goal", "finish safely",
-        "--expected-behavior", "proof remains healthy",
-    ]) == 0
-    assert main([
-        "--root", str(tmp_path), "story", "approve", "US-0001",
-        "--summary", "Approved",
-    ]) == 0
-    assert main([
-        "--root", str(tmp_path), "test", "plan", "--feature", "F-0001",
-        "--story", "US-0001", "--type", "acceptance",
-        "--scenario", "Finish proof", "--expected", "passing",
-    ]) == 0
-    artifact = tmp_path / "finish-proof.txt"
-    artifact.write_text("passed\n", encoding="utf-8")
-    capsys.readouterr()
-    assert main([
-        "--root", str(tmp_path), "evidence", "add",
-        "--file", artifact.name, "--summary", "Finish acceptance",
-        "--copy", "--json",
-    ]) == 0
-    evidence = _json_output(capsys)["evidence"]
-    assert main([
-        "--root", str(tmp_path), "test", "pass", "TC-0001",
-        "--summary", "Passed", "--evidence-id", evidence["id"],
-    ]) == 0
-    assert main([
-        "--root", str(tmp_path), "feature", "status", "F-0001",
-        "--status", "done", "--summary", "Feature accepted",
-        "--evidence-id", evidence["id"],
-    ]) == 0
-    capsys.readouterr()
-    manifest_path = tmp_path / str(evidence["manifest_path"])
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    copied_path = tmp_path / str(manifest["members"][0]["stored_path"])
+    proof = _prepare_finish_current_proof(tmp_path, capsys)
+    copied_path = proof["copied_path"]
 
     from pcl import finish_execution
 
@@ -1795,6 +1816,116 @@ def test_finish_rechecks_current_proof_input_without_hwm_change(
     assert details["terminal_readiness"]["terminal_allowed"] is False
     assert _evidence_count(tmp_path, "completion_packet") == 0
     assert _evidence_count(tmp_path, "completion_check") == 0
+
+
+def _prepare_finish_current_proof(root: Path, capsys) -> dict:
+    _create_packet_project(root, capsys)
+    assert main([
+        "--root", str(root), "feature", "add",
+        "--name", "Finish proof", "--surface", "cli:finish",
+        "--task", "T-0001",
+    ]) == 0
+    assert main([
+        "--root", str(root), "story", "draft", "--feature", "F-0001",
+        "--actor", "operator", "--goal", "finish safely",
+        "--expected-behavior", "proof remains healthy",
+    ]) == 0
+    assert main([
+        "--root", str(root), "story", "approve", "US-0001",
+        "--summary", "Approved",
+    ]) == 0
+    assert main([
+        "--root", str(root), "test", "plan", "--feature", "F-0001",
+        "--story", "US-0001", "--type", "acceptance",
+        "--scenario", "Finish proof", "--expected", "passing",
+    ]) == 0
+    artifact = root / "finish-proof.txt"
+    artifact.write_text("passed\n", encoding="utf-8")
+    capsys.readouterr()
+    assert main([
+        "--root", str(root), "evidence", "add",
+        "--file", artifact.name, "--summary", "Finish acceptance",
+        "--copy", "--json",
+    ]) == 0
+    evidence = _json_output(capsys)["evidence"]
+    assert main([
+        "--root", str(root), "test", "pass", "TC-0001",
+        "--summary", "Passed", "--evidence-id", evidence["id"],
+    ]) == 0
+    assert main([
+        "--root", str(root), "feature", "status", "F-0001",
+        "--status", "done", "--summary", "Feature accepted",
+        "--evidence-id", evidence["id"],
+    ]) == 0
+    capsys.readouterr()
+    manifest_path = root / str(evidence["manifest_path"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    copied_path = root / str(manifest["members"][0]["stored_path"])
+    return {
+        "copied_path": copied_path,
+        "evidence": evidence,
+        "manifest": manifest,
+        "manifest_path": manifest_path,
+    }
+
+
+def test_finish_rejects_coherent_proof_substitution_before_terminal_artifacts(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    proof = _prepare_finish_current_proof(tmp_path, capsys)
+    copied_path = proof["copied_path"]
+    manifest_path = proof["manifest_path"]
+
+    from pcl import finish_execution
+
+    execute = finish_execution.execute_planned_guarded_command
+    mutated = False
+
+    def execute_and_substitute_proof(*args, **kwargs):
+        nonlocal mutated
+        execute(*args, **kwargs)
+        if not mutated:
+            mutated = True
+            replacement = b"coherently substituted during checks\n"
+            copied_path.write_bytes(replacement)
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["members"][0]["size_bytes"] = len(replacement)
+            manifest["members"][0]["sha256"] = hashlib.sha256(
+                replacement
+            ).hexdigest()
+            manifest_path.write_text(
+                json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+    monkeypatch.setattr(
+        finish_execution,
+        "execute_planned_guarded_command",
+        execute_and_substitute_proof,
+    )
+    before = _terminal_artifact_snapshot(tmp_path)
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet",
+        "--task", "T-0001", "--json",
+    ]) == 1
+    details = _json_output(capsys)["error"]["details"]
+    expected = details["expected_terminal_readiness"]["evaluation"]
+    current = details["terminal_readiness"]["evaluation"]
+
+    assert details["mutation_committed"] is False
+    assert current["evaluated_through_event_sequence"] == (
+        expected["evaluated_through_event_sequence"]
+    )
+    assert current["input_sha256"] != expected["input_sha256"]
+    assert details["terminal_readiness"]["terminal_allowed"] is False
+    assert "strict_manifest_event_mismatch" in {
+        reason["code"]
+        for reason in details["terminal_readiness"]["reasons"]
+    }
+    assert _terminal_artifact_snapshot(tmp_path) == before
 
 
 def test_finish_human_gate_emits_incomplete_packet_and_next_action(tmp_path: Path, capsys) -> None:

@@ -12,7 +12,14 @@ from .evidence import (
     assess_adhoc_evidence,
     newest_linked_evidence_id,
     require_healthy_terminal_evidence,
+    resolve_strict_copied_evidence_in_snapshot,
+    strict_copied_evidence_identity,
     superseding_evidence_id,
+)
+from .evidence_sets import (
+    EVIDENCE_SET_EVIDENCE_TYPE,
+    resolve_strict_evidence_set_in_snapshot,
+    strict_evidence_set_identity,
 )
 from .events import append_event
 from .guards import require_initialized
@@ -469,6 +476,7 @@ def task_terminal_readiness_for_row(
     evidence_rows: list[dict[str, Any]] = []
     requirements: list[dict[str, Any]] = []
     current_proof_refs: set[tuple[str, str]] = set(resolved.scope_refs)
+    current_proof_evidence_ids: set[str] = set()
 
     incomplete_dependencies = [
         row
@@ -576,6 +584,8 @@ def task_terminal_readiness_for_row(
                             "reason": "missing_target_bound_evidence",
                         },
                     )
+                current_proof_refs.add(("evidence", acceptance_evidence_id))
+                current_proof_evidence_ids.add(acceptance_evidence_id)
                 evidence_row = require_healthy_terminal_evidence(
                     paths,
                     conn,
@@ -584,7 +594,6 @@ def task_terminal_readiness_for_row(
                     allowed_types=ADHOC_EVIDENCE_TYPES,
                 )
                 evidence_rows.append(dict(evidence_row))
-                current_proof_refs.add(("evidence", acceptance_evidence_id))
             except EvidenceAddError as exc:
                 requirements.append(
                     {
@@ -602,6 +611,7 @@ def task_terminal_readiness_for_row(
             evidence_id = str(test.get("evidence_id") or "").strip()
             if evidence_id:
                 current_proof_refs.add(("evidence", evidence_id))
+                current_proof_evidence_ids.add(evidence_id)
                 evidence_row = conn.execute(
                     "SELECT * FROM evidence WHERE id = ?",
                     (evidence_id,),
@@ -800,6 +810,17 @@ def task_terminal_readiness_for_row(
             }
         )
 
+    (
+        strict_proof_identities,
+        strict_proof_requirements,
+        strict_invalid_evidence_ids,
+    ) = _resolve_strict_current_proof(
+        paths,
+        conn,
+        evidence_ids=current_proof_evidence_ids,
+    )
+    requirements.extend(strict_proof_requirements)
+
     lifecycle_findings = collect_lifecycle_findings(paths, conn)
     for finding in lifecycle_findings:
         if (finding.entity_type, finding.entity_id) not in current_proof_refs:
@@ -823,6 +844,11 @@ def task_terminal_readiness_for_row(
 
     findings = collect_terminal_readiness_findings(paths, conn)
     for finding in findings:
+        if _finding_matches_invalid_strict_evidence(
+            finding,
+            strict_invalid_evidence_ids,
+        ):
+            continue
         requirement = _readiness_requirement_for_finding(
             finding,
             resolved=resolved,
@@ -853,6 +879,8 @@ def task_terminal_readiness_for_row(
         superseded_by = superseding_evidence_id(conn, evidence_id)
         historical = superseded_by is not None
         in_current_proof = ("evidence", evidence_id) in current_proof_refs
+        if not historical or in_current_proof:
+            continue
         evidence_assessments.append(
             {
                 "evidence_id": evidence_id,
@@ -873,11 +901,7 @@ def task_terminal_readiness_for_row(
             requirements.append(
                 {
                     "code": f"evidence_adhoc_{code}",
-                    "state": (
-                        "blocked"
-                        if not historical or in_current_proof
-                        else "advisory"
-                    ),
+                    "state": "advisory",
                     "message": (
                         f"Adhoc Evidence {evidence_id} failed current health "
                         f"assessment: {code}."
@@ -939,6 +963,7 @@ def task_terminal_readiness_for_row(
             for finding in lifecycle_findings
         ],
         "evidence_assessments": evidence_assessments,
+        "strict_proof_identities": strict_proof_identities,
         "event_hwm": hwm,
     }
     return task_terminal_readiness(
@@ -968,12 +993,87 @@ def task_terminal_readiness_for_row(
     )
 
 
-def _readiness_requirement_for_finding(
-    finding: ValidationFinding,
+def _resolve_strict_current_proof(
+    paths: ProjectPaths,
+    conn,
     *,
-    resolved,
-    current_proof_refs: set[tuple[str, str]],
-) -> dict[str, Any] | None:
+    evidence_ids: set[str],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], set[str]]:
+    identities: list[dict[str, Any]] = []
+    requirements: list[dict[str, Any]] = []
+    invalid_evidence_ids: set[str] = set()
+    for evidence_id in sorted(evidence_ids):
+        row = conn.execute(
+            "SELECT id, type FROM evidence WHERE id = ?",
+            (evidence_id,),
+        ).fetchone()
+        evidence_type = None if row is None else str(row["type"])
+        if evidence_type in ADHOC_EVIDENCE_TYPES:
+            resolution = resolve_strict_copied_evidence_in_snapshot(
+                paths,
+                conn,
+                evidence_id=evidence_id,
+            )
+            identity = strict_copied_evidence_identity(resolution)
+        elif evidence_type == EVIDENCE_SET_EVIDENCE_TYPE:
+            resolution = resolve_strict_evidence_set_in_snapshot(
+                paths,
+                conn,
+                evidence_id=evidence_id,
+            )
+            identity = strict_evidence_set_identity(resolution)
+        else:
+            identities.append(
+                {
+                    "evidence_id": evidence_id,
+                    "evidence_type": evidence_type,
+                    "health": "not_strict_resolvable",
+                }
+            )
+            continue
+
+        identity["evidence_type"] = evidence_type
+        identities.append(identity)
+        if resolution["ok"]:
+            continue
+        invalid_evidence_ids.add(evidence_id)
+        strict_findings = [
+            dict(finding)
+            for finding in resolution.get("findings") or []
+            if isinstance(finding, Mapping)
+        ]
+        if not strict_findings:
+            strict_findings = [{"code": "strict_resolution_invalid"}]
+        for finding in strict_findings:
+            code = str(finding.get("code") or "strict_resolution_invalid")
+            requirements.append(
+                {
+                    "code": code,
+                    "state": "blocked",
+                    "message": (
+                        f"Current proof Evidence {evidence_id} failed strict "
+                        f"event-anchored resolution: {code}."
+                    ),
+                    "next_command": f"pcl evidence show {evidence_id} --json",
+                    "requires_human": code
+                    in {
+                        "strict_event_anchor_ambiguous",
+                        "strict_event_anchor_invalid",
+                        "strict_resolution_invalid",
+                    },
+                    "details": {
+                        "evidence_id": evidence_id,
+                        "evidence_type": evidence_type,
+                        "event_anchor": resolution.get("event_anchor"),
+                        "finding": finding,
+                        "current_proof": True,
+                    },
+                }
+            )
+    return identities, requirements, invalid_evidence_ids
+
+
+def _finding_refs(finding: ValidationFinding) -> set[tuple[str, str]]:
     refs: set[tuple[str, str]] = set()
     if isinstance(finding.entity, dict):
         refs.add(
@@ -990,9 +1090,33 @@ def _readiness_requirement_for_finding(
         for item in finding.related
         if isinstance(item, dict)
     )
+    return refs
+
+
+def _finding_matches_invalid_strict_evidence(
+    finding: ValidationFinding,
+    invalid_evidence_ids: set[str],
+) -> bool:
+    if not finding.code.startswith(("evidence_adhoc_", "evidence_set_")):
+        return False
+    return any(
+        entity_type == "evidence" and entity_id in invalid_evidence_ids
+        for entity_type, entity_id in _finding_refs(finding)
+    )
+
+
+def _readiness_requirement_for_finding(
+    finding: ValidationFinding,
+    *,
+    resolved,
+    current_proof_refs: set[tuple[str, str]],
+) -> dict[str, Any] | None:
+    refs = _finding_refs(finding)
     in_current_proof = bool(refs & current_proof_refs)
-    if finding.proof_scope == "historical":
-        state = "blocked" if in_current_proof else "advisory"
+    if in_current_proof:
+        state = "blocked"
+    elif finding.proof_scope == "historical":
+        state = "advisory"
     elif finding_is_in_scope(finding, resolved) or finding_must_remain_visible(finding):
         state = (
             "blocked"

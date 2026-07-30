@@ -2,6 +2,17 @@
 
 Date: 2026-07-30
 
+## Independent-review correction
+
+This evidence is not the final provenance claim. Independent review at
+`7de0c7c49065cffba8ff45ef50d8cdd02e802c0a` proved that the implementation
+caught an uncoordinated copied-byte drift but did **not** bind a coherently
+rewritten manifest/copy or Evidence Set artifact to its immutable recording
+event. The statement below that event-free current Evidence drift was covered
+was therefore too broad. See
+`0229-p0b-strict-proof-review-red.md` and the subsequent remediation GREEN
+evidence for the corrected contract and results.
+
 Base:
 `c923a1eb5ef6360896c72dfa00570798cc8c9c21`
 
@@ -77,9 +88,10 @@ post-fix result.
 - Read/list/next/direct expose one canonical digest and event HWM for the same
   snapshot.
 - Task-bound finish rechecks Task/HWM/input/current proof inside the final
-  transaction. Both an intervening PCL event and event-free current Evidence
-  drift returned `finish_target_readiness_changed` before check Evidence,
-  packet file/Evidence, completion-packet event, or Task terminal event.
+  transaction. At this revision, an intervening PCL event and uncoordinated
+  current Evidence byte drift returned `finish_target_readiness_changed`;
+  coherent manifest/artifact substitution remained an independent-review
+  defect and is not claimed as covered by this evidence.
 - Normal failed-check attempt/packet semantics, exit compatibility, and P0-A
   post-commit failure semantics remain covered by the full suite.
 - Four loaded/distributed Skill copies are byte-identical at SHA-256

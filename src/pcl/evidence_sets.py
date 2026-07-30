@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import hashlib
 import json
 from pathlib import Path, PurePosixPath
@@ -304,27 +305,41 @@ def resolve_strict_evidence_set(
 ) -> dict[str, Any]:
     """Resolve one event-anchored Evidence Set artifact without mutation."""
     require_initialized(paths)
-    evidence_id = str(evidence_id or "").strip()
     conn = connect(paths.db_path)
     try:
         conn.execute("BEGIN")
-        row = conn.execute(
-            "SELECT id, type, path, summary FROM evidence WHERE id = ?",
-            (evidence_id,),
-        ).fetchone()
-        event_rows = conn.execute(
-            """
-            SELECT id, sequence, payload_json
-            FROM events
-            WHERE event_type = 'evidence_set_recorded'
-              AND entity_type = 'evidence'
-              AND entity_id = ?
-            ORDER BY sequence, id
-            """,
-            (evidence_id,),
-        ).fetchall()
+        return resolve_strict_evidence_set_in_snapshot(
+            paths,
+            conn,
+            evidence_id=evidence_id,
+        )
     finally:
         conn.close()
+
+
+def resolve_strict_evidence_set_in_snapshot(
+    paths: ProjectPaths,
+    conn: sqlite3.Connection,
+    *,
+    evidence_id: str,
+) -> dict[str, Any]:
+    """Resolve an Evidence Set using the caller-owned SQLite snapshot."""
+    evidence_id = str(evidence_id or "").strip()
+    row = conn.execute(
+        "SELECT id, type, path, summary FROM evidence WHERE id = ?",
+        (evidence_id,),
+    ).fetchone()
+    event_rows = conn.execute(
+        """
+        SELECT id, sequence, payload_json
+        FROM events
+        WHERE event_type = 'evidence_set_recorded'
+          AND entity_type = 'evidence'
+          AND entity_id = ?
+        ORDER BY sequence, id
+        """,
+        (evidence_id,),
+    ).fetchall()
 
     if not event_rows:
         return _strict_evidence_set_result(
@@ -469,6 +484,48 @@ def resolve_strict_evidence_set(
         artifact_sha256=artifact_sha256,
         findings=[],
     )
+
+
+def strict_evidence_set_identity(
+    resolution: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Project one strict resolution into canonical, byte-free proof identity."""
+    artifact_bytes = resolution.get("artifact_bytes")
+    artifact = resolution.get("artifact")
+    return {
+        "contract_version": str(resolution.get("contract_version") or ""),
+        "evidence_id": str(resolution.get("evidence_id") or ""),
+        "health": str(resolution.get("health") or ""),
+        "event_anchor": resolution.get("event_anchor"),
+        "artifact_sha256": resolution.get("artifact_sha256"),
+        "artifact_bytes_sha256": (
+            "sha256:" + hashlib.sha256(artifact_bytes).hexdigest()
+            if isinstance(artifact_bytes, bytes)
+            else None
+        ),
+        "member_hashes": [
+            {
+                "evidence_id": member.get("evidence_id"),
+                "kind": member.get("kind"),
+                "path": member.get("path"),
+                "sha256": member.get("sha256"),
+                "size_bytes": member.get("size_bytes"),
+                "status": member.get("status"),
+            }
+            for group in ("included_reports", "excluded_reports")
+            for member in (
+                artifact.get(group, [])
+                if isinstance(artifact, Mapping)
+                else []
+            )
+            if isinstance(member, Mapping)
+        ],
+        "findings": [
+            dict(finding)
+            for finding in resolution.get("findings") or []
+            if isinstance(finding, Mapping)
+        ],
+    }
 
 
 def _strict_evidence_set_result(

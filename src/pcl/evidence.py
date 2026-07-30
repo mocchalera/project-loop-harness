@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 import hashlib
 import json
 import os
@@ -889,27 +890,41 @@ def resolve_strict_copied_evidence(
     """Resolve event-anchored copied Evidence bytes without mutating project state."""
     if not paths.db_path.is_file():
         raise ProjectNotInitializedError(root=str(paths.root))
-    evidence_id = str(evidence_id or "").strip()
     conn = connect(paths.db_path)
     try:
         conn.execute("BEGIN")
-        row = conn.execute(
-            "SELECT id, type, path, command FROM evidence WHERE id = ?",
-            (evidence_id,),
-        ).fetchone()
-        event_rows = conn.execute(
-            """
-            SELECT id, sequence, payload_json
-            FROM events
-            WHERE event_type = 'adhoc_evidence_recorded'
-              AND entity_type = 'evidence'
-              AND entity_id = ?
-            ORDER BY sequence, id
-            """,
-            (evidence_id,),
-        ).fetchall()
+        return resolve_strict_copied_evidence_in_snapshot(
+            paths,
+            conn,
+            evidence_id=evidence_id,
+        )
     finally:
         conn.close()
+
+
+def resolve_strict_copied_evidence_in_snapshot(
+    paths: ProjectPaths,
+    conn: sqlite3.Connection,
+    *,
+    evidence_id: str,
+) -> dict[str, Any]:
+    """Resolve copied Evidence using the caller-owned SQLite snapshot."""
+    evidence_id = str(evidence_id or "").strip()
+    row = conn.execute(
+        "SELECT id, type, path, command FROM evidence WHERE id = ?",
+        (evidence_id,),
+    ).fetchone()
+    event_rows = conn.execute(
+        """
+        SELECT id, sequence, payload_json
+        FROM events
+        WHERE event_type = 'adhoc_evidence_recorded'
+          AND entity_type = 'evidence'
+          AND entity_id = ?
+        ORDER BY sequence, id
+        """,
+        (evidence_id,),
+    ).fetchall()
 
     if not event_rows:
         return _strict_copied_result(
@@ -1097,6 +1112,55 @@ def resolve_strict_copied_evidence(
         findings=findings,
         members=resolved_members if not findings else [],
     )
+
+
+def strict_copied_evidence_identity(
+    resolution: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Project one strict resolution into canonical, byte-free proof identity."""
+    manifest_bytes = resolution.get("manifest_bytes")
+    manifest = resolution.get("manifest")
+    members = manifest.get("members") if isinstance(manifest, dict) else None
+    resolved_by_path: dict[str, str] = {}
+    for item in resolution.get("members") or []:
+        if not isinstance(item, Mapping):
+            continue
+        metadata = item.get("metadata")
+        content = item.get("content")
+        if (
+            isinstance(metadata, Mapping)
+            and isinstance(metadata.get("stored_path"), str)
+            and isinstance(content, bytes)
+        ):
+            resolved_by_path[str(metadata["stored_path"])] = hashlib.sha256(
+                content
+            ).hexdigest()
+    return {
+        "contract_version": str(resolution.get("contract_version") or ""),
+        "evidence_id": str(resolution.get("evidence_id") or ""),
+        "health": str(resolution.get("health") or ""),
+        "event_anchor": resolution.get("event_anchor"),
+        "manifest_sha256": (
+            hashlib.sha256(manifest_bytes).hexdigest()
+            if isinstance(manifest_bytes, bytes)
+            else None
+        ),
+        "members": [
+            {
+                "metadata": dict(member),
+                "resolved_sha256": resolved_by_path.get(
+                    str(member.get("stored_path") or "")
+                ),
+            }
+            for member in members or []
+            if isinstance(member, Mapping)
+        ],
+        "findings": [
+            dict(finding)
+            for finding in resolution.get("findings") or []
+            if isinstance(finding, Mapping)
+        ],
+    }
 
 
 def _strict_copied_result(

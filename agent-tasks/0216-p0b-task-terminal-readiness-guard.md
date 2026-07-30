@@ -1,12 +1,12 @@
 # 0216: P0-B Task terminal readiness guard
 
-- **Status:** Implemented locally; independent review pending
+- **Status:** Independent review remediation in progress
 - **Milestone:** P0-B terminal mutation safety
 - **Priority:** P0
 - **Size:** L
 - **Dependency:** P0-A mutation-tail commits through `c923a1e`
 - **Project Loop:** Goal `G-0002`, Task `T-0002`, Feature `F-0002`, Story
-  `US-0002`, Tests `TC-0014`–`TC-0016`
+  `US-0002`, Tests `TC-0014`–`TC-0018`
 - **Schema/dependencies:** unchanged
 
 ## Approved contract
@@ -36,6 +36,23 @@ Cockpit Ask `ask_adc40334f575` fixed these semantics:
 - Existing normal check-failure attempts/packets and same-state Task no-ops are
   unchanged.
 
+## Independent review correction
+
+Review task `1230d59b` found that current copied Evidence and Evidence Set
+artifacts were assessed for self-consistency but were not included in the
+canonical Task input as strict event-anchored identities. A coherent
+manifest/copy or Evidence Set rewrite could therefore retain the event HWM and
+digest and pass both direct done and finish. The same review found that a
+standalone Task was blocked by an unrelated active Evidence warning because a
+manual scan duplicated the formal risk finding as a blocker.
+
+The remediation must reuse the existing strict resolvers in the caller-owned
+snapshot, bind recording event and artifact/member hashes into the canonical
+input, block strict current-proof findings before terminal artifacts, and
+remove manual active-Evidence blocking outside the current proof. Formal
+global error/unknown/human gates remain fail-closed; unrelated warnings remain
+risks.
+
 ## Verification boundary
 
 Use source-tree execution only:
@@ -50,7 +67,7 @@ PYTHONPATH=src python -m pcl --root . --json validate --summary
 PYTHONPATH=src python -m pcl --root . --json render
 ```
 
-Story `US-0002` remains draft and Tests `TC-0014`–`TC-0016` remain planned:
+Story `US-0002` remains draft and Tests `TC-0014`–`TC-0018` remain planned:
 implementation authority and the external Ask decisions are not fabricated as
 Story-approval provenance. Record immutable implementation Evidence without
 closing or removing the Task.

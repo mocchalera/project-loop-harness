@@ -194,6 +194,11 @@ preceding command; do not invent IDs.
    Defect, Evidence/Evidence Set, Workflow, Goal, finding, or human-gate proof
    is incomplete. Follow the ordered `terminal_readiness.next_commands`; do not
    bypass the guard. Standalone Tasks retain their existing Evidence semantics.
+   Current copied Evidence and Evidence Sets are re-resolved against their
+   immutable recording-event anchors in the same Task snapshot; a coherent
+   manifest/artifact rewrite without a new event must block even when the event
+   high-watermark is unchanged. An unrelated Evidence warning remains a risk
+   and does not create a new Evidence prerequisite for a standalone Task.
 
 8. Emit a completion packet bound to the Goal. Continue only when its outcome
    is `COMPLETED_VERIFIED` or `COMPLETED_WITH_RISK`; keep the packet's returned

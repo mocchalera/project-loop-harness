@@ -21,9 +21,11 @@ A changed transition to `done` requires:
 - approved/waived Stories, passing/waived Tests, and no active Defects for that
   Feature;
 - the Feature's newest exact-target acceptance Evidence to be current,
-  supported, non-superseded, and healthy;
+  supported, non-superseded, healthy, and strictly consistent with its
+  immutable recording event;
 - direct Test Evidence or Evidence Set and its completion-policy receipt to be
-  healthy and target-bound;
+  healthy, target-bound, and strictly consistent with the Evidence Set
+  recording event;
 - Workflow-backed Tests to use the Task Goal, a passed Run, passed Jobs, and an
   approved Verification;
 - a non-contradictory Goal with a valid, non-exhausted budget and no exact-scope
@@ -41,6 +43,10 @@ Current exact-proof findings are re-evaluated and block. Superseded historical
 Evidence outside the current proof closure is advisory. A historical Evidence
 ID still referenced by the current closure blocks. Global active errors,
 unknown/unsupported findings, and human-required findings always block.
+Warnings outside the current proof closure retain their formal risk
+classification and do not create an Evidence prerequisite for a standalone
+Task. The manual historical scan is limited to superseded Evidence, so one
+active finding is not emitted once as a blocker and again as a formal risk.
 
 Reasons are normalized, exactly deduplicated, and sorted by:
 
@@ -78,8 +84,14 @@ The additive Task receipt includes:
 The canonical input digest excludes presentation-only `source` but includes
 the exact Task, dependency, Feature/Story/Test/Defect, Evidence, Workflow,
 Goal, Decision/Escalation, formal-finding, Evidence-health, and event
-high-watermark inputs. Read/list/next/direct surfaces therefore expose the same
-digest for the same database snapshot.
+high-watermark inputs. For every copied Evidence or Evidence Set in the current
+proof closure, it also includes the strict recording event ID/sequence,
+manifest or artifact SHA, current canonical bytes SHA, member hashes, and
+strict findings. The strict resolver uses the caller-owned SQLite snapshot; it
+does not open a second connection. Read/list/next/direct surfaces therefore
+expose the same digest for the same database snapshot, and an event-free
+coherent artifact substitution changes both strict health and the digest even
+when the event high-watermark is unchanged.
 
 ## Failure and commit boundary
 

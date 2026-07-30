@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import json
 from pathlib import Path
+import shutil
 from threading import Event
 from typing import Any
 
@@ -173,6 +175,179 @@ def _mutation_snapshot(root: Path, task_id: str) -> dict[str, Any]:
     }
 
 
+def _coherently_rewrite_copied_evidence(
+    root: Path,
+    evidence_id: str,
+    *,
+    replacement: bytes = b"coherently substituted\n",
+) -> None:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        row = conn.execute(
+            "SELECT path FROM evidence WHERE id = ?",
+            (evidence_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    manifest_path = root / str(row["path"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    member = manifest["members"][0]
+    copied_path = root / str(member["stored_path"])
+    copied_path.write_bytes(replacement)
+    member["size_bytes"] = len(replacement)
+    member["sha256"] = hashlib.sha256(replacement).hexdigest()
+    manifest_path.write_text(
+        json.dumps(manifest, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _record_current_test_evidence_set(
+    root: Path,
+    capsys,
+    fixture: dict[str, str],
+) -> dict[str, str]:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        conn.execute(
+            """
+            UPDATE test_cases
+            SET status = 'planned', evidence_id = NULL
+            WHERE id = ?
+            """,
+            (fixture["test_id"],),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    work_root = root / "work" / "strict-set"
+    reports = work_root / "reports"
+    reports.mkdir(parents=True)
+    verdict = reports / "completion-verdict.json"
+    verdict.write_text(
+        json.dumps({"findings": [], "status": "complete"}, sort_keys=True),
+        encoding="utf-8",
+    )
+    manifest = reports / "report-manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "contract_version": "evidence-report-manifest/v1",
+                "reports": [
+                    {
+                        "kind": "completion_verdict",
+                        "path": "reports/completion-verdict.json",
+                        "status": "pass",
+                    }
+                ],
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    report_evidence = _run_json(
+        root,
+        capsys,
+        "evidence",
+        "add",
+        "--file",
+        str(verdict),
+        "--summary",
+        "Completion verdict",
+    )
+    evidence_set = _run_json(
+        root,
+        capsys,
+        "evidence-set",
+        "record",
+        "--target",
+        f"test_case:{fixture['test_id']}",
+        "--work-root",
+        str(work_root),
+        "--manifest",
+        str(manifest),
+        "--required-kind",
+        "completion_verdict",
+        "--include",
+        (
+            "completion_verdict="
+            f"{report_evidence['evidence']['id']}:verdict"
+        ),
+        "--summary",
+        "Strict current Evidence Set",
+    )
+    policy = root / "strict-completion-policy.json"
+    policy.write_text(
+        json.dumps(
+            {
+                "contract_version": "completion-policy/v1",
+                "policy_id": "strict-current-proof",
+                "required_evidence_set_status": "complete",
+                "predicates": [
+                    {
+                        "id": "verdict-complete",
+                        "report_kind": "completion_verdict",
+                        "json_path": "$.status",
+                        "operator": "equals",
+                        "expected": "complete",
+                    }
+                ],
+            },
+            sort_keys=True,
+        ),
+        encoding="utf-8",
+    )
+    _run_json(
+        root,
+        capsys,
+        "test",
+        "pass",
+        fixture["test_id"],
+        "--summary",
+        "Evidence Set policy passed",
+        "--evidence-id",
+        str(evidence_set["evidence"]["id"]),
+        "--completion-policy",
+        str(policy),
+    )
+    _run_json(
+        root,
+        capsys,
+        "feature",
+        "status",
+        fixture["feature_id"],
+        "--status",
+        "done",
+        "--summary",
+        "Feature acceptance is complete",
+        "--evidence-id",
+        fixture["evidence_id"],
+    )
+    return {
+        "evidence_id": str(evidence_set["evidence"]["id"]),
+        "path": str(evidence_set["evidence"]["path"]),
+        "work_root": work_root.relative_to(root).as_posix(),
+    }
+
+
+def _coherently_rewrite_evidence_set(
+    root: Path,
+    evidence_set: dict[str, str],
+) -> None:
+    original_work_root = root / evidence_set["work_root"]
+    replacement_work_root = original_work_root.with_name("strict-set-rewritten")
+    shutil.copytree(original_work_root, replacement_work_root)
+    artifact_path = root / evidence_set["path"]
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    artifact["work_root"] = replacement_work_root.relative_to(root).as_posix()
+    artifact_path.write_text(
+        json.dumps(artifact, ensure_ascii=False, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
 def test_direct_done_requires_linked_feature_done_and_is_zero_mutation(
     tmp_path: Path,
     capsys,
@@ -203,6 +378,201 @@ def test_direct_done_requires_linked_feature_done_and_is_zero_mutation(
         "task_done_feature_not_terminal"
     ]
     assert _mutation_snapshot(tmp_path, fixture["task_id"]) == before
+
+
+def test_coherent_copied_proof_substitution_blocks_direct_done_without_mutation(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    fixture = _prepare_linked_task(tmp_path, capsys, feature_done=True)
+    _coherently_rewrite_copied_evidence(tmp_path, fixture["evidence_id"])
+    before = _mutation_snapshot(tmp_path, fixture["task_id"])
+
+    assert main(
+        [
+            "--root",
+            str(tmp_path),
+            "task",
+            "status",
+            fixture["task_id"],
+            "done",
+            "--reason",
+            "Coherent substitution must not close",
+            "--json",
+        ]
+    ) == 1
+    payload = _json_output(capsys)
+
+    assert payload["error"]["code"] == "task_terminal_readiness_failed"
+    readiness = payload["error"]["details"]["terminal_readiness"]
+    assert readiness["terminal_allowed"] is False
+    assert "strict_manifest_event_mismatch" in {
+        reason["code"] for reason in readiness["reasons"]
+    }
+    assert _mutation_snapshot(tmp_path, fixture["task_id"]) == before
+
+
+def test_coherent_copied_proof_changes_digest_with_unchanged_hwm_across_views(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    fixture = _prepare_linked_task(tmp_path, capsys, feature_done=True)
+    before = _run_json(
+        tmp_path, capsys, "task", "read", fixture["task_id"]
+    )["task"]["terminal_readiness"]
+
+    _coherently_rewrite_copied_evidence(tmp_path, fixture["evidence_id"])
+
+    read = _run_json(
+        tmp_path, capsys, "task", "read", fixture["task_id"]
+    )["task"]["terminal_readiness"]
+    listed = _run_json(tmp_path, capsys, "task", "list")["tasks"][0][
+        "terminal_readiness"
+    ]
+    next_readiness = _run_json(
+        tmp_path, capsys, "next", "--target", fixture["task_id"]
+    )["target"]["terminal_readiness"]
+
+    assert read["evaluation"]["evaluated_through_event_sequence"] == before[
+        "evaluation"
+    ]["evaluated_through_event_sequence"]
+    assert read["evaluation"]["input_sha256"] != before["evaluation"][
+        "input_sha256"
+    ]
+    assert {
+        receipt["evaluation"]["input_sha256"]
+        for receipt in (read, listed, next_readiness)
+    } == {read["evaluation"]["input_sha256"]}
+    assert all(
+        receipt["terminal_allowed"] is False
+        for receipt in (read, listed, next_readiness)
+    )
+
+
+def test_coherent_evidence_set_substitution_blocks_direct_done_without_mutation(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    fixture = _prepare_linked_task(tmp_path, capsys, feature_done=False)
+    evidence_set = _record_current_test_evidence_set(tmp_path, capsys, fixture)
+    before_readiness = _run_json(
+        tmp_path, capsys, "task", "read", fixture["task_id"]
+    )["task"]["terminal_readiness"]
+    _coherently_rewrite_evidence_set(tmp_path, evidence_set)
+    read = _run_json(
+        tmp_path, capsys, "task", "read", fixture["task_id"]
+    )["task"]["terminal_readiness"]
+    listed = _run_json(tmp_path, capsys, "task", "list")["tasks"][0][
+        "terminal_readiness"
+    ]
+    next_readiness = _run_json(
+        tmp_path, capsys, "next", "--target", fixture["task_id"]
+    )["target"]["terminal_readiness"]
+    before_mutation = _mutation_snapshot(tmp_path, fixture["task_id"])
+
+    assert {
+        receipt["evaluation"]["input_sha256"]
+        for receipt in (read, listed, next_readiness)
+    } == {read["evaluation"]["input_sha256"]}
+    assert read["evaluation"]["input_sha256"] != before_readiness["evaluation"][
+        "input_sha256"
+    ]
+    assert all(
+        receipt["terminal_allowed"] is False
+        for receipt in (read, listed, next_readiness)
+    )
+
+    assert main(
+        [
+            "--root",
+            str(tmp_path),
+            "task",
+            "status",
+            fixture["task_id"],
+            "done",
+            "--reason",
+            "Evidence Set substitution must not close",
+            "--json",
+        ]
+    ) == 1
+    payload = _json_output(capsys)
+
+    readiness = payload["error"]["details"]["terminal_readiness"]
+    assert readiness["evaluation"]["evaluated_through_event_sequence"] == (
+        before_readiness["evaluation"]["evaluated_through_event_sequence"]
+    )
+    assert readiness["evaluation"]["input_sha256"] != before_readiness[
+        "evaluation"
+    ]["input_sha256"]
+    assert "strict_evidence_set_hash_mismatch" in {
+        reason["code"] for reason in readiness["reasons"]
+    }
+    assert _mutation_snapshot(tmp_path, fixture["task_id"]) == before_mutation
+
+
+def test_standalone_done_ignores_unrelated_active_evidence_warning_without_duplicate(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    assert main(["init", "--target", str(tmp_path), "--json"]) == 0
+    _json_output(capsys)
+    task = _run_json(
+        tmp_path,
+        capsys,
+        "task",
+        "create",
+        "--title",
+        "Standalone completion",
+    )
+    artifact = tmp_path / "unrelated-warning.txt"
+    artifact.write_text("original\n", encoding="utf-8")
+    evidence = _run_json(
+        tmp_path,
+        capsys,
+        "evidence",
+        "add",
+        "--file",
+        artifact.name,
+        "--summary",
+        "Unrelated copied Evidence",
+        "--copy",
+    )["evidence"]
+    manifest = json.loads(
+        (tmp_path / str(evidence["manifest_path"])).read_text(encoding="utf-8")
+    )
+    (tmp_path / str(manifest["members"][0]["stored_path"])).write_text(
+        "drifted\n",
+        encoding="utf-8",
+    )
+
+    readiness = _run_json(
+        tmp_path, capsys, "task", "read", str(task["id"])
+    )["task"]["terminal_readiness"]
+    matching = [
+        reason
+        for reason in readiness["reasons"]
+        if reason["code"] == "evidence_adhoc_copy_hash_mismatch"
+    ]
+    closed = _run_json(
+        tmp_path,
+        capsys,
+        "task",
+        "status",
+        str(task["id"]),
+        "done",
+        "--reason",
+        "Standalone Task needs no new Evidence",
+    )
+
+    assert readiness["terminal_allowed"] is True
+    assert len(matching) == 1
+    assert matching[0]["state"] == "risk"
+    assert matching[0]["details"]["current_proof"] is False
+    assert closed["changed"] is True
+    assert [
+        reason["code"]
+        for reason in closed["terminal_readiness"]["reasons"]
+    ].count("evidence_adhoc_copy_hash_mismatch") == 1
 
 
 def test_direct_done_rejects_incomplete_dependency_without_tail_or_artifact_change(
