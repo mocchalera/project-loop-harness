@@ -19,6 +19,7 @@ from ..events import append_event
 from ..guards import require_initialized
 from ..ids import next_prefixed_id
 from ..paths import ProjectPaths
+from ..prefixed_ids import next_prefixed_ids_strict
 from ..token_estimation import estimate_token_count
 from ..timeutil import utc_now_iso
 
@@ -94,9 +95,13 @@ def build_code_index(paths: ProjectPaths, *, include_files: bool = False) -> dic
                 json.dumps(summary, ensure_ascii=False, sort_keys=True),
             ),
         )
-        next_file_number = _next_numeric_suffix(conn, "code_index_files", "CIF")
-        for offset, item in enumerate(scan.files):
-            file_id = f"CIF-{next_file_number + offset:04d}"
+        file_ids = next_prefixed_ids_strict(
+            conn,
+            table="code_index_files",
+            prefix="CIF",
+            count=len(scan.files),
+        ) if scan.files else []
+        for file_id, item in zip(file_ids, scan.files, strict=True):
             conn.execute(
                 """
                 INSERT INTO code_index_files(
@@ -592,11 +597,12 @@ def _json_object(raw: Any) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _next_numeric_suffix(conn: sqlite3.Connection, table: str, prefix: str) -> int:
-    rows = conn.execute(f"SELECT id FROM {table} WHERE id LIKE ?", (f"{prefix}-%",)).fetchall()
-    max_number = 0
-    for row in rows:
-        match = ID_NUMBER_RE.match(str(row["id"]))
-        if match:
-            max_number = max(max_number, int(match.group(1)))
-    return max_number + 1
+def _next_numeric_suffix(conn: sqlite3.Connection, table: str, prefix: str) -> str:
+    """Return the next decimal suffix without narrowing it through an integer."""
+
+    return next_prefixed_ids_strict(
+        conn,
+        table=table,
+        prefix=prefix,
+        count=1,
+    )[0].removeprefix(f"{prefix}-")

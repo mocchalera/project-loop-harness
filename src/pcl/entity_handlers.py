@@ -52,6 +52,7 @@ from .tasks import (
     remove_dependency,
     set_task_status,
 )
+from .task_accept import accept_task, canonical_task_accept_json
 
 
 ENTITY_COMMANDS = frozenset({"goal", "feature", "story", "test", "task", "defect"})
@@ -460,6 +461,35 @@ def handle_entity_command(
             )
         _print_mutation_tail_warning(result, error=error)
         return 0
+
+    if args.command == "task" and args.task_command == "accept":
+        result = accept_task(
+            paths,
+            task_id=args.task_id,
+            artifact_path=args.artifact,
+            command=args.accept_command,
+            summary=args.summary,
+            copy_files=bool(args.copy),
+            test_ids=list(args.test_ids),
+        )
+        if json_output:
+            print(canonical_task_accept_json(result), file=output)
+        elif result["ok"]:
+            if result["status"] == "already_accepted":
+                print(
+                    f"Task {args.task_id} was already accepted by this exact request; no change recorded.",
+                    file=output,
+                )
+            else:
+                print(f"Accepted Task {args.task_id} atomically.", file=output)
+        else:
+            print(
+                f"ERROR {result['error_code']}: {result['message']}",
+                file=error,
+            )
+            if result.get("safe_retry_action"):
+                print(f"NEXT: {result['safe_retry_action']}", file=error)
+        return int(result["exit_code"])
 
     if args.command == "task" and args.task_command == "depend":
         result = add_dependency(paths, args.task_id, depends_on_task_id=args.depends_on_task_id)

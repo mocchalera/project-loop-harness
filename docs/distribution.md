@@ -128,7 +128,16 @@ returned as agent context:
 }
 ```
 
-Add mutation tools later with approval gates.
+Atomic Task Accept is the one narrow mutation tool. It is absent by default and
+requires an explicit startup-only capability:
+
+```bash
+pcl-mcp --stdio --root target-project --approval-mode task-accept-write
+```
+
+This mode exposes `task_accept` but not `render_dashboard`. It does not accept
+request-time capability promotion. See [task-accept.md](task-accept.md) for the
+fixed input, idempotency, exit, and recovery contract.
 
 ## Phase 5: CI
 

@@ -444,6 +444,7 @@ def task_terminal_readiness_for_row(
     task: Mapping[str, Any],
     *,
     source: str = "task_read",
+    formal_findings: list[ValidationFinding] | None = None,
 ) -> dict[str, Any]:
     task_id = str(task["id"])
     resolved = resolve_routing_target(
@@ -842,7 +843,11 @@ def task_terminal_readiness_for_row(
             }
         )
 
-    findings = collect_terminal_readiness_findings(paths, conn)
+    findings = (
+        collect_terminal_readiness_findings(paths, conn)
+        if formal_findings is None
+        else list(formal_findings)
+    )
     for finding in findings:
         if _finding_matches_invalid_strict_evidence(
             finding,

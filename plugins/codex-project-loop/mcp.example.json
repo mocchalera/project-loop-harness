@@ -7,5 +7,5 @@
     }
   },
   "status": "example-only",
-  "note": "The Python project-loop-harness package must be installed separately so pcl-mcp is on PATH. Use --approval-mode local-render only when dashboard writes are explicitly allowed."
+  "note": "The Python project-loop-harness package must be installed separately so pcl-mcp is on PATH. Use --approval-mode local-render only for dashboard writes. Use the mutually exclusive startup mode task-accept-write only when Atomic Task Accept is explicitly authorized; initialize and tool arguments cannot promote it."
 }

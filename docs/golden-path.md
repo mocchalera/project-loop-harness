@@ -101,6 +101,23 @@ If validation fails or the generated artifacts do not match state, follow [recov
 
 Status transitions are idempotent for exact same-state requests: repeating a goal, feature, test case, or task status command for the current status exits 0, returns `changed: false` in JSON, and records no new evidence or audit event.
 
+When one reviewed artifact proves every non-waived Test for one in-progress
+Task, the Test/Feature/Task terminal sequence can instead use Atomic Task
+Accept:
+
+```bash
+pcl task accept T-0001 --root /tmp/pcl-demo \
+  --artifact artifacts/acceptance.txt \
+  --command "pytest -q" \
+  --summary "Acceptance complete" \
+  --copy --test TC-0001 --test TC-0002 --json
+```
+
+Stories must already be approved or explicitly waived. The command creates one
+base copied Evidence, not an Evidence Set, and commits all terminal lifecycle
+changes together. Follow an exit-6 `safe_retry_action`; do not replay its
+original mutation. See [task-accept.md](task-accept.md).
+
 ## Executor Smoke Path
 
 Freshly initialized projects include a command-only workflow for dogfooding the

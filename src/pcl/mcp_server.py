@@ -15,6 +15,7 @@ from .paths import ProjectPaths, resolve_paths
 from .redaction import REDACTED_SECRET as REDACTED_SECRET
 from .redaction import SECRET_PATTERNS, redact_text, redact_value
 from .renderer import render_dashboard
+from .task_accept import accept_task, canonical_task_accept_json
 from .validators import validate_project
 
 
@@ -24,8 +25,18 @@ MAX_STDIO_MESSAGE_BYTES = 1_048_576
 SERVER_NAME = "pcl-mcp"
 APPROVAL_READ_ONLY = "read-only"
 APPROVAL_LOCAL_RENDER = "local-render"
+APPROVAL_TASK_ACCEPT_WRITE = "task-accept-write"
 _SECRET_PATTERNS = SECRET_PATTERNS
 _SERVER_NOT_INITIALIZED = -32002
+_CAPABILITY_DENIED = -32003
+_FORBIDDEN_INITIALIZE_POINTERS = (
+    ("/params/approvalMode", ("approvalMode",)),
+    ("/params/approval_mode", ("approval_mode",)),
+    ("/params/capabilities/pclTaskAcceptWrite", ("capabilities", "pclTaskAcceptWrite")),
+    ("/params/capabilities/pcl_task_accept_write", ("capabilities", "pcl_task_accept_write")),
+    ("/params/capabilities/taskAccept", ("capabilities", "taskAccept")),
+    ("/params/capabilities/task_accept", ("capabilities", "task_accept")),
+)
 
 
 class _InitializationState(Enum):
@@ -107,6 +118,19 @@ class ProjectLoopMcpServer:
         raise JsonRpcError(-32601, f"Method not found: {method}")
 
     def _initialize(self, params: dict[str, Any]) -> dict[str, Any]:
+        attempted = _forbidden_initialize_attempts(params)
+        if attempted:
+            raise JsonRpcError(
+                _CAPABILITY_DENIED,
+                "MCP initialize cannot change the startup capability.",
+                {
+                    "active_capability": self.approval_mode,
+                    "attempted_pointers": attempted,
+                    "primary_pointer": attempted[0]["pointer"],
+                    "reason": "startup_capability_is_immutable",
+                    "startup_authority": "process argv --approval-mode",
+                },
+            )
         requested = params.get("protocolVersion")
         protocol_version = (
             requested if requested in SUPPORTED_PROTOCOL_VERSIONS else PROTOCOL_VERSION
@@ -117,12 +141,22 @@ class ProjectLoopMcpServer:
             "serverInfo": {"name": SERVER_NAME, "version": __version__},
             "instructions": (
                 "Project Loop Harness MCP exposes safe local pcl read operations. "
-                "State mutations still go through the pcl CLI. Generated dashboard HTML "
+                "Generated dashboard HTML "
                 "is a human-only view and must not be read or parsed as project state. "
                 "render_dashboard is only available when the server is started with "
-                "--approval-mode local-render."
+                "--approval-mode local-render. Atomic Task Accept is only available "
+                "with startup --approval-mode task-accept-write."
             ),
         }
+        if self.approval_mode == APPROVAL_TASK_ACCEPT_WRITE:
+            result["capabilities"]["experimental"] = {
+                "pcl": {
+                    "taskAcceptWrite": True,
+                    "startupAuthority": "process argv --approval-mode",
+                    "requestTimeCapabilityPromotion": False,
+                    "toolSurface": ["task_accept"],
+                }
+            }
         self._initialization_state = _InitializationState.INITIALIZING
         return result
 
@@ -148,14 +182,26 @@ class ProjectLoopMcpServer:
                     read_only=False,
                 )
             )
+        if self.approval_mode == APPROVAL_TASK_ACCEPT_WRITE:
+            tools.append(_task_accept_tool())
         return tools
 
     def _call_tool(self, params: dict[str, Any]) -> dict[str, Any]:
         name = params.get("name")
+        if name == "task_accept" and self.approval_mode != APPROVAL_TASK_ACCEPT_WRITE:
+            raise JsonRpcError(
+                _CAPABILITY_DENIED,
+                "task_accept requires --approval-mode task-accept-write.",
+                {
+                    "active_capability": self.approval_mode,
+                    "required_capability": APPROVAL_TASK_ACCEPT_WRITE,
+                    "tool": "task_accept",
+                },
+            )
         arguments = params.get("arguments") or {}
         if not isinstance(arguments, dict):
             raise JsonRpcError(-32602, "Tool arguments must be an object.")
-        if arguments:
+        if name != "task_accept" and arguments:
             raise JsonRpcError(
                 -32602,
                 "Project Loop Harness MCP tools do not accept arguments; the server root is fixed at startup.",
@@ -187,7 +233,61 @@ class ProjectLoopMcpServer:
                     "rendered": True,
                 }
             )
+        if name == "task_accept":
+            if self.approval_mode != APPROVAL_TASK_ACCEPT_WRITE:  # defensive dispatch gate
+                raise JsonRpcError(
+                    _CAPABILITY_DENIED,
+                    "task_accept requires --approval-mode task-accept-write.",
+                    {
+                        "active_capability": self.approval_mode,
+                        "required_capability": APPROVAL_TASK_ACCEPT_WRITE,
+                        "tool": "task_accept",
+                    },
+                )
+            return self._task_accept(arguments)
         raise JsonRpcError(-32602, f"Unknown tool: {name}")
+
+    def _task_accept(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        required = {"task_id", "artifact", "command", "summary", "copy", "test_ids"}
+        if set(arguments) != required:
+            raise JsonRpcError(
+                -32602,
+                "task_accept arguments must exactly match its fixed input schema.",
+                {
+                    "missing": sorted(required - set(arguments)),
+                    "unexpected": sorted(set(arguments) - required),
+                },
+            )
+        if (
+            not isinstance(arguments["task_id"], str)
+            or not isinstance(arguments["artifact"], str)
+            or not isinstance(arguments["command"], str)
+            or not isinstance(arguments["summary"], str)
+            or type(arguments["copy"]) is not bool
+            or not isinstance(arguments["test_ids"], list)
+            or any(not isinstance(value, str) for value in arguments["test_ids"])
+        ):
+            raise JsonRpcError(-32602, "task_accept arguments do not match the declared JSON types.")
+        envelope = accept_task(
+            self.paths,
+            task_id=arguments["task_id"],
+            artifact_path=arguments["artifact"],
+            command=arguments["command"],
+            summary=arguments["summary"],
+            copy_files=arguments["copy"],
+            test_ids=arguments["test_ids"],
+        )
+        public_envelope = _redact_secrets(envelope)
+        return {
+            "content": [
+                {
+                    "type": "text",
+                    "text": canonical_task_accept_json(public_envelope),
+                }
+            ],
+            "structuredContent": public_envelope,
+            "isError": not bool(public_envelope["ok"]),
+        }
 
     def _get_status(self) -> dict[str, Any]:
         validation = validate_project(self.paths).to_dict()
@@ -248,6 +348,49 @@ def _tool(name: str, description: str, *, read_only: bool = True) -> dict[str, A
     }
 
 
+def _task_accept_tool() -> dict[str, Any]:
+    return {
+        "name": "task_accept",
+        "description": (
+            "Atomically accept one in-progress Task with one immutable copied base "
+            "Evidence linked directly to every selected Test, its Feature, and Task."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["task_id", "artifact", "command", "summary", "copy", "test_ids"],
+            "properties": {
+                "task_id": {
+                    "type": "string",
+                    "pattern": "^T-[0-9]{4,4096}$",
+                    "maxLength": 4098,
+                },
+                "artifact": {"type": "string", "minLength": 1, "maxLength": 4096},
+                "command": {"type": "string", "minLength": 1, "maxLength": 8192},
+                "summary": {"type": "string", "minLength": 1, "maxLength": 65536},
+                "copy": {"const": True},
+                "test_ids": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 96,
+                    "uniqueItems": True,
+                    "items": {
+                        "type": "string",
+                        "pattern": "^TC-[0-9]{4,4096}$",
+                        "maxLength": 4099,
+                    },
+                },
+            },
+        },
+        "annotations": {
+            "readOnlyHint": False,
+            "destructiveHint": False,
+            "idempotentHint": True,
+            "openWorldHint": False,
+        },
+    }
+
+
 def _tool_result(payload: dict[str, Any]) -> dict[str, Any]:
     payload = _redact_secrets(payload)
     return {
@@ -269,6 +412,35 @@ def _redact_secrets(value: Any) -> Any:
 def _redact_text(value: str) -> str:
     redacted, _ = redact_text(value)
     return redacted
+
+
+def _forbidden_initialize_attempts(params: dict[str, Any]) -> list[dict[str, str]]:
+    attempts: list[dict[str, str]] = []
+    for pointer, segments in _FORBIDDEN_INITIALIZE_POINTERS:
+        current: Any = params
+        present = True
+        for segment in segments:
+            if not isinstance(current, dict) or segment not in current:
+                present = False
+                break
+            current = current[segment]
+        if present:
+            attempts.append({"pointer": pointer, "value_type": _json_value_type(current)})
+    return attempts
+
+
+def _json_value_type(value: Any) -> str:
+    if value is None:
+        return "null"
+    if type(value) is bool:
+        return "boolean"
+    if isinstance(value, str):
+        return "string"
+    if isinstance(value, (int, float)):
+        return "number"
+    if isinstance(value, list):
+        return "array"
+    return "object"
 
 
 def encode_message(message: dict[str, Any]) -> bytes:
@@ -352,7 +524,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--root", default=".", help="Project root. Defaults to current directory.")
     parser.add_argument(
         "--approval-mode",
-        choices=[APPROVAL_READ_ONLY, APPROVAL_LOCAL_RENDER],
+        choices=[APPROVAL_READ_ONLY, APPROVAL_LOCAL_RENDER, APPROVAL_TASK_ACCEPT_WRITE],
         default=APPROVAL_READ_ONLY,
         help="Explicit permission mode. Defaults to read-only.",
     )

@@ -60,9 +60,25 @@ and Task-bound finish use the current `terminal-readiness/v1` proof snapshot.
 Their typed pre-commit failures preserve Task, event, outbox, audit JSONL, and
 dashboard bytes.
 
+`pcl task accept` is a fixed `pcl_local_state` plus local Evidence-copy
+operation. It does not add a force, override, lite, configuration bypass,
+human approval receipt, or implicit Story approval. It is allowed only for an
+already in-progress Task whose projected final Feature, Tests, current copied
+Evidence, global guards, and P0-B proof all pass. Exact retries are read-only
+verification. A post-commit exit 6 must be recovered through the reported
+projection or render command, not by replaying the business request.
+Projection recovery may publish only the receipt-bound Task Accept tail record
+and acceptance marker after independently revalidating committed DB authority.
+
 ## MCP guidance
 
-MCP should be an optional bridge to external services. It should not replace local CLI state mutation in the first implementation.
+MCP remains an optional local bridge. Its default mode is `read-only`.
+`local-render` adds only deterministic dashboard rendering. The single narrow
+mutation mode `task-accept-write` must be selected in process argv and exposes
+only Atomic Task Accept in addition to the read tools. Initialize fields and
+request-time aliases cannot elevate authority; unauthorized listing and
+dispatch are both denied before arguments, root, artifacts, DB, or locks are
+examined.
 
 ## Guarded executor guidance
 

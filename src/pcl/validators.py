@@ -642,6 +642,7 @@ def validate_project(
     strict: bool = False,
     include_config_advice: bool = False,
     connection: sqlite3.Connection | None = None,
+    transaction_overlay_event_ids: frozenset[str] | None = None,
 ) -> ValidationResult:
     result = ValidationResult()
     if not paths.loop_dir.exists():
@@ -837,7 +838,12 @@ def validate_project(
                 check_evidence="evidence" not in missing_tables,
             )
         if strict and not missing_tables:
-            _validate_strict_invariants(paths, conn, result)
+            _validate_strict_invariants(
+                paths,
+                conn,
+                result,
+                transaction_overlay_event_ids=transaction_overlay_event_ids,
+            )
         if strict and result.warnings:
             kept_warnings: list[str] = []
             for warning in result.warnings:
@@ -1142,9 +1148,18 @@ def _strip_yaml_string(value: str) -> str:
 
 
 def _validate_strict_invariants(
-    paths: ProjectPaths, conn: sqlite3.Connection, result: ValidationResult
+    paths: ProjectPaths,
+    conn: sqlite3.Connection,
+    result: ValidationResult,
+    *,
+    transaction_overlay_event_ids: frozenset[str] | None = None,
 ) -> None:
-    _validate_audit_log_integrity(paths, conn, result)
+    _validate_audit_log_integrity(
+        paths,
+        conn,
+        result,
+        transaction_overlay_event_ids=transaction_overlay_event_ids,
+    )
     _validate_workflow_proposals(paths, conn, result)
     _validate_foreign_keys(conn, result)
     _validate_verification_feedback_references(conn, result)
@@ -1480,7 +1495,11 @@ def _validate_approved_workflow_proposal(
 
 
 def _validate_audit_log_integrity(
-    paths: ProjectPaths, conn: sqlite3.Connection, result: ValidationResult
+    paths: ProjectPaths,
+    conn: sqlite3.Connection,
+    result: ValidationResult,
+    *,
+    transaction_overlay_event_ids: frozenset[str] | None = None,
 ) -> None:
     if not paths.events_path.exists():
         return
@@ -1515,7 +1534,11 @@ def _validate_audit_log_integrity(
     db_by_id = {str(event["id"]): event for event in db_events}
     db_ids = set(db_by_id)
     jsonl_ids = set(jsonl_by_id)
-    for event_id in sorted(db_ids - jsonl_ids):
+    permitted_suffix = transaction_overlay_event_ids or frozenset()
+    missing_from_jsonl = db_ids - jsonl_ids
+    for event_id in sorted(missing_from_jsonl):
+        if event_id in permitted_suffix:
+            continue
         _add_audit_error(
             result,
             f"DB event {event_id} is missing from events.jsonl.",
@@ -1530,11 +1553,15 @@ def _validate_audit_log_integrity(
             event_id=event_id,
         )
 
-    if db_ids == jsonl_ids:
+    if missing_from_jsonl <= permitted_suffix and not (jsonl_ids - db_ids):
         db_order = [str(event["id"]) for event in db_events]
         jsonl_order = [str(event["id"]) for event in jsonl_events if event.get("id") in jsonl_by_id]
-        if db_order != jsonl_order:
-            for index, (db_id, jsonl_id) in enumerate(zip(db_order, jsonl_order), start=1):
+        expected_jsonl_order = [event_id for event_id in db_order if event_id not in permitted_suffix]
+        if expected_jsonl_order != jsonl_order:
+            for index, (db_id, jsonl_id) in enumerate(
+                zip(expected_jsonl_order, jsonl_order),
+                start=1,
+            ):
                 if db_id != jsonl_id:
                     _add_audit_error(
                         result,

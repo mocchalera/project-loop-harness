@@ -125,6 +125,21 @@ renderer caller uses the same exclusive lock-aware wrapper. The renderer
 remains a derived two-file writer; this is not a claim of two-file or
 process-crash atomic publication.
 
+Atomic Task Accept (`pcl task accept`) is the terminal complement to Direct
+Setup. It retains the same verified-root and exclusive operation capability,
+publishes one immutable copied base Evidence through exclusive no-overwrite
+storage, and performs all Test, Feature, Task, event, and outbox changes in one
+schema-8 transaction. The full strict validator runs once against the exact
+planned unprojected event suffix; its formal findings feed the existing P0-B
+classifier without a second validator call. The Task update and its reserved
+authority event/outbox are the exact post-strict three DML statements. Durable
+request claims, Evidence reservations, and a single-head generation chain
+separate exact replay, stale pre-commit successor attempts, accepted authority,
+and post-commit tail recovery. See [task-accept.md](task-accept.md).
+Committed authorities missing their post-commit acceptance marker are closed
+only by `audit flush`: it verifies the receipt-bound current proof and records a
+tail-recovery generation without replaying business DML.
+
 Task completion adds a pre-update proof gate inside that same transaction.
 The exact `routing-target/v1` Task is re-read and evaluated through the shared
 `terminal-readiness/v1` collector before its row changes. The receipt binds the

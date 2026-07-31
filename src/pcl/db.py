@@ -124,11 +124,22 @@ def connect_mutation(
     paths: Any,
     *,
     exclusive: bool = False,
+    operation_capability: object | None = None,
 ) -> MutationConnection:
     from .locks import AdvisoryLock
+    from .locks import require_live_exclusive_project_operation_capability
 
-    lock = AdvisoryLock(paths.loop_dir / "project.lock", exclusive=exclusive)
-    lock.acquire()
+    lock = None
+    if operation_capability is None:
+        lock = AdvisoryLock(paths.loop_dir / "project.lock", exclusive=exclusive)
+        lock.acquire()
+    else:
+        if not exclusive:
+            raise ValueError("A borrowed operation capability requires exclusive=True.")
+        require_live_exclusive_project_operation_capability(
+            operation_capability,
+            loop_dir=paths.loop_dir,
+        )
     try:
         conn = sqlite3.connect(
             paths.db_path,
@@ -143,7 +154,8 @@ def connect_mutation(
         conn.execute("BEGIN IMMEDIATE")
         return conn
     except BaseException:
-        lock.release()
+        if lock is not None:
+            lock.release()
         raise
 
 

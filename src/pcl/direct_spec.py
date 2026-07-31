@@ -203,6 +203,8 @@ def load_direct_spec(paths: ProjectPaths, relative_path: str) -> DirectSpecDocum
 def _secure_read_project_file(
     paths: ProjectPaths,
     relative_path: str,
+    *,
+    max_bytes: int = DIRECT_SPEC_MAX_BYTES,
 ) -> tuple[bytes, DirectSpecRootBinding]:
     parts = _validate_relative_path(relative_path)
     _require_secure_open_capabilities()
@@ -268,10 +270,10 @@ def _secure_read_project_file(
                 code="direct_spec_path_invalid",
                 details={"reason": "leaf_unreadable"},
             )
-        first = _read_bounded(leaf_fd)
+        first = _read_bounded(leaf_fd, max_bytes=max_bytes)
         between = os.fstat(leaf_fd)
         os.lseek(leaf_fd, 0, os.SEEK_SET)
-        second = _read_bounded(leaf_fd)
+        second = _read_bounded(leaf_fd, max_bytes=max_bytes)
         after = os.fstat(leaf_fd)
         current_leaf = os.stat(leaf_name, dir_fd=parent_fd, follow_symlinks=False)
         if (
@@ -424,9 +426,9 @@ def _require_secure_open_capabilities() -> None:
         )
 
 
-def _read_bounded(descriptor: int) -> bytes:
+def _read_bounded(descriptor: int, *, max_bytes: int = DIRECT_SPEC_MAX_BYTES) -> bytes:
     chunks: list[bytes] = []
-    remaining = DIRECT_SPEC_MAX_BYTES + 1
+    remaining = max_bytes + 1
     while remaining:
         chunk = os.read(descriptor, min(remaining, 64 * 1024))
         if not chunk:
@@ -434,13 +436,28 @@ def _read_bounded(descriptor: int) -> bytes:
         chunks.append(chunk)
         remaining -= len(chunk)
     content = b"".join(chunks)
-    if len(content) > DIRECT_SPEC_MAX_BYTES:
+    if len(content) > max_bytes:
         raise DirectSpecError(
             "Direct spec exceeds the byte limit.",
             code="direct_spec_too_large",
-            details={"limit_bytes": DIRECT_SPEC_MAX_BYTES, "representation": "raw"},
+            details={"limit_bytes": max_bytes, "representation": "raw"},
         )
     return content
+
+
+def secure_read_project_artifact(
+    paths: ProjectPaths,
+    relative_path: str,
+    *,
+    max_bytes: int,
+) -> tuple[bytes, DirectSpecRootBinding]:
+    """Reuse Direct Setup's retained-root, no-follow file reader for artifacts."""
+
+    return _secure_read_project_file(
+        paths,
+        relative_path,
+        max_bytes=max_bytes,
+    )
 
 
 def _parse_and_validate(raw: bytes) -> dict[str, Any]:

@@ -10,6 +10,7 @@ from .errors import InvalidInputError
 from .events import append_event
 from .guards import require_initialized
 from .paths import ProjectPaths
+from .prefixed_ids import decimal_sort_key, increment_decimal_text
 from .workflow_proposal_validation import PROPOSAL_ID_RE, validate_workflow_proposal_text
 from .workflow_verifier import verify_workflow_text
 
@@ -298,12 +299,17 @@ def _proposal_record(
 
 
 def _next_proposal_id(conn, proposals_dir: Path) -> str:
-    max_n = 0
+    maximum = "0"
+    maximum_key = decimal_sort_key(maximum)
     if proposals_dir.exists():
         for path in proposals_dir.glob("WP-*.yaml"):
             match = PROPOSAL_ID_RE.match(path.stem)
             if match:
-                max_n = max(max_n, int(match.group(1)))
+                suffix = match.group(1)
+                key = decimal_sort_key(suffix)
+                if key > maximum_key:
+                    maximum = suffix.lstrip("0") or "0"
+                    maximum_key = key
     rows = conn.execute(
         """
         SELECT entity_id FROM events
@@ -314,8 +320,12 @@ def _next_proposal_id(conn, proposals_dir: Path) -> str:
     for row in rows:
         match = PROPOSAL_ID_RE.match(str(row["entity_id"] or ""))
         if match:
-            max_n = max(max_n, int(match.group(1)))
-    return f"WP-{max_n + 1:04d}"
+            suffix = match.group(1)
+            key = decimal_sort_key(suffix)
+            if key > maximum_key:
+                maximum = suffix.lstrip("0") or "0"
+                maximum_key = key
+    return f"WP-{increment_decimal_text(maximum).zfill(4)}"
 
 
 def _proposal_events_by_id(conn) -> dict[str, dict[str, Any]]:

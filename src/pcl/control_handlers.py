@@ -31,6 +31,7 @@ from .presentation import format_start_summary, to_pretty_json
 from .read_handlers import handle_doctor, handle_loop_status
 from .renderer import render_dashboard
 from .start import start_work
+from .task_accept import recover_task_accept_tails
 from .validators import validate_project
 from .validation_projection import project_validation_result
 
@@ -168,9 +169,9 @@ def handle_control_command(
 
     if args.command == "audit" and args.audit_command == "flush":
         result = project_pending_events(paths)
-        _print_json({"ok": result.ok, **result.to_dict()}) if json_output else print(
-            to_pretty_json(result.to_dict())
-        )
+        tail_recovery = recover_task_accept_tails(paths) if result.ok else None
+        payload = {"ok": result.ok, **result.to_dict(), "task_accept_tail_recovery": tail_recovery}
+        _print_json(payload) if json_output else print(to_pretty_json(payload))
         return 0 if result.ok else 6
 
     if args.command == "audit" and args.audit_command == "check":

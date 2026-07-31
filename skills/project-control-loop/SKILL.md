@@ -206,6 +206,20 @@ preceding command; do not invent IDs.
    `pcl test reverify` only when an approved legacy Test must explicitly adopt
    a stronger target-bound Evidence Set and completion-policy receipt.
 
+   When one project-relative artifact proves every non-waived Test for the
+   Task-linked Feature, use the fixed atomic alternative instead of running
+   Evidence, Test, Feature, and Task terminal commands one by one:
+
+   ```bash
+   pcl task accept T-XXXX --artifact artifacts/acceptance.txt --command "..." --summary "..." --copy --test TC-XXXX --json
+   ```
+
+   Repeat `--test` for the exact non-waived Test set. Stories must already be
+   approved or explicitly waived; this command never infers approval and never
+   creates or reuses an Evidence Set. Exact replay must report
+   `already_accepted` with all effects zero. On exit 6, run only the reported
+   projection or render recovery action and do not replay the business request.
+
 7. Mark the Task created by `pcl start` terminal after its acceptance work is
    complete. Do not leave a child Task active when closing its Goal:
 
@@ -315,6 +329,7 @@ pcl story draft --feature F-0001 --actor "..." --goal "..." --expected-behavior 
 pcl story approve US-0001 --summary "..."
 pcl test plan --feature F-0001 --story US-0001 --type acceptance --scenario "..." --expected "..."
 pcl evidence add --file artifacts/acceptance.txt --summary "..." --command "..." --copy
+pcl task accept T-0001 --artifact artifacts/acceptance.txt --command "..." --summary "..." --copy --test TC-0001 --json
 pcl test pass TC-0001 --summary "..." --evidence-id E-0001
 pcl feature status F-0001 --status done --summary "..." --evidence-id E-0001
 pcl defect open --feature F-0001 --severity high --expected "..." --actual "..."

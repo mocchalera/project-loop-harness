@@ -19,6 +19,7 @@ from .errors import DataStoreError, EXIT_USAGE, InvalidInputError, PclError, Pro
 from .events import append_event
 from .ids import next_prefixed_id
 from .paths import ProjectPaths
+from .prefixed_ids import decimal_sort_key, increment_decimal_text
 from .strict_evidence import strict_read_canonical_file
 from .test_faults import crash_if_requested
 from .timeutil import utc_now_iso
@@ -179,12 +180,18 @@ def preflight_provenance_destination(paths: ProjectPaths) -> None:
         rows = conn.execute("SELECT id FROM evidence WHERE id LIKE 'E-%'").fetchall()
     finally:
         conn.close()
-    highest = 0
+    highest = "0"
+    highest_key = decimal_sort_key(highest)
     for row in rows:
         match = re.fullmatch(r"E-(\d+)", str(row["id"]))
         if match:
-            highest = max(highest, int(match.group(1)))
-    provenance_id = f"E-{highest + 2:04d}"
+            suffix = match.group(1)
+            key = decimal_sort_key(suffix)
+            if key > highest_key:
+                highest = suffix.lstrip("0") or "0"
+                highest_key = key
+    provenance_suffix = increment_decimal_text(increment_decimal_text(highest))
+    provenance_id = f"E-{provenance_suffix.zfill(4)}"
     final_path = directory / f"{provenance_id}.json"
     if os.path.lexists(final_path):
         os.lstat(final_path)

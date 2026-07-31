@@ -82,3 +82,20 @@ Create a review artifact outside `.project-loop/` with:
 Only after a maintainer reviews that record should
 `docs/mcp-compatibility.md` gain a tested-client row. Never copy credentials,
 full local paths, unrelated user content, or raw secrets into the record.
+
+## Optional Atomic Task Accept smoke
+
+Run this only when the local fixture already has an in-progress Task, an
+approved or waived Story, planned Tests, and a project-relative acceptance
+artifact. Start a separate MCP process with:
+
+```bash
+"$(pwd)/.venv/bin/python" -m pcl.mcp_server --stdio \
+  --root /tmp/pcl-mcp-manual-smoke --approval-mode task-accept-write
+```
+
+Verify `tools/list` contains `task_accept` and omits `render_dashboard`. Call
+`task_accept` once, then call the exact same input again and verify the second
+envelope is `already_accepted` with all effects zero. Separately verify the
+default and `local-render` processes neither list nor dispatch `task_accept`.
+Do not attempt to pass approval mode through initialize or tool arguments.

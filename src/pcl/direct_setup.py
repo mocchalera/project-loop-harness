@@ -16,6 +16,7 @@ from .errors import (
 from .events import append_event
 from .evidence import record_inline_evidence
 from .paths import ProjectPaths
+from .prefixed_ids import next_prefixed_ids_strict
 from .timeutil import utc_now_iso
 from .validators import collect_authoritative_admission_findings
 
@@ -393,19 +394,12 @@ def _next_ids(
     prefix: str,
     count: int,
 ) -> list[str]:
-    pattern = _ID_PATTERN_CACHE.setdefault(
-        prefix,
-        re.compile(rf"^{re.escape(prefix)}-(\d+)$"),
+    return next_prefixed_ids_strict(
+        conn,
+        table=table,
+        prefix=prefix,
+        count=count,
     )
-    maximum = 0
-    for row in conn.execute(
-        f"SELECT id FROM {table} WHERE id LIKE ?",
-        (f"{prefix}-%",),
-    ).fetchall():
-        match = pattern.match(str(row["id"]))
-        if match:
-            maximum = max(maximum, int(match.group(1)))
-    return [f"{prefix}-{number:04d}" for number in range(maximum + 1, maximum + count + 1)]
 
 
 def _build_event_plan(

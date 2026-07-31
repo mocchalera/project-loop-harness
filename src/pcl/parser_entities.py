@@ -211,6 +211,16 @@ def add_entity_parsers(sub) -> None:
         "new_status", help=f"Target task status: {choices_help(TASK_STATUSES)}"
     )
     p_task_status.add_argument("--reason", required=True)
+    p_task_accept = task_sub.add_parser(
+        "accept",
+        help="Atomically accept one in-progress Task with immutable copied Evidence",
+    )
+    p_task_accept.add_argument("task_id")
+    p_task_accept.add_argument("--artifact", required=True)
+    p_task_accept.add_argument("--command", required=True, dest="accept_command")
+    p_task_accept.add_argument("--summary", required=True)
+    p_task_accept.add_argument("--copy", action="store_true")
+    p_task_accept.add_argument("--test", action="append", default=[], dest="test_ids")
     p_task_depend = task_sub.add_parser("depend")
     p_task_depend.add_argument("task_id")
     p_task_depend.add_argument("--on", required=True, dest="depends_on_task_id")
