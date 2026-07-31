@@ -11,6 +11,7 @@ import sys
 import pytest
 
 from pcl.db import connect
+from pcl.outbox import ProjectionResult
 from pcl.task_accept import (
     accept_task,
     task_accept_envelope_golden_fixtures,
@@ -236,6 +237,82 @@ def test_runtime_m2_records_match_frozen_seq27_role_contents(
     assert {binding["snapshot"]["row_postimage"]["status"] for binding in test_bindings} == {
         "passing"
     }
+
+
+def test_projection_failure_has_committed_accepted_authority_before_projection(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    fixture = prepare_acceptance(tmp_path, capsys, test_count=2)
+
+    monkeypatch.setattr(
+        "pcl.outbox.project_pending_events",
+        lambda *args, **kwargs: ProjectionResult(
+            committed=True,
+            projection="pending",
+            delivered=0,
+            pending_count=6,
+            first_pending_sequence=1,
+            safe_next_action="pcl audit flush --json",
+            error="injected projection failure",
+        ),
+    )
+
+    result = _service(tmp_path, fixture)
+
+    assert result["error_code"] == "task_accept_projection_pending"
+    assert result["mutation_committed"] is True
+    recovery_root = tmp_path / ".project-loop" / "task-accept-recovery" / "v1"
+    roles = Counter(
+        path.name.rsplit("-", 1)[0] for path in recovery_root.rglob("*.json")
+    )
+    assert sum(roles.values()) == 25
+    assert roles["accepted"] == 1
+    assert roles["projection"] == 0
+    assert roles["render"] == 0
+    assert roles["teardown"] == 0
+    assert roles["tail"] == 0
+    assert roles["generation-manifest"] == 0
+    assert roles["ledger-sealed"] == 0
+
+
+def test_postcommit_accepted_publish_failure_reports_actual_24_record_state(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    fixture = prepare_acceptance(tmp_path, capsys, test_count=2)
+    monkeypatch.setattr(
+        "pcl.task_accept._publish_m2_postcommit_authority",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("accepted publish failed")),
+    )
+
+    result = _service(tmp_path, fixture)
+
+    assert result["error_code"] == "task_accept_tail_pending"
+    assert result["mutation_committed"] is True
+    assert result["safe_retry_action"] == "process_restart_and_inspect"
+    assert result["effects"]["markers_published"] == 24
+    assert result["effects"]["live_generation_records_published"] == 9
+    recovery_root = tmp_path / ".project-loop" / "task-accept-recovery" / "v1"
+    roles = Counter(
+        path.name.rsplit("-", 1)[0] for path in recovery_root.rglob("*.json")
+    )
+    assert sum(roles.values()) == 24
+    assert roles["accepted"] == 0
+    assert roles["projection"] == 0
+
+    monkeypatch.undo()
+    from pcl.outbox import project_pending_events
+    from pcl.task_accept import recover_task_accept_tails
+
+    assert project_pending_events(resolve_paths(tmp_path)).ok is True
+    recovered = recover_task_accept_tails(resolve_paths(tmp_path))
+    assert recovered["mode"] == "accepted_authority_tail_recovery_success"
+    assert recovered["effects"]["markers_published"] == 7
+    assert recovered["effects"]["live_generation_records_published"] == 6
+    assert _service(tmp_path, fixture)["mode"] == "exact_replay_success"
 
 
 @pytest.mark.parametrize(

@@ -11,6 +11,10 @@
 - **Fail-first evidence:** `docs/evidence/0240-p1b-atomic-task-accept-red.md`
 - **Correction evidence:** `docs/evidence/0242-p1b-atomic-task-accept-correction.md`
 - **Second correction evidence:** `E-0051` / `docs/evidence/0243-p1b-atomic-task-accept-second-correction.md`
+- **Final second correction evidence:** `E-0052` /
+  `docs/evidence/0244-p1b-atomic-task-accept-second-correction-final.md`
+- **Final candidate evidence:** `E-0053` /
+  `docs/evidence/0245-p1b-atomic-task-accept-final-candidate.md`
 
 ## Contract
 
@@ -38,6 +42,18 @@ supporting-Evidence replay and live strict/P0-B tail-recovery behavior, but this
 is not independent acceptance. It does not approve `US-0005` or terminalize
 repository-local `F-0004`/`T-0004`.
 
+The final second-correction Evidence further qualifies `E-0051`: its first
+milestone still reversed the approved postcommit accepted/projection timing.
+The final candidate publishes accepted immediately after confirmed SQLite
+commit, retains the canonical 25-record projection-failure state, and reserves
+the remaining six records for dedicated tail recovery. Independent fixed-hash
+re-review remains required.
+
+Final candidate Evidence further qualifies `E-0052` for the distinct
+postcommit accepted-publication failure: actual 24-record accounting, a
+confirmed-DB seven-record dedicated repair, and subsequent all-zero replay are
+now covered without changing the canonical 25+6 projection-recovery contract.
+
 ## Verification
 
 Run focused Task Accept, prefixed-ID, MCP, P0-B, P1-A, Evidence, mutation-tail,
@@ -47,7 +63,7 @@ separately before independent review.
 
 Second-correction verification completed with the focused Task
 Accept/adversarial suite, relevant P0-B/P1-A/outbox/mutation-tail/MCP/Skill
-regressions, Ruff and diff checks, and the full suite (`1490 passed, 2
+regressions, Ruff and diff checks, and the final full suite (`1492 passed, 2
 skipped`). The draft Story remains a deliberate human-semantic blocker for
 closing this repository-local PCL Task; independent fixed-hash re-review is
 also still pending.

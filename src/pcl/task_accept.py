@@ -1745,6 +1745,29 @@ def _accept_locked(
             }
         )
         conn._precommit_guard = proof_seal.verify
+
+        def publish_committed_acceptance_authority() -> dict[str, int]:
+            try:
+                return _publish_m2_postcommit_authority(generation)
+            except Exception as exc:
+                raise ProjectionPendingError(
+                    details={
+                        "committed": True,
+                        "projection": "unknown",
+                        "delivered": 0,
+                        "pending_count": len(event_plan),
+                        "first_pending_sequence": int(event_plan[0]["sequence"]),
+                        "event_id": authority_event_id,
+                        "event_sequence": int(task_item["sequence"]),
+                        "safe_next_action": "process_restart_and_inspect",
+                        "error": str(exc),
+                        "accepted_authority_published": False,
+                        "mutation_committed": True,
+                        "safe_to_retry_original": False,
+                    }
+                ) from exc
+
+        conn._postcommit_authority_publisher = publish_committed_acceptance_authority
         try:
             crash_if_requested("task_accept_before_sqlite_commit")
             conn.commit()
@@ -1754,15 +1777,36 @@ def _accept_locked(
         except ProjectionPendingError as exc:
             committed = bool(exc.details.get("mutation_committed"))
             if committed:
+                accepted_published = (
+                    exc.details.get("accepted_authority_published") is not False
+                )
+                if not accepted_published:
+                    effects = envelope["effects"]
+                    effects["live_generation_records_published"] -= 1
+                    effects["markers_published"] -= 1
+                    effects["durable_recovery_records_published"] -= 1
+                    envelope["receipts"]["acceptance_receipt_status"] = "corrupt"
                 return _postcommit_error(
                     envelope,
-                    code="task_accept_projection_pending",
-                    message="Acceptance committed, but JSONL projection is pending.",
+                    code=(
+                        "task_accept_projection_pending"
+                        if accepted_published
+                        else "task_accept_tail_pending"
+                    ),
+                    message=(
+                        "Acceptance committed, but JSONL projection is pending."
+                        if accepted_published
+                        else "Acceptance committed, but its accepted authority is pending."
+                    ),
                     identity=identity,
                     authority_event_id=authority_event_id,
                     evidence_id=evidence_id,
                     generation=generation.number,
-                    action="pcl audit flush --json",
+                    action=(
+                        "pcl audit flush --json"
+                        if accepted_published
+                        else "process_restart_and_inspect"
+                    ),
                     business_changed=True,
                     mutation_committed=True,
                     prior_authoritative_commit=False,
@@ -1778,7 +1822,20 @@ def _accept_locked(
             )
         finally:
             conn._precommit_guard = None
+            conn._postcommit_authority_publisher = None
             proof_seal.close()
+        postcommit_authority = getattr(conn, "postcommit_authority_result", None)
+        if not isinstance(postcommit_authority, dict):
+            return _commit_outcome_unknown(
+                envelope,
+                identity=identity,
+                authority_event_id=authority_event_id,
+                evidence_id=evidence_id,
+                generation=generation.number,
+            )
+        fs_effects["markers_published"] += int(
+            postcommit_authority["markers_published"]
+        )
         projection = getattr(conn, "projection_result", None)
         envelope["effects"].update(
             {
@@ -2998,7 +3055,6 @@ def _m2_build_records(
             },
             common=common,
         ),
-        projection,
         _m2_record(
             "request-binding",
             {
@@ -3058,7 +3114,14 @@ def _m2_build_records(
         },
         common=common,
     )
-    live_without_manifest = [*pre_live, accepted, render, teardown, tail]
+    live_without_manifest = [
+        *pre_live,
+        accepted,
+        projection,
+        render,
+        teardown,
+        tail,
+    ]
     generation_manifest = _m2_record(
         "generation-manifest",
         {
@@ -3111,7 +3174,8 @@ def _m2_build_records(
     return {
         "id_index": id_records,
         "pre_live": pre_live,
-        "tail_live": [accepted, render, teardown, tail, generation_manifest],
+        "postcommit_live": [accepted],
+        "tail_live": [projection, render, teardown, tail, generation_manifest],
         "reserved": reserved,
         "sealed": sealed,
     }
@@ -3170,6 +3234,34 @@ def _publish_m2_precommit_authority(
             "A durable Task Accept precommit authority is only partially published.",
             EXIT_DATA_ERROR,
             "durable_authority",
+        )
+    return {"markers_published": created}
+
+
+def _publish_m2_postcommit_authority(generation: _Generation) -> dict[str, int]:
+    records = generation.record.get("m2_records")
+    if not isinstance(records, dict):
+        raise _Abort(
+            "task_accept_request_ledger_corrupt",
+            "The durable Task Accept postcommit authority plan is unavailable.",
+            EXIT_DATA_ERROR,
+            "postcommit_authority",
+        )
+    postcommit_live = records.get("postcommit_live")
+    if not isinstance(postcommit_live, list) or len(postcommit_live) != 1:
+        raise _Abort(
+            "task_accept_request_ledger_corrupt",
+            "The durable Task Accept postcommit authority plan is invalid.",
+            EXIT_DATA_ERROR,
+            "postcommit_authority",
+        )
+    created = int(_publish_m2_record(generation.directory, postcommit_live[0]))
+    if created != 1:
+        raise _Abort(
+            "task_accept_request_ledger_corrupt",
+            "The committed acceptance authority was not published exactly once.",
+            EXIT_DATA_ERROR,
+            "postcommit_authority",
         )
     return {"markers_published": created}
 
@@ -4294,7 +4386,15 @@ def _verify_replay_ledger(
         "reservation-manifest",
         "evidence",
     }
-    for role in singleton_roles - ({"accepted", "generation-manifest", "render", "tail", "teardown"} if not require_accepted else set()):
+    pending_tail_roles = {
+        "generation-manifest",
+        "projection",
+        "render",
+        "tail",
+        "teardown",
+    }
+    pending_optional_roles = {*pending_tail_roles, "accepted"}
+    for role in singleton_roles - (pending_optional_roles if not require_accepted else set()):
         if len(role_records.get(role, [])) != 1:
             raise _Abort(
                 "task_accept_request_ledger_corrupt",
@@ -4346,10 +4446,19 @@ def _verify_replay_ledger(
             False,
             True,
         )
-    if not require_accepted and (sealed_count or accepted_count):
+    if not require_accepted and (sealed_count or accepted_count not in {0, 1}):
         raise _Abort(
             "task_accept_request_ledger_corrupt",
-            "A pending generation has an ambiguous partial accepted head.",
+            "A committed pending generation has an ambiguous accepted authority.",
+            EXIT_DATA_ERROR,
+            "replay_ledger",
+            False,
+            True,
+        )
+    if not require_accepted and any(role_records.get(role) for role in pending_tail_roles):
+        raise _Abort(
+            "task_accept_request_ledger_corrupt",
+            "A committed pending generation has an ambiguous partial tail.",
             EXIT_DATA_ERROR,
             "replay_ledger",
             False,
@@ -4459,6 +4568,19 @@ def _verify_replay_ledger(
         raise _Abort(
             "task_accept_request_ledger_corrupt",
             "The canonical Task Accept generation has the wrong record count.",
+            EXIT_DATA_ERROR,
+            "replay_ledger",
+            False,
+            True,
+        )
+    pending_totals = {
+        18 + 3 * len(identity["test_ids"]),
+        19 + 3 * len(identity["test_ids"]),
+    }
+    if not require_accepted and total not in pending_totals:
+        raise _Abort(
+            "task_accept_request_ledger_corrupt",
+            "The canonical pending Task Accept generation has the wrong record count.",
             EXIT_DATA_ERROR,
             "replay_ledger",
             False,
@@ -4609,8 +4731,6 @@ def recover_task_accept_tails(paths: ProjectPaths) -> dict[str, Any]:
                     receipt_sha256=_sha256_canonical(receipt),
                     require_accepted=False,
                 )
-                if ledger.accepted_count == 1:
-                    continue
                 if len(ledger.generations) != 1:
                     raise _Abort(
                         "task_accept_request_ledger_corrupt",
@@ -4663,7 +4783,11 @@ def recover_task_accept_tails(paths: ProjectPaths) -> dict[str, Any]:
                     receipt=receipt,
                     validation_result=validation.to_dict(),
                     readiness=readiness,
+                    accepted_published=ledger.accepted_count == 1,
                 )
+                accepted_effects = {"markers_published": 0}
+                if ledger.accepted_count == 0:
+                    accepted_effects = _publish_m2_postcommit_authority(generation)
                 render_receipt = _run_postcommit_render(
                     paths,
                     operation_capability=capability,
@@ -4680,8 +4804,13 @@ def recover_task_accept_tails(paths: ProjectPaths) -> dict[str, Any]:
                         message=f"Accepted Task {identity['task_id']} remains pending render",
                     )
                 effects = _publish_m2_tail(generation)
-                result["tail_recovery_records_published"] += effects["markers_published"]
-                result["accepted_markers_published"] += 1
+                published = int(accepted_effects["markers_published"]) + int(
+                    effects["markers_published"]
+                )
+                result["tail_recovery_records_published"] += published
+                result["accepted_markers_published"] += int(
+                    accepted_effects["markers_published"]
+                )
                 result["recovered"] += 1
                 return _tail_recovery_success_envelope(
                     identity=identity,
@@ -4692,6 +4821,7 @@ def recover_task_accept_tails(paths: ProjectPaths) -> dict[str, Any]:
                     render_receipt=render_receipt,
                     validation=validation.to_dict(),
                     readiness=readiness,
+                    markers_published=published,
                 )
         finally:
             conn.close()
@@ -4708,6 +4838,7 @@ def _m2_rebuild_tail_plan(
     receipt: dict[str, Any],
     validation_result: dict[str, Any],
     readiness: dict[str, Any],
+    accepted_published: bool,
 ) -> None:
     evidence = conn.execute(
         "SELECT path, command, summary FROM evidence WHERE id = ?",
@@ -4778,7 +4909,10 @@ def _m2_rebuild_tail_plan(
         validation_result=validation_result,
         readiness=readiness,
     )
-    for record in rebuilt["pre_live"]:
+    retained_records = list(rebuilt["pre_live"])
+    if accepted_published:
+        retained_records.extend(rebuilt["postcommit_live"])
+    for record in retained_records:
         existing_path = generation.directory / str(record["filename"])
         _read_framed_required(existing_path, str(record["domain"]))
         if hashlib.sha256(existing_path.read_bytes()).hexdigest() != record["frame_sha256"]:
@@ -5667,16 +5801,17 @@ def _tail_recovery_success_envelope(
     render_receipt: dict[str, Any],
     validation: dict[str, Any],
     readiness: dict[str, Any],
+    markers_published: int = 6,
 ) -> dict[str, Any]:
     record_set = _m2_record_set_receipts(generation)
     effects = _zero_effects()
     effects.update(
         {
             "db_mutations_total": event_count,
-            "durable_recovery_records_published": 6,
+            "durable_recovery_records_published": markers_published,
             "generation_ledger_records_published": 1,
-            "live_generation_records_published": 5,
-            "markers_published": 6,
+            "live_generation_records_published": markers_published - 1,
+            "markers_published": markers_published,
             "projection_records_delivered": event_count,
             "render_writes": 0 if render_receipt["status"] == "disabled" else 1,
             "tail_db_rows_updated": event_count,
