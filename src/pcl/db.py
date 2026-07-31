@@ -13,6 +13,7 @@ SQLITE_BUSY_TIMEOUT_MS = 30_000
 class MutationConnection(sqlite3.Connection):
     _operation_lock: Any = None
     _paths: Any = None
+    _precommit_guard: Any = None
     projection_result: Any = None
     _authoritative_commit_completed = False
 
@@ -20,6 +21,8 @@ class MutationConnection(sqlite3.Connection):
         from .test_faults import crash_if_requested
 
         crash_if_requested("before_sqlite_commit")
+        if self._precommit_guard is not None:
+            self._precommit_guard()
         super().commit()
         crash_if_requested("after_sqlite_commit_before_projector")
         if self._paths is None or self._authoritative_commit_completed:

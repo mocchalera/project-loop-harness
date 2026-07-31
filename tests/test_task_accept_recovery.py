@@ -116,7 +116,8 @@ def test_tampered_current_member_blocks_exact_replay(tmp_path: Path, capsys) -> 
 
     assert replay["ok"] is False
     assert replay["error_code"] == "task_accept_replay_not_current"
-    assert replay["prior_acceptance_verified"] is True
+    # M5 only permits this flag after live current-proof validation succeeds.
+    assert replay["prior_acceptance_verified"] is False
     assert replay["mutation_committed"] is False
     assert state_counts(tmp_path) == before
 
@@ -297,7 +298,7 @@ def test_superseded_acceptance_evidence_blocks_replay_as_noncurrent(
 
     assert replay["ok"] is False
     assert replay["error_code"] == "task_accept_replay_not_current"
-    assert replay["prior_acceptance_verified"] is True
+    assert replay["prior_acceptance_verified"] is False
 
 
 def test_postcommit_render_failure_is_exit6_and_recovers_only_through_tail(
@@ -420,7 +421,7 @@ def test_commit_outcome_unknown_is_never_success_or_safe_original_retry(
     assert result["status"] == "error"
     assert result["mutation_committed"] is False
     assert result["safe_to_retry_original"] is False
-    assert result["safe_retry_action"] == "pcl audit check --json"
+    assert result["safe_retry_action"] == "process_restart_and_inspect"
     committed_counts = state_counts(tmp_path)
     monkeypatch.undo()
     assert main(["--root", str(tmp_path), "audit", "flush", "--json"]) == 0

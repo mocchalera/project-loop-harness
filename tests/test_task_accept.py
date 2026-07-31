@@ -269,7 +269,9 @@ def test_not_initialized_uses_exit3_json_contract(tmp_path: Path, capsys) -> Non
     assert main(args) == 3
     result = json.loads(capsys.readouterr().out)
     assert result["error_code"] == "task_accept_not_initialized"
-    assert result["safe_to_retry_original"] is True
+    # M5 distinguishes correcting input/environment for a new invocation from
+    # automatically retrying the original argv.
+    assert result["safe_to_retry_original"] is False
 
 
 def test_one_invalid_test_in_multi_test_request_rolls_back_entire_bundle(

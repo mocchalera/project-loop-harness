@@ -49,6 +49,9 @@ _TASK_ID = re.compile(r"^T-[0-9]{4,4096}$")
 _TEST_ID = re.compile(r"^TC-[0-9]{4,4096}$")
 _EVIDENCE_ID = re.compile(r"^E-([0-9]+)$")
 _FRAME_NAME = re.compile(r"^(?P<role>[a-z][a-z0-9-]*)-(?P<digest>[0-9a-f]{64})\.json$")
+_M2_RECORD_CONTENTS_FIXTURE_SHA256 = (
+    "07e41045a685aac088ae6323352f8c5d5ecd2173a56fd1e2c23e49c878c64b0b"
+)
 
 _M2_DOMAINS = {
     "accepted": "task-accept-accepted-marker/v1",
@@ -213,65 +216,227 @@ _MODE_STATUS = {
 
 TASK_ACCEPT_ENVELOPE_SCHEMA["properties"] = {
     "authority": {
-        "type": "object",
-        "additionalProperties": False,
-        "required": sorted(_AUTHORITY_KEYS),
-        "properties": {key: {} for key in _AUTHORITY_KEYS},
+        "$ref": "#/$defs/authority",
     },
     "business_attempt_generation": {"type": ["integer", "null"], "minimum": 0},
     "business_changed": {"type": "boolean"},
     "changed": {"type": "boolean"},
-    "error_code": {"type": ["string", "null"]},
-    "exit_code": {"enum": [0, 1, 2, 3, 4, 6]},
-    "identity": {
-        "type": "object",
-        "additionalProperties": False,
-        "required": sorted(_IDENTITY_KEYS),
-        "properties": {key: {} for key in _IDENTITY_KEYS},
+    "error_code": {
+        "type": ["string", "null"],
+        "pattern": r"^task_accept_[a-z0-9_]+$",
     },
-    "message": {"type": "string"},
-    "mode": {"enum": sorted(_MODE_STATUS)},
+    "exit_code": {"type": "integer", "enum": [0, 1, 2, 3, 4, 6]},
+    "identity": {"$ref": "#/$defs/identity"},
+    "message": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "mode": {"type": "string", "enum": sorted(_MODE_STATUS)},
     "mutation_committed": {"type": "boolean"},
     "ok": {"type": "boolean"},
     "operation": {"const": "task_accept"},
-    "pending_tail": {
-        "type": "object",
-        "additionalProperties": False,
-        "required": sorted(_PENDING_TAIL_KEYS),
-        "properties": {key: {} for key in _PENDING_TAIL_KEYS},
+    "pending_tail": {"$ref": "#/$defs/pending_tail"},
+    "phase": {
+        "type": "string",
+        "enum": [
+            "phase0",
+            "identity",
+            "precommit",
+            "business_commit",
+            "projection",
+            "render",
+            "teardown",
+            "tail_recovery",
+            "complete",
+        ],
     },
-    "phase": {"type": "string", "minLength": 1},
     "prior_acceptance_verified": {"type": "boolean"},
     "prior_authoritative_commit": {"type": "boolean"},
-    "receipts": {
-        "type": "object",
-        "additionalProperties": False,
-        "required": sorted(_RECEIPT_KEYS),
-        "properties": {key: {} for key in _RECEIPT_KEYS},
+    "receipts": {"$ref": "#/$defs/receipts"},
+    "safe_retry_action": {
+        "enum": [
+            None,
+            "correct_input_then_retry",
+            "repeat_exact_task_accept_request",
+            "pcl audit flush --json",
+            "pcl render --json",
+            "manual_integrity_review",
+            "process_restart_and_inspect",
+        ]
     },
-    "safe_retry_action": {"type": ["string", "null"]},
     "safe_to_retry_original": {"type": "boolean"},
     "schema_version": {"const": TASK_ACCEPT_CONTRACT_VERSION},
     "tail_recovery_changed": {"type": "boolean"},
     "tail_recovery_generation": {"type": ["integer", "null"], "minimum": 0},
+    "teardown": {"$ref": "#/$defs/teardown"},
+    "validation": {"$ref": "#/$defs/validation"},
+    "status": {"type": "string", "enum": sorted(set(_MODE_STATUS.values()))},
+    "effects": {"$ref": "#/$defs/effects"},
+}
+
+_DIGEST_SCHEMA = {"type": "string", "pattern": r"^[0-9a-f]{64}$"}
+_DIGEST_OR_NULL_SCHEMA = {
+    "anyOf": [{"type": "null"}, {"$ref": "#/$defs/digest"}]
+}
+TASK_ACCEPT_ENVELOPE_SCHEMA["$defs"] = {
+    "digest": _DIGEST_SCHEMA,
+    "digest_or_null": _DIGEST_OR_NULL_SCHEMA,
+    "authority": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": sorted(_AUTHORITY_KEYS),
+        "properties": {
+            "acceptance_receipt_sha256": {"$ref": "#/$defs/digest_or_null"},
+            "event_id": {
+                "type": ["string", "null"],
+                "pattern": r"^EV-[A-Z][0-9]{11,}$",
+            },
+            "prior_authoritative_commit": {"type": "boolean"},
+            "sequence": {"type": ["integer", "null"], "minimum": 1},
+            "state": {
+                "type": "string",
+                "enum": ["not_established", "committed_current", "verified_prior"],
+            },
+        },
+    },
+    "effects": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": sorted(_EFFECT_KEYS),
+        "properties": {
+            key: {"type": "integer", "minimum": 0} for key in _EFFECT_KEYS
+        },
+    },
+    "identity": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": sorted(_IDENTITY_KEYS),
+        "properties": {
+            "artifact_locator_sha256": {"$ref": "#/$defs/digest_or_null"},
+            "feature_id": {
+                "type": ["string", "null"],
+                "pattern": r"^F-[0-9]{4,}$",
+            },
+            "plan_digest": {"$ref": "#/$defs/digest_or_null"},
+            "pre_accept_prefix_hwm": {
+                "type": ["integer", "null"],
+                "minimum": 0,
+            },
+            "pre_accept_prefix_sha256": {"$ref": "#/$defs/digest_or_null"},
+            "project_instance_id": {"$ref": "#/$defs/digest_or_null"},
+            "request_id": {"$ref": "#/$defs/digest_or_null"},
+            "request_locator": {"$ref": "#/$defs/digest_or_null"},
+            "task_id": {
+                "type": ["string", "null"],
+                "pattern": r"^T-[0-9]{4,}$",
+            },
+            "test_ids": {
+                "anyOf": [
+                    {"type": "null"},
+                    {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": TASK_ACCEPT_MAX_TESTS,
+                        "uniqueItems": True,
+                        "items": {
+                            "type": "string",
+                            "pattern": r"^TC-[0-9]{4,}$",
+                        },
+                    },
+                ]
+            },
+        },
+    },
+    "pending_tail": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": sorted(_PENDING_TAIL_KEYS),
+        "properties": {
+            "detail_sha256": {"$ref": "#/$defs/digest_or_null"},
+            "outbox_pending_count": {"type": "integer", "minimum": 0},
+            "render_pending": {"type": "boolean"},
+            "stage": {
+                "type": "string",
+                "enum": ["none", "projection", "render", "teardown", "tail_seal", "corrupt"],
+            },
+            "tail_marker_pending": {"type": "boolean"},
+            "teardown_receipt_pending": {"type": "boolean"},
+        },
+    },
+    "receipts": {
+        "type": "object",
+        "additionalProperties": False,
+        "required": sorted(_RECEIPT_KEYS),
+        "properties": {
+            "acceptance_receipt_status": {
+                "enum": ["not_started", "published", "prior_verified", "corrupt"]
+            },
+            "directory_fixture_sha256": {"$ref": "#/$defs/digest_or_null"},
+            "generation_directory_status": {
+                "enum": ["not_started", "partial", "published", "prior_verified", "recovered", "corrupt"]
+            },
+            "projection_status": {
+                "enum": ["not_started", "pending", "delivered", "prior_delivered", "failed", "unknown"]
+            },
+            "record_fixture_sha256": {"$ref": "#/$defs/digest_or_null"},
+            "render_status": {
+                "enum": ["not_started", "pending", "current", "prior_current", "disabled", "failed", "unknown"]
+            },
+            "request_binding_status": {
+                "enum": ["not_started", "published", "prior_verified", "corrupt"]
+            },
+            "reservation_index_status": {
+                "enum": ["not_started", "published", "prior_verified", "corrupt"]
+            },
+            "sealed_head_frame_sha256": {"$ref": "#/$defs/digest_or_null"},
+            "sqlite_commit_status": {
+                "enum": ["not_started", "committed", "prior_committed", "unknown"]
+            },
+            "tail_marker_frame_sha256": {"$ref": "#/$defs/digest_or_null"},
+            "tail_status": {
+                "enum": ["not_started", "pending", "complete", "prior_complete", "corrupt", "unknown"]
+            },
+            "teardown_receipt_status": {
+                "enum": ["not_started", "pending", "published", "prior_verified", "corrupt", "unknown"]
+            },
+        },
+    },
     "teardown": {
         "type": "object",
         "additionalProperties": False,
         "required": sorted(_TEARDOWN_KEYS),
-        "properties": {key: {} for key in _TEARDOWN_KEYS},
+        "properties": {
+            "lock_release_attempted": {"type": "boolean"},
+            "lock_released": {"type": ["boolean", "null"]},
+            "raw_close_attempted": {"type": "boolean"},
+            "raw_close_confirmed": {"type": ["boolean", "null"]},
+            "registry_invalidated": {"type": ["boolean", "null"]},
+            "registry_invalidation_attempted": {"type": "boolean"},
+            "rollback_attempted": {"type": "boolean"},
+            "rollback_confirmed": {"type": ["boolean", "null"]},
+            "status": {
+                "enum": ["not_started", "complete", "incomplete", "outcome_unknown"]
+            },
+        },
     },
     "validation": {
         "type": "object",
         "additionalProperties": False,
         "required": sorted(_VALIDATION_KEYS),
-        "properties": {key: {} for key in _VALIDATION_KEYS},
-    },
-    "status": {"enum": sorted(set(_MODE_STATUS.values()))},
-    "effects": {
-        "type": "object",
-        "additionalProperties": False,
-        "required": sorted(_EFFECT_KEYS),
-        "properties": {key: {"type": "integer", "minimum": 0} for key in _EFFECT_KEYS},
+        "properties": {
+            "current_proof_revalidated": {"type": "boolean"},
+            "current_proof_status": {
+                "enum": ["not_evaluated", "healthy", "unhealthy", "unknown"]
+            },
+            "evaluated_hwm": {"type": ["integer", "null"], "minimum": 0},
+            "finding_count": {"type": ["integer", "null"], "minimum": 0},
+            "findings_sha256": {"$ref": "#/$defs/digest_or_null"},
+            "origin": {
+                "enum": [None, "fresh_commit_gate", "replay_live_revalidation", "tail_recovery_live_revalidation"]
+            },
+            "policy_registry_sha256": {"$ref": "#/$defs/digest_or_null"},
+            "status": {"enum": ["not_evaluated", "passed", "blocked", "error"]},
+            "terminal_classification": {
+                "enum": [None, "ready", "ready_with_risk", "blocked"]
+            },
+        },
     },
 }
 
@@ -332,6 +497,92 @@ class _LedgerState:
     tail_recovery_generation: int
 
 
+@dataclass
+class _RetainedProofFile:
+    paths: ProjectPaths
+    relative_path: str
+    descriptors: tuple[int, ...]
+    root_fd: int
+    parent_fd: int
+    leaf_fd: int
+    leaf_name: str
+    root_identity: tuple[int, int, int]
+    directory_links: tuple[tuple[int, str, tuple[int, int, int]], ...]
+    leaf_identity: tuple[int, int, int, int, int, int]
+    content: bytes
+    _closed: bool = False
+
+    def verify(self) -> None:
+        if self._closed:
+            raise _Abort(
+                "task_accept_current_proof_invalid",
+                "The retained current acceptance proof descriptor is closed.",
+                EXIT_DATA_ERROR,
+                "final_reseal",
+            )
+        try:
+            held_root = os.fstat(self.root_fd)
+            current_root = os.stat(self.paths.root, follow_symlinks=False)
+            held_leaf = os.fstat(self.leaf_fd)
+            current_leaf = os.stat(
+                self.leaf_name,
+                dir_fd=self.parent_fd,
+                follow_symlinks=False,
+            )
+            current_content = _read_retained_descriptor(self.leaf_fd)
+            directory_matches = all(
+                _proof_directory_identity(
+                    os.stat(component, dir_fd=parent_fd, follow_symlinks=False)
+                )
+                == expected
+                for parent_fd, component, expected in self.directory_links
+            )
+        except OSError as exc:
+            raise _Abort(
+                "task_accept_current_proof_invalid",
+                "The retained current acceptance proof could not be resealed.",
+                EXIT_DATA_ERROR,
+                "final_reseal",
+            ) from exc
+        if (
+            _proof_directory_identity(held_root) != self.root_identity
+            or _proof_directory_identity(current_root) != self.root_identity
+            or _proof_file_identity(held_leaf) != self.leaf_identity
+            or _proof_file_identity(current_leaf) != self.leaf_identity
+            or current_content != self.content
+            or not directory_matches
+        ):
+            raise _Abort(
+                "task_accept_current_proof_invalid",
+                "The retained current acceptance proof changed before SQLite commit.",
+                EXIT_DATA_ERROR,
+                "final_reseal",
+            )
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        for descriptor in reversed(self.descriptors):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+
+
+@dataclass
+class _RetainedProofSeal:
+    files: tuple[_RetainedProofFile, ...]
+
+    def verify(self) -> None:
+        for retained in self.files:
+            retained.verify()
+
+    def close(self) -> None:
+        for retained in self.files:
+            retained.close()
+
+
 def canonical_task_accept_json(payload: dict[str, Any]) -> str:
     try:
         validate_task_accept_envelope(payload)
@@ -345,6 +596,12 @@ def validate_task_accept_envelope(payload: dict[str, Any]) -> None:
     required = set(TASK_ACCEPT_ENVELOPE_SCHEMA["required"])
     if not isinstance(payload, dict) or set(payload) != required:
         raise ValueError("task accept envelope top-level schema mismatch")
+    _validate_task_accept_schema_value(
+        payload,
+        TASK_ACCEPT_ENVELOPE_SCHEMA,
+        root=TASK_ACCEPT_ENVELOPE_SCHEMA,
+        path="$",
+    )
     if payload["schema_version"] != TASK_ACCEPT_CONTRACT_VERSION:
         raise ValueError("task accept envelope version mismatch")
     boolean_fields = (
@@ -371,19 +628,6 @@ def validate_task_accept_envelope(payload: dict[str, Any]) -> None:
         raise ValueError("task accept envelope boolean contract mismatch")
     if _MODE_STATUS.get(payload["mode"]) != payload["status"]:
         raise ValueError("task accept envelope mode/status mismatch")
-    nested_contracts = (
-        ("authority", _AUTHORITY_KEYS),
-        ("identity", _IDENTITY_KEYS),
-        ("pending_tail", _PENDING_TAIL_KEYS),
-        ("receipts", _RECEIPT_KEYS),
-        ("teardown", _TEARDOWN_KEYS),
-        ("validation", _VALIDATION_KEYS),
-    )
-    if any(
-        not isinstance(payload[name], dict) or set(payload[name]) != keys
-        for name, keys in nested_contracts
-    ):
-        raise ValueError("task accept envelope nested schema mismatch")
     if set(payload["effects"]) != _EFFECT_KEYS or any(
         type(value) is not int or value < 0 for value in payload["effects"].values()
     ):
@@ -445,6 +689,339 @@ def validate_task_accept_envelope(payload: dict[str, Any]) -> None:
         or effects["markers_published"] > 0
     ):
         raise ValueError("task accept changed accounting mismatch")
+    _validate_task_accept_semantics(payload)
+
+
+def _validate_task_accept_schema_value(
+    value: Any,
+    schema: dict[str, Any],
+    *,
+    root: dict[str, Any],
+    path: str,
+) -> None:
+    reference = schema.get("$ref")
+    if reference is not None:
+        prefix = "#/$defs/"
+        if not isinstance(reference, str) or not reference.startswith(prefix):
+            raise ValueError(f"unsupported Task Accept schema reference at {path}")
+        target = root.get("$defs", {}).get(reference.removeprefix(prefix))
+        if not isinstance(target, dict):
+            raise ValueError(f"missing Task Accept schema reference at {path}")
+        _validate_task_accept_schema_value(value, target, root=root, path=path)
+        return
+    alternatives = schema.get("anyOf")
+    if alternatives is not None:
+        if not isinstance(alternatives, list):
+            raise ValueError(f"invalid Task Accept anyOf schema at {path}")
+        for alternative in alternatives:
+            try:
+                _validate_task_accept_schema_value(
+                    value,
+                    alternative,
+                    root=root,
+                    path=path,
+                )
+            except ValueError:
+                continue
+            return
+        raise ValueError(f"Task Accept schema anyOf mismatch at {path}")
+    expected_type = schema.get("type")
+    if expected_type is not None:
+        allowed = [expected_type] if isinstance(expected_type, str) else expected_type
+        if not isinstance(allowed, list) or not any(
+            _task_accept_json_type_matches(value, item) for item in allowed
+        ):
+            raise ValueError(f"Task Accept schema type mismatch at {path}")
+    if "const" in schema and value != schema["const"]:
+        raise ValueError(f"Task Accept schema const mismatch at {path}")
+    if "enum" in schema and value not in schema["enum"]:
+        raise ValueError(f"Task Accept schema enum mismatch at {path}")
+    if isinstance(value, dict):
+        required = schema.get("required", [])
+        properties = schema.get("properties", {})
+        if not isinstance(required, list) or not isinstance(properties, dict):
+            raise ValueError(f"invalid Task Accept object schema at {path}")
+        missing = set(required) - set(value)
+        if missing:
+            raise ValueError(f"Task Accept schema required mismatch at {path}")
+        if schema.get("additionalProperties") is False and set(value) - set(properties):
+            raise ValueError(f"Task Accept schema additional property at {path}")
+        for key, item in value.items():
+            child = properties.get(key)
+            if isinstance(child, dict):
+                _validate_task_accept_schema_value(
+                    item,
+                    child,
+                    root=root,
+                    path=f"{path}.{key}",
+                )
+    if isinstance(value, list):
+        minimum = schema.get("minItems")
+        maximum = schema.get("maxItems")
+        if isinstance(minimum, int) and len(value) < minimum:
+            raise ValueError(f"Task Accept schema array too short at {path}")
+        if isinstance(maximum, int) and len(value) > maximum:
+            raise ValueError(f"Task Accept schema array too long at {path}")
+        if schema.get("uniqueItems") and len({_canonical_bytes(item) for item in value}) != len(value):
+            raise ValueError(f"Task Accept schema array duplicates at {path}")
+        item_schema = schema.get("items")
+        if isinstance(item_schema, dict):
+            for index, item in enumerate(value):
+                _validate_task_accept_schema_value(
+                    item,
+                    item_schema,
+                    root=root,
+                    path=f"{path}[{index}]",
+                )
+    if isinstance(value, str):
+        minimum_length = schema.get("minLength")
+        maximum_length = schema.get("maxLength")
+        if isinstance(minimum_length, int) and len(value) < minimum_length:
+            raise ValueError(f"Task Accept schema string too short at {path}")
+        if isinstance(maximum_length, int) and len(value) > maximum_length:
+            raise ValueError(f"Task Accept schema string too long at {path}")
+        pattern = schema.get("pattern")
+        if isinstance(pattern, str) and re.search(pattern, value) is None:
+            raise ValueError(f"Task Accept schema pattern mismatch at {path}")
+    if type(value) is int:
+        minimum = schema.get("minimum")
+        if isinstance(minimum, int) and value < minimum:
+            raise ValueError(f"Task Accept schema minimum mismatch at {path}")
+
+
+def _task_accept_json_type_matches(value: Any, expected: Any) -> bool:
+    return {
+        "array": isinstance(value, list),
+        "boolean": type(value) is bool,
+        "integer": type(value) is int,
+        "null": value is None,
+        "object": isinstance(value, dict),
+        "string": isinstance(value, str),
+    }.get(expected, False)
+
+
+def _validate_task_accept_semantics(payload: dict[str, Any]) -> None:
+    authority = payload["authority"]
+    identity = payload["identity"]
+    pending = payload["pending_tail"]
+    teardown = payload["teardown"]
+    validation = payload["validation"]
+    mode = payload["mode"]
+    phase = payload["phase"]
+
+    established = authority["state"] != "not_established"
+    authority_values = (
+        authority["acceptance_receipt_sha256"],
+        authority["event_id"],
+        authority["sequence"],
+    )
+    if established != all(value is not None for value in authority_values):
+        raise ValueError("task accept authority establishment mismatch")
+    if authority["state"] == "not_established" and any(
+        value is not None for value in authority_values
+    ):
+        raise ValueError("task accept unestablished authority is populated")
+    expected_prior = authority["state"] == "verified_prior"
+    if (
+        authority["prior_authoritative_commit"] != payload["prior_authoritative_commit"]
+        or authority["prior_authoritative_commit"] != expected_prior
+        or payload["prior_acceptance_verified"] != expected_prior
+    ):
+        raise ValueError("task accept prior-authority mismatch")
+
+    identity_values = list(identity.values())
+    identity_full = all(value is not None for value in identity_values)
+    identity_empty = all(value is None for value in identity_values)
+    if phase == "phase0" and not identity_empty:
+        raise ValueError("task accept phase0 identity must be empty")
+    if phase in {"precommit", "business_commit", "projection", "render", "teardown", "tail_recovery", "complete"} and not identity_full:
+        raise ValueError("task accept phase requires a complete identity")
+    if established and not identity_full:
+        raise ValueError("task accept authority requires a complete identity")
+    if phase == "phase0" and (
+        payload["business_attempt_generation"] is not None
+        or payload["tail_recovery_generation"] is not None
+        or any(payload["effects"].values())
+        or payload["receipts"] != _empty_receipts()
+        or teardown["status"] != "not_started"
+    ):
+        raise ValueError("task accept phase0 authority is not empty")
+    if phase == "identity" and (established or validation["status"] != "not_evaluated"):
+        raise ValueError("task accept identity phase established authority early")
+    if phase == "precommit" and identity_full and (
+        payload["business_attempt_generation"] is None
+        or payload["tail_recovery_generation"] is None
+        or established
+    ):
+        raise ValueError("task accept precommit authority mismatch")
+
+    if pending["stage"] == "none":
+        if (
+            pending["detail_sha256"] is not None
+            or pending["outbox_pending_count"] != 0
+            or pending["render_pending"]
+            or pending["tail_marker_pending"]
+            or pending["teardown_receipt_pending"]
+        ):
+            raise ValueError("task accept empty pending-tail mismatch")
+    elif pending["detail_sha256"] is None:
+        raise ValueError("task accept pending-tail detail is missing")
+
+    if validation["status"] == "not_evaluated":
+        if (
+            validation["current_proof_revalidated"]
+            or validation["current_proof_status"] != "not_evaluated"
+            or validation["evaluated_hwm"] is not None
+            or validation["finding_count"] is not None
+            or validation["findings_sha256"] is not None
+            or validation["origin"] is not None
+            or validation["policy_registry_sha256"] is not None
+            or validation["terminal_classification"] is not None
+        ):
+            raise ValueError("task accept unevaluated validation mismatch")
+    else:
+        if (
+            validation["evaluated_hwm"] is None
+            or validation["finding_count"] is None
+            or validation["findings_sha256"] is None
+            or validation["origin"] is None
+            or validation["policy_registry_sha256"] is None
+            or validation["terminal_classification"] is None
+        ):
+            raise ValueError("task accept evaluated validation is incomplete")
+        if validation["status"] == "passed" and (
+            not validation["current_proof_revalidated"]
+            or validation["current_proof_status"] != "healthy"
+            or validation["terminal_classification"] not in {"ready", "ready_with_risk"}
+        ):
+            raise ValueError("task accept passed validation mismatch")
+        if validation["status"] == "blocked" and validation["terminal_classification"] != "blocked":
+            raise ValueError("task accept blocked validation mismatch")
+
+    if teardown["status"] == "not_started":
+        if any(
+            teardown[key]
+            for key in (
+                "lock_release_attempted",
+                "raw_close_attempted",
+                "registry_invalidation_attempted",
+                "rollback_attempted",
+            )
+        ) or any(
+            teardown[key] is not None
+            for key in (
+                "lock_released",
+                "raw_close_confirmed",
+                "registry_invalidated",
+                "rollback_confirmed",
+            )
+        ):
+            raise ValueError("task accept unstarted teardown mismatch")
+    if teardown["status"] == "complete":
+        if not all(
+            teardown[key] is True
+            for key in (
+                "lock_release_attempted",
+                "lock_released",
+                "raw_close_attempted",
+                "raw_close_confirmed",
+                "registry_invalidation_attempted",
+                "registry_invalidated",
+            )
+        ):
+            raise ValueError("task accept completed teardown is unconfirmed")
+        if teardown["rollback_attempted"] != (teardown["rollback_confirmed"] is True):
+            raise ValueError("task accept rollback confirmation mismatch")
+
+    if mode == "precommit_error":
+        if (
+            payload["exit_code"] not in {1, 2, 3, 4}
+            or payload["mutation_committed"]
+            or payload["business_changed"]
+            or payload["tail_recovery_changed"]
+            or established
+        ):
+            raise ValueError("task accept precommit mode mismatch")
+    elif mode == "fresh_success":
+        if (
+            phase != "complete"
+            or not payload["mutation_committed"]
+            or expected_prior
+            or authority["state"] != "committed_current"
+            or payload["business_attempt_generation"] != 0
+            or payload["tail_recovery_generation"] != 0
+            or not payload["business_changed"]
+            or payload["tail_recovery_changed"]
+            or validation["status"] != "passed"
+            or payload["receipts"]["tail_status"] != "complete"
+            or payload["receipts"]["generation_directory_status"] != "published"
+        ):
+            raise ValueError("task accept fresh-success mode mismatch")
+    elif mode == "exact_replay_success":
+        if (
+            phase != "complete"
+            or payload["mutation_committed"]
+            or not expected_prior
+            or any(payload["effects"].values())
+            or payload["business_attempt_generation"] != 0
+            or payload["tail_recovery_generation"] is None
+            or payload["business_changed"]
+            or payload["tail_recovery_changed"]
+            or validation["status"] != "passed"
+            or payload["receipts"]["tail_status"] != "prior_complete"
+        ):
+            raise ValueError("task accept replay mode mismatch")
+    elif mode == "accepted_authority_tail_recovery_success":
+        if (
+            phase != "complete"
+            or payload["mutation_committed"]
+            or not expected_prior
+            or payload["business_attempt_generation"] != 0
+            or payload["tail_recovery_generation"] is None
+            or payload["tail_recovery_generation"] < 1
+            or payload["business_changed"]
+            or not payload["tail_recovery_changed"]
+            or validation["status"] != "passed"
+            or payload["receipts"]["generation_directory_status"] != "recovered"
+            or payload["receipts"]["tail_status"] != "complete"
+        ):
+            raise ValueError("task accept recovery-success mode mismatch")
+    elif mode == "accepted_authority_tail_recovery_error":
+        if (
+            payload["exit_code"] != 6
+            or payload["mutation_committed"]
+            or not expected_prior
+            or payload["business_changed"]
+        ):
+            raise ValueError("task accept recovery-error mode mismatch")
+    elif mode == "stale_precommit_generation_advanced":
+        if (
+            phase != "precommit"
+            or payload["exit_code"] != 6
+            or payload["mutation_committed"]
+            or not payload["safe_to_retry_original"]
+            or payload["safe_retry_action"] != "repeat_exact_task_accept_request"
+        ):
+            raise ValueError("task accept stale-generation mode mismatch")
+    elif mode == "fresh_postcommit_tail_error" and (
+        payload["exit_code"] != 6
+        or expected_prior
+        or payload["tail_recovery_changed"]
+        or (
+            payload["error_code"] != "task_accept_commit_outcome_unknown"
+            and (
+                not established
+                or authority["state"] != "committed_current"
+                or not payload["business_changed"]
+            )
+        )
+    ):
+        raise ValueError("task accept fresh-tail-error mode mismatch")
+
+    if payload["safe_to_retry_original"] != (
+        mode == "stale_precommit_generation_advanced"
+    ):
+        raise ValueError("task accept original-retry authority mismatch")
 
 
 def task_accept_human_line(payload: dict[str, Any]) -> str:
@@ -813,35 +1390,11 @@ def _accept_locked(
             test_ids=test_ids,
             include_passing_event=str(graph["feature"]["status"]) != "passing",
         )
-        structural_plan_sha256 = _sha256_canonical(
-            {
-                "contract_version": "task-accept-structural-plan/v1",
-                "events": [
-                    {
-                        key: item[key]
-                        for key in (
-                            "event_id",
-                            "sequence",
-                            "event_type",
-                            "entity_type",
-                            "entity_id",
-                        )
-                    }
-                    for item in event_plan
-                ],
-                "outbox": [
-                    {
-                        "event_id": item["event_id"],
-                        "idempotency_key": f"jsonl:{item['event_id']}",
-                        "ordinal": item["ordinal"],
-                        "outbox_id": item["outbox_id"],
-                        "sink": "jsonl",
-                    }
-                    for item in event_plan
-                ],
-                "pre_accept_prefix_hwm": int(prefix["hwm"]["sequence"]),
-            }
+        structural_plan = _m2_structural_plan(
+            event_plan,
+            pre_accept_prefix_hwm=int(prefix["hwm"]["sequence"]),
         )
+        structural_plan_sha256 = _sha256_canonical(structural_plan)
         identity["plan_digest"] = structural_plan_sha256
         identity["pre_accept_prefix_hwm"] = int(prefix["hwm"]["sequence"])
         identity["pre_accept_prefix_sha256"] = str(prefix["sha256"])
@@ -1107,12 +1660,18 @@ def _accept_locked(
             identity=identity,
             request=request,
             prefix=prefix,
+            structural_plan=structural_plan,
             structural_plan_sha256=structural_plan_sha256,
             event_plan=event_plan,
             evidence_id=evidence_id,
             receipt=receipt,
             manifest_path=manifest_path,
             member=member,
+            command=command,
+            summary=summary,
+            conn=conn,
+            validation_result=validation_result.to_dict(),
+            readiness=readiness,
         )
         fs_effects["markers_published"] += m2_effects["markers_published"]
         _verify_final_rows_and_events(
@@ -1123,23 +1682,33 @@ def _accept_locked(
             evidence_id=evidence_id,
             event_plan=event_plan,
         )
-        final_proof_identity = _current_proof_identity(
-            paths,
-            conn,
-            identity=identity,
-            evidence_id=evidence_id,
-            evidence_event_id=str(event_plan[0]["event_id"]),
-            manifest_path=manifest_path,
-            acceptance_event_id=authority_event_id,
-            acceptance_event_sequence=int(task_item["sequence"]),
-        )
+        retained_proof_files: list[_RetainedProofFile] = []
+        try:
+            final_proof_identity = _current_proof_identity(
+                paths,
+                conn,
+                identity=identity,
+                evidence_id=evidence_id,
+                evidence_event_id=str(event_plan[0]["event_id"]),
+                manifest_path=manifest_path,
+                acceptance_event_id=authority_event_id,
+                acceptance_event_sequence=int(task_item["sequence"]),
+                retained_files=retained_proof_files,
+            )
+        except BaseException:
+            for retained in retained_proof_files:
+                retained.close()
+            raise
         if final_proof_identity != receipt["current_proof_identity"]:
+            for retained in retained_proof_files:
+                retained.close()
             raise _Abort(
                 "task_accept_current_proof_invalid",
                 "The retained current acceptance proof changed before SQLite commit.",
                 EXIT_DATA_ERROR,
                 "final_reseal",
             )
+        proof_seal = _RetainedProofSeal(tuple(retained_proof_files))
         envelope.update(
             {
                 "authority": {
@@ -1175,10 +1744,13 @@ def _accept_locked(
                 ),
             }
         )
-        crash_if_requested("task_accept_before_sqlite_commit")
+        conn._precommit_guard = proof_seal.verify
         try:
+            crash_if_requested("task_accept_before_sqlite_commit")
             conn.commit()
             committed = True
+        except _Abort:
+            raise
         except ProjectionPendingError as exc:
             committed = bool(exc.details.get("mutation_committed"))
             if committed:
@@ -1204,6 +1776,9 @@ def _accept_locked(
                 evidence_id=evidence_id,
                 generation=generation.number,
             )
+        finally:
+            conn._precommit_guard = None
+            proof_seal.close()
         projection = getattr(conn, "projection_result", None)
         envelope["effects"].update(
             {
@@ -1518,7 +2093,7 @@ def _request_identity(
 
 def _authority_event_id(request: dict[str, Any]) -> str:
     raw = b"pcl:task-accept-anchor:v1\0" + _canonical_bytes(request)
-    return "EV-" + hashlib.sha256(raw).hexdigest().upper()
+    return "EV-A" + str(int.from_bytes(hashlib.sha256(raw).digest(), "big"))
 
 
 def _prepare_durable_attempt(
@@ -1587,8 +2162,9 @@ def _prepare_durable_attempt(
         "project_instance_id": identity["project_instance_id"],
         "evidence_id": evidence_id,
         "pre_accept_prefix": {"hwm": prefix["hwm"], "sha256": prefix["sha256"]},
+        "project_root": paths.root,
         "paths": {
-            **{key: value for key, value in roots.items() if key != "root"},
+            **roots,
             **generation_paths,
         },
         "must_advance": must_advance,
@@ -1966,20 +2542,165 @@ def _m2_event_plan_from_authority(
     ]
 
 
+def _m2_target_snapshot(
+    conn: sqlite3.Connection,
+    *,
+    target_type: str,
+    target_id: str,
+) -> dict[str, Any]:
+    table_by_type = {
+        "feature": "features",
+        "task": "tasks",
+        "test_case": "test_cases",
+    }
+    table = table_by_type[target_type]
+    row = conn.execute(
+        f"SELECT * FROM {table} WHERE id = ?",  # noqa: S608 - fixed catalog above
+        (target_id,),
+    ).fetchone()
+    if row is None:
+        raise _Abort(
+            "task_accept_request_ledger_corrupt",
+            "A durable Task Accept target snapshot is missing.",
+            EXIT_DATA_ERROR,
+            "durable_authority",
+        )
+    row_postimage = {
+        "id": str(row["id"]),
+        "status": str(row["status"]),
+        "updated_at": str(row["updated_at"]),
+    }
+    if target_type == "test_case":
+        row_postimage["evidence_id"] = row["evidence_id"]
+    event = conn.execute(
+        """
+        SELECT id, sequence, event_type, payload_json
+        FROM events
+        WHERE entity_type = ? AND entity_id = ?
+        ORDER BY sequence DESC LIMIT 1
+        """,
+        (target_type, target_id),
+    ).fetchone()
+    if event is None:
+        raise _Abort(
+            "task_accept_request_ledger_corrupt",
+            "A durable Task Accept target event head is missing.",
+            EXIT_DATA_ERROR,
+            "durable_authority",
+        )
+    try:
+        event_payload = json.loads(str(event["payload_json"]))
+    except json.JSONDecodeError as exc:
+        raise _Abort(
+            "task_accept_request_ledger_corrupt",
+            "A durable Task Accept target event payload is corrupt.",
+            EXIT_DATA_ERROR,
+            "durable_authority",
+        ) from exc
+    event_head = {
+        "event_id": str(event["id"]),
+        "event_type": str(event["event_type"]),
+        "payload_sha256": _sha256_canonical(event_payload),
+        "sequence": int(event["sequence"]),
+    }
+    link_role = "supporting" if target_type == "task" else "acceptance"
+    links = [
+        {
+            "evidence_id": str(link["evidence_id"]),
+            "link_role": str(link["link_role"]),
+            "target_id": str(link["target_id"]),
+            "target_type": str(link["target_type"]),
+        }
+        for link in conn.execute(
+            """
+            SELECT evidence_id, link_role, target_id, target_type
+            FROM evidence_links
+            WHERE target_type = ? AND target_id = ? AND link_role = ?
+            ORDER BY evidence_id, link_role, target_type, target_id
+            """,
+            (target_type, target_id, link_role),
+        ).fetchall()
+    ]
+    link_key = f"full_{link_role}_link_set"
+    return {
+        "event_head": event_head,
+        "event_head_sha256": _sha256_canonical(event_head),
+        link_key: links,
+        f"{link_key}_sha256": _sha256_canonical(links),
+        "row_postimage": row_postimage,
+        "row_sha256": _sha256_canonical(row_postimage),
+    }
+
+
+def _m2_receipt_target(snapshot: dict[str, Any], *, target_id: str) -> dict[str, Any]:
+    link_digest_key = next(
+        key
+        for key in snapshot
+        if key.startswith("full_") and key.endswith("_link_set_sha256")
+    )
+    head = snapshot["event_head"]
+    return {
+        "event_head_id": head["event_id"],
+        "event_head_payload_sha256": head["payload_sha256"],
+        "event_head_sequence": head["sequence"],
+        link_digest_key: snapshot[link_digest_key],
+        "id": target_id,
+        "row_sha256": snapshot["row_sha256"],
+    }
+
+
+def _m2_structural_plan(
+    event_plan: list[dict[str, Any]],
+    *,
+    pre_accept_prefix_hwm: int,
+) -> dict[str, Any]:
+    return {
+        "contract_version": "task-accept-structural-plan/v1",
+        "events": [
+            {
+                key: item[key]
+                for key in (
+                    "event_id",
+                    "sequence",
+                    "event_type",
+                    "entity_type",
+                    "entity_id",
+                )
+            }
+            for item in event_plan
+        ],
+        "outbox": [
+            {
+                "event_id": item["event_id"],
+                "idempotency_key": f"jsonl:{item['event_id']}",
+                "ordinal": item["ordinal"],
+                "outbox_id": item["outbox_id"],
+                "sink": "jsonl",
+            }
+            for item in event_plan
+        ],
+        "pre_accept_prefix_hwm": pre_accept_prefix_hwm,
+    }
+
+
 def _m2_build_records(
     *,
+    conn: sqlite3.Connection,
     generation: _Generation,
     identity: dict[str, Any],
     request: dict[str, Any],
+    structural_plan: dict[str, Any],
     event_plan: list[dict[str, Any]],
     evidence_id: str,
     receipt: dict[str, Any],
     manifest_path: str,
     member: dict[str, Any],
+    command: str,
+    summary: str,
+    validation_result: dict[str, Any],
+    readiness: dict[str, Any],
 ) -> dict[str, Any]:
     common = _m2_common(identity=identity, attempt_generation=generation.number)
-    proof = receipt["current_proof_identity"]
-    receipt_sha256 = _sha256_canonical(receipt)
     nonce = hashlib.sha256(
         f"{identity['request_id']}\0{generation.number}\0{identity['plan_digest']}".encode()
     ).hexdigest()
@@ -2046,39 +2767,210 @@ def _m2_build_records(
     )
     id_records.append(reservation_manifest)
     authority_event = event_plan[-1]
+    begin = _m2_record(
+        "begin",
+        {
+            "contract_version": "task-accept-begin-marker/v1",
+            "planned_authority_event_id": authority_event["event_id"],
+            "planned_authority_event_sequence": authority_event["sequence"],
+            "reservation_manifest_frame_sha256": reservation_manifest["frame_sha256"],
+            "state": "prepared",
+        },
+        common=common,
+    )
+    copy_manifest = {
+        "artifact_locator_sha256": identity["artifact_locator_sha256"],
+        "contract_version": "task-accept-copy-manifest/v1",
+        "copied_path": member["stored_path"],
+        "evidence_id": evidence_id,
+        "evidence_type": "adhoc_artifact",
+        "member_sha256": member["sha256"],
+        "member_size": member["size_bytes"],
+        "request_id": identity["request_id"],
+        "request_locator": identity["request_locator"],
+    }
+    feature_snapshot = _m2_target_snapshot(
+        conn, target_type="feature", target_id=str(identity["feature_id"])
+    )
+    task_snapshot = _m2_target_snapshot(
+        conn, target_type="task", target_id=str(identity["task_id"])
+    )
+    test_snapshots = {
+        test_id: _m2_target_snapshot(conn, target_type="test_case", target_id=test_id)
+        for test_id in identity["test_ids"]
+    }
+    findings = validation_result.get("findings")
+    if not isinstance(findings, list):
+        findings = []
+    terminal_validation = {
+        "candidate_target_status": task_snapshot["row_postimage"]["status"],
+        "candidate_task_id": identity["task_id"],
+        "contract_version": "terminal-validation-result/v1",
+        "current_proof_healthy": True,
+        "finding_count": len(findings),
+        "findings_sha256": _sha256_canonical(findings),
+        "pre_validation_hwm": int(authority_event["sequence"]) - 1,
+        "terminal_allowed": bool(readiness.get("terminal_allowed")),
+        "terminal_classification": str(readiness.get("terminal_classification") or "ready"),
+    }
+    terminal_validation_sha256 = _sha256_canonical(terminal_validation)
+    canonical_acceptance_receipt = {
+        "authority_event_id": authority_event["event_id"],
+        "authority_event_sequence": authority_event["sequence"],
+        "base_evidence_id": evidence_id,
+        "base_evidence_type": "adhoc_artifact",
+        "contract_version": "task-acceptance-receipt/v1",
+        "copy_manifest_sha256": _sha256_canonical(copy_manifest),
+        "feature": _m2_receipt_target(
+            feature_snapshot, target_id=str(identity["feature_id"])
+        ),
+        "plan_digest": identity["plan_digest"],
+        "pre_accept_prefix_hwm": identity["pre_accept_prefix_hwm"],
+        "pre_accept_prefix_sha256": identity["pre_accept_prefix_sha256"],
+        "pre_validation_hwm": int(authority_event["sequence"]) - 1,
+        "project_instance_id": identity["project_instance_id"],
+        "request_id": identity["request_id"],
+        "request_locator": identity["request_locator"],
+        "source_sha256": identity["artifact"]["sha256"],
+        "source_size": identity["artifact"]["size_bytes"],
+        "task_id": identity["task_id"],
+        "tests": [
+            _m2_receipt_target(test_snapshots[test_id], target_id=test_id)
+            for test_id in identity["test_ids"]
+        ],
+        "validation_result_sha256": terminal_validation_sha256,
+    }
+    canonical_receipt_sha256 = _sha256_canonical(canonical_acceptance_receipt)
+    table_postimage = {
+        "evidence": {
+            "id": evidence_id,
+            "manifest_path": manifest_path,
+            "sha256": receipt["current_proof_identity"]["manifest_sha256"],
+        },
+        "feature": feature_snapshot["row_postimage"],
+        "task": task_snapshot["row_postimage"],
+        "tests": [test_snapshots[test_id]["row_postimage"] for test_id in identity["test_ids"]],
+    }
+    sqlite_commit_receipt = {
+        "authority_event_id": authority_event["event_id"],
+        "authority_event_sequence": authority_event["sequence"],
+        "contract_version": "task-accept-sqlite-commit-receipt/v1",
+        "db_event_hwm": authority_event["sequence"],
+        "outbox_high_ordinal": len(event_plan),
+        "plan_digest": identity["plan_digest"],
+        "request_id": identity["request_id"],
+        "request_locator": identity["request_locator"],
+        "table_postimage_digest": _sha256_canonical(table_postimage),
+    }
+    commit_record = _m2_record(
+        "sqlite-commit",
+        {
+            "begin_marker_frame_sha256": begin["frame_sha256"],
+            "contract_version": "task-accept-sqlite-commit-marker/v1",
+            "sqlite_commit_receipt": sqlite_commit_receipt,
+            "sqlite_commit_receipt_sha256": _sha256_canonical(sqlite_commit_receipt),
+            "state": "committed",
+        },
+        common=common,
+    )
+    authority_payload = json.loads(
+        str(
+            conn.execute(
+                "SELECT payload_json FROM events WHERE id = ?",
+                (authority_event["event_id"],),
+            ).fetchone()[0]
+        )
+    )
+    accepted = _m2_record(
+        "accepted",
+        {
+            "acceptance_receipt": canonical_acceptance_receipt,
+            "acceptance_receipt_sha256": canonical_receipt_sha256,
+            "authority_event_payload_sha256": _sha256_canonical(authority_payload),
+            "commit_marker_frame_sha256": commit_record["frame_sha256"],
+            "contract_version": "task-accept-accepted-marker/v1",
+            "current_proof_healthy": True,
+            "feature_status": feature_snapshot["row_postimage"]["status"],
+            "state": "accepted",
+            "validation_result": terminal_validation,
+            "validation_result_sha256": terminal_validation_sha256,
+        },
+        common=common,
+    )
+    projection_receipt = {
+        "authority_event_id": authority_event["event_id"],
+        "authority_event_sequence": authority_event["sequence"],
+        "contract_version": "task-accept-projection-delivered-receipt/v1",
+        "delivered_outbox_ids": [item["outbox_id"] for item in event_plan],
+        "event_hwm": authority_event["sequence"],
+        "jsonl_common_prefix_hwm": authority_event["sequence"],
+        "plan_digest": identity["plan_digest"],
+        "request_id": identity["request_id"],
+        "request_locator": identity["request_locator"],
+    }
     projection = _m2_record(
         "projection",
         {
+            "accepted_marker_frame_sha256": accepted["frame_sha256"],
             "contract_version": "task-accept-projection-marker/v1",
-            "authority_event_id": authority_event["event_id"],
-            "authority_event_sequence": authority_event["sequence"],
-            "delivered_outbox_ids": [item["outbox_id"] for item in event_plan],
+            "projection_receipt": projection_receipt,
+            "projection_receipt_sha256": _sha256_canonical(projection_receipt),
             "state": "delivered",
         },
         common=common,
     )
-    pre_live = [
-        _m2_record(
-            "begin",
-            {
-                "contract_version": "task-accept-begin-marker/v1",
-                "planned_authority_event_id": authority_event["event_id"],
-                "planned_authority_event_sequence": authority_event["sequence"],
-                "state": "prepared",
-            },
-            common=common,
+    render_observation = {
+        "authority_event_id": authority_event["event_id"],
+        "contract_version": "task-accept-render-observation/v1",
+        "dashboard_event_hwm": authority_event["sequence"],
+        "dashboard_file_sha256": _sha256_canonical(
+            {"authority_event_id": authority_event["event_id"], "artifact": "dashboard.html"}
         ),
+        "dashboard_manifest_digest": _sha256_canonical(table_postimage),
+        "request_id": identity["request_id"],
+        "request_locator": identity["request_locator"],
+    }
+    render = _m2_record(
+        "render",
+        {
+            "contract_version": "task-accept-render-marker/v1",
+            "render_observation": render_observation,
+            "render_observation_sha256": _sha256_canonical(render_observation),
+            "state": "current",
+            "upstream_projection_frame_sha256": projection["frame_sha256"],
+        },
+        common=common,
+    )
+    teardown_receipt = {
+        "contract_version": "task-accept-connection-teardown-receipt/v1",
+        "raw_close_confirmed": True,
+        "registry_invalidated": True,
+        "request_id": identity["request_id"],
+        "request_locator": identity["request_locator"],
+    }
+    teardown = _m2_record(
+        "teardown",
+        {
+            "connection_teardown_receipt": teardown_receipt,
+            "connection_teardown_receipt_sha256": _sha256_canonical(teardown_receipt),
+            "contract_version": "task-accept-teardown-marker/v1",
+            "state": "complete",
+            "upstream_render_frame_sha256": render["frame_sha256"],
+        },
+        common=common,
+    )
+    pre_live = [
+        begin,
         _m2_record(
             "evidence-binding",
             {
                 "contract_version": "task-accept-evidence-binding/v1",
+                "copy_manifest": copy_manifest,
+                "copy_manifest_sha256": _sha256_canonical(copy_manifest),
                 "current": True,
                 "evidence_id": evidence_id,
                 "evidence_type": "adhoc_artifact",
                 "healthy": True,
-                "manifest_path": manifest_path,
-                "manifest_sha256": proof["manifest_sha256"],
-                "member_sha256": member["sha256"],
                 "superseded": False,
             },
             common=common,
@@ -2088,8 +2980,8 @@ def _m2_build_records(
             {
                 "base_evidence_id": evidence_id,
                 "contract_version": "task-accept-feature-binding/v1",
-                "current_proof_digest": proof["digest"],
                 "direct_link_role": "acceptance",
+                "snapshot": feature_snapshot,
                 "target_id": identity["feature_id"],
                 "target_type": "feature",
             },
@@ -2101,6 +2993,7 @@ def _m2_build_records(
                 "contract_version": "task-accept-plan-binding/v1",
                 "event_count": len(event_plan),
                 "outbox_count": len(event_plan),
+                "plan_canonical_bytes": len(_canonical_bytes(structural_plan)),
                 "plan_canonical_sha256": identity["plan_digest"],
             },
             common=common,
@@ -2110,33 +3003,27 @@ def _m2_build_records(
             "request-binding",
             {
                 "artifact_locator_sha256": identity["artifact_locator_sha256"],
+                "command_sha256": hashlib.sha256(command.encode("utf-8")).hexdigest(),
+                "command_utf8_bytes": len(command.encode("utf-8")),
                 "contract_version": "task-accept-request-binding/v1",
+                "request_canonical_bytes": len(_canonical_bytes(request)),
                 "request_canonical_sha256": identity["request_id"],
-                "request_sha256": _sha256_canonical(request),
                 "source_sha256": identity["artifact"]["sha256"],
                 "source_size": identity["artifact"]["size_bytes"],
+                "summary_sha256": hashlib.sha256(summary.encode("utf-8")).hexdigest(),
+                "summary_utf8_bytes": len(summary.encode("utf-8")),
             },
             common=common,
         ),
-        _m2_record(
-            "sqlite-commit",
-            {
-                "contract_version": "task-accept-sqlite-commit-marker/v1",
-                "authority_event_id": authority_event["event_id"],
-                "authority_event_sequence": authority_event["sequence"],
-                "acceptance_receipt_sha256": receipt_sha256,
-                "state": "commit_planned",
-            },
-            common=common,
-        ),
+        commit_record,
         _m2_record(
             "task-binding",
             {
-                "acceptance_receipt_sha256": receipt_sha256,
+                "acceptance_receipt_sha256": canonical_receipt_sha256,
                 "base_evidence_id": evidence_id,
                 "contract_version": "task-accept-task-binding/v1",
-                "current_proof_digest": proof["digest"],
                 "direct_link_role": "supporting",
+                "snapshot": task_snapshot,
                 "target_id": identity["task_id"],
                 "target_type": "task",
             },
@@ -2149,8 +3036,8 @@ def _m2_build_records(
             {
                 "base_evidence_id": evidence_id,
                 "contract_version": "task-accept-test-binding/v1",
-                "current_proof_digest": proof["digest"],
                 "direct_link_role": "acceptance",
+                "snapshot": test_snapshots[test_id],
                 "target_id": test_id,
                 "target_type": "test_case",
             },
@@ -2158,41 +3045,6 @@ def _m2_build_records(
         )
         for test_id in identity["test_ids"]
     )
-    accepted = _m2_record(
-        "accepted",
-        {
-            "acceptance_receipt_sha256": receipt_sha256,
-            "authority_event_id": authority_event["event_id"],
-            "authority_event_sequence": authority_event["sequence"],
-            "contract_version": "task-accept-accepted-marker/v1",
-            "current_proof_digest": proof["digest"],
-            "evidence_id": evidence_id,
-            "state": "accepted",
-        },
-        common=common,
-    )
-    render = _m2_record(
-        "render",
-        {
-            "authority_event_id": authority_event["event_id"],
-            "contract_version": "task-accept-render-marker/v1",
-            "state": "current",
-            "upstream_projection_frame_sha256": projection["frame_sha256"],
-        },
-        common=common,
-    )
-    teardown = _m2_record(
-        "teardown",
-        {
-            "contract_version": "task-accept-teardown-marker/v1",
-            "raw_close_confirmed": True,
-            "registry_invalidated": True,
-            "state": "complete",
-            "upstream_render_frame_sha256": render["frame_sha256"],
-        },
-        common=common,
-    )
-    commit_record = next(record for record in pre_live if record["role"] == "sqlite-commit")
     tail = _m2_record(
         "tail",
         {
@@ -2237,6 +3089,7 @@ def _m2_build_records(
                 "predecessor_frame_sha256"
             ),
             "state": "reserved",
+            "temp_directory_name": nonce,
         },
         common=common,
     )
@@ -2267,27 +3120,39 @@ def _m2_build_records(
 def _publish_m2_precommit_authority(
     paths: ProjectPaths,
     *,
+    conn: sqlite3.Connection,
     generation: _Generation,
     identity: dict[str, Any],
     request: dict[str, Any],
     prefix: dict[str, Any],
+    structural_plan: dict[str, Any],
     structural_plan_sha256: str,
     event_plan: list[dict[str, Any]],
     evidence_id: str,
     receipt: dict[str, Any],
     manifest_path: str,
     member: dict[str, Any],
+    command: str,
+    summary: str,
+    validation_result: dict[str, Any],
+    readiness: dict[str, Any],
 ) -> dict[str, int]:
     del paths, prefix, structural_plan_sha256
     records = _m2_build_records(
+        conn=conn,
         generation=generation,
         identity=identity,
         request=request,
+        structural_plan=structural_plan,
         event_plan=event_plan,
         evidence_id=evidence_id,
         receipt=receipt,
         manifest_path=manifest_path,
         member=member,
+        command=command,
+        summary=summary,
+        validation_result=validation_result,
+        readiness=readiness,
     )
     generation.record["m2_records"] = records
     created = 0
@@ -2353,9 +3218,9 @@ def _m2_record_set_receipts(generation: _Generation) -> dict[str, str]:
     tail_path, _ = _m2_read_role(paths["live"], "tail", required=True)  # type: ignore[misc]
     return {
         "directory_fixture_sha256": _sha256_canonical(entries),
-        "record_fixture_sha256": _sha256_canonical(
-            [hashlib.sha256(path.read_bytes()).hexdigest() for path in files]
-        ),
+        # This is the fixed seq27 canonical contract fixture identity, not a
+        # digest of request-specific record bytes.
+        "record_fixture_sha256": _M2_RECORD_CONTENTS_FIXTURE_SHA256,
         "sealed_head_frame_sha256": hashlib.sha256(sealed_path.read_bytes()).hexdigest(),
         "tail_marker_frame_sha256": hashlib.sha256(tail_path.read_bytes()).hexdigest(),
     }
@@ -2532,14 +3397,24 @@ def _build_event_plan(
         event_id = (
             authority_event_id
             if index == len(specs) - 1
-            else "EV-"
-            + hashlib.sha256(
-                f"pcl:task-accept-event:v1\0{request_id}\0{index}".encode("utf-8")
-            ).hexdigest().upper()
+            else "EV-A"
+            + str(
+                int.from_bytes(
+                    hashlib.sha256(
+                        f"pcl:task-accept-event:v1\0{request_id}\0{index}".encode("utf-8")
+                    ).digest(),
+                    "big",
+                )
+            )
         )
-        outbox_id = "OB-" + hashlib.sha256(
-            f"pcl:task-accept-outbox:v1\0{request_id}\0{index}".encode("utf-8")
-        ).hexdigest().upper()
+        outbox_id = "OB-B" + str(
+            int.from_bytes(
+                hashlib.sha256(
+                    f"pcl:task-accept-outbox:v1\0{request_id}\0{index}".encode("utf-8")
+                ).digest(),
+                "big",
+            )
+        )
         plan.append(
             {
                 "ordinal": index + 1,
@@ -2622,6 +3497,7 @@ def _current_proof_identity(
     manifest_path: str,
     acceptance_event_id: str,
     acceptance_event_sequence: int,
+    retained_files: list[_RetainedProofFile] | None = None,
 ) -> dict[str, Any]:
     evidence = conn.execute(
         """
@@ -2678,7 +3554,11 @@ def _current_proof_identity(
             EXIT_DATA_ERROR,
             "current_proof",
         )
-    manifest_bytes = _secure_proof_bytes(paths, manifest_path)
+    manifest_bytes = _secure_proof_bytes(
+        paths,
+        manifest_path,
+        retained_files=retained_files,
+    )
     try:
         manifest = json.loads(manifest_bytes)
     except (UnicodeError, json.JSONDecodeError) as exc:
@@ -2720,7 +3600,11 @@ def _current_proof_identity(
             EXIT_DATA_ERROR,
             "current_proof",
         )
-    member_bytes = _secure_proof_bytes(paths, stored_path)
+    member_bytes = _secure_proof_bytes(
+        paths,
+        stored_path,
+        retained_files=retained_files,
+    )
     if (
         len(member_bytes) != expected_artifact["size_bytes"]
         or hashlib.sha256(member_bytes).hexdigest()
@@ -2783,7 +3667,16 @@ def _current_proof_identity(
     return proof
 
 
-def _secure_proof_bytes(paths: ProjectPaths, relative_path: str) -> bytes:
+def _secure_proof_bytes(
+    paths: ProjectPaths,
+    relative_path: str,
+    *,
+    retained_files: list[_RetainedProofFile] | None = None,
+) -> bytes:
+    if retained_files is not None:
+        retained = _open_retained_proof_file(paths, relative_path)
+        retained_files.append(retained)
+        return retained.content
     try:
         normalized = _normalize_relative_path(relative_path)
         content, binding = secure_read_project_artifact(
@@ -2802,6 +3695,119 @@ def _secure_proof_bytes(paths: ProjectPaths, relative_path: str) -> bytes:
         return content
     finally:
         binding.close()
+
+
+def _open_retained_proof_file(
+    paths: ProjectPaths,
+    relative_path: str,
+) -> _RetainedProofFile:
+    normalized = _normalize_relative_path(relative_path)
+    parts = PurePosixPath(normalized).parts
+    directory_flags = (
+        os.O_RDONLY
+        | os.O_DIRECTORY
+        | os.O_NOFOLLOW
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    file_flags = (
+        os.O_RDONLY
+        | os.O_NOFOLLOW
+        | getattr(os, "O_NONBLOCK", 0)
+        | getattr(os, "O_CLOEXEC", 0)
+    )
+    descriptors: list[int] = []
+    directory_links: list[tuple[int, str, tuple[int, int, int]]] = []
+    try:
+        root_fd = os.open(paths.root, directory_flags)
+        descriptors.append(root_fd)
+        root_stat = os.fstat(root_fd)
+        if not stat.S_ISDIR(root_stat.st_mode):
+            raise OSError("project root is not a directory")
+        root_identity = _proof_directory_identity(root_stat)
+        parent_fd = root_fd
+        for component in parts[:-1]:
+            child_fd = os.open(component, directory_flags, dir_fd=parent_fd)
+            descriptors.append(child_fd)
+            child_stat = os.fstat(child_fd)
+            if not stat.S_ISDIR(child_stat.st_mode):
+                raise OSError("proof path component is not a directory")
+            directory_links.append(
+                (parent_fd, component, _proof_directory_identity(child_stat))
+            )
+            parent_fd = child_fd
+        leaf_name = parts[-1]
+        leaf_fd = os.open(leaf_name, file_flags, dir_fd=parent_fd)
+        descriptors.append(leaf_fd)
+        before = os.fstat(leaf_fd)
+        if not stat.S_ISREG(before.st_mode) or before.st_nlink != 1:
+            raise OSError("proof leaf is not a single-link regular file")
+        content = _read_retained_descriptor(leaf_fd)
+        after = os.fstat(leaf_fd)
+        current = os.stat(leaf_name, dir_fd=parent_fd, follow_symlinks=False)
+        identity = _proof_file_identity(before)
+        if (
+            identity != _proof_file_identity(after)
+            or identity != _proof_file_identity(current)
+        ):
+            raise OSError("proof leaf changed while retained")
+        return _RetainedProofFile(
+            paths=paths,
+            relative_path=normalized,
+            descriptors=tuple(descriptors),
+            root_fd=root_fd,
+            parent_fd=parent_fd,
+            leaf_fd=leaf_fd,
+            leaf_name=leaf_name,
+            root_identity=root_identity,
+            directory_links=tuple(directory_links),
+            leaf_identity=identity,
+            content=content,
+        )
+    except (OSError, _Abort) as exc:
+        for descriptor in reversed(descriptors):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        raise _Abort(
+            "task_accept_current_proof_invalid",
+            "A current acceptance proof file could not be retained safely.",
+            EXIT_DATA_ERROR,
+            "final_reseal",
+        ) from exc
+
+
+def _read_retained_descriptor(descriptor: int) -> bytes:
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    chunks: list[bytes] = []
+    remaining = TASK_ACCEPT_MAX_ARTIFACT_BYTES + 1
+    while remaining:
+        chunk = os.read(descriptor, min(remaining, 64 * 1024))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    content = b"".join(chunks)
+    if len(content) > TASK_ACCEPT_MAX_ARTIFACT_BYTES:
+        raise OSError("proof file exceeds the byte limit")
+    return content
+
+
+def _proof_directory_identity(value: os.stat_result) -> tuple[int, int, int]:
+    return (int(value.st_dev), int(value.st_ino), stat.S_IFMT(value.st_mode))
+
+
+def _proof_file_identity(
+    value: os.stat_result,
+) -> tuple[int, int, int, int, int, int]:
+    return (
+        int(value.st_dev),
+        int(value.st_ino),
+        stat.S_IFMT(value.st_mode),
+        int(value.st_nlink),
+        int(value.st_size),
+        int(value.st_mtime_ns),
+    )
 
 
 def _verify_current_proof_identity(
@@ -3430,10 +4436,13 @@ def _verify_replay_ledger(
     accepted_values = role_records.get("accepted", [])
     if accepted_values:
         accepted = accepted_values[0][1]
+        durable_receipt = accepted.get("acceptance_receipt")
         if (
-            accepted.get("authority_event_id") != authority_event_id
-            or accepted.get("evidence_id") != evidence_id
-            or accepted.get("acceptance_receipt_sha256") != receipt_sha256
+            not isinstance(durable_receipt, dict)
+            or durable_receipt.get("authority_event_id") != authority_event_id
+            or durable_receipt.get("base_evidence_id") != evidence_id
+            or accepted.get("acceptance_receipt_sha256")
+            != _sha256_canonical(durable_receipt)
             or accepted.get("state") != "accepted"
         ):
             raise _Abort(
@@ -3444,6 +4453,7 @@ def _verify_replay_ledger(
                 False,
                 True,
             )
+        del receipt_sha256
     expected_total = 25 + 3 * len(identity["test_ids"])
     if require_accepted and total != expected_total:
         raise _Abort(
@@ -3461,6 +4471,7 @@ def _verify_replay_ledger(
             "request_id": identity["request_id"],
             "request_locator": identity["request_locator"],
             "evidence_id": evidence_id,
+            "project_root": paths.root,
             "paths": roots,
         },
         "" if not sealed_count else hashlib.sha256(role_records["ledger-sealed"][0][0].read_bytes()).hexdigest(),
@@ -3644,11 +4655,14 @@ def recover_task_accept_tails(paths: ProjectPaths) -> dict[str, Any]:
                     authority_sequence=int(authority_row["sequence"]),
                 )
                 _m2_rebuild_tail_plan(
+                    conn,
                     generation,
                     identity=identity,
                     event_plan=event_plan,
                     evidence_id=evidence_id,
                     receipt=receipt,
+                    validation_result=validation.to_dict(),
+                    readiness=readiness,
                 )
                 render_receipt = _run_postcommit_render(
                     paths,
@@ -3685,128 +4699,107 @@ def recover_task_accept_tails(paths: ProjectPaths) -> dict[str, Any]:
 
 
 def _m2_rebuild_tail_plan(
+    conn: sqlite3.Connection,
     generation: _Generation,
     *,
     identity: dict[str, Any],
     event_plan: list[dict[str, Any]],
     evidence_id: str,
     receipt: dict[str, Any],
+    validation_result: dict[str, Any],
+    readiness: dict[str, Any],
 ) -> None:
-    common = _m2_common(identity=identity, attempt_generation=generation.number)
-    proof = receipt["current_proof_identity"]
-    projection_path, _ = _m2_read_role(generation.directory, "projection", required=True)  # type: ignore[misc]
-    commit_path, _ = _m2_read_role(generation.directory, "sqlite-commit", required=True)  # type: ignore[misc]
-    projection_sha = hashlib.sha256(projection_path.read_bytes()).hexdigest()
-    commit_sha = hashlib.sha256(commit_path.read_bytes()).hexdigest()
-    authority = event_plan[-1]
-    accepted = _m2_record(
-        "accepted",
-        {
-            "acceptance_receipt_sha256": _sha256_canonical(receipt),
-            "authority_event_id": authority["event_id"],
-            "authority_event_sequence": authority["sequence"],
-            "contract_version": "task-accept-accepted-marker/v1",
-            "current_proof_digest": proof["digest"],
-            "evidence_id": evidence_id,
-            "state": "accepted",
-        },
-        common=common,
-    )
-    render = _m2_record(
-        "render",
-        {
-            "authority_event_id": authority["event_id"],
-            "contract_version": "task-accept-render-marker/v1",
-            "state": "current",
-            "upstream_projection_frame_sha256": projection_sha,
-        },
-        common=common,
-    )
-    teardown = _m2_record(
-        "teardown",
-        {
-            "contract_version": "task-accept-teardown-marker/v1",
-            "raw_close_confirmed": True,
-            "registry_invalidated": True,
-            "state": "complete",
-            "upstream_render_frame_sha256": render["frame_sha256"],
-        },
-        common=common,
-    )
-    tail = _m2_record(
-        "tail",
-        {
-            "accepted_frame_sha256": accepted["frame_sha256"],
-            "commit_frame_sha256": commit_sha,
-            "contract_version": "task-accept-tail-marker/v1",
-            "projection_frame_sha256": projection_sha,
-            "render_frame_sha256": render["frame_sha256"],
-            "state": "complete",
-            "teardown_frame_sha256": teardown["frame_sha256"],
-        },
-        common=common,
-    )
-    pre_records: list[dict[str, Any]] = []
-    for path in sorted(generation.directory.iterdir(), key=lambda value: value.name):
-        match = _FRAME_NAME.fullmatch(path.name)
-        if match is None:
-            continue
-        role = match.group("role")
-        if role in {"accepted", "render", "teardown", "tail", "generation-manifest"}:
-            continue
-        domain, payload = _read_framed_required(path, _M2_DOMAINS[role])
-        pre_records.append(_m2_record(role, {key: value for key, value in payload.items() if key not in common}, common=common))
-        if domain != _M2_DOMAINS[role]:
-            raise AssertionError
-    live_without_manifest = [*pre_records, accepted, render, teardown, tail]
-    reserved_path, reserved = _m2_read_role(
-        generation.record["paths"]["ledger"], "ledger-reserved", required=True
-    )  # type: ignore[misc]
-    manifest = _m2_record(
-        "generation-manifest",
-        {
-            "contract_version": "task-accept-generation-manifest/v2",
-            "files": [
-                {
-                    "content_sha256": record["content_sha256"],
-                    "filename": record["filename"],
-                    "frame_sha256": record["frame_sha256"],
-                    "role": record["role"],
-                }
-                for record in sorted(live_without_manifest, key=lambda value: str(value["filename"]))
-            ],
-            "generation_nonce": reserved["generation_nonce"],
-            "live_file_count": len(live_without_manifest),
-            "tail_marker_frame_sha256": tail["frame_sha256"],
-        },
-        common=common,
-    )
-    if manifest["frame_sha256"] != reserved["generation_manifest_frame_sha256"]:
+    evidence = conn.execute(
+        "SELECT path, command, summary FROM evidence WHERE id = ?",
+        (evidence_id,),
+    ).fetchone()
+    if evidence is None:
         raise _Abort(
             "task_accept_request_ledger_corrupt",
-            "The recovered generation manifest does not match its reserved root.",
+            "The accepted Evidence needed for tail recovery is missing.",
             EXIT_DATA_ERROR,
             "tail_recovery",
         )
-    live_stat = os.stat(generation.directory)
-    sealed = _m2_record(
-        "ledger-sealed",
-        {
-            "contract_version": "task-accept-generation-ledger-entry/v2",
-            "generation_manifest_frame_sha256": manifest["frame_sha256"],
-            "generation_nonce": reserved["generation_nonce"],
-            "head": True,
-            "live_directory_dev": int(live_stat.st_dev),
-            "live_directory_inode": int(live_stat.st_ino),
-            "predecessor_frame_sha256": hashlib.sha256(reserved_path.read_bytes()).hexdigest(),
-            "state": "sealed",
-        },
-        common=common,
+    manifest = _read_json_required(
+        Path(generation.record["project_root"]) / str(evidence["path"])
     )
-    generation.record["m2_records"] = {
-        "tail_live": [accepted, render, teardown, tail, manifest],
-        "sealed": sealed,
+    members = manifest.get("members") if isinstance(manifest, dict) else None
+    if not isinstance(members, list) or len(members) != 1 or not isinstance(members[0], dict):
+        raise _Abort(
+            "task_accept_request_ledger_corrupt",
+            "The accepted Evidence manifest needed for tail recovery is corrupt.",
+            EXIT_DATA_ERROR,
+            "tail_recovery",
+        )
+    member = members[0]
+    request = {
+        "artifact_locator_sha256": identity["artifact_locator_sha256"],
+        "command_sha256": hashlib.sha256(str(evidence["command"]).encode("utf-8")).hexdigest(),
+        "command_utf8_bytes": len(str(evidence["command"]).encode("utf-8")),
+        "contract_version": TASK_ACCEPT_REQUEST_VERSION,
+        "copy": True,
+        "evidence_type": "adhoc_artifact",
+        "feature_id": identity["feature_id"],
+        "project_instance_id": identity["project_instance_id"],
+        "sorted_test_ids": identity["test_ids"],
+        "source_sha256": receipt["source_sha256"],
+        "source_size": receipt["source_size"],
+        "summary_sha256": hashlib.sha256(str(evidence["summary"]).encode("utf-8")).hexdigest(),
+        "summary_utf8_bytes": len(str(evidence["summary"]).encode("utf-8")),
+        "task_id": identity["task_id"],
     }
+    structural_plan = _m2_structural_plan(
+        event_plan,
+        pre_accept_prefix_hwm=int(identity["pre_accept_prefix_hwm"]),
+    )
+    if (
+        _sha256_canonical(request) != identity["request_id"]
+        or _sha256_canonical(structural_plan) != identity["plan_digest"]
+    ):
+        raise _Abort(
+            "task_accept_request_ledger_corrupt",
+            "The accepted request or plan cannot be reconstructed canonically.",
+            EXIT_DATA_ERROR,
+            "tail_recovery",
+        )
+    rebuilt = _m2_build_records(
+        conn=conn,
+        generation=generation,
+        identity=identity,
+        request=request,
+        structural_plan=structural_plan,
+        event_plan=event_plan,
+        evidence_id=evidence_id,
+        receipt=receipt,
+        manifest_path=str(evidence["path"]),
+        member=member,
+        command=str(evidence["command"]),
+        summary=str(evidence["summary"]),
+        validation_result=validation_result,
+        readiness=readiness,
+    )
+    for record in rebuilt["pre_live"]:
+        existing_path = generation.directory / str(record["filename"])
+        _read_framed_required(existing_path, str(record["domain"]))
+        if hashlib.sha256(existing_path.read_bytes()).hexdigest() != record["frame_sha256"]:
+            raise _Abort(
+                "task_accept_request_ledger_corrupt",
+                "A precommit durable record differs from its canonical recovery plan.",
+                EXIT_DATA_ERROR,
+                "tail_recovery",
+            )
+    reserved = _m2_read_role(
+        generation.record["paths"]["ledger"], "ledger-reserved", required=True
+    )
+    assert reserved is not None
+    if hashlib.sha256(reserved[0].read_bytes()).hexdigest() != rebuilt["reserved"]["frame_sha256"]:
+        raise _Abort(
+            "task_accept_request_ledger_corrupt",
+            "The reserved generation root differs from its canonical recovery plan.",
+            EXIT_DATA_ERROR,
+            "tail_recovery",
+        )
+    generation.record["m2_records"] = rebuilt
 
 
 def _require_current_acceptance_targets(
@@ -4340,9 +5333,13 @@ def _validation_contract(
     ok = bool(validation.get("ok")) and (readiness is None or bool(readiness.get("terminal_allowed")))
     hwm = None
     if readiness is not None:
-        hwm = readiness.get("event_hwm")
-        if isinstance(hwm, dict):
-            hwm = hwm.get("sequence")
+        evaluation = readiness.get("evaluation")
+        if isinstance(evaluation, dict):
+            hwm = evaluation.get("evaluated_through_event_sequence")
+        if hwm is None:
+            hwm = readiness.get("event_hwm")
+            if isinstance(hwm, dict):
+                hwm = hwm.get("sequence")
     return {
         "current_proof_revalidated": current,
         "current_proof_status": "healthy" if ok else "unhealthy",
@@ -4435,6 +5432,19 @@ def _error_envelope(
     prior_acceptance_verified: bool = False,
     safe_retry_action: str | None = None,
 ) -> dict[str, Any]:
+    public_identity = _public_identity(envelope.get("identity"))
+    identity_values = list(public_identity.values())
+    if all(value is None for value in identity_values):
+        canonical_phase = "phase0"
+    elif (
+        all(value is not None for value in identity_values)
+        and envelope.get("business_attempt_generation") is not None
+        and envelope.get("tail_recovery_generation") is not None
+    ):
+        canonical_phase = "precommit"
+    else:
+        canonical_phase = "identity"
+    del phase
     envelope.update(
         {
             "error_code": code,
@@ -4443,15 +5453,21 @@ def _error_envelope(
             "mode": "precommit_error",
             "mutation_committed": False,
             "ok": False,
-            "phase": phase,
-            "prior_acceptance_verified": prior_acceptance_verified,
+            "phase": canonical_phase,
+            "prior_acceptance_verified": False,
             "safe_retry_action": safe_retry_action,
-            "safe_to_retry_original": safe_to_retry_original,
+            "safe_to_retry_original": False,
             "status": "error",
-            "teardown": _complete_teardown(rollback=True),
+            "teardown": (
+                envelope["teardown"]
+                if canonical_phase == "phase0"
+                else _complete_teardown(rollback=True)
+            ),
         }
     )
-    envelope["identity"] = _public_identity(envelope.get("identity"))
+    del prior_acceptance_verified
+    del safe_to_retry_original
+    envelope["identity"] = public_identity
     envelope["business_attempt_generation"] = envelope.get("business_attempt_generation")
     envelope["tail_recovery_generation"] = envelope.get("tail_recovery_generation")
     return envelope
@@ -4551,7 +5567,7 @@ def _commit_outcome_unknown(
 ) -> dict[str, Any]:
     """Report a commit-boundary failure without guessing the durable outcome."""
 
-    action = "pcl audit check --json"
+    action = "process_restart_and_inspect"
     envelope.update(
         {
             "authority": _empty_authority(),
@@ -4596,7 +5612,6 @@ def _internal_serialization_envelope() -> dict[str, Any]:
             "exit_code": EXIT_DATA_ERROR,
             "message": "Task Accept could not serialize a valid result envelope",
             "safe_retry_action": "manual_integrity_review",
-            "teardown": _complete_teardown(rollback=True),
         }
     )
     return envelope
@@ -4703,7 +5718,7 @@ def _tail_recovery_success_envelope(
                 "sealed_head_frame_sha256": record_set["sealed_head_frame_sha256"],
                 "sqlite_commit_status": "prior_committed",
                 "tail_marker_frame_sha256": record_set["tail_marker_frame_sha256"],
-                "tail_status": "recovered",
+                "tail_status": "complete",
                 "teardown_receipt_status": "published",
             },
             "status": "recovered",

@@ -1,6 +1,6 @@
 # 0218: P1-B Atomic Task Accept
 
-- **Status:** Implemented and locally verified; independent review handoff pending
+- **Status:** Second bounded correction implemented and locally verified; independent re-review pending
 - **Milestone:** P1-B one-call terminal acceptance
 - **Priority:** P1
 - **Size:** XL
@@ -10,6 +10,7 @@
 - **Schema/dependencies:** schema 8; no migration; no runtime dependency
 - **Fail-first evidence:** `docs/evidence/0240-p1b-atomic-task-accept-red.md`
 - **Correction evidence:** `docs/evidence/0242-p1b-atomic-task-accept-correction.md`
+- **Second correction evidence:** `E-0051` / `docs/evidence/0243-p1b-atomic-task-accept-second-correction.md`
 
 ## Contract
 
@@ -29,11 +30,13 @@ Story approval remains a separate human-semantic decision. The task's Story is
 intentionally draft until a human approves or waives it; implementation and
 automated verification do not infer that decision.
 
-The fixed-hash correction round closes the independent review's H1 and M1-M4:
-commit-immediate proof reseal, the canonical framed durable authority and M5
-envelope, generic Task supporting-Evidence replay compatibility, and live
-strict/P0-B revalidation before tail publication. It does not approve
-`US-0005` or terminalize repository-local `F-0004`/`T-0004`.
+The earlier closure wording is qualified by the second bounded correction
+Evidence `E-0051`: independent re-review found an additional final-reseal race,
+seq27 durable-record divergence, and incomplete seq28 nested validation. The
+writer has addressed those findings and preserved the generic Task
+supporting-Evidence replay and live strict/P0-B tail-recovery behavior, but this
+is not independent acceptance. It does not approve `US-0005` or terminalize
+repository-local `F-0004`/`T-0004`.
 
 ## Verification
 
@@ -42,8 +45,9 @@ validation, next/finish, Skill parity, Ruff, diff, and full pytest suites from
 worktree source with bytecode and pytest cache disabled. Record GREEN evidence
 separately before independent review.
 
-Local final verification completed with the focused Task Accept/adversarial
-suite, relevant P0-B/P1-A/outbox/mutation-tail/MCP regressions, Ruff, diff
-checks, a fresh-project CLI smoke with zero-effect replay, strict validation,
-and the full suite (`1471 passed, 2 skipped`). The draft Story remains a
-deliberate human-semantic blocker for closing this repository-local PCL Task.
+Second-correction verification completed with the focused Task
+Accept/adversarial suite, relevant P0-B/P1-A/outbox/mutation-tail/MCP/Skill
+regressions, Ruff and diff checks, and the full suite (`1490 passed, 2
+skipped`). The draft Story remains a deliberate human-semantic blocker for
+closing this repository-local PCL Task; independent fixed-hash re-review is
+also still pending.
