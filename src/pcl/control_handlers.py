@@ -170,9 +170,15 @@ def handle_control_command(
     if args.command == "audit" and args.audit_command == "flush":
         result = project_pending_events(paths)
         tail_recovery = recover_task_accept_tails(paths) if result.ok else None
-        payload = {"ok": result.ok, **result.to_dict(), "task_accept_tail_recovery": tail_recovery}
+        tail_ok = tail_recovery is None or tail_recovery.get("ok", True)
+        payload = {
+            "ok": result.ok and tail_ok,
+            **result.to_dict(),
+            "task_accept_tail_recovery": tail_recovery,
+        }
+        payload["ok"] = result.ok and tail_ok
         _print_json(payload) if json_output else print(to_pretty_json(payload))
-        return 0 if result.ok else 6
+        return 0 if result.ok and tail_ok else 6
 
     if args.command == "audit" and args.audit_command == "check":
         if args.audit_target is None and args.audit_since is None and not args.summary:

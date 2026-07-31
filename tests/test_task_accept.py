@@ -50,15 +50,25 @@ def test_atomic_accept_closes_tests_feature_and_task_with_one_base_evidence(
 
     assert set(result) == ENVELOPE_KEYS
     assert result["ok"] is True
-    assert result["status"] == "accepted"
+    assert result["status"] == "success"
     assert result["mutation_committed"] is True
     assert result["business_changed"] is True
     assert result["prior_acceptance_verified"] is False
-    assert result["schema_version"] == 8
+    assert result["schema_version"] == "task-accept-envelope/v1"
     assert result["effects"]["events_appended"] == 6
-    assert result["effects"]["outbox_appended"] == 6
+    assert result["effects"]["outbox_records_appended"] == 6
     assert result["effects"]["copies_published"] == 1
-    proof = result["receipts"]["acceptance"]["current_proof_identity"]
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        authority_payload = json.loads(
+            conn.execute(
+                "SELECT payload_json FROM events WHERE id = ?",
+                (result["authority"]["event_id"],),
+            ).fetchone()["payload_json"]
+        )
+    finally:
+        conn.close()
+    proof = authority_payload["task_acceptance"]["current_proof_identity"]
     assert set(proof) == {
         "acceptance_hwm",
         "contract_version",
@@ -140,21 +150,14 @@ def test_exact_retry_has_zero_business_projection_render_and_marker_effects(
     replay = run_json(tmp_path, capsys, *accept_args(fixture))
 
     assert replay["ok"] is True
-    assert replay["status"] == "already_accepted"
+    assert replay["status"] == "no_op"
     assert replay["business_changed"] is False
     assert replay["changed"] is False
     assert replay["mutation_committed"] is False
     assert replay["prior_acceptance_verified"] is True
     assert replay["identity"] == first["identity"]
-    assert replay["effects"] == {
-        "business_rows_changed": 0,
-        "copies_published": 0,
-        "events_appended": 0,
-        "markers_published": 0,
-        "outbox_appended": 0,
-        "projection_writes": 0,
-        "render_writes": 0,
-    }
+    assert len(replay["effects"]) == 25
+    assert set(replay["effects"].values()) == {0}
     assert state_counts(tmp_path) == before
     assert {
         name: (tmp_path / ".project-loop" / "dashboard" / name).read_bytes()
@@ -196,7 +199,7 @@ def test_story_guard_rolls_back_all_database_state(tmp_path: Path, capsys) -> No
 
     assert rejected["error_code"] == "task_accept_story_not_terminal"
     assert rejected["mutation_committed"] is False
-    assert rejected["effects"]["business_rows_changed"] == 0
+    assert rejected["effects"]["db_mutations_total"] == 0
     assert state_counts(tmp_path) == before
 
 
@@ -210,7 +213,9 @@ def test_cli_text_success_and_json_are_two_views_of_same_result(
     captured = capsys.readouterr()
 
     assert captured.err == ""
-    assert captured.out.startswith(f"Accepted Task {fixture['task_id']}")
+    assert captured.out.startswith(
+        f"OK task_accept fresh_success: Task {fixture['task_id']} accepted atomically "
+    )
     assert not captured.out.lstrip().startswith("{")
 
 
@@ -239,7 +244,7 @@ def test_copy_and_at_least_one_test_are_fixed_cli_requirements(
     assert copy_error["error_code"] == "task_accept_copy_required"
     assert main(base + ["--copy"]) == 2
     test_error = json.loads(capsys.readouterr().out)
-    assert test_error["error_code"] == "task_accept_test_required"
+    assert test_error["error_code"] == "task_accept_usage_error"
 
 
 def test_not_initialized_uses_exit3_json_contract(tmp_path: Path, capsys) -> None:

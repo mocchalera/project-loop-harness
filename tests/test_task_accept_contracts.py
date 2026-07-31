@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -12,6 +13,13 @@ from pcl.mcp_server import (
     ProjectLoopMcpServer,
 )
 from pcl.paths import resolve_paths
+from pcl.task_accept import (
+    TASK_ACCEPT_ENVELOPE_SCHEMA,
+    canonical_task_accept_json,
+    task_accept_envelope_golden_fixtures,
+    task_accept_human_line,
+    validate_task_accept_envelope,
+)
 
 from task_accept_helpers import accept_args, prepare_acceptance, run_json
 
@@ -158,8 +166,8 @@ def test_cli_request_hash_is_stable_for_test_order_and_full_length(tmp_path: Pat
     accepted = run_json(tmp_path, capsys, *accept_args(reversed_fixture))
 
     request_id = accepted["identity"]["request_id"]
-    assert request_id.startswith("sha256:")
-    assert len(request_id) == len("sha256:") + 64
+    assert len(request_id) == 64
+    assert set(request_id) <= set("0123456789abcdef")
     assert accepted["identity"]["test_ids"] == sorted(fixture["test_ids"])
 
 
@@ -185,5 +193,52 @@ def test_fresh_and_replay_run_full_strict_exactly_once_and_p0b_is_strict_free(
     assert calls == 1
     calls = 0
     replay = run_json(tmp_path, capsys, *accept_args(fixture))
-    assert replay["status"] == "already_accepted"
+    assert replay["status"] == "no_op"
     assert calls == 1
+
+
+def test_m5_eight_canonical_json_goldens_are_byte_exact() -> None:
+    assert set(TASK_ACCEPT_ENVELOPE_SCHEMA["properties"]) == set(
+        TASK_ACCEPT_ENVELOPE_SCHEMA["required"]
+    )
+    expected = [
+        (2836, "c8f3f4e9cd3cfb9a3df0db8e13af901120e5b6cf4d31e8ba2b7b5686070babf8"),
+        (3599, "f0f1b3d43554e783610b8068f8db19ae8015a8fde055c1445df87177ac576ca1"),
+        (3670, "fe4b7c981deff731bcb7435da9c0be72dd30cee9227e4bf49ce745e978d33c8e"),
+        (3492, "e98bc304adac11750ebbf7bb643429ab90678df03d46d7b2d62b6aab98d2ed2f"),
+        (3655, "c42d251e8607fd415e299449d1e85836609043242b20c5b41e8299f4db8370b9"),
+        (3310, "2f1b4ecccea587bebb30686bc63112888beeb508bb99a07fffe4e319fb2d41a3"),
+        (3287, "c4fe686965fe3cbfc02b98ed3402384cf0f268de959979c141d478d85304c64e"),
+        (3522, "c2175f627e45fdac1c4c38ea7d184b8dbdeda2ae1d06d7332f0391c4c9159539"),
+    ]
+    actual = []
+    for payload in task_accept_envelope_golden_fixtures():
+        validate_task_accept_envelope(payload)
+        raw = canonical_task_accept_json(payload).encode("utf-8")
+        actual.append((len(raw), hashlib.sha256(raw).hexdigest()))
+    assert actual == expected
+
+    assert [
+        task_accept_human_line(payload)
+        for payload in task_accept_envelope_golden_fixtures()
+    ] == [
+        "ERROR task_accept task_accept_usage_error: task accept requires at least one --test [action=correct_input_then_retry]",
+        "OK task_accept fresh_success: Task T-0042 accepted atomically [authority=EV-A00000000006@106]",
+        "OK task_accept exact_replay_success: Task T-0042 acceptance already verified; no changes [authority=EV-A00000000006@106]",
+        "ERROR task_accept task_accept_projection_pending: Task T-0042 was accepted, but projection is pending [action=pcl audit flush --json]",
+        "OK task_accept accepted_authority_tail_recovery_success: Accepted Task T-0042 tail recovered [authority=EV-A00000000006@106]",
+        "ERROR task_accept task_accept_business_attempt_generation_advanced: A new business attempt generation was reserved; repeat the exact request [action=repeat_exact_task_accept_request]",
+        "ERROR task_accept task_accept_recovery_identity_corrupt: Task Accept recovery identity is corrupt [action=manual_integrity_review]",
+        "ERROR task_accept task_accept_projection_pending: Accepted Task T-0042 remains pending projection [action=pcl audit flush --json]",
+    ]
+
+
+def test_m5_semantic_validation_rejects_unknown_and_bad_accounting() -> None:
+    payload = task_accept_envelope_golden_fixtures()[0]
+    payload["unknown"] = True
+    with pytest.raises(ValueError):
+        validate_task_accept_envelope(payload)
+    payload.pop("unknown")
+    payload["effects"]["db_mutations_total"] += 1
+    with pytest.raises(ValueError):
+        validate_task_accept_envelope(payload)

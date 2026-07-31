@@ -40,16 +40,21 @@ business, event, and outbox rows back.
 The artifact is opened component by component without following symlinks,
 must be a regular single-link project-relative file, and is re-read inside the
 exclusive project lock and before the terminal gate. Its durable copy uses a
-content-addressed filename and exclusive no-overwrite publication. Claim,
-Evidence reservation, and generation records are immutable project-local
-files under `.project-loop/evidence/task-accept-*`.
+content-addressed filename and exclusive no-overwrite publication. The durable
+authority is a set of canonical `PCLF1` framed, no-overwrite records under
+`.project-loop/task-accept-recovery/v1`. It contains the full request binding,
+ID reservation index and manifest, Test/Feature/Task proof bindings, structural
+plan, SQLite/projection/render authorities, a generation manifest, and one
+continuous reserved-to-sealed ledger head. The canonical two-Test fresh form
+has 31 records; exact replay verifies every record and publishes none.
 
 The acceptance receipt binds the Evidence row and direct-link hashes, manifest
 and member hashes, Evidence recording event and complete pre-terminal event
 suffix, acceptance HWM, and full request input digest. An exact retry
 recomputes that identity and revalidates the DB authority, immutable ledger,
 copied member, current direct link sets, full strict result, and P0-B current
-proof. Only then does it return `already_accepted`; it appends no rows,
+proof. Only then does it return `mode=exact_replay_success`, `status=no_op`;
+it appends no rows,
 publishes no files or markers, projects no JSONL, and renders no dashboard.
 The same Task with a different request conflicts. Source hash drift,
 superseded or replaced proof, ledger gaps/forks, copy or manifest tampering,
@@ -72,19 +77,30 @@ Exit codes are:
 
 When SQLite committed but projection did not finish, `pcl audit flush --json`
 projects the committed outbox and runs the dedicated Task Accept tail recovery.
-That recovery validates current DB/proof authority, appends an immutable
-tail-recovery generation, and publishes the missing acceptance marker; it does
-not run Test, Feature, Task, Evidence, event, or outbox DML. A subsequent exact
-request is a zero-effect accepted replay. Rendering recovers separately through
-`pcl render --json`.
+Immediately before publishing any accepted marker, that recovery reruns strict
+formal validation and P0-B terminal readiness against the current snapshot. A
+new blocker returns `mode=accepted_authority_tail_recovery_error`, publishes no
+marker, and performs no business DML. A healthy recovery publishes the fixed
+six-record tail and returns `status=recovered`; it does not rerun Test, Feature,
+Task, Evidence, event, or outbox business DML. A subsequent exact request is a
+zero-effect replay.
 
 When SQLite committed but projection or rendering did not finish, the JSON
 envelope has `mutation_committed: true`, `safe_to_retry_original: false`, and
-an explicit `safe_retry_action`. Use `pcl audit flush --json` for projection
-or `pcl render --json` for rendering; do not re-run the original business
-mutation as a recovery action. An unknown commit outcome is never reported as
+an explicit `safe_retry_action`. Use the reported `pcl audit flush --json`
+dedicated recovery action; do not re-run the original business mutation as a
+recovery action. An unknown commit outcome is never reported as
 success or as a safe original retry; audit inspection and the same dedicated
 tail recovery determine whether a committed authority exists.
+
+Every JSON result uses `schema_version=task-accept-envelope/v1`, exactly 26
+top-level fields and 25 non-negative effect counters. Serialization first
+passes both the versioned JSON Schema shape and semantic accounting checks.
+`mutation_committed` is always boolean, including commit-acknowledgement loss.
+Fresh success is `fresh_success/success`; replay is
+`exact_replay_success/no_op`; known postcommit tail failures and dedicated
+recovery have their own fixed modes. Human output is one canonical line on
+stdout, with errors using the corresponding fixed `ERROR task_accept` line.
 
 ## MCP capability
 

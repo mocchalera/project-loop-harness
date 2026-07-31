@@ -9,6 +9,7 @@
   `US-0005`, planned Tests `TC-0025`–`TC-0028`
 - **Schema/dependencies:** schema 8; no migration; no runtime dependency
 - **Fail-first evidence:** `docs/evidence/0240-p1b-atomic-task-accept-red.md`
+- **Correction evidence:** `docs/evidence/0242-p1b-atomic-task-accept-correction.md`
 
 ## Contract
 
@@ -27,6 +28,12 @@ failure returns exit 6 and forbids re-running the original business request.
 Story approval remains a separate human-semantic decision. The task's Story is
 intentionally draft until a human approves or waives it; implementation and
 automated verification do not infer that decision.
+
+The fixed-hash correction round closes the independent review's H1 and M1-M4:
+commit-immediate proof reseal, the canonical framed durable authority and M5
+envelope, generic Task supporting-Evidence replay compatibility, and live
+strict/P0-B revalidation before tail publication. It does not approve
+`US-0005` or terminalize repository-local `F-0004`/`T-0004`.
 
 ## Verification
 

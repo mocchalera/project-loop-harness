@@ -52,7 +52,7 @@ from .tasks import (
     remove_dependency,
     set_task_status,
 )
-from .task_accept import accept_task, canonical_task_accept_json
+from .task_accept import accept_task, canonical_task_accept_json, task_accept_human_line
 
 
 ENTITY_COMMANDS = frozenset({"goal", "feature", "story", "test", "task", "defect"})
@@ -474,21 +474,8 @@ def handle_entity_command(
         )
         if json_output:
             print(canonical_task_accept_json(result), file=output)
-        elif result["ok"]:
-            if result["status"] == "already_accepted":
-                print(
-                    f"Task {args.task_id} was already accepted by this exact request; no change recorded.",
-                    file=output,
-                )
-            else:
-                print(f"Accepted Task {args.task_id} atomically.", file=output)
         else:
-            print(
-                f"ERROR {result['error_code']}: {result['message']}",
-                file=error,
-            )
-            if result.get("safe_retry_action"):
-                print(f"NEXT: {result['safe_retry_action']}", file=error)
+            print(task_accept_human_line(result), file=output if result["ok"] else error)
         return int(result["exit_code"])
 
     if args.command == "task" and args.task_command == "depend":
