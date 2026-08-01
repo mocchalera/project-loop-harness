@@ -164,6 +164,17 @@ Evidence or writing a completion packet. This freshness gate is separate from
 ordinary failed-check Evidence, whose existing incomplete-attempt semantics
 remain authoritative.
 
+P1-C C1 adds a read-only `authority-surface-resolution/v1` library contract.
+It derives the risk-comparison base from an append-only Task-start revision or
+an explicitly trusted integration-head merge-base, binds the canonical Git
+diff and base/candidate/union catalog and canary hashes, and composes all risk
+and verification inputs by maximum rank. Candidate configuration cannot delete
+or weaken a trusted rule/canary. The external bootstrap profile forbids
+self-certification and requires exact-candidate full regression plus fixed-hash
+independent review. C1 adds no proof command, event, Evidence, terminal input,
+render, schema, migration, dependency, or default enablement. See
+[authority-surface-resolution-v1.md](authority-surface-resolution-v1.md).
+
 ## Why CLI first
 
 Agent Skills are instructions. They cannot reliably guarantee migrations, validation, deterministic rendering, or guarded state transitions by themselves.

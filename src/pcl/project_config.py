@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 from typing import Any
 
 from .errors import InvalidInputError
@@ -11,6 +12,7 @@ FINISH_CHECK_EXAMPLE = 'commands:\n  test: "python -m pytest"'
 CHECKPOINT_DEFAULT_FEATURE_INTERVAL = 5
 CHECKPOINT_DEFAULT_MODE = "advisory"
 CHECKPOINT_MODES = {"advisory", "blocking", "off"}
+_FULL_GIT_OID = re.compile(r"^[0-9a-f]{40}(?:[0-9a-f]{24})?$")
 
 
 def project_command_specs(root: Path) -> dict[str, dict[str, Any]]:
@@ -99,6 +101,37 @@ def dashboard_auto_render(root: Path) -> bool:
             "allowed": ["false", "true"],
         },
     )
+
+
+def trusted_integration_head_oid(root: Path) -> str | None:
+    """Read the optional C1 trusted integration-head full OID."""
+
+    config_path = root / "pcl.yaml"
+    if not config_path.exists():
+        return None
+    try:
+        values = _simple_yaml_section(
+            config_path.read_text(encoding="utf-8").splitlines(),
+            "authority",
+        )
+    except OSError as exc:
+        raise InvalidInputError(
+            f"Could not read authority configuration at {config_path}: {exc}",
+            details={"path": str(config_path)},
+        ) from exc
+    value = values.get("trusted_integration_head_oid")
+    if value is None or value.strip().lower() in {"", "null", "~"}:
+        return None
+    value = value.strip()
+    if _FULL_GIT_OID.fullmatch(value) is None:
+        raise InvalidInputError(
+            "authority.trusted_integration_head_oid must be a full Git commit OID.",
+            details={
+                "field": "authority.trusted_integration_head_oid",
+                "value": value,
+            },
+        )
+    return value
 
 
 def finish_check_configuration(root: Path) -> dict[str, Any]:

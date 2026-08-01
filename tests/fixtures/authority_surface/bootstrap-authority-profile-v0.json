@@ -1,0 +1,207 @@
+{
+  "authority_catalog": {
+    "catalog_id": "p1-c-c1-bootstrap-minimum-2026-08-02",
+    "contract_version": "authority-impact-catalog/v1",
+    "rules": [
+      {
+        "id": "r2-authority-resolver-catalog-profile",
+        "minimum_risk": "R2",
+        "patterns": [
+          "**/*authority*catalog*",
+          "**/*authority*profile*",
+          "**/*authority*surface*",
+          "src/pcl/authority_surface.py",
+          "src/pcl/contracts/authority_surface.py"
+        ]
+      },
+      {
+        "id": "r2-canary",
+        "minimum_risk": "R2",
+        "patterns": [
+          "**/*canary*"
+        ]
+      },
+      {
+        "id": "r2-mutation-lock-receipt",
+        "minimum_risk": "R2",
+        "patterns": [
+          "**/*receipt*.py",
+          "src/pcl/direct_setup.py",
+          "src/pcl/locks.py",
+          "src/pcl/mutation_tail.py"
+        ]
+      },
+      {
+        "id": "r2-policy",
+        "minimum_risk": "R2",
+        "patterns": [
+          "pcl.yaml",
+          "src/pcl/adaptive_policy.py",
+          "src/pcl/contracts/policies/*",
+          "src/pcl/routing.py"
+        ]
+      },
+      {
+        "id": "r2-proof-key-anchor-validation",
+        "minimum_risk": "R2",
+        "patterns": [
+          "**/*proof*anchor*",
+          "**/*proof*key*",
+          "src/pcl/check_result_reuse.py"
+        ]
+      },
+      {
+        "id": "r2-replay-recovery",
+        "minimum_risk": "R2",
+        "patterns": [
+          "**/*recovery*",
+          "**/*replay*",
+          "src/pcl/start_retry.py"
+        ]
+      },
+      {
+        "id": "r2-terminal-evidence",
+        "minimum_risk": "R2",
+        "patterns": [
+          "src/pcl/contracts/evidence_set.py",
+          "src/pcl/evidence*.py",
+          "src/pcl/lifecycle.py",
+          "src/pcl/task_accept.py",
+          "src/pcl/tasks.py",
+          "src/pcl/terminal_readiness.py"
+        ]
+      },
+      {
+        "id": "r3-dependency",
+        "minimum_risk": "R3",
+        "patterns": [
+          "Pipfile",
+          "Pipfile.lock",
+          "package-lock.json",
+          "package.json",
+          "pnpm-lock.yaml",
+          "poetry.lock",
+          "pyproject.toml",
+          "requirements*.txt",
+          "setup.cfg",
+          "setup.py",
+          "uv.lock"
+        ]
+      },
+      {
+        "id": "r3-durability",
+        "minimum_risk": "R3",
+        "patterns": [
+          "docs/evidence-durability-design.md",
+          "src/pcl/db.py",
+          "src/pcl/events.py",
+          "src/pcl/outbox.py",
+          "src/pcl/strict_evidence.py"
+        ]
+      },
+      {
+        "id": "r3-permission",
+        "minimum_risk": "R3",
+        "patterns": [
+          "**/*authorization*.py",
+          "**/permission*.py",
+          "**/permissions/*",
+          "src/pcl/approval_provenance.py",
+          "src/pcl/guards.py"
+        ]
+      },
+      {
+        "id": "r3-schema-migration",
+        "minimum_risk": "R3",
+        "patterns": [
+          "**/migrations/*",
+          "**/schema.sql",
+          "src/pcl/db/migrations/*",
+          "src/pcl/db/schema.sql"
+        ]
+      },
+      {
+        "id": "r0-explicit-documentation-presentation",
+        "minimum_risk": "R0",
+        "path_class": "non_executable",
+        "patterns": [
+          "**/*.md",
+          "**/*.png",
+          "docs/*"
+        ]
+      }
+    ]
+  },
+  "canary_contract": {
+    "contract_version": "authority-canary-contract/v1",
+    "items": [
+      {
+        "authority_claim_ids": [
+          "C1-base-catalog-nondeletion",
+          "C1-max-rank-composition"
+        ],
+        "command": [
+          "python",
+          "-m",
+          "pytest",
+          "-q",
+          "tests/test_authority_surface.py"
+        ],
+        "effect_expectations": [
+          "canonical-product-inputs-unchanged",
+          "pcl-state-effect0"
+        ],
+        "id": "c1-authority-rank-and-union",
+        "referenced_blob_oids": [
+          "35703817aae4584c9352364af6d08c2aa52e0020"
+        ],
+        "required_outcome": "pass",
+        "selectors": [
+          "test_candidate_deletion_and_weakening_cannot_remove_base_requirement",
+          "test_risk_and_depth_are_composed_by_maximum_rank"
+        ],
+        "supported_platform_conditions": [
+          "python>=3.10"
+        ]
+      },
+      {
+        "authority_claim_ids": [
+          "C1-trusted-base-precedence",
+          "C1-unknown-executable-floor"
+        ],
+        "command": [
+          "python",
+          "-m",
+          "pytest",
+          "-q",
+          "tests/test_authority_surface.py"
+        ],
+        "effect_expectations": [
+          "canonical-product-inputs-unchanged",
+          "pcl-state-effect0"
+        ],
+        "id": "c1-base-and-unknown-path",
+        "referenced_blob_oids": [
+          "35703817aae4584c9352364af6d08c2aa52e0020"
+        ],
+        "required_outcome": "pass",
+        "selectors": [
+          "test_trusted_base_precedence_and_fail_closed_states",
+          "test_unknown_executable_path_is_never_silent_r0_or_r1"
+        ],
+        "supported_platform_conditions": [
+          "git>=2",
+          "python>=3.10"
+        ]
+      }
+    ]
+  },
+  "contract_version": "bootstrap-authority-profile/v0",
+  "profile_id": "p1-c-c1-external-frozen-2026-08-02",
+  "resolver_contract_version": "authority-surface-resolution/v1",
+  "verification_boundary": {
+    "exact_candidate_full_regression_required": true,
+    "fixed_hash_independent_review_required": true,
+    "self_certification_allowed": false
+  }
+}

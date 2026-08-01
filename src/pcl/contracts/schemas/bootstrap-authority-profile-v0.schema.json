@@ -1,0 +1,36 @@
+{
+  "$id": "https://project-loop.local/contracts/bootstrap-authority-profile-v0.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "authority_catalog": {"type": "object"},
+    "canary_contract": {"type": "object"},
+    "contract_version": {"const": "bootstrap-authority-profile/v0"},
+    "profile_id": {"minLength": 1, "type": "string"},
+    "resolver_contract_version": {"const": "authority-surface-resolution/v1"},
+    "verification_boundary": {
+      "additionalProperties": false,
+      "properties": {
+        "exact_candidate_full_regression_required": {"const": true},
+        "fixed_hash_independent_review_required": {"const": true},
+        "self_certification_allowed": {"const": false}
+      },
+      "required": [
+        "exact_candidate_full_regression_required",
+        "fixed_hash_independent_review_required",
+        "self_certification_allowed"
+      ],
+      "type": "object"
+    }
+  },
+  "required": [
+    "contract_version",
+    "profile_id",
+    "resolver_contract_version",
+    "authority_catalog",
+    "canary_contract",
+    "verification_boundary"
+  ],
+  "title": "External frozen bootstrap authority profile v0",
+  "type": "object"
+}

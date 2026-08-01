@@ -152,6 +152,23 @@ from .decision_proposal import (
     load_decision_proposal,
     validate_decision_proposal,
 )
+from .authority_surface import (
+    AUTHORITY_CANARY_CONTRACT_VERSION,
+    AUTHORITY_CATALOG_CONTRACT_VERSION,
+    AUTHORITY_SURFACE_RESOLUTION_CONTRACT_VERSION,
+    BOOTSTRAP_AUTHORITY_PROFILE_CONTRACT_VERSION,
+    AuthorityContractValidationResult,
+    authority_document_sha256,
+    authority_surface_resolution_schema,
+    bootstrap_authority_profile_schema,
+    load_bootstrap_authority_profile,
+    merge_authority_canaries,
+    merge_authority_catalogs,
+    validate_authority_canary,
+    validate_authority_catalog,
+    validate_authority_surface_resolution,
+    validate_bootstrap_authority_profile,
+)
 
 __all__ = [
     "COMPLETION_PACKET_CONTRACT_VERSION",
@@ -272,4 +289,19 @@ __all__ = [
     "decision_proposal_schema",
     "load_decision_proposal",
     "validate_decision_proposal",
+    "AUTHORITY_CANARY_CONTRACT_VERSION",
+    "AUTHORITY_CATALOG_CONTRACT_VERSION",
+    "AUTHORITY_SURFACE_RESOLUTION_CONTRACT_VERSION",
+    "BOOTSTRAP_AUTHORITY_PROFILE_CONTRACT_VERSION",
+    "AuthorityContractValidationResult",
+    "authority_document_sha256",
+    "authority_surface_resolution_schema",
+    "bootstrap_authority_profile_schema",
+    "load_bootstrap_authority_profile",
+    "merge_authority_canaries",
+    "merge_authority_catalogs",
+    "validate_authority_canary",
+    "validate_authority_catalog",
+    "validate_authority_surface_resolution",
+    "validate_bootstrap_authority_profile",
 ]

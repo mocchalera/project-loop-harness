@@ -1,0 +1,37 @@
+{
+  "$id": "https://project-loop.local/contracts/authority-surface-resolution-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "actual_diff": {"type": "object"},
+    "base": {"type": "object"},
+    "bootstrap_profile": {"type": "object"},
+    "candidate": {"type": "object"},
+    "canary": {"type": "object"},
+    "catalog": {"type": "object"},
+    "contract_version": {"const": "authority-surface-resolution/v1"},
+    "effective": {"type": "object"},
+    "inputs": {"type": "object"},
+    "mandatory_evidence": {"const": false},
+    "resolver": {"type": "object"},
+    "target": {"type": "object"},
+    "terminal_authority": {"const": false}
+  },
+  "required": [
+    "contract_version",
+    "target",
+    "base",
+    "candidate",
+    "actual_diff",
+    "inputs",
+    "catalog",
+    "canary",
+    "resolver",
+    "bootstrap_profile",
+    "effective",
+    "terminal_authority",
+    "mandatory_evidence"
+  ],
+  "title": "Project Loop authority surface resolution v1",
+  "type": "object"
+}
