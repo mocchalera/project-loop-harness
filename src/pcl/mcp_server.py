@@ -290,7 +290,10 @@ class ProjectLoopMcpServer:
         }
 
     def _get_status(self) -> dict[str, Any]:
-        validation = validate_project(self.paths).to_dict()
+        validation = validate_project(
+            self.paths,
+            include_current_evidence_integrity=True,
+        ).to_dict()
         return {
             "root": str(self.paths.root),
             "approval_mode": self.approval_mode,

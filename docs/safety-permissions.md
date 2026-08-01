@@ -69,6 +69,13 @@ verification. A post-commit exit 6 must be recovered through the reported
 projection or render command, not by replaying the business request.
 Projection recovery may publish only the receipt-bound Task Accept tail record
 and acceptance marker after independently revalidating committed DB authority.
+The final retained-descriptor reseal is the filesystem proof linearization
+point. A non-cooperative change after that point is post-acceptance corruption,
+not a pre-commit rollback condition. The immediate post-commit check runs
+before healthy accepted authority, projection, render, or tail publication;
+detected corruption returns exit 6 and remains blocked in validation and tail
+recovery. This classification is not an advisory-lock guarantee and does not
+claim pathname currentness through the physical SQLite commit.
 
 ## MCP guidance
 

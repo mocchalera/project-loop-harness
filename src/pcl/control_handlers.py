@@ -128,7 +128,11 @@ def handle_control_command(
         )
 
     if args.command == "validate":
-        result = validate_project(paths, strict=args.strict)
+        result = validate_project(
+            paths,
+            strict=args.strict,
+            include_current_evidence_integrity=True,
+        )
         if args.validation_target is not None or args.active_only or args.summary:
             payload = project_validation_result(
                 paths,
@@ -226,7 +230,10 @@ def handle_control_command(
         return 0
 
     if args.command == "render":
-        result = validate_project(paths)
+        result = validate_project(
+            paths,
+            include_current_evidence_integrity=True,
+        )
         if not result.ok:
             return _print_validation(result, json_output=json_output)
         render_dashboard(paths, locale=args.locale)

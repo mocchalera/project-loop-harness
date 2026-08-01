@@ -641,6 +641,7 @@ def validate_project(
     *,
     strict: bool = False,
     include_config_advice: bool = False,
+    include_current_evidence_integrity: bool = False,
     connection: sqlite3.Connection | None = None,
     transaction_overlay_event_ids: frozenset[str] | None = None,
 ) -> ValidationResult:
@@ -828,6 +829,8 @@ def validate_project(
                 )
         if table_exists(conn, "tasks") and table_exists(conn, "task_dependencies"):
             _validate_task_invariants(conn, result)
+        if include_current_evidence_integrity and not strict and not missing_tables:
+            _validate_current_acceptance_evidence_integrity(paths, conn, result)
         if table_exists(conn, "agents") and _agent_jobs_has_lease_columns(conn):
             _validate_agent_registry_invariants(conn, result)
         if "verifications" not in missing_tables:
@@ -2909,7 +2912,86 @@ def _validate_adhoc_evidence_manifests(
             manifest_path_value=manifest_path_value,
             validate_optional_fields=True,
         )
-        _add_adhoc_assessment_findings(result, evidence_id=evidence_id, assessment=assessment)
+        _add_adhoc_assessment_findings(
+            result,
+            evidence_id=evidence_id,
+            assessment=assessment,
+            current_acceptance=_is_current_acceptance_evidence(
+                conn,
+                evidence_id=evidence_id,
+            ),
+        )
+
+
+def _validate_current_acceptance_evidence_integrity(
+    paths: ProjectPaths,
+    conn: sqlite3.Connection,
+    result: ValidationResult,
+) -> None:
+    rows = conn.execute(
+        """
+        SELECT id, type, path
+        FROM evidence
+        WHERE type IN ('adhoc_artifact', 'adhoc_bundle')
+        ORDER BY id
+        """
+    ).fetchall()
+    for row in rows:
+        evidence_id = str(row["id"])
+        if (
+            superseding_evidence_id(conn, evidence_id) is not None
+            or not _is_current_acceptance_evidence(conn, evidence_id=evidence_id)
+        ):
+            continue
+        assessment = assess_adhoc_evidence(
+            paths,
+            evidence_id=evidence_id,
+            evidence_type=str(row["type"]),
+            manifest_path_value=str(row["path"] or "").strip(),
+            validate_optional_fields=True,
+        )
+        _add_adhoc_assessment_findings(
+            result,
+            evidence_id=evidence_id,
+            assessment=assessment,
+            current_acceptance=True,
+        )
+
+
+def _is_current_acceptance_evidence(
+    conn: sqlite3.Connection,
+    *,
+    evidence_id: str,
+) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM evidence_links AS link
+        LEFT JOIN tasks AS task
+          ON link.target_type = 'task' AND task.id = link.target_id
+        LEFT JOIN features AS feature
+          ON link.target_type = 'feature' AND feature.id = link.target_id
+        LEFT JOIN test_cases AS test_case
+          ON link.target_type = 'test_case' AND test_case.id = link.target_id
+        WHERE link.evidence_id = ?
+          AND (
+            (link.target_type = 'task'
+             AND link.link_role = 'supporting'
+             AND task.status = 'done')
+            OR
+            (link.target_type = 'feature'
+             AND link.link_role = 'acceptance'
+             AND feature.status = 'done')
+            OR
+            (link.target_type = 'test_case'
+             AND link.link_role = 'acceptance'
+             AND test_case.status = 'passing')
+          )
+        LIMIT 1
+        """,
+        (evidence_id,),
+    ).fetchone()
+    return row is not None
 
 
 def _add_adhoc_assessment_findings(
@@ -2917,6 +2999,7 @@ def _add_adhoc_assessment_findings(
     *,
     evidence_id: str,
     assessment: dict[str, Any],
+    current_acceptance: bool = False,
 ) -> None:
     for finding in assessment.get("findings", []):
         if not isinstance(finding, dict):
@@ -2972,11 +3055,19 @@ def _add_adhoc_assessment_findings(
         elif code == "member_hash_mismatch":
             emitter.warning(f"Adhoc evidence {evidence_id} member {path} drifted: hash mismatch.")
         elif code == "copy_missing":
-            emitter.warning(f"Adhoc evidence {evidence_id} copied member {path} drifted: missing.")
+            message = f"Adhoc evidence {evidence_id} copied member {path} drifted: missing."
+            if current_acceptance:
+                emitter.error(message)
+            else:
+                emitter.warning(message)
         elif code == "copy_hash_mismatch":
-            emitter.warning(
+            message = (
                 f"Adhoc evidence {evidence_id} copied member {path} drifted: hash mismatch."
             )
+            if current_acceptance:
+                emitter.error(message)
+            else:
+                emitter.warning(message)
         elif code == "member_outside_project_root":
             emitter.warning(
                 f"Adhoc evidence {evidence_id} member {path} is outside the project root."

@@ -14,6 +14,7 @@ class MutationConnection(sqlite3.Connection):
     _operation_lock: Any = None
     _paths: Any = None
     _precommit_guard: Any = None
+    _postcommit_guard: Any = None
     _postcommit_authority_publisher: Any = None
     postcommit_authority_result: Any = None
     projection_result: Any = None
@@ -30,6 +31,11 @@ class MutationConnection(sqlite3.Connection):
             return
         self._authoritative_commit_completed = True
         try:
+            # Task Accept uses this first post-commit callback only to classify
+            # corruption after its retained-descriptor linearization point. It
+            # runs before accepted authority, projection, render, or tail work.
+            if self._postcommit_guard is not None:
+                self._postcommit_guard()
             if self._postcommit_authority_publisher is not None:
                 self.postcommit_authority_result = self._postcommit_authority_publisher()
             crash_if_requested("after_sqlite_commit_before_projector")

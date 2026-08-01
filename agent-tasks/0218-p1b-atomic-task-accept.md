@@ -1,6 +1,6 @@
 # 0218: P1-B Atomic Task Accept
 
-- **Status:** Second bounded correction implemented and locally verified; independent re-review pending
+- **Status:** Revised-linearization bounded correction implemented and locally verified; independent re-review pending
 - **Milestone:** P1-B one-call terminal acceptance
 - **Priority:** P1
 - **Size:** XL
@@ -15,6 +15,8 @@
   `docs/evidence/0244-p1b-atomic-task-accept-second-correction-final.md`
 - **Final candidate evidence:** `E-0053` /
   `docs/evidence/0245-p1b-atomic-task-accept-final-candidate.md`
+- **Revised-linearization correction:** `E-0054` /
+  `docs/evidence/0246-p1b-revised-linearization-correction.md`
 
 ## Contract
 
@@ -53,6 +55,18 @@ Final candidate Evidence further qualifies `E-0052` for the distinct
 postcommit accepted-publication failure: actual 24-record accounting, a
 confirmed-DB seven-record dedicated repair, and subsequent all-zero replay are
 now covered without changing the canonical 25+6 projection-recovery contract.
+
+Human authority `ask_cb3c43a0cbd2` supersedes only the impossible requirement
+that non-cooperative filesystem bytes remain current through the physical
+SQLite commit. The successful final retained-descriptor reseal is now the
+filesystem linearization point V, conditional on the staged transaction
+committing. Post-V corruption preserves committed business state, returns a
+recoverable corruption envelope when observed, and blocks healthy tail
+recovery and current-proof consumers until legitimate immutable Evidence
+supersedes it. This qualification does not change M1/M2/M3/M4, P0-B, schema 8,
+or the Story/human boundary.
+`E-0054` immutably supersedes `E-0053`; it is writer Evidence rather than
+independent acceptance.
 
 ## Verification
 

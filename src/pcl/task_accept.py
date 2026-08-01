@@ -240,6 +240,7 @@ TASK_ACCEPT_ENVELOPE_SCHEMA["properties"] = {
             "identity",
             "precommit",
             "business_commit",
+            "post_acceptance_corruption",
             "projection",
             "render",
             "teardown",
@@ -572,6 +573,8 @@ class _RetainedProofFile:
 
 @dataclass
 class _RetainedProofSeal:
+    """Proof snapshot whose successful final verify is acceptance point V."""
+
     files: tuple[_RetainedProofFile, ...]
 
     def verify(self) -> None:
@@ -834,7 +837,16 @@ def _validate_task_accept_semantics(payload: dict[str, Any]) -> None:
     identity_empty = all(value is None for value in identity_values)
     if phase == "phase0" and not identity_empty:
         raise ValueError("task accept phase0 identity must be empty")
-    if phase in {"precommit", "business_commit", "projection", "render", "teardown", "tail_recovery", "complete"} and not identity_full:
+    if phase in {
+        "precommit",
+        "business_commit",
+        "post_acceptance_corruption",
+        "projection",
+        "render",
+        "teardown",
+        "tail_recovery",
+        "complete",
+    } and not identity_full:
         raise ValueError("task accept phase requires a complete identity")
     if established and not identity_full:
         raise ValueError("task accept authority requires a complete identity")
@@ -1704,7 +1716,7 @@ def _accept_locked(
                 retained.close()
             raise _Abort(
                 "task_accept_current_proof_invalid",
-                "The retained current acceptance proof changed before SQLite commit.",
+                "The retained current acceptance proof no longer matches its linearization identity.",
                 EXIT_DATA_ERROR,
                 "final_reseal",
             )
@@ -1746,6 +1758,33 @@ def _accept_locked(
         )
         conn._precommit_guard = proof_seal.verify
 
+        def verify_postcommit_proof() -> None:
+            # V is the preceding precommit verify. This does not move V: it is
+            # an immediate best-effort classifier for corruption after V and
+            # before any healthy postcommit authority is published.
+            try:
+                proof_seal.verify()
+            except _Abort as exc:
+                raise ProjectionPendingError(
+                    details={
+                        "committed": True,
+                        "projection": "not_started",
+                        "delivered": 0,
+                        "pending_count": len(event_plan),
+                        "first_pending_sequence": int(event_plan[0]["sequence"]),
+                        "event_id": authority_event_id,
+                        "event_sequence": int(task_item["sequence"]),
+                        "safe_next_action": "pcl audit flush --json",
+                        "error": str(exc),
+                        "accepted_authority_published": False,
+                        "post_acceptance_corruption": True,
+                        "mutation_committed": True,
+                        "safe_to_retry_original": False,
+                    }
+                ) from exc
+
+        conn._postcommit_guard = verify_postcommit_proof
+
         def publish_committed_acceptance_authority() -> dict[str, int]:
             try:
                 return _publish_m2_postcommit_authority(generation)
@@ -1777,6 +1816,9 @@ def _accept_locked(
         except ProjectionPendingError as exc:
             committed = bool(exc.details.get("mutation_committed"))
             if committed:
+                post_acceptance_corruption = bool(
+                    exc.details.get("post_acceptance_corruption")
+                )
                 accepted_published = (
                     exc.details.get("accepted_authority_published") is not False
                 )
@@ -1786,17 +1828,25 @@ def _accept_locked(
                     effects["markers_published"] -= 1
                     effects["durable_recovery_records_published"] -= 1
                     envelope["receipts"]["acceptance_receipt_status"] = "corrupt"
-                return _postcommit_error(
+                result = _postcommit_error(
                     envelope,
                     code=(
-                        "task_accept_projection_pending"
-                        if accepted_published
-                        else "task_accept_tail_pending"
+                        "task_accept_post_acceptance_corruption"
+                        if post_acceptance_corruption
+                        else (
+                            "task_accept_projection_pending"
+                            if accepted_published
+                            else "task_accept_tail_pending"
+                        )
                     ),
                     message=(
-                        "Acceptance committed, but JSONL projection is pending."
-                        if accepted_published
-                        else "Acceptance committed, but its accepted authority is pending."
+                        "Acceptance committed at the final reseal, but immediate post-acceptance corruption was detected."
+                        if post_acceptance_corruption
+                        else (
+                            "Acceptance committed, but JSONL projection is pending."
+                            if accepted_published
+                            else "Acceptance committed, but its accepted authority is pending."
+                        )
                     ),
                     identity=identity,
                     authority_event_id=authority_event_id,
@@ -1804,13 +1854,25 @@ def _accept_locked(
                     generation=generation.number,
                     action=(
                         "pcl audit flush --json"
-                        if accepted_published
+                        if accepted_published or post_acceptance_corruption
                         else "process_restart_and_inspect"
                     ),
                     business_changed=True,
                     mutation_committed=True,
                     prior_authoritative_commit=False,
                 )
+                if post_acceptance_corruption:
+                    result["pending_tail"]["outbox_pending_count"] = len(event_plan)
+                    result["receipts"].update(
+                        {
+                            "generation_directory_status": "partial",
+                            "projection_status": "pending",
+                            "sqlite_commit_status": "committed",
+                            "tail_status": "corrupt",
+                            "teardown_receipt_status": "pending",
+                        }
+                    )
+                return result
             raise
         except Exception:
             return _commit_outcome_unknown(
@@ -1822,6 +1884,7 @@ def _accept_locked(
             )
         finally:
             conn._precommit_guard = None
+            conn._postcommit_guard = None
             conn._postcommit_authority_publisher = None
             proof_seal.close()
         postcommit_authority = getattr(conn, "postcommit_authority_result", None)
@@ -1846,6 +1909,49 @@ def _accept_locked(
         envelope["effects"]["db_mutations_total"] += len(event_plan)
         envelope["receipts"]["projection_status"] = "delivered"
         envelope["receipts"]["sqlite_commit_status"] = "committed"
+        authority_row = conn.execute(
+            """
+            SELECT id, sequence, event_type, entity_type, entity_id,
+                   payload_json, created_at
+            FROM events WHERE id = ?
+            """,
+            (authority_event_id,),
+        ).fetchone()
+        assert authority_row is not None
+        try:
+            _verify_current_proof_identity(
+                paths,
+                conn,
+                receipt=receipt,
+                identity=identity,
+                evidence_id=evidence_id,
+                authority_row=authority_row,
+            )
+        except _Abort:
+            envelope["receipts"].update(
+                {
+                    "generation_directory_status": "partial",
+                    "render_status": "pending",
+                    "tail_status": "corrupt",
+                    "teardown_receipt_status": "pending",
+                }
+            )
+            return _postcommit_error(
+                envelope,
+                code="task_accept_post_acceptance_corruption",
+                message=(
+                    "Acceptance committed at the final reseal, but later "
+                    "post-acceptance corruption was detected before rendering."
+                ),
+                identity=identity,
+                authority_event_id=authority_event_id,
+                evidence_id=evidence_id,
+                generation=generation.number,
+                action="pcl audit flush --json",
+                business_changed=True,
+                mutation_committed=True,
+                prior_authoritative_commit=False,
+            )
         render_receipt = _run_postcommit_render(
             paths,
             operation_capability=operation_capability,
@@ -4673,50 +4779,67 @@ def recover_task_accept_tails(paths: ProjectPaths) -> dict[str, Any]:
                         EXIT_DATA_ERROR,
                         "tail_recovery",
                     )
-                manifest_bytes = _secure_proof_bytes(paths, str(evidence_row["path"]))
+                identity = _tail_recovery_identity(paths, receipt=receipt)
                 try:
+                    manifest_bytes = _secure_proof_bytes(
+                        paths,
+                        str(evidence_row["path"]),
+                    )
                     manifest = json.loads(manifest_bytes)
                     member = manifest["members"][0]
-                except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
-                    raise _Abort(
-                        "task_accept_request_ledger_corrupt",
-                        "A committed Task Accept manifest is corrupt.",
-                        EXIT_DATA_ERROR,
-                        "tail_recovery",
-                    ) from exc
-                artifact_locator = {
-                    "contract_version": "artifact-locator/v1",
-                    "normalized_posix_segments": list(PurePosixPath(str(member["path"])).parts),
-                    "path_scope": "project-relative",
-                    "project_instance_id": receipt.get("project_instance_id"),
-                    "verified_regular_file": True,
-                }
-                identity = {
-                    "request_id": request_id,
-                    "request_locator": request_locator,
-                    "project_instance_id": receipt.get("project_instance_id"),
-                    "task_id": receipt.get("task_id"),
-                    "feature_id": receipt.get("feature_id"),
-                    "test_ids": receipt.get("test_ids"),
-                    "artifact_locator_sha256": _sha256_canonical(artifact_locator),
-                    "plan_digest": receipt.get("structural_plan_sha256"),
-                    "pre_accept_prefix_hwm": receipt.get("pre_accept_prefix_hwm"),
-                    "pre_accept_prefix_sha256": receipt.get("pre_accept_prefix_sha256"),
-                    "artifact": {
-                        "path": member.get("path"),
-                        "sha256": receipt.get("source_sha256"),
-                        "size_bytes": receipt.get("source_size"),
-                        "copy": True,
-                    },
-                }
-                _verify_current_proof_identity(
-                    paths,
-                    conn,
-                    receipt=receipt,
-                    identity=identity,
-                    evidence_id=evidence_id,
-                    authority_row=authority_row,
-                )
+                    if not isinstance(member, dict):
+                        raise TypeError("member is not an object")
+                    identity["artifact"]["path"] = member.get("path")
+                except (
+                    _Abort,
+                    KeyError,
+                    IndexError,
+                    TypeError,
+                    UnicodeError,
+                    json.JSONDecodeError,
+                ):
+                    validation, readiness = _tail_recovery_live_gate(
+                        paths,
+                        conn,
+                        identity=identity,
+                    )
+                    return _tail_recovery_blocked_envelope(
+                        identity=identity,
+                        receipt=receipt,
+                        authority_row=authority_row,
+                        validation=validation.to_dict(),
+                        readiness=readiness,
+                        code="task_accept_post_acceptance_corruption",
+                        message=(
+                            f"Accepted Task {identity['task_id']} has corrupt current Evidence"
+                        ),
+                    )
+                try:
+                    _verify_current_proof_identity(
+                        paths,
+                        conn,
+                        receipt=receipt,
+                        identity=identity,
+                        evidence_id=evidence_id,
+                        authority_row=authority_row,
+                    )
+                except _Abort:
+                    validation, readiness = _tail_recovery_live_gate(
+                        paths,
+                        conn,
+                        identity=identity,
+                    )
+                    return _tail_recovery_blocked_envelope(
+                        identity=identity,
+                        receipt=receipt,
+                        authority_row=authority_row,
+                        validation=validation.to_dict(),
+                        readiness=readiness,
+                        code="task_accept_post_acceptance_corruption",
+                        message=(
+                            f"Accepted Task {identity['task_id']} has corrupt current Evidence"
+                        ),
+                    )
                 _require_current_acceptance_targets(
                     conn,
                     identity=identity,
@@ -4738,27 +4861,10 @@ def recover_task_accept_tails(paths: ProjectPaths) -> dict[str, Any]:
                         EXIT_DATA_ERROR,
                         "tail_recovery",
                     )
-                validation = _validate_candidate_snapshot(
+                validation, readiness = _tail_recovery_live_gate(
                     paths,
                     conn,
-                    overlay_event_ids=frozenset(),
-                )
-                task_row = conn.execute(
-                    "SELECT * FROM tasks WHERE id = ?", (identity["task_id"],)
-                ).fetchone()
-                if task_row is None:
-                    raise _Abort(
-                        "task_accept_request_ledger_corrupt",
-                        "The accepted Task authority target is missing.",
-                        EXIT_DATA_ERROR,
-                        "tail_recovery",
-                    )
-                readiness = task_terminal_readiness_for_row(
-                    paths,
-                    conn,
-                    dict(task_row),
-                    source="task_accept_tail_recovery",
-                    formal_findings=list(validation.findings),
+                    identity=identity,
                 )
                 if not validation.ok or not readiness.get("terminal_allowed"):
                     return _tail_recovery_blocked_envelope(
@@ -4826,6 +4932,96 @@ def recover_task_accept_tails(paths: ProjectPaths) -> dict[str, Any]:
         finally:
             conn.close()
     return result
+
+
+def _tail_recovery_identity(
+    paths: ProjectPaths,
+    *,
+    receipt: dict[str, Any],
+) -> dict[str, Any]:
+    identity = {
+        "request_id": receipt.get("request_id"),
+        "request_locator": receipt.get("request_locator"),
+        "project_instance_id": receipt.get("project_instance_id"),
+        "task_id": receipt.get("task_id"),
+        "feature_id": receipt.get("feature_id"),
+        "test_ids": receipt.get("test_ids"),
+        "artifact_locator_sha256": None,
+        "plan_digest": receipt.get("structural_plan_sha256"),
+        "pre_accept_prefix_hwm": receipt.get("pre_accept_prefix_hwm"),
+        "pre_accept_prefix_sha256": receipt.get("pre_accept_prefix_sha256"),
+        "artifact": {
+            "path": None,
+            "sha256": receipt.get("source_sha256"),
+            "size_bytes": receipt.get("source_size"),
+            "copy": True,
+        },
+    }
+    roots = _m2_paths(paths, identity)
+    ledger_entries = _m2_ledger_entries(roots["ledger"], identity=identity)
+    if not ledger_entries:
+        raise _Abort(
+            "task_accept_request_ledger_corrupt",
+            "The committed Task Accept authority has no generation ledger.",
+            EXIT_DATA_ERROR,
+            "tail_recovery",
+        )
+    generation = int(ledger_entries[-1][1]["attempt_generation"])
+    live = _m2_generation_paths(roots, generation)["live"]
+    request_binding = _m2_read_role(live, "request-binding", required=True)
+    assert request_binding is not None
+    value = request_binding[1]
+    expected_common = _m2_common(identity=identity, attempt_generation=generation)
+    if any(value.get(key) != expected for key, expected in expected_common.items()):
+        raise _Abort(
+            "task_accept_request_ledger_corrupt",
+            "The committed Task Accept request binding conflicts with its receipt.",
+            EXIT_DATA_ERROR,
+            "tail_recovery",
+        )
+    locator_sha256 = value.get("artifact_locator_sha256")
+    if not isinstance(locator_sha256, str) or re.fullmatch(
+        r"[0-9a-f]{64}", locator_sha256
+    ) is None:
+        raise _Abort(
+            "task_accept_request_ledger_corrupt",
+            "The committed Task Accept artifact locator is invalid.",
+            EXIT_DATA_ERROR,
+            "tail_recovery",
+        )
+    identity["artifact_locator_sha256"] = locator_sha256
+    return identity
+
+
+def _tail_recovery_live_gate(
+    paths: ProjectPaths,
+    conn: sqlite3.Connection,
+    *,
+    identity: dict[str, Any],
+):
+    validation = _validate_candidate_snapshot(
+        paths,
+        conn,
+        overlay_event_ids=frozenset(),
+    )
+    task_row = conn.execute(
+        "SELECT * FROM tasks WHERE id = ?", (identity["task_id"],)
+    ).fetchone()
+    if task_row is None:
+        raise _Abort(
+            "task_accept_request_ledger_corrupt",
+            "The accepted Task authority target is missing.",
+            EXIT_DATA_ERROR,
+            "tail_recovery",
+        )
+    readiness = task_terminal_readiness_for_row(
+        paths,
+        conn,
+        dict(task_row),
+        source="task_accept_tail_recovery",
+        formal_findings=list(validation.findings),
+    )
+    return validation, readiness
 
 
 def _m2_rebuild_tail_plan(
@@ -5630,7 +5826,11 @@ def _postcommit_error(
     effects = envelope.get("effects")
     if not isinstance(effects, dict) or set(effects) != _EFFECT_KEYS:
         effects = _zero_effects()
-    if "projection" in code:
+    if code == "task_accept_post_acceptance_corruption":
+        pending_stage = "corrupt"
+        pending_phase = "post_acceptance_corruption"
+        render_pending = False
+    elif "projection" in code:
         pending_stage = "projection"
         pending_phase = "projection"
         render_pending = True
@@ -5881,6 +6081,7 @@ def _tail_recovery_blocked_envelope(
     message: str | None = None,
 ) -> dict[str, Any]:
     envelope = _envelope()
+    proof_corrupt = code == "task_accept_post_acceptance_corruption"
     envelope.update(
         {
             "authority": {
@@ -5899,8 +6100,8 @@ def _tail_recovery_blocked_envelope(
             "pending_tail": {
                 "detail_sha256": _sha256_canonical(readiness),
                 "outbox_pending_count": 0,
-                "render_pending": True,
-                "stage": "tail_seal",
+                "render_pending": not proof_corrupt,
+                "stage": "corrupt" if proof_corrupt else "tail_seal",
                 "tail_marker_pending": True,
                 "teardown_receipt_pending": True,
             },
@@ -5909,14 +6110,20 @@ def _tail_recovery_blocked_envelope(
             "prior_authoritative_commit": True,
             "receipts": {
                 **_empty_receipts(),
-                "acceptance_receipt_status": "prior_verified",
-                "generation_directory_status": "partial",
+                "acceptance_receipt_status": (
+                    "corrupt" if proof_corrupt else "prior_verified"
+                ),
+                "generation_directory_status": (
+                    "corrupt" if proof_corrupt else "partial"
+                ),
                 "projection_status": "prior_delivered",
                 "request_binding_status": "prior_verified",
                 "reservation_index_status": "prior_verified",
                 "sqlite_commit_status": "prior_committed",
-                "tail_status": "pending",
-                "teardown_receipt_status": "pending",
+                "tail_status": "corrupt" if proof_corrupt else "pending",
+                "teardown_receipt_status": (
+                    "corrupt" if proof_corrupt else "pending"
+                ),
             },
             "safe_retry_action": "pcl audit flush --json",
             "status": "error",

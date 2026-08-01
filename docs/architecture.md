@@ -140,6 +140,15 @@ Committed authorities missing their post-commit acceptance marker are closed
 only by `audit flush`: it verifies the receipt-bound current proof and records a
 tail-recovery generation without replaying business DML.
 
+Task Accept filesystem currentness is linearized at the successful final
+retained-descriptor reseal, conditional on the staged SQLite transaction later
+committing. This is intentionally not a cross-filesystem/SQLite atomicity
+claim. Retained descriptors stay live through physical commit and are checked
+again before post-commit authority publication. A detected post-linearization
+change preserves the committed business state but isolates its tail with exit
+6; later validation and recovery classify current copied-Evidence corruption
+as an active integrity error and never overwrite or adopt the corrupt object.
+
 Task completion adds a pre-update proof gate inside that same transaction.
 The exact `routing-target/v1` Task is re-read and evaluated through the shared
 `terminal-readiness/v1` collector before its row changes. The receipt binds the

@@ -67,7 +67,10 @@ def apply_direct_setup_tail(
     observations: list[dict[str, Any]] = []
     for attempt in range(1, MAX_RENDER_ATTEMPTS + 1):
         before = _state_high_watermark(paths)
-        validation_result = validate_project(paths)
+        validation_result = validate_project(
+            paths,
+            include_current_evidence_integrity=True,
+        )
         validation_projection = project_validation_result(
             paths,
             validation_result,

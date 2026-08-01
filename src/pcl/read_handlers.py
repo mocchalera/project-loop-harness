@@ -19,7 +19,12 @@ def handle_doctor(
     json_output: bool,
     output: TextIO,
 ) -> int:
-    result = validate_project(paths, strict=strict, include_config_advice=True)
+    result = validate_project(
+        paths,
+        strict=strict,
+        include_config_advice=True,
+        include_current_evidence_integrity=True,
+    )
     update_result = update_check.check_for_update() if check_updates else None
     if update_result is not None:
         if update_result.update_available and update_result.latest_version:

@@ -328,7 +328,10 @@ def _render_dashboard_with_lock(
     )
     require_initialized(paths)
     resolved_locale = resolve_dashboard_locale(paths, locale)
-    validation = validate_project(paths)
+    validation = validate_project(
+        paths,
+        include_current_evidence_integrity=True,
+    )
 
     conn = connect(paths.db_path)
     try:

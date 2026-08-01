@@ -35,6 +35,15 @@ The final Task row, `task_status_changed` event, and its outbox row are the only
 three DML statements after the strict/P0-B gate. A pre-commit failure rolls all
 business, event, and outbox rows back.
 
+The filesystem current-proof linearization point is the successful final
+retained-descriptor reseal, called **V**. Acceptance is logically linearized at
+V only if the already-staged SQLite transaction subsequently commits. The
+retained manifest/member/root identity is therefore a statement about bytes at
+V, not a claim that a pathname remains unchanged through the later physical
+SQLite commit. Commit failure or an unknown commit outcome retains the existing
+fail-closed outcome contract. Drift detected before V remains an effect-zero
+pre-commit failure.
+
 ## Copied Evidence and durable retry authority
 
 The artifact is opened component by component without following symlinks,
@@ -84,6 +93,26 @@ marker, and performs no business DML. A healthy recovery publishes the fixed
 six-record tail and returns `status=recovered`; it does not rerun Test, Feature,
 Task, Evidence, event, or outbox business DML. A subsequent exact request is a
 zero-effect replay.
+
+Retained proof descriptors remain open through the physical SQLite commit. The
+first post-commit callback rechecks them before accepted authority, projection,
+render, or the sealed tail is published. If it observes a non-cooperative
+filesystem change after V, the business transaction remains committed but the
+command returns exit `6`, `task_accept_post_acceptance_corruption`, phase
+`post_acceptance_corruption`. It publishes neither a healthy accepted marker
+nor projection/render/sealed-tail authority; the normal two-Test case retains
+the deterministic 24-record pending authority. A second live proof check after
+projection isolates corruption that lands after the immediate callback and
+before rendering, retaining the 25-record accepted pre-tail authority.
+
+Changes after either immediate check are still post-acceptance corruption; they
+do not retroactively roll back terminal SQLite state. The next validation,
+terminal-readiness consumer, exact replay, or tail recovery re-reads the
+manifest and copied member and blocks on missing, replaced, or hash-mismatched
+current Evidence. `pcl validate` and `pcl doctor` report current copied
+acceptance corruption as an error. Recovery never overwrites or adopts those
+bytes and cannot publish a healthy marker until legitimate new immutable
+Evidence and supersession/current-proof state exist.
 
 When SQLite committed but projection or rendering did not finish, the JSON
 envelope has `mutation_committed: true`, `safe_to_retry_original: false`, and
