@@ -103,7 +103,10 @@ command returns exit `6`, `task_accept_post_acceptance_corruption`, phase
 nor projection/render/sealed-tail authority; the normal two-Test case retains
 the deterministic 24-record pending authority. A second live proof check after
 projection isolates corruption that lands after the immediate callback and
-before rendering, retaining the 25-record accepted pre-tail authority.
+before rendering, retaining the 25-record accepted pre-tail authority. Because
+rendering has not started and corrupt proof cannot be rendered or recovered as
+healthy, that envelope reports `receipts.render_status=not_started` together
+with `pending_tail.render_pending=false`.
 
 Changes after either immediate check are still post-acceptance corruption; they
 do not retroactively roll back terminal SQLite state. The next validation,

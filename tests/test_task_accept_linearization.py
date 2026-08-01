@@ -190,6 +190,13 @@ def test_corruption_after_complete_is_high_and_blocks_consumers(
     assert accepted["phase"] == "post_acceptance_corruption"
     assert accepted["mutation_committed"] is True
     assert accepted["effects"]["markers_published"] == 25
+    assert accepted["receipts"]["render_status"] == "not_started"
+    assert accepted["pending_tail"]["render_pending"] is False
+    validate_task_accept_envelope(accepted)
+    contradictory = json.loads(json.dumps(accepted))
+    contradictory["receipts"]["render_status"] = "pending"
+    with pytest.raises(ValueError, match="pending render receipt mismatch"):
+        validate_task_accept_envelope(contradictory)
     before = state_counts(tmp_path)
 
     copied_member = _copied_member(tmp_path)

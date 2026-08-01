@@ -807,6 +807,7 @@ def _validate_task_accept_semantics(payload: dict[str, Any]) -> None:
     authority = payload["authority"]
     identity = payload["identity"]
     pending = payload["pending_tail"]
+    receipts = payload["receipts"]
     teardown = payload["teardown"]
     validation = payload["validation"]
     mode = payload["mode"]
@@ -878,6 +879,8 @@ def _validate_task_accept_semantics(payload: dict[str, Any]) -> None:
             raise ValueError("task accept empty pending-tail mismatch")
     elif pending["detail_sha256"] is None:
         raise ValueError("task accept pending-tail detail is missing")
+    if receipts["render_status"] == "pending" and not pending["render_pending"]:
+        raise ValueError("task accept pending render receipt mismatch")
 
     if validation["status"] == "not_evaluated":
         if (
@@ -1931,7 +1934,7 @@ def _accept_locked(
             envelope["receipts"].update(
                 {
                     "generation_directory_status": "partial",
-                    "render_status": "pending",
+                    "render_status": "not_started",
                     "tail_status": "corrupt",
                     "teardown_receipt_status": "pending",
                 }
