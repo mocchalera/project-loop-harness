@@ -72,7 +72,10 @@ ambiguous task-start provenance, non-ancestor start, invalid/ambiguous
 merge-base, or unverifiable source fails closed. A caller base is only an
 assertion against the derived value. `base == candidate` is
 `no_candidate_change`, never low-risk approval. Both `base_unknown` and
-`no_candidate_change` enforce R2 minimum and forbid reuse.
+`no_candidate_change` enforce R2 minimum and forbid reuse. The resolver also
+validates this across caller-supplied inputs: a `resolved` base equal to the
+candidate, or a `no_candidate_change` base unequal to the candidate, is
+rejected rather than trusted.
 
 ## External bootstrap boundary
 
@@ -82,7 +85,7 @@ test copy of the frozen `bootstrap-authority-profile/v0` document. Its canonical
 digest is:
 
 ```text
-sha256:632fa2a2d50005ea1d6f85c220886cd3e8f644ece720a4d39ceb240847d53eac
+sha256:26abdd95d540386b762d525fed0e49212b2cadf802ffcdcf2b1ccd03155d1331
 ```
 
 That document requires an exact-candidate full regression and fixed-hash

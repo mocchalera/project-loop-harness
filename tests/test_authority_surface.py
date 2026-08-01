@@ -99,7 +99,7 @@ def _base_resolution(*, status: str = "resolved") -> dict:
     return {
         "status": "no_candidate_change",
         "derivation": "task_start_event",
-        "commit_oid": BASE,
+        "commit_oid": CANDIDATE,
         "source_ref": "EV-START",
         "ancestry_result": "same_as_candidate",
         "reuse_allowed": False,
@@ -120,10 +120,12 @@ def _resolution(
     base_canary: dict | None = None,
     candidate_canary: dict | None = None,
     base_resolution: dict | None = None,
+    packaged_catalog: dict | None = None,
+    bootstrap_profile: dict | None = None,
     old_mode: str = "100644",
     new_mode: str = "100644",
 ) -> dict:
-    profile = load_bootstrap_authority_profile(FIXTURE)
+    profile = bootstrap_profile or load_bootstrap_authority_profile(FIXTURE)
     entries = [
         {
             "old_mode": old_mode,
@@ -152,7 +154,11 @@ def _resolution(
             "risk_level": reviewer_risk,
             "verification_depth": reviewer_depth,
         },
-        packaged_catalog=profile["authority_catalog"],
+        packaged_catalog=(
+            packaged_catalog
+            if packaged_catalog is not None
+            else profile["authority_catalog"]
+        ),
         base_catalog=base_catalog or _empty_catalog("base"),
         candidate_catalog=candidate_catalog or _empty_catalog("candidate"),
         base_canary=base_canary or _empty_canary(),
@@ -276,6 +282,31 @@ def test_risk_and_depth_are_composed_by_maximum_rank() -> None:
     assert resolution["inputs"]["reviewer_escalation"]["risk_level"] == "R0"
 
 
+def test_r3_requires_human_gate_with_basic_depth() -> None:
+    resolution = _resolution(
+        path="docs/operator-guide.md",
+        existing_route_risk="R3",
+        existing_adaptive_depth="basic",
+    )
+
+    assert resolution["effective"]["risk_level"] == "R3"
+    assert resolution["effective"]["verification_depth"] == "independent"
+    assert resolution["effective"]["human_gate_required"] is True
+
+
+def test_r2_human_depth_disables_reuse() -> None:
+    resolution = _resolution(
+        path="docs/operator-guide.md",
+        existing_route_risk="R2",
+        existing_adaptive_depth="human",
+    )
+
+    assert resolution["effective"]["risk_level"] == "R2"
+    assert resolution["effective"]["verification_depth"] == "human"
+    assert resolution["effective"]["human_gate_required"] is True
+    assert resolution["effective"]["reuse_allowed"] is False
+
+
 def test_r4_preserves_human_depth_gate_and_disables_reuse() -> None:
     resolution = _resolution(
         existing_route_risk="R4",
@@ -347,6 +378,52 @@ def test_candidate_canary_deletion_is_retained_and_conflicting_narrowing_fails()
 
 
 @pytest.mark.parametrize(
+    ("field", "replacement", "expected_code"),
+    [
+        (
+            "command",
+            ["python", "-m", "pytest", "-q", "tests/test_authority_surface.py", "--strict"],
+            "authority_canary_conflict",
+        ),
+        ("required_outcome", "fail", "authority_canary_invalid"),
+        (
+            "supported_platform_conditions",
+            ["python>=3.11"],
+            "authority_canary_conflict",
+        ),
+    ],
+)
+def test_candidate_canary_preserves_command_outcome_and_platform(
+    field: str,
+    replacement: object,
+    expected_code: str,
+) -> None:
+    profile = load_bootstrap_authority_profile(FIXTURE)
+    candidate = json.loads(json.dumps(profile["canary_contract"]))
+    candidate["items"][0][field] = replacement
+
+    with pytest.raises(AuthoritySurfaceError) as exc_info:
+        _resolution(
+            base_canary=profile["canary_contract"],
+            candidate_canary=candidate,
+        )
+
+    assert exc_info.value.code == expected_code
+    assert field in str(exc_info.value.details)
+
+
+def test_packaged_catalog_must_match_bootstrap_profile() -> None:
+    profile = load_bootstrap_authority_profile(FIXTURE)
+    packaged = json.loads(json.dumps(profile["authority_catalog"]))
+    packaged["rules"][0]["minimum_risk"] = "R4"
+
+    with pytest.raises(AuthoritySurfaceError) as exc_info:
+        _resolution(packaged_catalog=packaged, bootstrap_profile=profile)
+
+    assert exc_info.value.code == "bootstrap_authority_catalog_mismatch"
+
+
+@pytest.mark.parametrize(
     ("path", "minimum"),
     [
         ("src/pcl/authority_surface.py", "R2"),
@@ -412,6 +489,74 @@ def test_candidate_cannot_classify_unknown_executable_as_non_executable_r0() -> 
     assert "unknown_executable_path" in resolution["effective"]["reason_codes"]
 
 
+def test_packaged_floor_survives_candidate_r0_non_executable_rule() -> None:
+    candidate = {
+        "contract_version": AUTHORITY_CATALOG_CONTRACT_VERSION,
+        "catalog_id": "candidate",
+        "rules": [
+            {
+                "id": "candidate-silent-artifact",
+                "minimum_risk": "R0",
+                "path_class": "non_executable",
+                "patterns": ["artifacts/opaque.bin"],
+            }
+        ],
+    }
+
+    resolution = _resolution(
+        path="artifacts/opaque.bin",
+        candidate_catalog=candidate,
+    )
+
+    assert resolution["inputs"]["packaged_catalog_floor"] == "R2"
+    assert resolution["inputs"]["candidate_catalog_floor"] == "R0"
+    assert resolution["effective"]["risk_level"] == "R2"
+
+
+def test_shared_rule_id_unions_patterns_before_risk_classification() -> None:
+    base = {
+        "contract_version": AUTHORITY_CATALOG_CONTRACT_VERSION,
+        "catalog_id": "base",
+        "rules": [
+            {
+                "id": "shared-authority",
+                "minimum_risk": "R3",
+                "patterns": ["docs/trusted-only.md"],
+            }
+        ],
+    }
+    candidate = {
+        "contract_version": AUTHORITY_CATALOG_CONTRACT_VERSION,
+        "catalog_id": "candidate",
+        "rules": [
+            {
+                "id": "shared-authority",
+                "minimum_risk": "R0",
+                "patterns": ["docs/operator-guide.md"],
+            }
+        ],
+    }
+
+    union = merge_authority_catalogs(base, candidate)
+    resolution = _resolution(
+        path="docs/operator-guide.md",
+        base_catalog=base,
+        candidate_catalog=candidate,
+    )
+
+    assert union["rules"] == [
+        {
+            "id": "shared-authority",
+            "minimum_risk": "R3",
+            "patterns": ["docs/operator-guide.md", "docs/trusted-only.md"],
+        }
+    ]
+    assert resolution["inputs"]["base_catalog_floor"] == "R0"
+    assert resolution["inputs"]["candidate_catalog_floor"] == "R0"
+    assert resolution["effective"]["risk_level"] == "R3"
+    assert resolution["effective"]["human_gate_required"] is True
+
+
 def test_executable_mode_cannot_hide_below_documentation_floor() -> None:
     resolution = _resolution(
         path="docs/operator-guide.md",
@@ -432,13 +577,41 @@ def test_only_explicit_documentation_paths_may_remain_below_r2() -> None:
     assert "unknown_path" in unknown_binary["effective"]["reason_codes"]
 
 
-def test_base_unknown_and_no_candidate_change_are_r2_and_never_reusable() -> None:
-    unknown = _resolution(base_resolution=_base_resolution(status="base_unknown"))
-    unchanged = _resolution(base_resolution=_base_resolution(status="no_candidate_change"))
+@pytest.mark.parametrize("status", ["base_unknown", "no_candidate_change"])
+def test_base_state_floor_isolated_on_documentation_diff(status: str) -> None:
+    resolution = _resolution(
+        path="docs/operator-guide.md",
+        base_resolution=_base_resolution(status=status),
+    )
 
-    for result in (unknown, unchanged):
-        assert result["effective"]["risk_level"] == "R2"
-        assert result["effective"]["reuse_allowed"] is False
+    assert resolution["inputs"]["base_state_floor"] == "R2"
+    assert resolution["inputs"]["packaged_catalog_floor"] == "R0"
+    assert resolution["effective"]["risk_level"] == "R2"
+    assert resolution["effective"]["reuse_allowed"] is False
+
+
+@pytest.mark.parametrize(
+    "path",
+    ["docs/operator-guide.md", "src/pcl/task_accept.py"],
+)
+def test_resolved_base_equal_to_candidate_is_rejected(path: str) -> None:
+    forged = _base_resolution()
+    forged["commit_oid"] = CANDIDATE
+
+    with pytest.raises(AuthoritySurfaceError) as exc_info:
+        _resolution(path=path, base_resolution=forged)
+
+    assert exc_info.value.code == "authority_base_no_candidate_change_mismatch"
+
+
+def test_no_candidate_change_base_must_equal_candidate() -> None:
+    forged = _base_resolution(status="no_candidate_change")
+    forged["commit_oid"] = BASE
+
+    with pytest.raises(AuthoritySurfaceError) as exc_info:
+        _resolution(path="docs/operator-guide.md", base_resolution=forged)
+
+    assert exc_info.value.code == "authority_base_no_candidate_change_mismatch"
 
 
 def test_internally_inconsistent_base_resolution_is_rejected() -> None:
@@ -448,6 +621,16 @@ def test_internally_inconsistent_base_resolution_is_rejected() -> None:
     with pytest.raises(AuthoritySurfaceError) as exc_info:
         _resolution(base_resolution=forged)
     assert exc_info.value.code == "authority_base_invalid"
+
+
+def test_terminal_authority_literal_is_validated() -> None:
+    resolution = _resolution(path="docs/operator-guide.md")
+    resolution["terminal_authority"] = True
+
+    validation = validate_authority_surface_resolution(resolution)
+
+    assert not validation.ok
+    assert "$.terminal_authority: must equal False" in validation.errors
 
 
 def test_candidate_runtime_cannot_self_certify() -> None:

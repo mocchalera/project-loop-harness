@@ -98,6 +98,7 @@ def resolve_authority_surface(
     _require_target(target)
     _require_candidate(candidate)
     _require_base_resolution(base_resolution)
+    _require_base_candidate_invariant(base_resolution, candidate)
     _require_actual_diff(actual_diff)
     _require_risk(existing_route_risk, "existing_route_risk")
     _require_depth(existing_adaptive_depth, "existing_adaptive_depth")
@@ -705,6 +706,22 @@ def _require_base_resolution(base: Mapping[str, Any]) -> None:
             raise _error("authority_base_invalid", "Trusted base identity is invalid.")
     if any(base[field] != value for field, value in expected.items()):
         raise _error("authority_base_invalid", "Trusted base state is internally inconsistent.")
+
+
+def _require_base_candidate_invariant(
+    base: Mapping[str, Any],
+    candidate: Mapping[str, str],
+) -> None:
+    same_commit = base["commit_oid"] == candidate["commit_oid"]
+    no_candidate_change = base["status"] == "no_candidate_change"
+    if same_commit != no_candidate_change:
+        raise _error(
+            "authority_base_no_candidate_change_mismatch",
+            "Trusted base equality and no_candidate_change status must agree.",
+            base_status=base["status"],
+            base_commit_oid=base["commit_oid"],
+            candidate_commit_oid=candidate["commit_oid"],
+        )
 
 
 def _require_actual_diff(actual_diff: Mapping[str, Any]) -> None:

@@ -29,10 +29,15 @@ not permit reuse or low-risk approval.
 ## Bootstrap limitation
 
 The frozen profile canonical SHA-256 is
-`sha256:632fa2a2d50005ea1d6f85c220886cd3e8f644ece720a4d39ceb240847d53eac`.
+`sha256:26abdd95d540386b762d525fed0e49212b2cadf802ffcdcf2b1ccd03155d1331`.
 It requires one exact-candidate full regression and fixed-hash independent
 review and forbids self-certification. Local implementation and tests do not
 claim either external outcome.
+
+The first independent review at `8649e30b3c8ed2acfd7153884ac2e1288b991520`
+reported H0/M2/L5. This bounded C1 follow-up rejects caller-supplied base status
+and candidate equality mismatches and adds isolated mutation-killing coverage;
+the resulting candidate still requires a new fixed-hash independent review.
 
 ## Exclusions
 

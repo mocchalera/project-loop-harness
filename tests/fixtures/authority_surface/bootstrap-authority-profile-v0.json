@@ -153,12 +153,17 @@
         ],
         "id": "c1-authority-rank-and-union",
         "referenced_blob_oids": [
-          "35703817aae4584c9352364af6d08c2aa52e0020"
+          "a753096772172a6266893c69443c21f37bf750ad"
         ],
         "required_outcome": "pass",
         "selectors": [
+          "test_base_state_floor_isolated_on_documentation_diff",
           "test_candidate_deletion_and_weakening_cannot_remove_base_requirement",
-          "test_risk_and_depth_are_composed_by_maximum_rank"
+          "test_packaged_floor_survives_candidate_r0_non_executable_rule",
+          "test_r2_human_depth_disables_reuse",
+          "test_r3_requires_human_gate_with_basic_depth",
+          "test_risk_and_depth_are_composed_by_maximum_rank",
+          "test_shared_rule_id_unions_patterns_before_risk_classification"
         ],
         "supported_platform_conditions": [
           "python>=3.10"
@@ -182,10 +187,12 @@
         ],
         "id": "c1-base-and-unknown-path",
         "referenced_blob_oids": [
-          "35703817aae4584c9352364af6d08c2aa52e0020"
+          "a753096772172a6266893c69443c21f37bf750ad"
         ],
         "required_outcome": "pass",
         "selectors": [
+          "test_no_candidate_change_base_must_equal_candidate",
+          "test_resolved_base_equal_to_candidate_is_rejected",
           "test_trusted_base_precedence_and_fail_closed_states",
           "test_unknown_executable_path_is_never_silent_r0_or_r1"
         ],
