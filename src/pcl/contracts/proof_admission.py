@@ -104,6 +104,37 @@ PROMOTION_WITHHOLDING_CODES = (
     "participant_handoff_withheld",
     "participant_output_uncommitted",
 )
+_OBSERVATION_REASON_EDGES = {
+    ("attempt_status", "missing"): "required_role_missing",
+    ("attempt_status", "not_run"): "required_role_not_run",
+    ("plan_binding_status", "mismatched"): "participant_policy_mismatch",
+    ("selector_audit_status", "mismatched"): "canary_plan_mismatch",
+    ("candidate_blob_status", "missing"): "candidate_blob_missing",
+    ("candidate_blob_status", "oid_mismatch"): "candidate_blob_oid_mismatch",
+    (
+        "candidate_blob_status",
+        "unsupported_type",
+    ): "candidate_blob_type_unsupported",
+    (
+        "candidate_blob_status",
+        "indeterminate",
+    ): "candidate_blob_resolution_indeterminate",
+    (
+        "effect_status",
+        "unsupported",
+    ): "canary_effect_expectation_unsupported",
+    ("effect_status", "mismatched"): "canary_effect_mismatch",
+    ("effect_status", "unproved"): "canary_pcl_state_effect_unproved",
+}
+_AGGREGATE_REASON_EDGES = {
+    "invalid": "participant_aggregate_invalid",
+    "indeterminate": "participant_aggregate_indeterminate",
+    "blocked": "participant_aggregate_blocked",
+    "cancelled": "participant_aggregate_cancelled",
+    "failed": "participant_aggregate_failed",
+    "spawn_failed": "participant_aggregate_spawn_failed",
+    "timed_out": "participant_aggregate_timed_out",
+}
 EFFECTS_ZERO = {
     "schema": 0,
     "migration": 0,
@@ -830,6 +861,17 @@ def _admission(value: dict[str, Any], errors: list[str]) -> None:
         }
         if set(reasons) & current_domain != expected_current:
             errors.append("$.state_reason_codes: current-proof source edges mismatch")
+        expected_admission = _observation_structural_reason_codes(
+            value.get("coverage_group_sha256"),
+            participants,
+            observations,
+        )
+        missing_admission = sorted(expected_admission - set(reasons))
+        if missing_admission:
+            errors.append(
+                "$.state_reason_codes: missing observation/structural source edges: "
+                + ", ".join(missing_admission)
+            )
         expected_state = derive_admission_state(reasons)
         if value.get("admission_state") != expected_state:
             errors.append("$.admission_state: does not match reason precedence")
@@ -1057,6 +1099,21 @@ def _observation(
                 errors.append(
                     f"{path}.{field}: not_observed is permitted only for missing"
                 )
+    if attempt in {"not_run", "executed"} and kind == "authority_canary":
+        if value.get("selector_audit_status") not in {"matched", "mismatched"}:
+            errors.append(
+                f"{path}.selector_audit_status: observed canary requires matched or mismatched"
+            )
+        if attempt == "executed" and value.get("effect_status") not in {
+            "satisfied",
+            "not_disproved",
+            "unproved",
+            "mismatched",
+            "unsupported",
+        }:
+            errors.append(
+                f"{path}.effect_status: executed canary requires an effect result"
+            )
     blob_digest = value.get("candidate_blob_resolution_sha256")
     if attempt == "missing":
         if blob_digest is not None:
@@ -1102,6 +1159,59 @@ def _observation(
             errors.append(f"{path}.observation_sha256: digest mismatch")
     except (KeyError, TypeError, ValueError):
         pass
+
+
+def _observation_structural_reason_codes(
+    coverage_group_sha256: Any,
+    participants: Sequence[Mapping[str, Any]],
+    observations: Sequence[Mapping[str, Any]],
+) -> set[str]:
+    reasons: set[str] = set()
+    covered_participants: set[str] = set()
+    for observation in observations:
+        for edge, reason in _OBSERVATION_REASON_EDGES.items():
+            field, adverse_value = edge
+            if observation.get(field) == adverse_value:
+                reasons.add(reason)
+        matching = observation.get("matching_checks")
+        if not isinstance(matching, list):
+            continue
+        if len(matching) > 1:
+            reasons.add("duplicate_required_role")
+        for match in matching:
+            if not isinstance(match, Mapping):
+                continue
+            participant_sha256 = match.get("participant_sha256")
+            if isinstance(participant_sha256, str):
+                covered_participants.add(participant_sha256)
+
+    bundle_digests: list[str] = []
+    proof_keys: list[str] = []
+    for participant in participants:
+        participant_sha256 = participant.get("participant_sha256")
+        if (
+            isinstance(participant_sha256, str)
+            and participant_sha256 not in covered_participants
+        ):
+            reasons.add("participant_without_required_role")
+        if participant.get("participant_group_sha256") != coverage_group_sha256:
+            reasons.add("coverage_group_mismatch")
+        bundle_sha256 = participant.get("bundle_sha256")
+        if isinstance(bundle_sha256, str):
+            bundle_digests.append(bundle_sha256)
+        proof_key_sha256 = participant.get("proof_key_sha256")
+        if isinstance(proof_key_sha256, str):
+            proof_keys.append(proof_key_sha256)
+        aggregate_reason = _AGGREGATE_REASON_EDGES.get(
+            participant.get("aggregate_verdict")
+        )
+        if aggregate_reason is not None:
+            reasons.add(aggregate_reason)
+    if len(bundle_digests) != len(set(bundle_digests)):
+        reasons.add("duplicate_bundle")
+    if len(proof_keys) != len(set(proof_keys)):
+        reasons.add("duplicate_proof_key")
+    return reasons
 
 
 def _aggregate_current_proof(value: Any, path: str, errors: list[str]) -> None:

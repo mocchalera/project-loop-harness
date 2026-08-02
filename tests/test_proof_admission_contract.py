@@ -214,12 +214,12 @@ def _observation(attempt: str, participant: dict) -> dict:
 def _admission(attempt: str) -> dict:
     participant = _participant()
     reasons = {
-        "missing": ["required_role_missing"],
+        "missing": ["participant_without_required_role", "required_role_missing"],
         "not_run": ["required_role_not_run"],
         "executed": [],
     }[attempt]
     state = {
-        "missing": "incomplete",
+        "missing": "invalid",
         "not_run": "incomplete",
         "executed": "reviewable",
     }[attempt]
@@ -255,6 +255,178 @@ def _admission(attempt: str) -> dict:
             "admission_sha256": DIGEST,
         }
     )
+
+
+def _launder_to_reviewable(admission: dict) -> dict:
+    admission = deepcopy(admission)
+    admission["state_reason_codes"] = []
+    admission["admission_state"] = "reviewable"
+    admission["review_readiness"] = "ready"
+    admission["promotion_suitability"] = "candidate"
+    return finalize_proof_coverage_admission(admission)
+
+
+def _as_canary(admission: dict) -> dict:
+    admission = deepcopy(admission)
+    observation = admission["role_observations"][0]
+    observation.update(
+        {
+            "role": "authority_canary.rank-canary",
+            "kind": "authority_canary",
+            "canary_id": "rank-canary",
+            "selector_audit_status": "matched",
+            "effect_status": "satisfied",
+        }
+    )
+    admission["role_observations"][0] = finalize_proof_coverage_observation(
+        observation
+    )
+    return admission
+
+
+def _replace_single_participant(admission: dict, participant: dict) -> dict:
+    admission = deepcopy(admission)
+    observation = admission["role_observations"][0]
+    observation["matching_checks"] = [
+        {
+            "participant_sha256": participant["participant_sha256"],
+            "check_id": observation["check_id"],
+        }
+    ]
+    observation["selected_participant_sha256"] = participant[
+        "participant_sha256"
+    ]
+    observation["aggregate_verdict"] = participant["aggregate_verdict"]
+    observation["aggregate_reuse_disposition"] = participant[
+        "aggregate_reuse_disposition"
+    ]
+    observation["aggregate_anchoring_eligible"] = participant[
+        "aggregate_anchoring_eligible"
+    ]
+    observation["aggregate_positive_proof_handoff"] = participant[
+        "aggregate_positive_proof_handoff"
+    ]
+    observation["output_commitment_status"] = participant[
+        "aggregate_output_commitment_status"
+    ]
+    admission["participants"] = [participant]
+    admission["role_observations"][0] = finalize_proof_coverage_observation(
+        observation
+    )
+    return admission
+
+
+def _participant_variant(*, verdict: str = "passed", nonce: int = 1) -> dict:
+    participant = _participant()
+    participant["aggregate_verdict"] = verdict
+    participant["bundle_sha256"] = f"sha256:{nonce:064x}"
+    participant["proof_key_sha256"] = f"sha256:{nonce + 4096:064x}"
+    return finalize_proof_coverage_participant(participant)
+
+
+def _admission_with_participants(
+    participants: list[dict],
+    *,
+    matching_digests: set[str],
+) -> dict:
+    admission = _admission("executed")
+    participants = sorted(participants, key=lambda item: item["participant_sha256"])
+    matching = sorted(
+        (
+            {
+                "participant_sha256": participant["participant_sha256"],
+                "check_id": f"check-{index:04d}",
+            }
+            for index, participant in enumerate(participants)
+            if participant["participant_sha256"] in matching_digests
+        ),
+        key=lambda item: (item["participant_sha256"], item["check_id"]),
+    )
+    assert matching
+    selected = matching[0]
+    selected_participant = next(
+        participant
+        for participant in participants
+        if participant["participant_sha256"] == selected["participant_sha256"]
+    )
+    observation = admission["role_observations"][0]
+    observation["matching_checks"] = matching
+    observation["selected_participant_sha256"] = selected["participant_sha256"]
+    observation["check_id"] = selected["check_id"]
+    observation["aggregate_verdict"] = selected_participant["aggregate_verdict"]
+    observation["aggregate_reuse_disposition"] = selected_participant[
+        "aggregate_reuse_disposition"
+    ]
+    observation["aggregate_anchoring_eligible"] = selected_participant[
+        "aggregate_anchoring_eligible"
+    ]
+    observation["aggregate_positive_proof_handoff"] = selected_participant[
+        "aggregate_positive_proof_handoff"
+    ]
+    observation["output_commitment_status"] = selected_participant[
+        "aggregate_output_commitment_status"
+    ]
+    admission["participants"] = participants
+    admission["role_observations"][0] = finalize_proof_coverage_observation(
+        observation
+    )
+    return admission
+
+
+def _reviewer_medium_3_case(case: str) -> tuple[dict, str]:
+    if case == "attempt_missing":
+        return _launder_to_reviewable(_admission("missing")), "required_role_missing"
+    if case == "attempt_not_run":
+        return _launder_to_reviewable(_admission("not_run")), "required_role_not_run"
+    if case.startswith("aggregate_"):
+        verdict = case.removeprefix("aggregate_")
+        participant = _participant_variant(verdict=verdict)
+        admission = _replace_single_participant(_admission("executed"), participant)
+        return _launder_to_reviewable(admission), f"participant_aggregate_{verdict}"
+
+    admission = _admission("executed")
+    field: str
+    value: str
+    expected: str
+    if case.startswith("selector_"):
+        admission = _as_canary(admission)
+        field = "selector_audit_status"
+        value = case.removeprefix("selector_")
+        expected = (
+            "canary_plan_mismatch"
+            if value == "mismatched"
+            else "selector_audit_status"
+        )
+    elif case.startswith("effect_"):
+        admission = _as_canary(admission)
+        field = "effect_status"
+        value = case.removeprefix("effect_")
+        expected = {
+            "mismatched": "canary_effect_mismatch",
+            "unsupported": "canary_effect_expectation_unsupported",
+            "unproved": "canary_pcl_state_effect_unproved",
+            "not_observed": "effect_status",
+        }[value]
+    elif case.startswith("blob_"):
+        field = "candidate_blob_status"
+        value = case.removeprefix("blob_")
+        expected = {
+            "oid_mismatch": "candidate_blob_oid_mismatch",
+            "missing": "candidate_blob_missing",
+            "unsupported_type": "candidate_blob_type_unsupported",
+            "indeterminate": "candidate_blob_resolution_indeterminate",
+        }[value]
+    else:
+        assert case == "plan_mismatched"
+        field = "plan_binding_status"
+        value = "mismatched"
+        expected = "participant_policy_mismatch"
+    observation = admission["role_observations"][0]
+    observation[field] = value
+    admission["role_observations"][0] = finalize_proof_coverage_observation(
+        observation
+    )
+    return _launder_to_reviewable(admission), expected
 
 
 def test_c4_contract_modules_and_exact_schema_ids_exist() -> None:
@@ -362,6 +534,200 @@ def test_observed_role_cannot_recompute_not_observed_status_into_reviewable(
     assert admission["admission_state"] == "reviewable"
     assert not validation.ok
     assert any(field in error for error in validation.errors)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "plan_mismatched",
+        "selector_mismatched",
+        "blob_oid_mismatch",
+        "blob_missing",
+        "blob_indeterminate",
+        "effect_mismatched",
+        "effect_unsupported",
+        "effect_unproved",
+        "selector_not_observed",
+        "effect_not_observed",
+        "attempt_not_run",
+        "aggregate_failed",
+        "aggregate_blocked",
+        "aggregate_timed_out",
+        "aggregate_cancelled",
+        "aggregate_spawn_failed",
+    ],
+)
+def test_reviewer_medium_3_conditions_cannot_be_laundered_to_reviewable(
+    case: str,
+) -> None:
+    admission, expected_error = _reviewer_medium_3_case(case)
+
+    validation = validate_proof_coverage_admission(admission)
+
+    assert admission["admission_state"] == "reviewable"
+    assert not validation.ok
+    assert any(expected_error in error for error in validation.errors)
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        "attempt_missing",
+        "blob_unsupported_type",
+        "aggregate_invalid",
+        "aggregate_indeterminate",
+    ],
+)
+def test_remaining_observation_and_aggregate_reason_edges_are_total(
+    case: str,
+) -> None:
+    admission, expected_error = _reviewer_medium_3_case(case)
+
+    validation = validate_proof_coverage_admission(admission)
+
+    assert not validation.ok
+    assert any(expected_error in error for error in validation.errors)
+
+
+@pytest.mark.parametrize(
+    "condition",
+    [
+        "coverage_group_mismatch",
+        "duplicate_bundle",
+        "duplicate_proof_key",
+        "duplicate_required_role",
+        "participant_without_required_role",
+    ],
+)
+def test_structural_reason_edges_cannot_be_laundered_to_reviewable(
+    condition: str,
+) -> None:
+    first = _participant_variant(nonce=101)
+    second = _participant_variant(nonce=202)
+    if condition == "coverage_group_mismatch":
+        first = deepcopy(first)
+        first["participant_group_sha256"] = f"sha256:{303:064x}"
+        first = finalize_proof_coverage_participant(first)
+        admission = _replace_single_participant(_admission("executed"), first)
+    elif condition == "duplicate_bundle":
+        second = deepcopy(second)
+        second["bundle_sha256"] = first["bundle_sha256"]
+        second = finalize_proof_coverage_participant(second)
+        admission = _admission_with_participants(
+            [first, second],
+            matching_digests={first["participant_sha256"]},
+        )
+    elif condition == "duplicate_proof_key":
+        second = deepcopy(second)
+        second["proof_key_sha256"] = first["proof_key_sha256"]
+        second = finalize_proof_coverage_participant(second)
+        admission = _admission_with_participants(
+            [first, second],
+            matching_digests={first["participant_sha256"]},
+        )
+    elif condition == "duplicate_required_role":
+        admission = _admission_with_participants(
+            [first, second],
+            matching_digests={
+                first["participant_sha256"],
+                second["participant_sha256"],
+            },
+        )
+    else:
+        admission = _admission_with_participants(
+            [first, second],
+            matching_digests={first["participant_sha256"]},
+        )
+    admission = _launder_to_reviewable(admission)
+
+    validation = validate_proof_coverage_admission(admission)
+
+    assert not validation.ok
+    assert any(condition in error for error in validation.errors)
+
+
+def test_unselected_duplicate_adverse_fact_and_input_permutation_cannot_hide_reason(
+) -> None:
+    healthy_candidates = [
+        _participant_variant(verdict="passed", nonce=1000 + index)
+        for index in range(32)
+    ]
+    adverse_candidates = [
+        _participant_variant(verdict="failed", nonce=2000 + index)
+        for index in range(32)
+    ]
+    pair = next(
+        (
+            (healthy, adverse)
+            for healthy in healthy_candidates
+            for adverse in adverse_candidates
+            if healthy["participant_sha256"] < adverse["participant_sha256"]
+        ),
+        None,
+    )
+    assert pair is not None
+    healthy, adverse = pair
+    matching = {healthy["participant_sha256"], adverse["participant_sha256"]}
+
+    forward = _launder_to_reviewable(
+        _admission_with_participants(
+            [healthy, adverse],
+            matching_digests=matching,
+        )
+    )
+    reverse = _launder_to_reviewable(
+        _admission_with_participants(
+            [adverse, healthy],
+            matching_digests=matching,
+        )
+    )
+
+    assert forward == reverse
+    assert forward["role_observations"][0]["selected_participant_sha256"] == healthy[
+        "participant_sha256"
+    ]
+    for admission in (forward, reverse):
+        validation = validate_proof_coverage_admission(admission)
+        assert not validation.ok
+        assert any(
+            "duplicate_required_role" in error for error in validation.errors
+        )
+        assert any(
+            "participant_aggregate_failed" in error
+            for error in validation.errors
+        )
+
+
+def test_all_true_reason_edges_survive_rank_precedence() -> None:
+    participant = _participant_variant(verdict="failed", nonce=3001)
+    admission = _replace_single_participant(_admission("not_run"), participant)
+    observation = admission["role_observations"][0]
+    observation["plan_binding_status"] = "mismatched"
+    admission["role_observations"][0] = finalize_proof_coverage_observation(
+        observation
+    )
+    admission["state_reason_codes"] = [
+        "participant_aggregate_failed",
+        "participant_policy_mismatch",
+        "required_role_not_run",
+    ]
+    admission["admission_state"] = "invalid"
+    admission["review_readiness"] = "withheld"
+    admission["promotion_suitability"] = "withheld"
+    admission = finalize_proof_coverage_admission(admission)
+
+    assert validate_proof_coverage_admission(admission).ok
+
+
+def test_nonserialized_authority_reason_remains_a_valid_declared_fact() -> None:
+    admission = _admission("executed")
+    admission["state_reason_codes"] = ["authority_current_mismatch"]
+    admission["admission_state"] = "stale"
+    admission["review_readiness"] = "withheld"
+    admission["promotion_suitability"] = "withheld"
+    admission = finalize_proof_coverage_admission(admission)
+
+    assert validate_proof_coverage_admission(admission).ok
 
 
 def test_current_proof_total_functions_cover_every_legal_cartesian_branch() -> None:
