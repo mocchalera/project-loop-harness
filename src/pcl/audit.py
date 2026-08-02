@@ -6,8 +6,10 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import sqlite3
+import stat
 from typing import Any, Callable, Iterable
 
 from .db import connect_mutation, table_exists
@@ -23,6 +25,19 @@ from .locks import jsonl_projector_lock, project_operation_lock
 from .outbox import canonical_event_bytes, canonical_event_record, project_pending_events
 from .paths import ProjectPaths
 from .profile_bundle_store import assess_profile_output_evidence
+from .proof_anchor import (
+    committed_proof_anchor_tombstone_valid,
+    inspect_committed_proof_anchor,
+)
+from .proof_anchor_store import (
+    MANIFEST_STORAGE_NAME as PROOF_ANCHOR_MANIFEST_NAME,
+    anchor_storage_root,
+)
+from .strict_evidence import strict_read_canonical_file
+from .contracts.proof_anchor import (
+    canonical_proof_anchor_bytes,
+    validate_proof_admission_anchor,
+)
 from .target_resolver import (
     ResolvedRoutingTarget,
     TaskGoalTargetNotFoundError,
@@ -45,6 +60,10 @@ EVIDENCE_IMPACT_TYPES = (
     "superseded_historical_drift",
 )
 EVIDENCE_DURABLE_COPY_FINDINGS = {"copy_missing", "copy_hash_mismatch"}
+_PROOF_ANCHOR_FINAL_DIRECTORY = re.compile(r"^[0-9a-f]{64}$")
+_PROOF_ANCHOR_STAGING_DIRECTORY = re.compile(
+    r"^\.([0-9a-f]{64})\.staging-[0-9a-f]{32}$"
+)
 
 
 class AuditCommandError(PclError):
@@ -68,19 +87,24 @@ def audit_check(
         target = _resolve_audit_target(conn, target_id) if target_id is not None else None
         since_boundary = _resolve_audit_since(db_events, since) if since is not None else None
         evidence_target_refs = _read_evidence_target_refs(conn, evidence_rows) if scoped else {}
+        jsonl = _scan_jsonl(paths.events_path)
+        anomalies: dict[str, list[dict[str, Any]]] = {
+            "repairable": [],
+            "human_review": [],
+            "unsupported": [],
+        }
+        _check_db_sequences(db_events, anomalies)
+        _check_outbox(db_events, outbox_rows, anomalies)
+        _check_jsonl(db_events, outbox_rows, jsonl, anomalies)
+        evidence_counts = _check_evidence(
+            paths,
+            conn,
+            evidence_rows,
+            db_events,
+            anomalies,
+        )
     finally:
         conn.close()
-
-    jsonl = _scan_jsonl(paths.events_path)
-    anomalies: dict[str, list[dict[str, Any]]] = {
-        "repairable": [],
-        "human_review": [],
-        "unsupported": [],
-    }
-    _check_db_sequences(db_events, anomalies)
-    _check_outbox(db_events, outbox_rows, anomalies)
-    _check_jsonl(db_events, outbox_rows, jsonl, anomalies)
-    evidence_counts = _check_evidence(paths, evidence_rows, db_events, anomalies)
 
     classification_counts = {key: len(value) for key, value in anomalies.items()}
     issue_count = sum(classification_counts.values())
@@ -399,7 +423,7 @@ def _read_evidence(conn: sqlite3.Connection) -> list[dict[str, Any]]:
         dict(row)
         for row in conn.execute(
             """
-            SELECT id, type, path, created_at, linked_task_id
+            SELECT id, type, path, summary, created_at, linked_task_id
             FROM evidence
             ORDER BY created_at, id
             """
@@ -1029,6 +1053,7 @@ def _check_jsonl(
 
 def _check_evidence(
     paths: ProjectPaths,
+    conn: sqlite3.Connection,
     evidence_rows: list[dict[str, Any]],
     db_events: list[dict[str, Any]],
     anomalies: dict[str, list[dict[str, Any]]],
@@ -1038,6 +1063,7 @@ def _check_evidence(
     missing_count = 0
     mismatch_count = 0
     impact_counts = {impact: 0 for impact in EVIDENCE_IMPACT_TYPES}
+    committed_anchor_requests: set[str] = set()
     for row in evidence_rows:
         value = str(row["path"] or "").strip()
         if _is_virtual_or_external(value):
@@ -1045,6 +1071,60 @@ def _check_evidence(
         artifact = Path(value)
         if not artifact.is_absolute():
             artifact = paths.root / artifact
+        if row["type"] == "proof_admission_anchor":
+            referenced.add(artifact.absolute())
+            try:
+                summary = json.loads(str(row.get("summary") or ""))
+            except json.JSONDecodeError:
+                summary = None
+            event = next(
+                (
+                    item
+                    for item in db_events
+                    if item["event_type"] == "proof_admission_anchored"
+                    and isinstance(item.get("payload"), dict)
+                    and item["payload"].get("evidence_id") == row["id"]
+                ),
+                None,
+            )
+            committed = (
+                None
+                if event is None
+                else inspect_committed_proof_anchor(
+                    paths,
+                    conn,
+                    event_id=str(event["id"]),
+                )
+            )
+            if not isinstance(summary, dict) or event is None or committed is None:
+                mismatch_count += 1
+                _add_anomaly(
+                    anomalies,
+                    "human_review",
+                    "proof_anchor_committed_authority_corrupt",
+                    f"Proof anchor Evidence {row['id']} has incomplete committed authority.",
+                    "report_only",
+                    evidence_id=row["id"],
+                )
+                continue
+            payload = committed.payload
+            request_id = str(payload.get("request_id") or "")
+            committed_anchor_requests.add(request_id[3:].lower())
+            if committed.health_status != "healthy":
+                mismatch_count += 1
+                impact_counts["current_evidence_corruption"] += 1
+                _add_anomaly(
+                    anomalies,
+                    "human_review",
+                    "proof_anchor_postcommit_unhealthy",
+                    f"Proof anchor Evidence {row['id']} is postcommit unhealthy.",
+                    "report_only",
+                    evidence_id=row["id"],
+                    request_id=request_id,
+                    health_sha256=committed.health["health_sha256"],
+                    finding_codes=committed.health["finding_codes"],
+                )
+            continue
         artifact = artifact.resolve()
         referenced.add(artifact)
         if row["type"] == "profile_output_bundle":
@@ -1156,12 +1236,15 @@ def _check_evidence(
     orphan_completion_packet_count = 0
     orphan_profile_temp_count = 0
     orphan_profile_bundle_count = 0
+    orphan_proof_anchor_staging_count = 0
+    orphan_proof_anchor_final_count = 0
     profile_root = paths.evidence_dir / "profile-output-bundles"
+    proof_anchor_root = anchor_storage_root(paths)
     if paths.evidence_dir.exists():
         for candidate in sorted(paths.evidence_dir.rglob("*")):
             if not candidate.is_file():
                 continue
-            if profile_root in candidate.parents:
+            if profile_root in candidate.parents or proof_anchor_root in candidate.parents:
                 continue
             if candidate.resolve() in referenced:
                 continue
@@ -1222,6 +1305,86 @@ def _check_evidence(
                         "quarantine_or_report",
                         path=_relative_or_absolute(paths, candidate),
                     )
+        for event in db_events:
+            if event["event_type"] != "proof_admission_anchor_recovery_exhausted":
+                continue
+            if not committed_proof_anchor_tombstone_valid(
+                paths,
+                conn,
+                event_id=str(event["id"]),
+            ):
+                _add_anomaly(
+                    anomalies,
+                    "human_review",
+                    "proof_anchor_exhaustion_event_invalid",
+                    "Proof-anchor recovery-exhaustion authority is invalid.",
+                    "report_only",
+                    event_id=str(event["id"]),
+                )
+        if proof_anchor_root.exists():
+            root_stat = os.lstat(proof_anchor_root)
+            if stat.S_ISLNK(root_stat.st_mode) or not stat.S_ISDIR(root_stat.st_mode):
+                _add_anomaly(
+                    anomalies,
+                    "human_review",
+                    "proof_anchor_storage_root_invalid",
+                    "Proof anchor storage root is not a canonical directory.",
+                    "report_only",
+                )
+            else:
+                for entry in sorted(os.scandir(proof_anchor_root), key=lambda item: item.name):
+                    name = entry.name
+                    staging_match = _PROOF_ANCHOR_STAGING_DIRECTORY.fullmatch(name)
+                    if staging_match is not None:
+                        orphan_proof_anchor_staging_count += 1
+                        _add_anomaly(
+                            anomalies,
+                            "human_review",
+                            "proof_anchor_orphan_staging",
+                            "Unreferenced proof-anchor staging directory requires review.",
+                            "report_only",
+                            request_hex=staging_match.group(1),
+                        )
+                        continue
+                    if _PROOF_ANCHOR_FINAL_DIRECTORY.fullmatch(name) is None:
+                        _add_anomaly(
+                            anomalies,
+                            "human_review",
+                            "proof_anchor_storage_entry_invalid",
+                            "Proof-anchor storage contains a non-canonical entry.",
+                            "report_only",
+                        )
+                        continue
+                    if name in committed_anchor_requests:
+                        continue
+                    orphan_proof_anchor_final_count += 1
+                    anchor_hash = None
+                    if entry.is_dir(follow_symlinks=False):
+                        manifest = strict_read_canonical_file(
+                            Path(entry.path) / PROOF_ANCHOR_MANIFEST_NAME,
+                            expected_parent=Path(entry.path),
+                        )
+                        if manifest.ok and manifest.content is not None:
+                            try:
+                                value = json.loads(manifest.content)
+                            except (UnicodeDecodeError, json.JSONDecodeError):
+                                value = None
+                            if (
+                                isinstance(value, dict)
+                                and validate_proof_admission_anchor(value).ok
+                                and canonical_proof_anchor_bytes(value) + b"\n"
+                                == manifest.content
+                            ):
+                                anchor_hash = value["anchor_sha256"]
+                    _add_anomaly(
+                        anomalies,
+                        "human_review",
+                        "proof_anchor_orphan_finalized",
+                        "Finalized proof-anchor directory has no committed authority quartet.",
+                        "report_only",
+                        request_hex=name,
+                        anchor_sha256=anchor_hash,
+                    )
     return {
         "evidence_missing_files": missing_count,
         "evidence_mismatches": mismatch_count,
@@ -1231,6 +1394,8 @@ def _check_evidence(
         "orphan_completion_packets": orphan_completion_packet_count,
         "orphan_profile_bundle_staging": orphan_profile_temp_count,
         "orphan_profile_bundle_directories": orphan_profile_bundle_count,
+        "orphan_proof_anchor_staging": orphan_proof_anchor_staging_count,
+        "orphan_proof_anchor_finalized": orphan_proof_anchor_final_count,
     }
 
 

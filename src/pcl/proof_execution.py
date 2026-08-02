@@ -368,41 +368,62 @@ def capture_current_proof(
     try:
         conn.execute("BEGIN")
         hwm = int(conn.execute("SELECT COALESCE(MAX(sequence), 0) FROM events").fetchone()[0])
-        target_type = str(target.get("type") or "")
-        target_id = str(target.get("id") or "")
-        if target_type == "task":
-            task = conn.execute(
-                "SELECT related_feature_id FROM tasks WHERE id = ?",
-                (target_id,),
-            ).fetchone()
-            if task is None:
-                raise ProofExecutionError(
-                    "Current-proof Task does not exist.",
-                    code="proof_current_task_missing",
-                    details={"target_id": target_id},
-                )
-            feature_id = task["related_feature_id"]
-            if feature_id is None:
-                preimage = {
-                    "contract_version": "proof-current-feature-snapshot/v1",
-                    "scope": "not_applicable",
-                    "status": "not_applicable",
-                }
-                return _current_snapshot(preimage, hwm)
-            feature_id = str(feature_id)
-        elif target_type == "feature":
-            feature_id = target_id
-        else:
-            raise ProofExecutionError(
-                "Current-proof target must be a Task or Feature.",
-                code="proof_current_target_invalid",
-                details={"target_type": target_type},
-            )
-        return _capture_feature_current_proof(paths, conn, feature_id=feature_id, hwm=hwm)
+        return capture_current_proof_in_snapshot(paths, conn, target, hwm=hwm)
     finally:
         if conn.in_transaction:
             conn.rollback()
         conn.close()
+
+
+def capture_current_proof_in_snapshot(
+    paths: ProjectPaths,
+    conn: Any,
+    target: Mapping[str, str],
+    *,
+    hwm: int,
+) -> CurrentProofSnapshot:
+    """Capture current proof without opening or ending the caller's transaction."""
+    if not conn.in_transaction:
+        raise ProofExecutionError(
+            "Current-proof snapshot requires an active transaction.",
+            code="proof_current_snapshot_required",
+        )
+    target_type = str(target.get("type") or "")
+    target_id = str(target.get("id") or "")
+    if target_type == "task":
+        task = conn.execute(
+            "SELECT related_feature_id FROM tasks WHERE id = ?",
+            (target_id,),
+        ).fetchone()
+        if task is None:
+            raise ProofExecutionError(
+                "Current-proof Task does not exist.",
+                code="proof_current_task_missing",
+                details={"target_id": target_id},
+            )
+        feature_id = task["related_feature_id"]
+        if feature_id is None:
+            preimage = {
+                "contract_version": "proof-current-feature-snapshot/v1",
+                "scope": "not_applicable",
+                "status": "not_applicable",
+            }
+            return _current_snapshot(preimage, hwm)
+        feature_id = str(feature_id)
+    elif target_type == "feature":
+        feature_id = target_id
+    else:
+        raise ProofExecutionError(
+            "Current-proof target must be a Task or Feature.",
+            code="proof_current_target_invalid",
+            details={"target_type": target_type},
+        )
+    return _capture_feature_current_proof(
+        paths,
+        conn,
+        feature_id=feature_id,
+        hwm=hwm,
+    )
 
 
 def aggregate_verdict(

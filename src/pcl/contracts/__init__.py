@@ -208,6 +208,21 @@ from .proof_admission import (
     validate_proof_coverage_admission,
     validate_proof_coverage_policy,
 )
+from .proof_anchor import (
+    PROOF_ADMISSION_ANCHOR_BASIS_CONTRACT_VERSION,
+    PROOF_ADMISSION_ANCHOR_CONTRACT_VERSION,
+    PROOF_ADMISSION_ANCHOR_RESULT_CONTRACT_VERSION,
+    PROOF_ADMISSION_AUTHORIZATION_CONTRACT_VERSION,
+    ProofAnchorValidationResult,
+    proof_admission_anchor_basis_schema,
+    proof_admission_anchor_result_schema,
+    proof_admission_anchor_schema,
+    proof_admission_authorization_schema,
+    validate_proof_admission_anchor,
+    validate_proof_admission_anchor_basis,
+    validate_proof_admission_anchor_result,
+    validate_proof_admission_authorization,
+)
 
 __all__ = [
     "COMPLETION_PACKET_CONTRACT_VERSION",
@@ -378,4 +393,17 @@ __all__ = [
     "proof_coverage_policy_schema",
     "validate_proof_coverage_admission",
     "validate_proof_coverage_policy",
+    "PROOF_ADMISSION_ANCHOR_BASIS_CONTRACT_VERSION",
+    "PROOF_ADMISSION_ANCHOR_CONTRACT_VERSION",
+    "PROOF_ADMISSION_ANCHOR_RESULT_CONTRACT_VERSION",
+    "PROOF_ADMISSION_AUTHORIZATION_CONTRACT_VERSION",
+    "ProofAnchorValidationResult",
+    "proof_admission_anchor_basis_schema",
+    "proof_admission_anchor_result_schema",
+    "proof_admission_anchor_schema",
+    "proof_admission_authorization_schema",
+    "validate_proof_admission_anchor",
+    "validate_proof_admission_anchor_basis",
+    "validate_proof_admission_anchor_result",
+    "validate_proof_admission_authorization",
 ]

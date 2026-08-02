@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ctypes
 import errno
 import os
 from pathlib import Path
 import stat
+import sys
+from typing import Sequence
 
 
 @dataclass(frozen=True)
@@ -24,6 +27,249 @@ class StrictFileWrite:
     expected_parent: Path
     parent_identity: tuple[int, int, int, int, int]
     file_identity: tuple[int, int, int, int, int]
+
+
+@dataclass(frozen=True)
+class StrictDirectoryWrite:
+    path: Path
+    expected_parent: Path
+    parent_identity: tuple[int, int, int, int, int]
+    directory_identity: tuple[int, int, int, int, int]
+    staging_path: Path | None = None
+
+
+def strict_inspect_canonical_directory(
+    path: Path,
+    *,
+    expected_parent: Path,
+) -> StrictDirectoryWrite:
+    """Open one existing canonical directory and retain its exact identity."""
+    if path.parent != expected_parent or path.name in {"", ".", ".."}:
+        raise OSError(errno.EINVAL, "directory path is not canonical", str(path))
+    parent_descriptor = _open_canonical_directory(expected_parent)
+    try:
+        matches = [
+            existing
+            for existing in os.listdir(parent_descriptor)
+            if existing.casefold() == path.name.casefold()
+        ]
+        if not matches:
+            raise FileNotFoundError(errno.ENOENT, "directory does not exist", str(path))
+        if matches != [path.name]:
+            raise OSError(errno.EEXIST, "directory path has a case collision", str(path))
+        child_descriptor = _open_child_directory(
+            path,
+            parent_name=path.name,
+            base_descriptor=parent_descriptor,
+        )
+        try:
+            child = os.fstat(child_descriptor)
+        finally:
+            os.close(child_descriptor)
+        return StrictDirectoryWrite(
+            path=path,
+            expected_parent=expected_parent,
+            parent_identity=_directory_identity(os.fstat(parent_descriptor)),
+            directory_identity=_directory_identity(child),
+        )
+    finally:
+        os.close(parent_descriptor)
+
+
+def strict_list_canonical_directory(receipt: StrictDirectoryWrite) -> tuple[str, ...]:
+    """List an exact retained directory without following a replacement path."""
+    parent_descriptor = _open_canonical_directory(receipt.expected_parent)
+    child_descriptor: int | None = None
+    try:
+        child_descriptor = _open_child_directory(
+            receipt.path,
+            parent_name=receipt.path.name,
+            base_descriptor=parent_descriptor,
+        )
+        before = os.fstat(child_descriptor)
+        if _directory_identity(before) != receipt.directory_identity:
+            raise OSError(errno.ESTALE, "directory identity changed")
+        entries = tuple(os.listdir(child_descriptor))
+        after = os.fstat(child_descriptor)
+        if _directory_identity(before) != _directory_identity(after):
+            raise OSError(errno.ESTALE, "directory changed while listing")
+        return entries
+    finally:
+        if child_descriptor is not None:
+            os.close(child_descriptor)
+        os.close(parent_descriptor)
+
+
+def strict_create_canonical_directory(
+    path: Path,
+    *,
+    expected_parent: Path,
+) -> StrictDirectoryWrite:
+    """Create one exclusive canonical directory and retain its exact identity."""
+    if path.parent != expected_parent or path.name in {"", ".", ".."}:
+        raise OSError(errno.EINVAL, "directory path is not canonical", str(path))
+    parent_descriptor = _open_canonical_directory(expected_parent)
+    created = False
+    try:
+        _reject_case_alias(parent_descriptor, path.name)
+        os.mkdir(path.name, mode=0o700, dir_fd=parent_descriptor)
+        created = True
+        os.fsync(parent_descriptor)
+        child_descriptor = _open_child_directory(
+            path,
+            parent_name=path.name,
+            base_descriptor=parent_descriptor,
+        )
+        try:
+            child = os.fstat(child_descriptor)
+        finally:
+            os.close(child_descriptor)
+        parent = os.fstat(parent_descriptor)
+        return StrictDirectoryWrite(
+            path=path,
+            expected_parent=expected_parent,
+            parent_identity=_directory_identity(parent),
+            directory_identity=_directory_identity(child),
+        )
+    except BaseException:
+        if created:
+            try:
+                os.rmdir(path.name, dir_fd=parent_descriptor)
+                os.fsync(parent_descriptor)
+            except OSError:
+                pass
+        raise
+    finally:
+        os.close(parent_descriptor)
+
+
+def strict_publish_written_directory(
+    receipt: StrictDirectoryWrite,
+    *,
+    final_path: Path,
+) -> StrictDirectoryWrite:
+    """Exclusively rename a retained staging directory and fsync its parent."""
+    if (
+        receipt.path.parent != receipt.expected_parent
+        or final_path.parent != receipt.expected_parent
+        or final_path.name in {"", ".", ".."}
+    ):
+        raise OSError(errno.EINVAL, "published directory path is not canonical")
+    parent_descriptor = _open_canonical_directory(receipt.expected_parent)
+    try:
+        _reject_case_alias(parent_descriptor, final_path.name)
+        current = os.stat(
+            receipt.path.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            not stat.S_ISDIR(current.st_mode)
+            or _directory_object_identity(current)
+            != _directory_object_identity_from_tuple(receipt.directory_identity)
+        ):
+            raise OSError(errno.ESTALE, "staging directory identity changed")
+        _rename_directory_exclusive(
+            parent_descriptor,
+            receipt.path.name,
+            final_path.name,
+        )
+        os.fsync(parent_descriptor)
+        final = os.stat(
+            final_path.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            not stat.S_ISDIR(final.st_mode)
+            or _directory_object_identity(final)
+            != _directory_object_identity(current)
+        ):
+            raise OSError(errno.ESTALE, "published directory identity changed")
+        parent = os.fstat(parent_descriptor)
+        return StrictDirectoryWrite(
+            path=final_path,
+            expected_parent=receipt.expected_parent,
+            parent_identity=_directory_identity(parent),
+            directory_identity=_directory_identity(final),
+            staging_path=receipt.path,
+        )
+    finally:
+        os.close(parent_descriptor)
+
+
+def strict_remove_written_directory(
+    receipt: StrictDirectoryWrite,
+    *,
+    file_receipts: Sequence[StrictFileWrite] = (),
+) -> bool:
+    """Remove only retained files and an exact empty invocation-owned directory."""
+    if receipt.path.parent != receipt.expected_parent:
+        return False
+    try:
+        parent_descriptor = _open_canonical_directory(receipt.expected_parent)
+    except OSError:
+        return False
+    child_descriptor: int | None = None
+    try:
+        parent = os.fstat(parent_descriptor)
+        current = os.stat(
+            receipt.path.name,
+            dir_fd=parent_descriptor,
+            follow_symlinks=False,
+        )
+        if (
+            _directory_identity(parent) != receipt.parent_identity
+            or not stat.S_ISDIR(current.st_mode)
+            or _directory_identity(current) != receipt.directory_identity
+        ):
+            return False
+        child_descriptor = _open_child_directory(
+            receipt.path,
+            parent_name=receipt.path.name,
+            base_descriptor=parent_descriptor,
+        )
+        expected_names = tuple(file_receipt.path.name for file_receipt in file_receipts)
+        actual_names = tuple(os.listdir(child_descriptor))
+        if (
+            set(actual_names) != set(expected_names)
+            or len(actual_names) != len(expected_names)
+            or len({name.casefold() for name in actual_names}) != len(actual_names)
+        ):
+            return False
+        for file_receipt in file_receipts:
+            source_parent = (
+                receipt.staging_path
+                if receipt.staging_path is not None
+                else receipt.path
+            )
+            if file_receipt.expected_parent != source_parent:
+                return False
+            file_stat = os.stat(
+                file_receipt.path.name,
+                dir_fd=child_descriptor,
+                follow_symlinks=False,
+            )
+            if (
+                not stat.S_ISREG(file_stat.st_mode)
+                or file_stat.st_nlink != 1
+                or _file_identity(file_stat) != file_receipt.file_identity
+            ):
+                return False
+        for file_receipt in file_receipts:
+            os.unlink(file_receipt.path.name, dir_fd=child_descriptor)
+        os.fsync(child_descriptor)
+        os.close(child_descriptor)
+        child_descriptor = None
+        os.rmdir(receipt.path.name, dir_fd=parent_descriptor)
+        os.fsync(parent_descriptor)
+        return True
+    except (FileNotFoundError, OSError):
+        return False
+    finally:
+        if child_descriptor is not None:
+            os.close(child_descriptor)
+        os.close(parent_descriptor)
 
 
 def strict_write_new_canonical_file(
@@ -93,6 +339,7 @@ def strict_write_new_canonical_file(
             not stat.S_ISDIR(parent_path_stat.st_mode)
             or _directory_identity(parent_path_stat) != _directory_identity(parent_open_stat)
             or not stat.S_ISREG(file_path_stat.st_mode)
+            or file_path_stat.st_nlink != 1
             or _file_identity(file_path_stat) != _file_identity(file_open_stat)
         ):
             raise OSError(errno.ESTALE, "artifact path changed during creation", str(path))
@@ -139,6 +386,7 @@ def strict_remove_written_file(receipt: StrictFileWrite) -> bool:
             if (
                 _directory_identity(parent_open) != receipt.parent_identity
                 or not stat.S_ISREG(current.st_mode)
+                or current.st_nlink != 1
                 or _file_identity(current) != receipt.file_identity
             ):
                 return False
@@ -187,6 +435,8 @@ def strict_read_canonical_file(
         return StrictFileRead("symlink")
     if not stat.S_ISREG(file_before.st_mode):
         return StrictFileRead("not_regular")
+    if file_before.st_nlink != 1:
+        return StrictFileRead("hardlink")
 
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
@@ -195,6 +445,7 @@ def strict_read_canonical_file(
             opened = os.fstat(stream.fileno())
             if (
                 not stat.S_ISREG(opened.st_mode)
+                or opened.st_nlink != 1
                 or _file_identity(file_before) != _file_identity(opened)
             ):
                 return StrictFileRead("changed")
@@ -269,6 +520,67 @@ def _unlink_if_present(descriptor: int, name: str) -> None:
         pass
 
 
+def _reject_case_alias(descriptor: int, name: str) -> None:
+    for existing in os.listdir(descriptor):
+        if existing.casefold() == name.casefold():
+            if existing == name:
+                raise FileExistsError(errno.EEXIST, "directory already exists", name)
+            raise OSError(errno.EEXIST, "case-alias directory already exists", name)
+
+
+def _rename_directory_exclusive(
+    parent_descriptor: int,
+    source_name: str,
+    destination_name: str,
+) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    source = os.fsencode(source_name)
+    destination = os.fsencode(destination_name)
+    if sys.platform == "darwin":
+        renameatx_np = getattr(libc, "renameatx_np", None)
+        if renameatx_np is None:
+            raise OSError(errno.ENOTSUP, "exclusive directory publish is unsupported")
+        renameatx_np.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        renameatx_np.restype = ctypes.c_int
+        outcome = renameatx_np(
+            parent_descriptor,
+            source,
+            parent_descriptor,
+            destination,
+            0x00000004,  # RENAME_EXCL
+        )
+    elif sys.platform.startswith("linux"):
+        renameat2 = getattr(libc, "renameat2", None)
+        if renameat2 is None:
+            raise OSError(errno.ENOTSUP, "exclusive directory publish is unsupported")
+        renameat2.argtypes = [
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_int,
+            ctypes.c_char_p,
+            ctypes.c_uint,
+        ]
+        renameat2.restype = ctypes.c_int
+        outcome = renameat2(
+            parent_descriptor,
+            source,
+            parent_descriptor,
+            destination,
+            1,  # RENAME_NOREPLACE
+        )
+    else:
+        raise OSError(errno.ENOTSUP, "exclusive directory publish is unsupported")
+    if outcome != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number), destination_name)
+
+
 def _file_identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
     return (
         value.st_dev,
@@ -281,6 +593,16 @@ def _file_identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
 
 def _directory_identity(value: os.stat_result) -> tuple[int, int, int, int, int]:
     return _file_identity(value)
+
+
+def _directory_object_identity(value: os.stat_result) -> tuple[int, int]:
+    return value.st_dev, value.st_ino
+
+
+def _directory_object_identity_from_tuple(
+    value: tuple[int, int, int, int, int],
+) -> tuple[int, int]:
+    return value[0], value[1]
 
 
 def _errno_detail(exc: OSError) -> str:

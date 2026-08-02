@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "proof-admission-anchor-result/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "ok", "status", "changed", "idempotent", "mutation_committed", "safe_to_retry_original", "request_id", "base_request_sha256", "anchor_generation", "basis_sha256", "anchor_sha256", "manifest_file_sha256", "evidence_id", "event_id", "outbox_id", "projection", "health", "effects", "recovery_action"],
+  "properties": {
+    "contract_version": {"const": "proof-admission-anchor-result/v1"},
+    "ok": {"type": "boolean"}, "status": {"enum": ["anchored", "already_anchored", "proof_anchor_recovery_generation_exhausted"]},
+    "changed": {"type": "boolean"}, "idempotent": {"type": "boolean"}, "mutation_committed": {"type": "boolean"}, "safe_to_retry_original": {"type": "boolean"},
+    "request_id": {"oneOf": [{"type": "string", "pattern": "^PA-[0-9A-F]{64}$"}, {"type": "null"}]},
+    "base_request_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "anchor_generation": {"oneOf": [{"type": "integer", "minimum": 0, "maximum": 3}, {"type": "null"}]},
+    "basis_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "anchor_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "manifest_file_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "evidence_id": {"oneOf": [{"type": "string", "pattern": "^E-[0-9A-Z]+$"}, {"type": "null"}]},
+    "event_id": {"oneOf": [{"type": "string", "pattern": "^EV-[0-9A-F]{64}$"}, {"type": "null"}]},
+    "outbox_id": {"oneOf": [{"type": "string", "pattern": "^OB-[0-9A-F]{64}$"}, {"type": "null"}]},
+    "projection": {"enum": ["not_applicable", "pending", "delivered", "failed_needs_review"]},
+    "health": {"oneOf": [{"type": "string", "enum": ["healthy", "postcommit_unhealthy"]}, {"type": "null"}]},
+    "effects": {"oneOf": [{"$ref": "#/$defs/effects_success"}, {"$ref": "#/$defs/effects_zero"}, {"$ref": "#/$defs/effects_exhaustion"}]},
+    "recovery_action": {"oneOf": [{"type": "string", "maxLength": 4096}, {"type": "null"}]},
+    "disposition": {"const": "human_design_required"}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"status": {"const": "anchored"}}, "required": ["status"]},
+      "then": {
+        "properties": {
+          "ok": {"const": true}, "changed": {"const": true}, "idempotent": {"const": false},
+          "mutation_committed": {"const": true}, "safe_to_retry_original": {"const": false},
+          "evidence_id": {"type": "string", "pattern": "^E-[0-9A-Z]+$"},
+          "projection": {"const": "delivered"}, "health": {"const": "healthy"},
+          "effects": {"$ref": "#/$defs/effects_success"}, "recovery_action": {"type": "null"}
+        },
+        "not": {"required": ["disposition"]}
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "already_anchored"}}, "required": ["status"]},
+      "then": {
+        "properties": {
+          "ok": {"const": true}, "changed": {"const": false}, "idempotent": {"const": true},
+          "mutation_committed": {"const": false}, "safe_to_retry_original": {"const": false},
+          "evidence_id": {"type": "string", "pattern": "^E-[0-9A-Z]+$"},
+          "projection": {"const": "delivered"}, "health": {"const": "healthy"},
+          "effects": {"$ref": "#/$defs/effects_zero"}, "recovery_action": {"type": "null"}
+        },
+        "not": {"required": ["disposition"]}
+      }
+    },
+    {
+      "if": {"properties": {"status": {"const": "proof_anchor_recovery_generation_exhausted"}}, "required": ["status"]},
+      "then": {
+        "required": ["disposition"],
+        "properties": {
+          "ok": {"const": false}, "safe_to_retry_original": {"const": false},
+          "anchor_generation": {"const": 3}, "evidence_id": {"type": "null"},
+          "health": {"const": "postcommit_unhealthy"},
+          "recovery_action": {"const": "human_design_required"},
+          "disposition": {"const": "human_design_required"}
+        },
+        "oneOf": [
+          {"properties": {"changed": {"const": true}, "idempotent": {"const": false}, "mutation_committed": {"const": true}, "projection": {"const": "delivered"}, "effects": {"$ref": "#/$defs/effects_exhaustion"}}},
+          {"properties": {"changed": {"const": false}, "idempotent": {"const": true}, "mutation_committed": {"const": false}, "projection": {"const": "not_applicable"}, "effects": {"$ref": "#/$defs/effects_zero"}}}
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "effects_success": {"const": {"schema_version": 8, "migrations_applied": 0, "dependencies_added": 0, "evidence_rows_inserted": 1, "evidence_links_inserted": 1, "events_appended": 1, "outbox_records_appended": 1, "directories_published": 1, "rows_updated": 0, "rows_deleted": 0, "rendered": 0, "lifecycle_transitions": 0, "network_requests": 0}},
+    "effects_zero": {"const": {"schema_version": 8, "migrations_applied": 0, "dependencies_added": 0, "evidence_rows_inserted": 0, "evidence_links_inserted": 0, "events_appended": 0, "outbox_records_appended": 0, "directories_published": 0, "rows_updated": 0, "rows_deleted": 0, "rendered": 0, "lifecycle_transitions": 0, "network_requests": 0}},
+    "effects_exhaustion": {"const": {"schema_version": 8, "migrations_applied": 0, "dependencies_added": 0, "evidence_rows_inserted": 0, "evidence_links_inserted": 0, "events_appended": 1, "outbox_records_appended": 1, "directories_published": 0, "rows_updated": 0, "rows_deleted": 0, "rendered": 0, "lifecycle_transitions": 0, "network_requests": 0}}
+  }
+}

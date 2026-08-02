@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "proof-admission-anchor/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "request", "epoch", "target", "candidate", "bindings", "members", "authorization_projection", "handoff", "effects", "anchor_sha256"],
+  "properties": {
+    "contract_version": {"const": "proof-admission-anchor/v1"},
+    "request": {"$ref": "#/$defs/request"},
+    "epoch": {"$ref": "#/$defs/epoch"},
+    "target": {"$ref": "proof-admission-anchor-basis/v1#/$defs/target"},
+    "candidate": {"$ref": "proof-admission-anchor-basis/v1#/$defs/candidate"},
+    "bindings": {
+      "type": "object", "additionalProperties": false,
+      "required": ["basis_sha256", "policy_sha256", "coverage_group_sha256", "admission_sha256", "independent_review_authorization_sha256", "independent_review_subject_sha256", "human_gate_authorization_sha256", "human_gate_subject_sha256"],
+      "properties": {
+        "basis_sha256": {"$ref": "#/$defs/sha256"}, "policy_sha256": {"$ref": "#/$defs/sha256"},
+        "coverage_group_sha256": {"$ref": "#/$defs/sha256"}, "admission_sha256": {"$ref": "#/$defs/sha256"},
+        "independent_review_authorization_sha256": {"$ref": "#/$defs/sha256"}, "independent_review_subject_sha256": {"$ref": "#/$defs/sha256"},
+        "human_gate_authorization_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "human_gate_subject_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]}
+      }
+    },
+    "members": {"type": "array", "minItems": 2, "maxItems": 3, "prefixItems": [{"$ref": "#/$defs/basis_member"}, {"$ref": "#/$defs/review_member"}, {"$ref": "#/$defs/human_member"}], "items": false},
+    "authorization_projection": {"$ref": "#/$defs/authorization_projection"},
+    "handoff": {"type": "object", "additionalProperties": false, "required": ["status", "reuse_consumable", "terminal_consumable", "promotion_authorized"], "properties": {"status": {"const": "anchored_candidate"}, "reuse_consumable": {"const": false}, "terminal_consumable": {"const": false}, "promotion_authorized": {"const": false}}},
+    "effects": {"$ref": "#/$defs/effects_success"},
+    "anchor_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "request_id": {"type": "string", "pattern": "^PA-[0-9A-F]{64}$"},
+    "event_id": {"type": "string", "pattern": "^EV-[0-9A-F]{64}$"},
+    "public_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,4095}$"},
+    "recovery": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/health"}]},
+    "recovery_predecessor": {"oneOf": [{"type": "null"}, {"type": "object", "additionalProperties": false, "required": ["request_id", "anchor_generation", "event_id", "anchor_sha256", "health_sha256"], "properties": {"request_id": {"$ref": "#/$defs/request_id"}, "anchor_generation": {"type": "integer", "minimum": 0, "maximum": 2}, "event_id": {"$ref": "#/$defs/event_id"}, "anchor_sha256": {"$ref": "#/$defs/sha256"}, "health_sha256": {"$ref": "#/$defs/sha256"}}}]},
+    "request": {"type": "object", "additionalProperties": false, "required": ["request_id", "base_request_sha256", "anchor_generation", "recovery"], "properties": {"request_id": {"$ref": "#/$defs/request_id"}, "base_request_sha256": {"$ref": "#/$defs/sha256"}, "anchor_generation": {"type": "integer", "minimum": 0, "maximum": 3}, "recovery": {"$ref": "#/$defs/recovery"}}},
+    "epoch": {"type": "object", "additionalProperties": false, "required": ["contract_version", "request_id", "base_request_sha256", "anchor_generation", "precommit_hwm", "ledger_predecessor", "recovery_predecessor", "epoch_sha256"], "properties": {"contract_version": {"const": "proof-admission-anchor-epoch/v1"}, "request_id": {"$ref": "#/$defs/request_id"}, "base_request_sha256": {"$ref": "#/$defs/sha256"}, "anchor_generation": {"type": "integer", "minimum": 0, "maximum": 3}, "precommit_hwm": {"type": "object", "additionalProperties": false, "required": ["sequence", "event_id"], "properties": {"sequence": {"type": "integer", "minimum": 0}, "event_id": {"oneOf": [{"$ref": "#/$defs/public_id"}, {"type": "null"}]} }}, "ledger_predecessor": {"type": "object", "additionalProperties": false, "required": ["event_id", "anchor_sha256"], "properties": {"event_id": {"oneOf": [{"$ref": "#/$defs/event_id"}, {"type": "null"}]}, "anchor_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]} }}, "recovery_predecessor": {"$ref": "#/$defs/recovery_predecessor"}, "epoch_sha256": {"$ref": "#/$defs/sha256"}}},
+    "basis_member": {"$ref": "#/$defs/member", "properties": {"role": {"const": "basis"}, "storage_name": {"const": "basis.json"}}},
+    "review_member": {"$ref": "#/$defs/member", "properties": {"role": {"const": "independent_review"}, "storage_name": {"const": "independent-review.json"}}},
+    "human_member": {"$ref": "#/$defs/member", "properties": {"role": {"const": "human_gate"}, "storage_name": {"const": "human-gate.json"}}},
+    "member": {"type": "object", "additionalProperties": false, "required": ["role", "storage_name", "size_bytes", "file_sha256"], "properties": {"role": {"enum": ["basis", "independent_review", "human_gate"]}, "storage_name": {"enum": ["basis.json", "independent-review.json", "human-gate.json"]}, "size_bytes": {"type": "integer", "minimum": 1, "maximum": 34603008}, "file_sha256": {"$ref": "#/$defs/sha256"}}},
+    "authorization_projection": {"type": "object", "additionalProperties": false, "required": ["independent_review", "human_gate", "authorized_actions", "anchor_authorization_granted", "reuse_authorized", "terminal_authority", "mandatory_evidence", "publication_authorized"], "properties": {"independent_review": {"const": "approved"}, "human_gate": {"enum": ["approved", "not_required"]}, "authorized_actions": {"const": ["anchor"]}, "anchor_authorization_granted": {"const": true}, "reuse_authorized": {"const": false}, "terminal_authority": {"const": false}, "mandatory_evidence": {"const": false}, "publication_authorized": {"const": false}}},
+    "effects_success": {"const": {"schema_version": 8, "migrations_applied": 0, "dependencies_added": 0, "evidence_rows_inserted": 1, "evidence_links_inserted": 1, "events_appended": 1, "outbox_records_appended": 1, "directories_published": 1, "rows_updated": 0, "rows_deleted": 0, "rendered": 0, "lifecycle_transitions": 0, "network_requests": 0}},
+    "health": {"type": "object", "additionalProperties": false, "required": ["contract_version", "predecessor", "authority_components", "artifact_observations", "finding_codes", "health_sha256"], "properties": {
+      "contract_version": {"const": "proof-admission-anchor-health/v1"},
+      "predecessor": {"type": "object", "additionalProperties": false, "required": ["request_id", "anchor_generation", "event_id", "anchor_sha256", "manifest_file_sha256"], "properties": {"request_id": {"$ref": "#/$defs/request_id"}, "anchor_generation": {"type": "integer", "minimum": 0, "maximum": 3}, "event_id": {"$ref": "#/$defs/event_id"}, "anchor_sha256": {"$ref": "#/$defs/sha256"}, "manifest_file_sha256": {"$ref": "#/$defs/sha256"}}},
+      "authority_components": {"const": {"evidence_row": "matched", "evidence_link": "matched", "event": "matched", "outbox": "matched"}},
+      "artifact_observations": {"type": "array", "minItems": 1, "maxItems": 4, "items": {"$ref": "#/$defs/health_observation"}},
+      "finding_codes": {"type": "array", "maxItems": 16, "uniqueItems": true, "items": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,4095}$"}},
+      "health_sha256": {"$ref": "#/$defs/sha256"}
+    }},
+    "health_observation": {"type": "object", "additionalProperties": false, "required": ["role", "storage_name", "status", "expected_size_bytes", "observed_size_bytes", "expected_file_sha256", "observed_file_sha256"], "properties": {"role": {"enum": ["manifest", "basis", "independent_review", "human_gate"]}, "storage_name": {"enum": ["evidence-manifest.json", "basis.json", "independent-review.json", "human-gate.json"]}, "status": {"enum": ["ok", "missing", "not_regular", "symlink", "redirected", "changed", "size_mismatch", "hash_mismatch"]}, "expected_size_bytes": {"oneOf": [{"type": "integer", "minimum": 0, "maximum": 37748736}, {"type": "null"}]}, "observed_size_bytes": {"oneOf": [{"type": "integer", "minimum": 0, "maximum": 37748736}, {"type": "null"}]}, "expected_file_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]}, "observed_file_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]}}}
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "proof-admission-authorization/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "authorization_id", "authorization_kind", "decision", "authority", "target", "candidate", "bindings", "authorization_subject_sha256", "review", "scope", "issued_at", "reason", "authorization_sha256"],
+  "properties": {
+    "contract_version": {"const": "proof-admission-authorization/v1"},
+    "authorization_id": {"$ref": "#/$defs/public_id"},
+    "authorization_kind": {"enum": ["independent_review", "human_gate"]},
+    "decision": {"enum": ["approved", "rejected", "inconclusive"]},
+    "authority": {
+      "type": "object", "additionalProperties": false,
+      "required": ["actor_kind", "actor_id", "recorder_kind", "recorder_id", "source_kind", "source_ref", "candidate_controlled"],
+      "properties": {
+        "actor_kind": {"enum": ["human", "agent", "system"]},
+        "actor_id": {"$ref": "#/$defs/public_id"},
+        "recorder_kind": {"enum": ["human", "agent", "system"]},
+        "recorder_id": {"$ref": "#/$defs/public_id"},
+        "source_kind": {"enum": ["cli", "conversation", "cockpit", "api"]},
+        "source_ref": {"type": "string", "maxLength": 4096},
+        "candidate_controlled": {"const": false}
+      }
+    },
+    "target": {"$ref": "proof-admission-anchor-basis/v1#/$defs/target"},
+    "candidate": {"$ref": "proof-admission-anchor-basis/v1#/$defs/candidate"},
+    "bindings": {
+      "type": "object", "additionalProperties": false,
+      "required": ["basis_sha256", "policy_sha256", "coverage_group_sha256", "admission_sha256", "producer_sha256"],
+      "properties": {
+        "basis_sha256": {"$ref": "#/$defs/sha256"}, "policy_sha256": {"$ref": "#/$defs/sha256"},
+        "coverage_group_sha256": {"$ref": "#/$defs/sha256"}, "admission_sha256": {"$ref": "#/$defs/sha256"},
+        "producer_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "authorization_subject_sha256": {"$ref": "#/$defs/sha256"},
+    "review": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["report_sha256", "report_size_bytes", "findings"],
+          "properties": {
+            "report_sha256": {"$ref": "#/$defs/sha256"}, "report_size_bytes": {"type": "integer", "minimum": 0, "maximum": 65536},
+            "findings": {"type": "object", "additionalProperties": false, "required": ["high", "medium", "low"], "properties": {"high": {"type": "integer", "minimum": 0, "maximum": 1000000}, "medium": {"type": "integer", "minimum": 0, "maximum": 1000000}, "low": {"type": "integer", "minimum": 0, "maximum": 1000000}}}
+          }
+        }
+      ]
+    },
+    "scope": {"$ref": "proof-admission-anchor-basis/v1#/$defs/scope"},
+    "issued_at": {"type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]+)?(?:Z|\\+00:00)$"},
+    "reason": {"type": "string", "minLength": 1, "maxLength": 16384},
+    "authorization_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "allOf": [
+    {"if": {"properties": {"authorization_kind": {"const": "human_gate"}}}, "then": {"properties": {"authority": {"properties": {"actor_kind": {"const": "human"}}}, "review": {"type": "null"}}}},
+    {"if": {"properties": {"authorization_kind": {"const": "independent_review"}}}, "then": {"properties": {"authority": {"properties": {"actor_kind": {"enum": ["human", "agent"]}}}, "review": {"type": "object"}}}},
+    {"if": {"properties": {"authorization_kind": {"const": "independent_review"}, "decision": {"const": "approved"}}, "required": ["authorization_kind", "decision"]}, "then": {"properties": {"review": {"properties": {"findings": {"properties": {"high": {"const": 0}, "medium": {"const": 0}}}}}}}}
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "public_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,4095}$"}
+  }
+}

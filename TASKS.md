@@ -222,6 +222,14 @@ Give these tasks to coding agents in this order:
 218. `agent-tasks/0213-v055-local-release-preparation.md` (v0.5.5 finish reliability and operability release, version/distribution alignment, local artifact Evidence, and no publication)
 219. `agent-tasks/0214-non-head-goal-packet-routing.md` (v0.5.5 RC correction preserving validated non-HEAD completion-packet base identity in exact Goal close routing)
 220. `agent-tasks/0215-v055-release-publication.md` (v0.5.5 authorized publication, corrective remote-CI gate, immutable tag chain, Trusted Publishing, PyPI provenance and hashes, public consumer dogfood, and pipx upgrade)
+221. `agent-tasks/0216-p0b-task-terminal-readiness-guard.md` (P0-B exact Task terminal-readiness proof and precommit guard)
+222. `agent-tasks/0217-p1a-direct-setup-bundle.md` (P1-A direct setup bundle and bounded mutation tail)
+223. `agent-tasks/0218-p1b-atomic-task-accept.md` (P1-B atomic Task acceptance and retained-descriptor filesystem currentness)
+224. `agent-tasks/0219-p1c-authority-resolver-bootstrap.md` (P1-C C1 authority-surface resolution and external bootstrap)
+225. `agent-tasks/0220-p1c-proof-workspace.md` (P1-C C2 isolated proof workspace and typed input binding)
+226. `agent-tasks/0221-p1c-proof-execution.md` (P1-C C3 deterministic proof execution and current-proof capture)
+227. `agent-tasks/0222-p1c-proof-admission.md` (P1-C C4 pure semantic coverage admission)
+228. `agent-tasks/0223-p1c-proof-anchor.md` (P1-C C5 durable proof admission anchor and anchor-scoped authorization)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and

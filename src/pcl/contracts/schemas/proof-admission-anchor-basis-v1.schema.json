@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "proof-admission-anchor-basis/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "target", "candidate", "policy", "admission", "bindings", "scope", "basis_sha256"],
+  "properties": {
+    "contract_version": {"const": "proof-admission-anchor-basis/v1"},
+    "target": {"$ref": "#/$defs/target"},
+    "candidate": {"$ref": "#/$defs/candidate"},
+    "policy": {"$ref": "proof-coverage-policy/v1"},
+    "admission": {"$ref": "proof-coverage-admission/v1"},
+    "bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["policy_sha256", "coverage_group_sha256", "admission_sha256"],
+      "properties": {
+        "policy_sha256": {"$ref": "#/$defs/sha256"},
+        "coverage_group_sha256": {"$ref": "#/$defs/sha256"},
+        "admission_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "scope": {"$ref": "#/$defs/scope"},
+    "basis_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {"type": {"const": "task"}, "id": {"type": "string", "minLength": 1, "maxLength": 4096}}
+    },
+    "candidate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["object_format", "commit_oid", "tree_oid"],
+      "properties": {
+        "object_format": {"enum": ["sha1", "sha256"]},
+        "commit_oid": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+        "tree_oid": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"}
+      },
+      "allOf": [
+        {"if": {"properties": {"object_format": {"const": "sha1"}}}, "then": {"properties": {"commit_oid": {"pattern": "^[0-9a-f]{40}$"}, "tree_oid": {"pattern": "^[0-9a-f]{40}$"}}}},
+        {"if": {"properties": {"object_format": {"const": "sha256"}}}, "then": {"properties": {"commit_oid": {"pattern": "^[0-9a-f]{64}$"}, "tree_oid": {"pattern": "^[0-9a-f]{64}$"}}}}
+      ]
+    },
+    "scope": {
+      "type": "object", "additionalProperties": false,
+      "required": ["anchor", "reuse", "terminal", "publication"],
+      "properties": {"anchor": {"const": true}, "reuse": {"const": false}, "terminal": {"const": false}, "publication": {"const": false}}
+    }
+  }
+}

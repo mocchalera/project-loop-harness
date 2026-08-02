@@ -29,6 +29,7 @@ from pcl.proof_execution import (
     StreamAccumulator,
     aggregate_verdict,
     capture_current_proof,
+    capture_current_proof_in_snapshot,
     derive_current_proof,
     execute_proof_workspace,
 )
@@ -982,6 +983,35 @@ def test_current_proof_exact_preimage_hwm_independence_and_read_only_effect(
     standalone = capture_current_proof(paths, {"type": "task", "id": "T-0002"})
     assert standalone.scope == "not_applicable"
     assert standalone.status == "not_applicable"
+
+
+def test_current_proof_connection_scoped_capture_uses_caller_snapshot(
+    tmp_path: Path,
+) -> None:
+    paths, _, task_id = _current_proof_project(tmp_path)
+    conn = connect(paths.db_path)
+    try:
+        conn.execute("BEGIN")
+        hwm = int(conn.execute("SELECT MAX(sequence) FROM events").fetchone()[0])
+        scoped = capture_current_proof_in_snapshot(
+            paths,
+            conn,
+            {"type": "task", "id": task_id},
+            hwm=hwm,
+        )
+        standalone = capture_current_proof_in_snapshot(
+            paths,
+            conn,
+            {"type": "task", "id": "T-0002"},
+            hwm=hwm,
+        )
+        assert conn.in_transaction
+    finally:
+        conn.rollback()
+        conn.close()
+    assert scoped == capture_current_proof(paths, {"type": "task", "id": task_id})
+    assert standalone.scope == "not_applicable"
+    assert standalone.event_high_watermark == hwm
 
 
 def test_current_proof_event_and_link_changes_are_digest_relevant(tmp_path: Path) -> None:

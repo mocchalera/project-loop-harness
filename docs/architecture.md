@@ -210,6 +210,19 @@ Evidence, persistence, CLI, terminal, and lifecycle integration remain C5 or
 later work. SQLite stays schema 8 and C4 has no runtime writes or PCL effects.
 See [proof-admission-v1.md](proof-admission-v1.md).
 
+P1-C C5 adds the first durable proof-admission boundary. It recomputes live
+C2/C3/C4 and authority inputs under the project mutation lock, requires
+independent review and any policy-required human gate, and atomically binds an
+immutable local artifact to one Evidence row, Task link, Task event, and outbox
+record. Exact replay is effect-zero; unhealthy committed artifacts advance only
+through a bounded, predecessor-bound recovery chain, followed by a durable
+subject-independent exhaustion tombstone. C5 grants only
+`anchor_authorization_granted`: C4's false reuse, terminal, mandatory-Evidence,
+and anchoring facts remain embedded unchanged, and no C6 consumer is enabled.
+SQLite remains schema 8 and C5 adds no migration, dependency, public CLI,
+lifecycle mutation, render, network, or publication behavior. See
+[proof-anchor-v1.md](proof-anchor-v1.md).
+
 ## Why CLI first
 
 Agent Skills are instructions. They cannot reliably guarantee migrations, validation, deterministic rendering, or guarded state transitions by themselves.

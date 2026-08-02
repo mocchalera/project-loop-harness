@@ -13,11 +13,19 @@ from typing import Any
 from .context_binding import _receipt_target_binding_agrees
 from .contracts.completion_packet import load_completion_packet, validate_completion_packet
 from .contracts.evidence_set import load_evidence_set, validate_evidence_set
+from .contracts.proof_anchor import (
+    validate_proof_anchor_event,
+    validate_proof_anchor_exhaustion_event,
+)
 from .db import connect, table_exists
 from .evidence import ADHOC_EVIDENCE_TYPES, assess_adhoc_evidence, superseding_evidence_id
 from .errors import DataStoreError, InvalidInputError
 from .migrations import migration_status
 from .paths import ProjectPaths
+from .proof_anchor import (
+    committed_proof_anchor_tombstone_valid,
+    inspect_committed_proof_anchor,
+)
 from .resources import read_text_resource
 from .project_config import (
     checkpoint_configuration,
@@ -1163,6 +1171,7 @@ def _validate_strict_invariants(
         result,
         transaction_overlay_event_ids=transaction_overlay_event_ids,
     )
+    _validate_proof_anchor_evidence(paths, conn, result)
     _validate_workflow_proposals(paths, conn, result)
     _validate_foreign_keys(conn, result)
     _validate_verification_feedback_references(conn, result)
@@ -1575,6 +1584,86 @@ def _validate_audit_log_integrity(
 
     for event_id in sorted(db_ids & jsonl_ids):
         _compare_event_record(event_id, db_by_id[event_id], jsonl_by_id[event_id], result)
+
+
+def _validate_proof_anchor_evidence(
+    paths: ProjectPaths,
+    conn: sqlite3.Connection,
+    result: ValidationResult,
+) -> None:
+    rows = conn.execute(
+        """
+        SELECT id, event_type, entity_type, entity_id, payload_json
+        FROM events
+        WHERE event_type IN (
+          'proof_admission_anchored',
+          'proof_admission_anchor_recovery_exhausted'
+        )
+        ORDER BY sequence, id
+        """
+    ).fetchall()
+    for row in rows:
+        try:
+            payload = json.loads(str(row["payload_json"]))
+        except JSONDecodeError:
+            payload = None
+        if row["event_type"] == "proof_admission_anchor_recovery_exhausted":
+            if (
+                row["entity_type"] != "task"
+                or not isinstance(payload, dict)
+                or not validate_proof_anchor_exhaustion_event(payload).ok
+                or not committed_proof_anchor_tombstone_valid(
+                    paths,
+                    conn,
+                    event_id=str(row["id"]),
+                )
+            ):
+                result.add_error(
+                    f"Proof anchor exhaustion event {row['id']} is invalid.",
+                    code="proof_anchor_exhaustion_event_invalid",
+                    entity={"type": "event", "id": str(row["id"])},
+                    repair_class="unsupported",
+                    requires_human=True,
+                )
+            continue
+        if (
+            row["entity_type"] != "task"
+            or not isinstance(payload, dict)
+            or not validate_proof_anchor_event(payload).ok
+            or row["entity_id"] is None
+        ):
+            result.add_error(
+                f"Proof anchor event {row['id']} is invalid.",
+                code="proof_anchor_event_invalid",
+                entity={"type": "event", "id": str(row["id"])},
+                repair_class="unsupported",
+                requires_human=True,
+            )
+            continue
+        committed = inspect_committed_proof_anchor(
+            paths,
+            conn,
+            event_id=str(row["id"]),
+        )
+        if committed is None:
+            result.add_error(
+                f"Proof anchor event {row['id']} has invalid committed authority.",
+                code="proof_anchor_committed_authority_corrupt",
+                entity={"type": "event", "id": str(row["id"])},
+                repair_class="unsupported",
+                requires_human=True,
+            )
+            continue
+        if committed.health_status != "healthy":
+            result.add_error(
+                f"Proof anchor Evidence {payload['evidence_id']} is postcommit unhealthy.",
+                code="proof_anchor_postcommit_unhealthy",
+                entity={"type": "evidence", "id": str(payload["evidence_id"])},
+                related=[{"type": "event", "id": str(row["id"])}],
+                repair_class="unsupported",
+                requires_human=True,
+                suggested_commands=[_pcl_json_command("audit", "check")],
+            )
 
 
 def _read_jsonl_events(paths: ProjectPaths, result: ValidationResult) -> list[dict[str, Any]]:
