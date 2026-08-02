@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop.local/contracts/proof-stream-log-v1.schema.json",
+  "title": "proof-stream-log/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "packet_sha256", "check_id", "stream", "commitment", "log_sha256"],
+  "properties": {
+    "contract_version": {"const": "proof-stream-log/v1"},
+    "packet_sha256": {"$ref": "#/$defs/sha256"},
+    "check_id": {"$ref": "#/$defs/check_id"},
+    "stream": {"enum": ["stdout", "stderr"]},
+    "commitment": {"enum": ["committed", "uncommitted"]},
+    "content_byte_count": {"type": "integer", "minimum": 0, "maximum": 1048576},
+    "content_base64": {"type": "string", "maxLength": 1398104, "contentEncoding": "base64"},
+    "content_sha256": {"$ref": "#/$defs/sha256"},
+    "reason_codes": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"enum": ["output_profile_cap_exceeded", "public_disclosure_ceiling_exceeded", "secret_shaped_environment", "secret_shape_match", "output_incomplete"]}},
+    "log_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "oneOf": [
+    {"properties": {"commitment": {"const": "committed"}}, "required": ["content_byte_count", "content_base64", "content_sha256"], "not": {"required": ["reason_codes"]}},
+    {"properties": {"commitment": {"const": "uncommitted"}}, "required": ["reason_codes"], "not": {"anyOf": [{"required": ["content_byte_count"]}, {"required": ["content_base64"]}, {"required": ["content_sha256"]}]}}
+  ],
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "check_id": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[\\u0001-\\u007f]+$"}
+  }
+}

@@ -1299,3 +1299,21 @@ def test_c2_has_no_pcl_or_c3_effects(tmp_path: Path) -> None:
         assert not ({"result", "artifact", "evidence", "event", "outbox"} & set(prepared.binding))
 
     assert {path: path.read_bytes() for path in (db, events)} == before
+
+
+def test_c3_bridge_keeps_source_capability_private_and_retains_failure(
+    tmp_path: Path,
+) -> None:
+    root, base, candidate = _repository(tmp_path)
+    with _prepare(root, base, candidate, tmp_path) as prepared:
+        public = json.dumps(prepared.binding, sort_keys=True)
+        assert str(prepared._source_root) not in public
+        assert str(prepared._source_common_dir) not in public
+        assert str(prepared._source_object_dir) not in public
+        assert prepared._source_root == root.resolve()
+        assert prepared._source_object_format == "sha1"
+        retained = prepared.lease_root
+        prepared.retain_failure("failed")
+        assert prepared.state == "retained_failure"
+        assert prepared.reuse_disposition == "fresh_only"
+    assert retained.exists()

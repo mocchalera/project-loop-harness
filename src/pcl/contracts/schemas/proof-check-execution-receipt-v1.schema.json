@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop.local/contracts/proof-check-execution-receipt-v1.schema.json",
+  "title": "proof-check-execution-receipt/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "packet_sha256", "check_id", "authority_checkpoint_sha256s", "spawn", "process", "stdout_log_sha256", "stderr_log_sha256", "reseal", "proof_validity", "receipt_sha256"],
+  "properties": {
+    "contract_version": {"const": "proof-check-execution-receipt/v1"},
+    "packet_sha256": {"$ref": "#/$defs/sha256"},
+    "check_id": {"$ref": "#/$defs/check_id"},
+    "authority_checkpoint_sha256s": {"type": "array", "maxItems": 514, "items": {"$ref": "#/$defs/sha256"}},
+    "spawn": {
+      "type": "object", "additionalProperties": false, "required": ["status", "error_kind"],
+      "properties": {"status": {"enum": ["not_attempted", "spawned", "failed"]}, "error_kind": {"enum": ["not_found", "permission_denied", "os_error", null]}}
+    },
+    "process": {
+      "type": "object", "additionalProperties": false,
+      "required": ["controller_cause", "leader_kind", "leader_value", "term_sent", "kill_sent", "pipes_eof", "group_quiescent"],
+      "properties": {
+        "controller_cause": {"enum": ["not_started", "exit", "signal", "timeout", "cancellation", "descendant_cleanup", "uncertain"]},
+        "leader_kind": {"enum": ["not_started", "exited", "signaled", "unknown"]},
+        "leader_value": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+        "term_sent": {"type": "boolean"}, "kill_sent": {"type": "boolean"}, "pipes_eof": {"type": "boolean"}, "group_quiescent": {"type": "boolean"}
+      }
+    },
+    "stdout_log_sha256": {"$ref": "#/$defs/sha256"},
+    "stderr_log_sha256": {"$ref": "#/$defs/sha256"},
+    "reseal": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "before_manifest_sha256", "after_manifest_sha256", "effect_classification"],
+      "properties": {
+        "status": {"enum": ["not_run", "matched", "inconclusive"]},
+        "before_manifest_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "after_manifest_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "effect_classification": {"enum": ["read_only", "declared_outputs", "mutates_inputs", "unknown", null]}
+      }
+    },
+    "proof_validity": {"enum": ["valid", "invalid", "indeterminate"]},
+    "receipt_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "check_id": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[\\u0001-\\u007f]+$"}
+  }
+}

@@ -185,6 +185,18 @@ effect classifier rather than shared candidate identity. C3 must consume the
 frozen spawn vector without reconstructing it; C4 owns mandated canary/role
 coverage. See [proof-workspace-v1.md](proof-workspace-v1.md).
 
+P1-C C3 adds an internal, effect-zero proof executor. It consumes C2's frozen
+`PreparedCheck` directly, rechecks the canonical source/common object store and
+C1 authority around every spawn, and uses one POSIX process group with bounded,
+deadlock-free stdout/stderr draining. Canonical in-memory packets, checkpoints,
+logs, receipts, results, and bundle manifests are deterministic and
+hash-bound; `reuse_authorized` remains false. Feature-linked current proof is
+captured in separate read-only SQLite snapshots, while a standalone Task is
+explicitly not applicable. C3 persists or anchors nothing and adds no CLI,
+schema migration, dependency, render, or lifecycle mutation. C4 still owns
+semantic role/canary coverage. See
+[proof-execution-v1.md](proof-execution-v1.md).
+
 ## Why CLI first
 
 Agent Skills are instructions. They cannot reliably guarantee migrations, validation, deterministic rendering, or guarded state transitions by themselves.

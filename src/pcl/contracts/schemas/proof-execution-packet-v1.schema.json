@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop.local/contracts/proof-execution-packet-v1.schema.json",
+  "title": "proof-execution-packet/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "workspace_binding_sha256", "executor_contract_sha256", "ordered_check_ids", "initial_reuse_disposition", "packet_sha256"],
+  "properties": {
+    "contract_version": {"const": "proof-execution-packet/v1"},
+    "workspace_binding_sha256": {"$ref": "#/$defs/sha256"},
+    "executor_contract_sha256": {"$ref": "#/$defs/sha256"},
+    "ordered_check_ids": {"type": "array", "minItems": 1, "maxItems": 256, "uniqueItems": true, "items": {"$ref": "#/$defs/check_id"}},
+    "initial_reuse_disposition": {"enum": ["eligible", "fresh_only"]},
+    "packet_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "check_id": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[\\u0001-\\u007f]+$"}
+  }
+}

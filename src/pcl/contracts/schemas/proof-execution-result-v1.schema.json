@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop.local/contracts/proof-execution-result-v1.schema.json",
+  "title": "proof-execution-result/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "packet_sha256", "ordered_result_sha256s", "not_run_check_ids", "final_authority_checkpoint_sha256", "verdict", "output_commitment_status", "current_proof", "anchoring_eligible", "positive_proof_handoff", "reuse_disposition", "reuse_authorized", "aggregate_sha256"],
+  "properties": {
+    "contract_version": {"const": "proof-execution-result/v1"},
+    "packet_sha256": {"$ref": "#/$defs/sha256"},
+    "ordered_result_sha256s": {"type": "array", "maxItems": 256, "items": {"$ref": "#/$defs/sha256"}},
+    "not_run_check_ids": {"type": "array", "maxItems": 256, "uniqueItems": true, "items": {"$ref": "#/$defs/check_id"}},
+    "final_authority_checkpoint_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "verdict": {"$ref": "#/$defs/verdict"},
+    "output_commitment_status": {"enum": ["committed", "uncommitted"]},
+    "current_proof": {
+      "type": "object", "additionalProperties": false, "required": ["scope", "status", "proof_sha256"],
+      "properties": {
+        "scope": {"enum": ["feature", "not_applicable"]},
+        "status": {"enum": ["healthy", "unhealthy", "not_applicable", "changed", "indeterminate"]},
+        "proof_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]}
+      }
+    },
+    "anchoring_eligible": {"type": "boolean"},
+    "positive_proof_handoff": {"enum": ["candidate", "withheld"]},
+    "reuse_disposition": {"enum": ["eligible", "fresh_only"]},
+    "reuse_authorized": {"const": false},
+    "aggregate_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "check_id": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[\\u0001-\\u007f]+$"},
+    "verdict": {"enum": ["passed", "failed", "cancelled", "timed_out", "spawn_failed", "blocked", "invalid", "indeterminate"]}
+  }
+}

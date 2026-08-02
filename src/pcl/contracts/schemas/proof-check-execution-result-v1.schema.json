@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop.local/contracts/proof-check-execution-result-v1.schema.json",
+  "title": "proof-check-execution-result/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "packet_sha256", "check_id", "receipt_sha256", "verdict", "reuse_disposition", "result_sha256"],
+  "properties": {
+    "contract_version": {"const": "proof-check-execution-result/v1"},
+    "packet_sha256": {"$ref": "#/$defs/sha256"},
+    "check_id": {"$ref": "#/$defs/check_id"},
+    "receipt_sha256": {"$ref": "#/$defs/sha256"},
+    "verdict": {"$ref": "#/$defs/verdict"},
+    "reuse_disposition": {"enum": ["eligible", "fresh_only"]},
+    "result_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "check_id": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[\\u0001-\\u007f]+$"},
+    "verdict": {"enum": ["passed", "failed", "cancelled", "timed_out", "spawn_failed", "blocked", "invalid", "indeterminate"]}
+  }
+}

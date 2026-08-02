@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop.local/contracts/proof-authority-checkpoint-v1.schema.json",
+  "title": "proof-authority-checkpoint/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "packet_sha256", "phase", "check_id", "source_status", "base_status", "literal_reuse_allowed", "rederived_cross_checks", "clone_diff_cross_check", "checkpoint_sha256"],
+  "properties": {
+    "contract_version": {"const": "proof-authority-checkpoint/v1"},
+    "packet_sha256": {"$ref": "#/$defs/sha256"},
+    "phase": {"enum": ["initial", "pre_spawn", "post_execution", "aggregate_final"]},
+    "check_id": {"oneOf": [{"$ref": "#/$defs/check_id"}, {"type": "null"}]},
+    "source_status": {"const": "matched"},
+    "base_status": {"enum": ["resolved", "base_unknown", "no_candidate_change"]},
+    "literal_reuse_allowed": {"type": "boolean"},
+    "rederived_cross_checks": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["binding", "bootstrap_profile", "verification_profile", "check_plan", "external_inputs", "proof_key", "public_execution"],
+      "properties": {
+        "binding": {"const": true},
+        "bootstrap_profile": {"const": true},
+        "verification_profile": {"const": true},
+        "check_plan": {"const": true},
+        "external_inputs": {"const": true},
+        "proof_key": {"const": true},
+        "public_execution": {"const": true}
+      }
+    },
+    "clone_diff_cross_check": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "diff_sha256"],
+      "properties": {
+        "status": {"enum": ["matched", "not_applicable_base_unknown"]},
+        "diff_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]}
+      }
+    },
+    "checkpoint_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "check_id": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[\\u0001-\\u007f]+$"}
+  }
+}

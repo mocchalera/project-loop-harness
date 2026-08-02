@@ -327,6 +327,14 @@ class PreparedProofWorkspace:
     _input_runtime: tuple[_InputRuntime, ...] = field(repr=False)
     _declared_outputs: Mapping[str, tuple[str, ...]] = field(repr=False)
     _binding_sha256: str = field(repr=False)
+    _source_root: Path = field(repr=False)
+    _source_root_stat_identity: _StatIdentity = field(repr=False)
+    _source_common_dir: Path = field(repr=False)
+    _source_common_dir_stat_identity: _StatIdentity = field(repr=False)
+    _source_object_dir: Path = field(repr=False)
+    _source_object_dir_stat_identity: _StatIdentity = field(repr=False)
+    _source_object_format: str = field(repr=False)
+    _retention_reason: str | None = field(default=None, repr=False)
 
     def capture_before(self, check_id: str) -> dict[str, Any]:
         check = self._require_check(check_id)
@@ -417,6 +425,28 @@ class PreparedProofWorkspace:
             )
         return check
 
+    def retain_failure(self, reason_code: str) -> None:
+        """Retain this exact C2 lease after a conclusive C3 non-success."""
+
+        if (
+            not isinstance(reason_code, str)
+            or not reason_code
+            or not reason_code.isascii()
+            or any(character not in "abcdefghijklmnopqrstuvwxyz_" for character in reason_code)
+        ):
+            raise _error(
+                "proof_workspace_retention_invalid",
+                "The proof workspace retention reason must be a fixed lowercase code.",
+            )
+        if self._lease.cleaned:
+            raise _error(
+                "proof_workspace_retention_invalid",
+                "A successfully cleaned proof workspace cannot be retained.",
+            )
+        self.reuse_disposition = "fresh_only"
+        self._retention_reason = reason_code
+        self.state = "retained_failure"
+
 
 @contextmanager
 def prepare_proof_workspace(
@@ -472,7 +502,7 @@ def prepare_proof_workspace(
         prepared.state = "retained_failure"
         raise
     else:
-        if prepared.state == "invalid":
+        if prepared.state in {"invalid", "retained_failure"}:
             prepared.state = "retained_failure"
         else:
             prepared.state = "complete"
@@ -517,6 +547,18 @@ def _prepare_owned_workspace(
     )
     runner = GitRunner(MappingProxyType(git_environment))
     source = _source_repository(canonical_root, runner)
+    source_root_identity = _directory_stat_identity(
+        source["root"],
+        code="proof_candidate_object_unavailable",
+    )
+    source_common_identity = _directory_stat_identity(
+        source["common_dir"],
+        code="proof_candidate_object_unavailable",
+    )
+    source_object_identity = _directory_stat_identity(
+        source["object_dir"],
+        code="proof_candidate_object_unavailable",
+    )
     candidate = spec["candidate"]
     if source["object_format"] != candidate["object_format"]:
         raise _error(
@@ -732,6 +774,13 @@ def _prepare_owned_workspace(
         _input_runtime=tuple(input_runtime),
         _declared_outputs=declared_outputs,
         _binding_sha256=proof_document_sha256(binding),
+        _source_root=source["root"],
+        _source_root_stat_identity=source_root_identity,
+        _source_common_dir=source["common_dir"],
+        _source_common_dir_stat_identity=source_common_identity,
+        _source_object_dir=source["object_dir"],
+        _source_object_dir_stat_identity=source_object_identity,
+        _source_object_format=source["object_format"],
     )
     workspace.assert_ready_to_spawn(next(iter(prepared_checks)))
     workspace.state = "ready"
@@ -2411,6 +2460,16 @@ def _assert_no_symlink_parents(path: Path) -> None:
 
 def _stat_identity_no_follow(path: Path) -> _StatIdentity:
     return _StatIdentity.from_stat(os.stat(path, follow_symlinks=False))
+
+
+def _directory_stat_identity(path: Path, *, code: str) -> _StatIdentity:
+    try:
+        value = os.lstat(path)
+    except OSError as exc:
+        raise _error(code, "A canonical Git authority directory is unavailable.") from exc
+    if not stat.S_ISDIR(value.st_mode) or stat.S_ISLNK(value.st_mode):
+        raise _error(code, "A canonical Git authority directory is unsafe.")
+    return _StatIdentity.from_stat(value)
 
 
 def _open_directory(path: Path) -> int:
