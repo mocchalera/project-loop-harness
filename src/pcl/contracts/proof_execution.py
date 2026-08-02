@@ -492,8 +492,14 @@ def _aggregate(value: dict[str, Any], errors: list[str]) -> None:
                 errors.append("$.current_proof.proof_sha256: indeterminate requires null")
         else:
             _sha(digest, "$.current_proof.proof_sha256", errors)
-        if scope == "not_applicable" and status != "not_applicable":
-            errors.append("$.current_proof.status: not_applicable scope requires not_applicable status")
+        if scope == "not_applicable" and status not in {
+            "not_applicable",
+            "changed",
+            "indeterminate",
+        }:
+            errors.append(
+                "$.current_proof.status: not_applicable scope requires a compatible status"
+            )
         if scope == "feature" and status == "not_applicable":
             errors.append("$.current_proof.status: feature scope cannot be not_applicable")
         current_candidate = status in {"healthy", "not_applicable"}

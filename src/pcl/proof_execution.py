@@ -616,7 +616,15 @@ def _execute_once(
         aggregate,
     )
     if verdict in _RETAINED_VERDICTS:
-        prepared.retain_failure(verdict)
+        retention_reason = verdict
+    elif current_start is not None and current["status"] == "indeterminate":
+        retention_reason = "indeterminate"
+    elif current_start is not None and current["status"] == "changed":
+        retention_reason = "invalid"
+    else:
+        retention_reason = None
+    if retention_reason is not None:
+        prepared.retain_failure(retention_reason)
     return ProofExecutionBundle(
         packet=packet,
         authority_checkpoints=tuple(checkpoints),

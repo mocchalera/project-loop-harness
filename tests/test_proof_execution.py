@@ -137,6 +137,37 @@ def _not_applicable() -> CurrentProofSnapshot:
     )
 
 
+def _healthy_feature() -> CurrentProofSnapshot:
+    digest = "sha256:" + "a" * 64
+    preimage = {
+        "contract_version": "proof-current-feature-snapshot/v1",
+        "scope": "feature",
+        "status": "healthy",
+        "feature_id": "F-0001",
+        "feature_status": "done",
+        "evidence_id": "E-0001",
+        "evidence_type": "adhoc_artifact",
+        "evidence_content_sha256": digest,
+        "superseded_by": None,
+        "recording_event_id": "EV-0001",
+        "recording_event_sha256": digest,
+        "link_identity_sha256": digest,
+        "health_failure_codes": [],
+    }
+    return CurrentProofSnapshot(
+        scope="feature",
+        status="healthy",
+        preimage=preimage,
+        proof_sha256=proof_document_sha256(
+            {
+                "contract_version": "proof-current-feature-snapshot-digest/v1",
+                "snapshot": preimage,
+            }
+        ),
+        event_high_watermark=1,
+    )
+
+
 def _execute(case: _Case, prepared, **kwargs):
     authority_provider = kwargs.pop("authority_provider", lambda: case.authority)
     current_proof_provider = kwargs.pop("current_proof_provider", _not_applicable)
@@ -468,14 +499,32 @@ def test_exit_signal_cancellation_and_eperm_uncertainty(
     )
     cancel = threading.Event()
     with _prepare(cancel_case, tmp_path / "cancel") as prepared:
-        timer = threading.Timer(0.2, cancel.set)
-        timer.start()
-        try:
-            cancelled = _execute(cancel_case, prepared, cancel_event=cancel)
-            assert cancelled.aggregate["verdict"] == "cancelled"
-            assert cancelled.check_receipts[0]["process"]["controller_cause"] == "cancellation"
-        finally:
-            timer.cancel()
+        original_popen = proof_execution_module._PROCESS_POPEN
+        timer: threading.Timer | None = None
+
+        def spawn_then_arm_cancellation(*args, **kwargs):
+            nonlocal timer
+            process = original_popen(*args, **kwargs)
+            timer = threading.Timer(0.2, cancel.set)
+            timer.start()
+            return process
+
+        with monkeypatch.context() as spawn_patch:
+            spawn_patch.setattr(
+                proof_execution_module,
+                "_PROCESS_POPEN",
+                spawn_then_arm_cancellation,
+            )
+            try:
+                cancelled = _execute(cancel_case, prepared, cancel_event=cancel)
+                assert cancelled.aggregate["verdict"] == "cancelled"
+                assert (
+                    cancelled.check_receipts[0]["process"]["controller_cause"]
+                    == "cancellation"
+                )
+            finally:
+                if timer is not None:
+                    timer.cancel()
 
     eperm_case = _case(tmp_path / "eperm")
     monkeypatch.setattr(proof_execution_module, "_process_group_state", lambda _pgid: "uncertain")
@@ -654,6 +703,62 @@ def test_inconclusive_current_proof_is_nullable_and_withheld(tmp_path: Path) -> 
         }
         assert bundle.aggregate["anchoring_eligible"] is False
         assert bundle.aggregate["positive_proof_handoff"] == "withheld"
+
+
+def test_standalone_end_capture_failure_returns_indeterminate_bundle_and_retains(
+    tmp_path: Path,
+) -> None:
+    case = _case(tmp_path)
+    calls = 0
+
+    def standalone_then_unavailable() -> CurrentProofSnapshot:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return _not_applicable()
+        raise OSError("end snapshot unavailable")
+
+    with _prepare(case, tmp_path) as prepared:
+        retained = prepared.lease_root
+        bundle = _execute(
+            case,
+            prepared,
+            current_proof_provider=standalone_then_unavailable,
+        )
+        assert calls == 2
+        assert bundle.aggregate["current_proof"] == {
+            "scope": "not_applicable",
+            "status": "indeterminate",
+            "proof_sha256": None,
+        }
+        assert bundle.aggregate["anchoring_eligible"] is False
+        assert bundle.aggregate["positive_proof_handoff"] == "withheld"
+        assert prepared.state == "retained_failure"
+    assert retained.exists()
+
+
+def test_feature_to_standalone_change_returns_changed_bundle_and_retains(
+    tmp_path: Path,
+) -> None:
+    case = _case(tmp_path)
+    snapshots = iter((_healthy_feature(), _not_applicable()))
+
+    with _prepare(case, tmp_path) as prepared:
+        retained = prepared.lease_root
+        bundle = _execute(
+            case,
+            prepared,
+            current_proof_provider=lambda: next(snapshots),
+        )
+        assert bundle.aggregate["current_proof"] == {
+            "scope": "not_applicable",
+            "status": "changed",
+            "proof_sha256": _not_applicable().proof_sha256,
+        }
+        assert bundle.aggregate["anchoring_eligible"] is False
+        assert bundle.aggregate["positive_proof_handoff"] == "withheld"
+        assert prepared.state == "retained_failure"
+    assert retained.exists()
 
 
 def test_source_authority_and_clone_drift_fail_before_spawn(tmp_path: Path) -> None:
