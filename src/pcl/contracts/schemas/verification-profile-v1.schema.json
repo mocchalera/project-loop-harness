@@ -1,0 +1,23 @@
+{
+  "$id": "https://project-loop.local/contracts/verification-profile-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "checks": {"minItems": 1, "type": "array"},
+    "contract_version": {"const": "verification-profile/v1"},
+    "execution_policy": {"type": "object"},
+    "mandatory_evidence": {"const": false},
+    "profile_id": {"minLength": 1, "type": "string"},
+    "terminal_authority": {"const": false}
+  },
+  "required": [
+    "contract_version",
+    "profile_id",
+    "execution_policy",
+    "checks",
+    "terminal_authority",
+    "mandatory_evidence"
+  ],
+  "title": "Verification profile v1",
+  "type": "object"
+}

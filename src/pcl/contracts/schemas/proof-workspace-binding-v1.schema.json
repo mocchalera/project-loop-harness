@@ -1,0 +1,33 @@
+{
+  "$id": "https://project-loop.local/contracts/proof-workspace-binding-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "authority": {"type": "object"},
+    "checks": {"type": "array"},
+    "contract_version": {"const": "proof-workspace-binding/v1"},
+    "external_inputs": {"type": "object"},
+    "mandatory_evidence": {"const": false},
+    "proof_key": {"type": "object"},
+    "repository": {"type": "object"},
+    "reuse": {"type": "object"},
+    "spec_sha256": {"type": "string"},
+    "terminal_authority": {"const": false},
+    "verification_profile": {"type": "object"}
+  },
+  "required": [
+    "contract_version",
+    "spec_sha256",
+    "repository",
+    "authority",
+    "verification_profile",
+    "external_inputs",
+    "checks",
+    "proof_key",
+    "reuse",
+    "terminal_authority",
+    "mandatory_evidence"
+  ],
+  "title": "Proof workspace binding v1",
+  "type": "object"
+}

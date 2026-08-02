@@ -6,10 +6,10 @@ import json
 import os
 from pathlib import Path
 import stat
-import subprocess
 from typing import Any, Iterable
 
 from .errors import InvalidInputError
+from .git_runtime import GitRunner, INHERITED_GIT_RUNNER
 from .timeutil import utc_now_iso
 
 
@@ -28,12 +28,20 @@ def collect_verification_input_manifest(
     root: Path,
     *,
     declared_output_patterns: Iterable[str] = (),
+    git_runner: GitRunner = INHERITED_GIT_RUNNER,
 ) -> dict[str, Any]:
     """Collect deterministic Git-backed verification inputs without mutating state."""
 
     canonical_root = root.resolve()
     patterns = tuple(sorted(set(str(pattern) for pattern in declared_output_patterns)))
-    repository_root = Path(_git(canonical_root, "rev-parse", "--show-toplevel").strip()).resolve()
+    repository_root = Path(
+        _git(
+            canonical_root,
+            "rev-parse",
+            "--show-toplevel",
+            git_runner=git_runner,
+        ).strip()
+    ).resolve()
     if repository_root != canonical_root:
         raise InvalidInputError(
             "Verification input root must be the Git repository root.",
@@ -42,15 +50,38 @@ def collect_verification_input_manifest(
                 "repository_root": str(repository_root),
             },
         )
-    head = _git(canonical_root, "rev-parse", "HEAD").strip()
-    tracked = _git_paths(canonical_root, "ls-files", "--cached")
-    untracked = _git_paths(
-        canonical_root,
-        "ls-files",
-        "--others",
-        "--exclude-standard",
+    head = _git(canonical_root, "rev-parse", "HEAD", git_runner=git_runner).strip()
+    if git_runner is INHERITED_GIT_RUNNER:
+        tracked = _git_paths(canonical_root, "ls-files", "--cached")
+        untracked = _git_paths(
+            canonical_root,
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+        )
+    else:
+        tracked = _git_paths(
+            canonical_root,
+            "ls-files",
+            "--cached",
+            git_runner=git_runner,
+        )
+        untracked = _git_paths(
+            canonical_root,
+            "ls-files",
+            "--others",
+            "--exclude-standard",
+            git_runner=git_runner,
+        )
+    ignored = (
+        (
+            _git_ignored_paths(canonical_root, patterns)
+            if git_runner is INHERITED_GIT_RUNNER
+            else _git_ignored_paths(canonical_root, patterns, git_runner=git_runner)
+        )
+        if patterns
+        else []
     )
-    ignored = _git_ignored_paths(canonical_root, patterns) if patterns else []
 
     sources: dict[str, str] = {}
     for path in tracked:
@@ -338,12 +369,21 @@ def _collection_error(
     }
 
 
-def _git_paths(root: Path, *args: str) -> list[str]:
-    output = _git_bytes(root, *args, "-z")
+def _git_paths(
+    root: Path,
+    *args: str,
+    git_runner: GitRunner = INHERITED_GIT_RUNNER,
+) -> list[str]:
+    output = _git_bytes(root, *args, "-z", git_runner=git_runner)
     return _decode_git_paths(output)
 
 
-def _git_ignored_paths(root: Path, patterns: tuple[str, ...]) -> list[str]:
+def _git_ignored_paths(
+    root: Path,
+    patterns: tuple[str, ...],
+    *,
+    git_runner: GitRunner = INHERITED_GIT_RUNNER,
+) -> list[str]:
     output = _git_bytes(
         root,
         "ls-files",
@@ -353,6 +393,7 @@ def _git_ignored_paths(root: Path, patterns: tuple[str, ...]) -> list[str]:
         "--exclude-standard",
         "--",
         *(f":(glob){pattern}" for pattern in patterns),
+        git_runner=git_runner,
     )
     return _decode_git_paths(output)
 
@@ -365,19 +406,23 @@ def _decode_git_paths(output: bytes) -> list[str]:
     )
 
 
-def _git(root: Path, *args: str) -> str:
-    return _git_bytes(root, *args).decode("utf-8", errors="surrogateescape")
-
-
-def _git_bytes(root: Path, *args: str) -> bytes:
-    result = subprocess.run(
-        ["git", *args],
-        cwd=root,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-        shell=False,
+def _git(
+    root: Path,
+    *args: str,
+    git_runner: GitRunner = INHERITED_GIT_RUNNER,
+) -> str:
+    return _git_bytes(root, *args, git_runner=git_runner).decode(
+        "utf-8",
+        errors="surrogateescape",
     )
+
+
+def _git_bytes(
+    root: Path,
+    *args: str,
+    git_runner: GitRunner = INHERITED_GIT_RUNNER,
+) -> bytes:
+    result = git_runner.run(root, *args)
     if result.returncode != 0:
         raise InvalidInputError(
             "Could not collect the Git-backed verification input manifest.",

@@ -175,6 +175,16 @@ independent review. C1 adds no proof command, event, Evidence, terminal input,
 render, schema, migration, dependency, or default enablement. See
 [authority-surface-resolution-v1.md](authority-surface-resolution-v1.md).
 
+P1-C C2 adds an internal, effect-zero proof workspace. It clones the exact
+ref-reachable candidate into a fresh POSIX lease with distinct Git metadata,
+seals every Git command and child environment, verifies the committed tree,
+and materializes only declared typed external inputs. It produces a frozen
+`PreparedCheck` and deterministic in-memory bindings, but executes no check and
+authorizes no reuse. `verification-input-manifest/v1` remains an in-workspace
+effect classifier rather than shared candidate identity. C3 must consume the
+frozen spawn vector without reconstructing it; C4 owns mandated canary/role
+coverage. See [proof-workspace-v1.md](proof-workspace-v1.md).
+
 ## Why CLI first
 
 Agent Skills are instructions. They cannot reliably guarantee migrations, validation, deterministic rendering, or guarded state transitions by themselves.

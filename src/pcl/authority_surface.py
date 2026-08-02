@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 import re
 import sqlite3
-import subprocess
 from typing import Any
 
 from .contracts.authority_surface import (
@@ -25,6 +24,7 @@ from .contracts.authority_surface import (
 )
 from .errors import PclError
 from .db import connect_read_only
+from .git_runtime import GitRunner, INHERITED_GIT_RUNNER
 from .paths import ProjectPaths
 from .project_config import trusted_integration_head_oid
 
@@ -387,10 +387,21 @@ def canonical_git_diff(
     *,
     base_commit_oid: str,
     candidate_commit_oid: str,
+    git_runner: GitRunner = INHERITED_GIT_RUNNER,
 ) -> dict[str, Any]:
-    base = _resolve_full_commit(root, base_commit_oid, code="authority_base_invalid")
-    candidate = _resolve_full_commit(root, candidate_commit_oid, code="authority_candidate_invalid")
-    if not _is_ancestor(root, base, candidate):
+    base = _resolve_full_commit(
+        root,
+        base_commit_oid,
+        code="authority_base_invalid",
+        git_runner=git_runner,
+    )
+    candidate = _resolve_full_commit(
+        root,
+        candidate_commit_oid,
+        code="authority_candidate_invalid",
+        git_runner=git_runner,
+    )
+    if not _is_ancestor(root, base, candidate, git_runner=git_runner):
         raise _error(
             "authority_base_nonancestor",
             "The authority comparison base is not an ancestor of the candidate.",
@@ -407,6 +418,7 @@ def canonical_git_diff(
         base,
         candidate,
         "--",
+        git_runner=git_runner,
     )
     fields = raw.split(b"\0")
     if fields and fields[-1] == b"":
@@ -813,11 +825,23 @@ def _require_depth(value: str, field: str) -> None:
         )
 
 
-def _resolve_full_commit(root: Path, value: str, *, code: str) -> str:
+def _resolve_full_commit(
+    root: Path,
+    value: str,
+    *,
+    code: str,
+    git_runner: GitRunner = INHERITED_GIT_RUNNER,
+) -> str:
     if _OID.fullmatch(value) is None:
         raise _error(code, "Git commit identity must be a full hexadecimal OID.", value=value)
     try:
-        resolved = _git_text(root, "rev-parse", "--verify", f"{value}^{{commit}}")
+        resolved = _git_text(
+            root,
+            "rev-parse",
+            "--verify",
+            f"{value}^{{commit}}",
+            git_runner=git_runner,
+        )
     except AuthoritySurfaceError as exc:
         raise _error(code, "Git commit identity could not be verified.", value=value) from exc
     if resolved != value:
@@ -825,14 +849,14 @@ def _resolve_full_commit(root: Path, value: str, *, code: str) -> str:
     return resolved
 
 
-def _is_ancestor(root: Path, base: str, candidate: str) -> bool:
-    completed = subprocess.run(
-        ["git", "merge-base", "--is-ancestor", base, candidate],
-        cwd=root,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+def _is_ancestor(
+    root: Path,
+    base: str,
+    candidate: str,
+    *,
+    git_runner: GitRunner = INHERITED_GIT_RUNNER,
+) -> bool:
+    completed = git_runner.run(root, "merge-base", "--is-ancestor", base, candidate)
     if completed.returncode == 0:
         return True
     if completed.returncode == 1:
@@ -844,8 +868,12 @@ def _is_ancestor(root: Path, base: str, candidate: str) -> bool:
     )
 
 
-def _git_text(root: Path, *args: str) -> str:
-    return _git_bytes(root, *args).decode("ascii").strip()
+def _git_text(
+    root: Path,
+    *args: str,
+    git_runner: GitRunner = INHERITED_GIT_RUNNER,
+) -> str:
+    return _git_bytes(root, *args, git_runner=git_runner).decode("ascii").strip()
 
 
 def _diff_entries_sha256(entries: Sequence[Mapping[str, Any]]) -> str:
@@ -859,14 +887,12 @@ def _diff_entries_sha256(entries: Sequence[Mapping[str, Any]]) -> str:
     return "sha256:" + hashlib.sha256(payload).hexdigest()
 
 
-def _git_bytes(root: Path, *args: str) -> bytes:
-    completed = subprocess.run(
-        ["git", *args],
-        cwd=root,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=False,
-    )
+def _git_bytes(
+    root: Path,
+    *args: str,
+    git_runner: GitRunner = INHERITED_GIT_RUNNER,
+) -> bytes:
+    completed = git_runner.run(root, *args)
     if completed.returncode != 0:
         raise _error(
             "authority_git_failure",

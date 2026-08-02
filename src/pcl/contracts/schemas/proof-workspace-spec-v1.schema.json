@@ -1,0 +1,31 @@
+{
+  "$id": "https://project-loop.local/contracts/proof-workspace-spec-v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "authority_surface_resolution_sha256": {"type": "string"},
+    "bootstrap_profile_sha256": {"type": "string"},
+    "candidate": {"type": "object"},
+    "contract_version": {"const": "proof-workspace-spec/v1"},
+    "external_inputs": {"type": "array"},
+    "isolation_contract_version": {"const": "proof-workspace-isolation/v1"},
+    "mandatory_evidence": {"const": false},
+    "target": {"type": "object"},
+    "terminal_authority": {"const": false},
+    "verification_profile_sha256": {"type": "string"}
+  },
+  "required": [
+    "contract_version",
+    "target",
+    "candidate",
+    "authority_surface_resolution_sha256",
+    "bootstrap_profile_sha256",
+    "verification_profile_sha256",
+    "isolation_contract_version",
+    "external_inputs",
+    "terminal_authority",
+    "mandatory_evidence"
+  ],
+  "title": "Proof workspace spec v1",
+  "type": "object"
+}

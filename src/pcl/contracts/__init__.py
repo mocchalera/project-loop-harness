@@ -169,6 +169,21 @@ from .authority_surface import (
     validate_authority_surface_resolution,
     validate_bootstrap_authority_profile,
 )
+from .proof_workspace import (
+    PREPARED_CHECK_CONTRACT_VERSION,
+    PROOF_WORKSPACE_BINDING_CONTRACT_VERSION,
+    PROOF_WORKSPACE_ISOLATION_CONTRACT_VERSION,
+    PROOF_WORKSPACE_SPEC_CONTRACT_VERSION,
+    VERIFICATION_PROFILE_CONTRACT_VERSION,
+    ProofWorkspaceValidationResult,
+    proof_document_sha256,
+    proof_workspace_binding_schema,
+    proof_workspace_spec_schema,
+    validate_proof_workspace_binding,
+    validate_proof_workspace_spec,
+    validate_verification_profile,
+    verification_profile_schema,
+)
 
 __all__ = [
     "COMPLETION_PACKET_CONTRACT_VERSION",
@@ -304,4 +319,17 @@ __all__ = [
     "validate_authority_catalog",
     "validate_authority_surface_resolution",
     "validate_bootstrap_authority_profile",
+    "PREPARED_CHECK_CONTRACT_VERSION",
+    "PROOF_WORKSPACE_BINDING_CONTRACT_VERSION",
+    "PROOF_WORKSPACE_ISOLATION_CONTRACT_VERSION",
+    "PROOF_WORKSPACE_SPEC_CONTRACT_VERSION",
+    "VERIFICATION_PROFILE_CONTRACT_VERSION",
+    "ProofWorkspaceValidationResult",
+    "proof_document_sha256",
+    "proof_workspace_binding_schema",
+    "proof_workspace_spec_schema",
+    "validate_proof_workspace_binding",
+    "validate_proof_workspace_spec",
+    "validate_verification_profile",
+    "verification_profile_schema",
 ]
