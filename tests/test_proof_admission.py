@@ -41,9 +41,11 @@ def _live_join(
     *,
     split: bool = True,
     fail_full: bool = False,
+    include_blob_lookup_decoy: bool = False,
 ) -> Iterator[dict[str, Any]]:
     seed = c3._case(tmp_path / "seed")
     blob_oid = c2._git(seed.root, "rev-parse", f"{seed.candidate}:src/candidate_only.py")
+    readme_oid = c2._git(seed.root, "rev-parse", f"{seed.candidate}:README.md")
     canary_argv = [
         sys.executable,
         "-c",
@@ -79,8 +81,9 @@ def _live_join(
         "full-regression",
         "full_regression",
         full_argv,
-        blob_oid,
+        readme_oid if include_blob_lookup_decoy else blob_oid,
         selectors=[],
+        blob_path="README.md" if include_blob_lookup_decoy else "src/candidate_only.py",
     )
     canary_check = _profile_check(
         "authority-canary",
@@ -89,10 +92,20 @@ def _live_join(
         blob_oid,
         selectors=["test_z", "test_a"],
     )
+    decoy_check = _profile_check(
+        "policy-id-decoy",
+        "decoy_role",
+        canary_argv,
+        blob_oid,
+        selectors=[],
+    )
+    combined_checks = [full_check, canary_check]
+    if include_blob_lookup_decoy:
+        combined_checks.append(decoy_check)
     profiles = (
         [_profile("full-profile", [full_check]), _profile("canary-profile", [canary_check])]
         if split
-        else [_profile("combined-profile", [full_check, canary_check])]
+        else [_profile("combined-profile", combined_checks)]
     )
     lease_parent = tmp_path / "leases"
     lease_parent.mkdir(parents=True, exist_ok=True)
@@ -157,6 +170,7 @@ def _profile_check(
     blob_oid: str,
     *,
     selectors: list[str],
+    blob_path: str = "src/candidate_only.py",
 ) -> dict[str, Any]:
     check = deepcopy(c2._profile(argv=argv)["checks"][0])
     check.update(
@@ -165,7 +179,7 @@ def _profile_check(
             "role": role,
             "selectors": selectors,
             "referenced_git_blobs": [
-                {"path": "src/candidate_only.py", "oid": blob_oid}
+                {"path": blob_path, "oid": blob_oid}
             ],
         }
     )
@@ -189,6 +203,8 @@ def _policy_document(
     requirements = []
     for participant in participants:
         for check in participant.verification_profile["checks"]:
+            if check["role"] == "decoy_role":
+                continue
             binding_check = next(
                 item
                 for item in participant.prepared.binding["checks"]
@@ -426,6 +442,84 @@ def test_policy_plan_blob_and_current_authority_mismatches_are_factual(
         assert "authority_current_indeterminate" in admission["state_reason_codes"]
         assert "current_proof_indeterminate" in admission["state_reason_codes"]
         assert admission["effects"]["database_write"] == 0
+
+
+def test_policy_renamed_selected_check_id_is_typed_policy_mismatch(
+    tmp_path: Path,
+) -> None:
+    with _live_join(tmp_path) as live:
+        policy = deepcopy(live["policy"])
+        requirement = policy["required_roles"][0]
+        requirement["expected_check"]["check_id"] = "renamed-policy-check"
+        policy = finalize_proof_coverage_policy(policy)
+        capability = issue_trusted_coverage_policy_producer_capability(
+            kind="external_bootstrap",
+            producer_id="c4-test-producer",
+        )
+        bound = bind_trusted_coverage_policy(
+            policy,
+            expected_policy_sha256=policy["policy_sha256"],
+            producer_capability=capability,
+        )
+
+        admission = evaluate_proof_coverage(
+            policy=bound,
+            participants=live["participants"],
+            authority_provider=lambda: live["authority"],
+            current_proof_provider=c3._not_applicable,
+        )
+
+        assert admission["admission_state"] == "invalid"
+        assert "participant_policy_mismatch" in admission["state_reason_codes"]
+        assert admission["review_readiness"] == "withheld"
+        assert admission["authorization_status"]["anchoring_authorized"] is False
+        assert str(tmp_path) not in json.dumps(dict(admission))
+
+
+def test_blob_lookup_uses_selected_role_check_not_policy_id_decoy(
+    tmp_path: Path,
+) -> None:
+    with _live_join(
+        tmp_path,
+        split=False,
+        include_blob_lookup_decoy=True,
+    ) as live:
+        policy = deepcopy(live["policy"])
+        requirement = policy["required_roles"][0]
+        decoy = next(
+            check
+            for check in live["participants"][0].verification_profile["checks"]
+            if check["check_id"] == "policy-id-decoy"
+        )
+        requirement["expected_check"] = {**deepcopy(decoy), "role": "full_regression"}
+        requirement["required_candidate_blobs"] = deepcopy(
+            decoy["referenced_git_blobs"]
+        )
+        policy = finalize_proof_coverage_policy(policy)
+        capability = issue_trusted_coverage_policy_producer_capability(
+            kind="external_bootstrap",
+            producer_id="c4-test-producer",
+        )
+        bound = bind_trusted_coverage_policy(
+            policy,
+            expected_policy_sha256=policy["policy_sha256"],
+            producer_capability=capability,
+        )
+
+        admission = evaluate_proof_coverage(
+            policy=bound,
+            participants=live["participants"],
+            authority_provider=lambda: live["authority"],
+            current_proof_provider=c3._not_applicable,
+        )
+
+        full = admission["role_observations"][0]
+        assert full["check_id"] == "full-regression"
+        assert full["candidate_blob_status"] == "oid_mismatch"
+        assert admission["admission_state"] == "invalid"
+        assert "participant_policy_mismatch" in admission["state_reason_codes"]
+        assert "candidate_blob_oid_mismatch" in admission["state_reason_codes"]
+        assert admission["promotion_suitability"] == "withheld"
 
 
 @pytest.mark.parametrize(

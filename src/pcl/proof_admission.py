@@ -269,9 +269,10 @@ def evaluate_proof_coverage(
 
     blob_resolutions: dict[tuple[str, str], _BlobResolution] = {}
     for requirement in document["required_roles"]:
-        selected_runtime = _selected_runtime_for_requirement(requirement, runtimes)
-        if selected_runtime is None:
+        selected = _selected_runtime_check_for_requirement(requirement, runtimes)
+        if selected is None:
             continue
+        selected_runtime, selected_check_id = selected
         cache_key = (
             selected_runtime.public["participant_sha256"],
             requirement["requirement_sha256"],
@@ -279,6 +280,7 @@ def evaluate_proof_coverage(
         blob_resolutions[cache_key] = _resolve_candidate_blobs(
             selected_runtime,
             requirement,
+            selected_check_id,
         )
 
     source_indeterminate: set[str] = set()
@@ -292,13 +294,14 @@ def evaluate_proof_coverage(
             raise _error("coverage_live_identity_mismatch", "source")
     if source_indeterminate:
         for requirement in document["required_roles"]:
-            selected_runtime = _selected_runtime_for_requirement(requirement, runtimes)
+            selected = _selected_runtime_check_for_requirement(requirement, runtimes)
             if (
-                selected_runtime is None
-                or selected_runtime.public["participant_sha256"]
+                selected is None
+                or selected[0].public["participant_sha256"]
                 not in source_indeterminate
             ):
                 continue
+            selected_runtime, selected_check_id = selected
             cache_key = (
                 selected_runtime.public["participant_sha256"],
                 requirement["requirement_sha256"],
@@ -306,6 +309,7 @@ def evaluate_proof_coverage(
             blob_resolutions[cache_key] = _indeterminate_blob_resolution(
                 selected_runtime,
                 requirement,
+                selected_check_id,
             )
 
     current_authority, current_canaries, authority_status = _current_authority(
@@ -672,10 +676,10 @@ def _bootstrap_canaries(
     return candidates
 
 
-def _selected_runtime_for_requirement(
+def _selected_runtime_check_for_requirement(
     requirement: Mapping[str, Any],
     runtimes: Sequence[_ParticipantRuntime],
-) -> _ParticipantRuntime | None:
+) -> tuple[_ParticipantRuntime, str] | None:
     role = requirement["role"]
     matches = [
         (runtime.public["participant_sha256"], check_id, runtime)
@@ -685,7 +689,8 @@ def _selected_runtime_for_requirement(
     ]
     if not matches:
         return None
-    return min(matches, key=lambda item: (item[0], item[1]))[2]
+    _, check_id, runtime = min(matches, key=lambda item: (item[0], item[1]))
+    return runtime, check_id
 
 
 def _observe_role(
@@ -752,7 +757,7 @@ def _observe_role(
     cache_key = (runtime.public["participant_sha256"], requirement["requirement_sha256"])
     blob_resolution = blob_resolutions.get(cache_key)
     if blob_resolution is None:
-        blob_resolution = _resolve_candidate_blobs(runtime, requirement)
+        blob_resolution = _resolve_candidate_blobs(runtime, requirement, check_id)
         blob_resolutions[cache_key] = blob_resolution
     for status in blob_resolution.statuses:
         reason = _BLOB_REASON.get(status)
@@ -935,17 +940,23 @@ def _canary_matches(
 def _resolve_candidate_blobs(
     runtime: _ParticipantRuntime,
     requirement: Mapping[str, Any],
+    selected_check_id: str,
 ) -> _BlobResolution:
     prepared = runtime.supplied.prepared
     candidate = runtime.supplied.spec["candidate"]
+    selected_check = runtime.profile_checks.get(selected_check_id)
+    if selected_check is None:
+        raise _error("coverage_live_identity_mismatch", "participant")
     profile_blobs = {
         item["path"]: item["oid"]
-        for item in runtime.profile_checks[requirement["expected_check"]["check_id"]][
-            "referenced_git_blobs"
-        ]
+        for item in selected_check["referenced_git_blobs"]
     }
     if runtime.source_before is None:
-        return _indeterminate_blob_resolution(runtime, requirement)
+        return _indeterminate_blob_resolution(
+            runtime,
+            requirement,
+            selected_check_id,
+        )
     rows: list[dict[str, Any]] = []
     statuses: set[str] = set()
     for blob in requirement["required_candidate_blobs"]:
@@ -996,10 +1007,10 @@ def _resolve_candidate_blobs(
 def _indeterminate_blob_resolution(
     runtime: _ParticipantRuntime,
     requirement: Mapping[str, Any],
+    selected_check_id: str,
 ) -> _BlobResolution:
     candidate = runtime.supplied.spec["candidate"]
-    check_id = requirement["expected_check"]["check_id"]
-    profile_check = runtime.profile_checks.get(check_id, {})
+    profile_check = runtime.profile_checks.get(selected_check_id, {})
     profile_blobs = {
         item["path"]: item["oid"]
         for item in profile_check.get("referenced_git_blobs", [])

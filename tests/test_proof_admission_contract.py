@@ -336,6 +336,34 @@ def test_output_commitment_status_low_h_nullability_is_explicit(attempt: str) ->
     assert not validate_proof_coverage_admission(tampered).ok
 
 
+@pytest.mark.parametrize("attempt", ["not_run", "executed"])
+@pytest.mark.parametrize(
+    "field",
+    ["plan_binding_status", "candidate_blob_status"],
+)
+def test_observed_role_cannot_recompute_not_observed_status_into_reviewable(
+    attempt: str,
+    field: str,
+) -> None:
+    admission = _admission(attempt)
+    observation = admission["role_observations"][0]
+    observation[field] = "not_observed"
+    admission["role_observations"][0] = finalize_proof_coverage_observation(
+        observation
+    )
+    admission["state_reason_codes"] = []
+    admission["admission_state"] = "reviewable"
+    admission["review_readiness"] = "ready"
+    admission["promotion_suitability"] = "candidate"
+    admission = finalize_proof_coverage_admission(admission)
+
+    validation = validate_proof_coverage_admission(admission)
+
+    assert admission["admission_state"] == "reviewable"
+    assert not validation.ok
+    assert any(field in error for error in validation.errors)
+
+
 def test_current_proof_total_functions_cover_every_legal_cartesian_branch() -> None:
     participant_values = {
         "healthy": {"scope": "feature", "status": "healthy", "proof_sha256": DIGEST},

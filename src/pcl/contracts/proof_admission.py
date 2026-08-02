@@ -1051,6 +1051,12 @@ def _observation(
         ("freshness", {"not_observed", "current", "stale", "indeterminate"}),
     ):
         _enum(value.get(field), allowed, f"{path}.{field}", errors)
+    if attempt != "missing":
+        for field in ("plan_binding_status", "candidate_blob_status"):
+            if value.get(field) == "not_observed":
+                errors.append(
+                    f"{path}.{field}: not_observed is permitted only for missing"
+                )
     blob_digest = value.get("candidate_blob_resolution_sha256")
     if attempt == "missing":
         if blob_digest is not None:
