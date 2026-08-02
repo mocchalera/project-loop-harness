@@ -1,0 +1,213 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop.local/contracts/proof-coverage-policy-v1.schema.json",
+  "title": "Proof Coverage Policy v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "policy_id",
+    "producer",
+    "target",
+    "candidate",
+    "authority_bindings",
+    "coverage_group_sha256",
+    "required_roles",
+    "authorization_requirements",
+    "terminal_authority",
+    "mandatory_evidence",
+    "policy_sha256"
+  ],
+  "properties": {
+    "contract_version": {"const": "proof-coverage-policy/v1"},
+    "policy_id": {"$ref": "#/$defs/publicId"},
+    "producer": {"$ref": "#/$defs/producer"},
+    "target": {"$ref": "#/$defs/target"},
+    "candidate": {"$ref": "#/$defs/candidate"},
+    "authority_bindings": {"$ref": "#/$defs/authorityBindings"},
+    "coverage_group_sha256": {"$ref": "#/$defs/sha256"},
+    "required_roles": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4096,
+      "items": {"$ref": "#/$defs/requirement"}
+    },
+    "authorization_requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["independent_review", "human_gate", "self_certification_allowed"],
+      "properties": {
+        "independent_review": {"const": "required"},
+        "human_gate": {"enum": ["required", "not_required"]},
+        "self_certification_allowed": {"const": false}
+      }
+    },
+    "terminal_authority": {"const": false},
+    "mandatory_evidence": {"const": false},
+    "policy_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "publicId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"
+    },
+    "path": {"type": "string", "minLength": 1, "maxLength": 4096},
+    "oid": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+    "blob": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "oid"],
+      "properties": {
+        "path": {"$ref": "#/$defs/path"},
+        "oid": {"$ref": "#/$defs/oid"}
+      }
+    },
+    "producer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "producer_id", "producer_sha256", "candidate_controlled"],
+      "properties": {
+        "kind": {"enum": ["external_bootstrap", "pinned_installed", "trusted_planner"]},
+        "producer_id": {"$ref": "#/$defs/publicId"},
+        "producer_sha256": {"$ref": "#/$defs/sha256"},
+        "candidate_controlled": {"const": false}
+      }
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {
+        "type": {"const": "task"},
+        "id": {"$ref": "#/$defs/publicId"}
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["object_format", "commit_oid", "tree_oid"],
+      "properties": {
+        "object_format": {"enum": ["sha1", "sha256"]},
+        "commit_oid": {"$ref": "#/$defs/oid"},
+        "tree_oid": {"$ref": "#/$defs/oid"}
+      }
+    },
+    "authorityBindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "authority_surface_resolution_sha256",
+        "bootstrap_profile_sha256",
+        "canary_union_sha256",
+        "isolation_contract_version"
+      ],
+      "properties": {
+        "authority_surface_resolution_sha256": {"$ref": "#/$defs/sha256"},
+        "bootstrap_profile_sha256": {"$ref": "#/$defs/sha256"},
+        "canary_union_sha256": {"$ref": "#/$defs/sha256"},
+        "isolation_contract_version": {"const": "proof-workspace-isolation/v1"}
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inherit_names", "workspace_pythonpath"],
+      "properties": {
+        "inherit_names": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {"type": "string", "minLength": 1, "maxLength": 4096}
+        },
+        "workspace_pythonpath": {
+          "type": "array",
+          "maxItems": 4096,
+          "items": {"type": "string", "minLength": 1, "maxLength": 4096}
+        }
+      }
+    },
+    "expectedCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "check_id", "role", "argv", "cwd", "selectors", "referenced_git_blobs",
+        "input_ids", "environment", "timeout_seconds", "max_output_bytes", "declared_outputs"
+      ],
+      "properties": {
+        "check_id": {"$ref": "#/$defs/publicId"},
+        "role": {"$ref": "#/$defs/publicId"},
+        "argv": {
+          "type": "array", "minItems": 1, "maxItems": 256,
+          "items": {"type": "string", "minLength": 1, "maxLength": 65536}
+        },
+        "cwd": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "selectors": {
+          "type": "array", "maxItems": 4096,
+          "items": {"type": "string", "minLength": 1, "maxLength": 4096}
+        },
+        "referenced_git_blobs": {
+          "type": "array", "minItems": 1, "maxItems": 256,
+          "items": {"$ref": "#/$defs/blob"}
+        },
+        "input_ids": {
+          "type": "array", "maxItems": 4096,
+          "items": {"$ref": "#/$defs/publicId"}
+        },
+        "environment": {"$ref": "#/$defs/environment"},
+        "timeout_seconds": {"type": "integer", "minimum": 1, "maximum": 86400},
+        "max_output_bytes": {"type": "integer", "minimum": 1, "maximum": 104857600},
+        "declared_outputs": {
+          "type": "array", "maxItems": 4096,
+          "items": {"type": "string", "minLength": 1, "maxLength": 4096}
+        }
+      }
+    },
+    "expectedExecution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "plan_sha256", "tool_identity_sha256", "environment_binding_sha256",
+        "public_execution_sha256", "spawn_vector_sha256",
+        "external_input_binding_sha256", "execution_binding_sha256"
+      ],
+      "properties": {
+        "plan_sha256": {"$ref": "#/$defs/sha256"},
+        "tool_identity_sha256": {"$ref": "#/$defs/sha256"},
+        "environment_binding_sha256": {"$ref": "#/$defs/sha256"},
+        "public_execution_sha256": {"$ref": "#/$defs/sha256"},
+        "spawn_vector_sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "external_input_binding_sha256": {"$ref": "#/$defs/sha256"},
+        "execution_binding_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "requirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "role", "kind", "canary_id", "canary_item_sha256", "expected_outcome",
+        "expected_check", "selector_audit_labels", "required_candidate_blobs",
+        "expected_execution", "requirement_sha256"
+      ],
+      "properties": {
+        "role": {"$ref": "#/$defs/publicId"},
+        "kind": {"enum": ["full_regression", "authority_canary"]},
+        "canary_id": {"anyOf": [{"$ref": "#/$defs/publicId"}, {"type": "null"}]},
+        "canary_item_sha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "expected_outcome": {"const": "pass"},
+        "expected_check": {"$ref": "#/$defs/expectedCheck"},
+        "selector_audit_labels": {
+          "type": "array", "maxItems": 4096,
+          "items": {"type": "string", "minLength": 1, "maxLength": 4096}
+        },
+        "required_candidate_blobs": {
+          "type": "array", "minItems": 1, "maxItems": 256,
+          "items": {"$ref": "#/$defs/blob"}
+        },
+        "expected_execution": {"$ref": "#/$defs/expectedExecution"},
+        "requirement_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    }
+  }
+}

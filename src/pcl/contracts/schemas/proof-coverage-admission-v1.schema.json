@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop.local/contracts/proof-coverage-admission-v1.schema.json",
+  "title": "Proof Coverage Admission v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version", "policy_sha256", "coverage_group_sha256", "participants",
+    "role_observations", "current_proof", "admission_state", "state_reason_codes",
+    "review_readiness", "promotion_suitability", "promotion_withholding_codes",
+    "authorization_status", "effects", "admission_sha256"
+  ],
+  "properties": {
+    "contract_version": {"const": "proof-coverage-admission/v1"},
+    "policy_sha256": {"$ref": "#/$defs/sha256"},
+    "coverage_group_sha256": {"$ref": "#/$defs/sha256"},
+    "participants": {
+      "type": "array", "minItems": 1, "maxItems": 256,
+      "items": {"$ref": "#/$defs/participant"}
+    },
+    "role_observations": {
+      "type": "array", "minItems": 1, "maxItems": 4096,
+      "items": {"$ref": "#/$defs/observation"}
+    },
+    "current_proof": {"$ref": "#/$defs/currentProof"},
+    "admission_state": {"enum": ["invalid", "indeterminate", "stale", "blocked", "incomplete", "reviewable"]},
+    "state_reason_codes": {"$ref": "#/$defs/reasons"},
+    "review_readiness": {"enum": ["ready", "withheld"]},
+    "promotion_suitability": {"enum": ["candidate", "withheld"]},
+    "promotion_withholding_codes": {"$ref": "#/$defs/reasons"},
+    "authorization_status": {"$ref": "#/$defs/authorizationStatus"},
+    "effects": {"$ref": "#/$defs/effects"},
+    "admission_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "publicId": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.-]*$"},
+    "nullableSha256": {"anyOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "nullablePublicId": {"anyOf": [{"$ref": "#/$defs/publicId"}, {"type": "null"}]},
+    "reasons": {
+      "type": "array", "maxItems": 64,
+      "items": {"$ref": "#/$defs/publicId"}
+    },
+    "aggregateCurrentProof": {
+      "type": "object", "additionalProperties": false,
+      "required": ["scope", "status", "proof_sha256"],
+      "properties": {
+        "scope": {"enum": ["feature", "not_applicable"]},
+        "status": {"enum": ["healthy", "unhealthy", "not_applicable", "changed", "indeterminate"]},
+        "proof_sha256": {"$ref": "#/$defs/nullableSha256"}
+      }
+    },
+    "participant": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "participant_sha256", "participant_group_sha256", "spec_sha256",
+        "workspace_binding_sha256", "proof_key_sha256", "verification_profile_sha256",
+        "check_plan_sha256", "external_input_binding_sha256", "packet_sha256",
+        "executor_contract_sha256", "aggregate_sha256", "bundle_sha256",
+        "aggregate_verdict", "aggregate_output_commitment_status",
+        "aggregate_reuse_disposition", "aggregate_anchoring_eligible",
+        "aggregate_positive_proof_handoff", "aggregate_current_proof"
+      ],
+      "properties": {
+        "participant_sha256": {"$ref": "#/$defs/sha256"},
+        "participant_group_sha256": {"$ref": "#/$defs/sha256"},
+        "spec_sha256": {"$ref": "#/$defs/sha256"},
+        "workspace_binding_sha256": {"$ref": "#/$defs/sha256"},
+        "proof_key_sha256": {"$ref": "#/$defs/sha256"},
+        "verification_profile_sha256": {"$ref": "#/$defs/sha256"},
+        "check_plan_sha256": {"$ref": "#/$defs/sha256"},
+        "external_input_binding_sha256": {"$ref": "#/$defs/sha256"},
+        "packet_sha256": {"$ref": "#/$defs/sha256"},
+        "executor_contract_sha256": {"$ref": "#/$defs/sha256"},
+        "aggregate_sha256": {"$ref": "#/$defs/sha256"},
+        "bundle_sha256": {"$ref": "#/$defs/sha256"},
+        "aggregate_verdict": {"enum": ["passed", "failed", "cancelled", "timed_out", "spawn_failed", "blocked", "invalid", "indeterminate"]},
+        "aggregate_output_commitment_status": {"enum": ["committed", "uncommitted"]},
+        "aggregate_reuse_disposition": {"enum": ["eligible", "fresh_only"]},
+        "aggregate_anchoring_eligible": {"type": "boolean"},
+        "aggregate_positive_proof_handoff": {"enum": ["candidate", "withheld"]},
+        "aggregate_current_proof": {"$ref": "#/$defs/aggregateCurrentProof"}
+      }
+    },
+    "matchingCheck": {
+      "type": "object", "additionalProperties": false,
+      "required": ["participant_sha256", "check_id"],
+      "properties": {
+        "participant_sha256": {"$ref": "#/$defs/sha256"},
+        "check_id": {"$ref": "#/$defs/publicId"}
+      }
+    },
+    "observation": {
+      "type": "object", "additionalProperties": false,
+      "required": [
+        "contract_version", "role", "kind", "canary_id", "requirement_sha256",
+        "matching_checks", "selected_participant_sha256", "check_id", "attempt_status",
+        "attempt_sha256", "result_sha256", "receipt_sha256", "c3_verdict",
+        "aggregate_verdict", "aggregate_reuse_disposition", "aggregate_anchoring_eligible",
+        "aggregate_positive_proof_handoff", "output_commitment_status",
+        "plan_binding_status", "selector_audit_status", "candidate_blob_status",
+        "candidate_blob_resolution_sha256", "effect_status", "freshness",
+        "observation_sha256"
+      ],
+      "properties": {
+        "contract_version": {"const": "proof-coverage-observation/v1"},
+        "role": {"$ref": "#/$defs/publicId"},
+        "kind": {"enum": ["full_regression", "authority_canary"]},
+        "canary_id": {"$ref": "#/$defs/nullablePublicId"},
+        "requirement_sha256": {"$ref": "#/$defs/sha256"},
+        "matching_checks": {"type": "array", "maxItems": 4096, "items": {"$ref": "#/$defs/matchingCheck"}},
+        "selected_participant_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "check_id": {"$ref": "#/$defs/nullablePublicId"},
+        "attempt_status": {"enum": ["missing", "not_run", "executed"]},
+        "attempt_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "result_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "receipt_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "c3_verdict": {"anyOf": [{"enum": ["passed", "failed", "cancelled", "timed_out", "spawn_failed", "blocked", "invalid", "indeterminate"]}, {"type": "null"}]},
+        "aggregate_verdict": {"anyOf": [{"enum": ["passed", "failed", "cancelled", "timed_out", "spawn_failed", "blocked", "invalid", "indeterminate"]}, {"type": "null"}]},
+        "aggregate_reuse_disposition": {"anyOf": [{"enum": ["eligible", "fresh_only"]}, {"type": "null"}]},
+        "aggregate_anchoring_eligible": {"type": ["boolean", "null"]},
+        "aggregate_positive_proof_handoff": {"anyOf": [{"enum": ["candidate", "withheld"]}, {"type": "null"}]},
+        "output_commitment_status": {"anyOf": [{"enum": ["committed", "uncommitted"]}, {"type": "null"}]},
+        "plan_binding_status": {"enum": ["not_observed", "matched", "mismatched"]},
+        "selector_audit_status": {"enum": ["not_observed", "not_applicable", "matched", "mismatched"]},
+        "candidate_blob_status": {"enum": ["not_observed", "matched", "missing", "oid_mismatch", "unsupported_type", "indeterminate"]},
+        "candidate_blob_resolution_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "effect_status": {"enum": ["not_observed", "not_applicable", "satisfied", "not_disproved", "unproved", "mismatched", "unsupported"]},
+        "freshness": {"enum": ["not_observed", "current", "stale", "indeterminate"]},
+        "observation_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "currentProof": {
+      "type": "object", "additionalProperties": false,
+      "required": ["scope", "status", "proof_sha256", "match_status"],
+      "properties": {
+        "scope": {"enum": ["feature", "not_applicable", "unknown"]},
+        "status": {"enum": ["healthy", "unhealthy", "not_applicable", "indeterminate"]},
+        "proof_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "match_status": {"enum": ["matched", "mismatched", "indeterminate"]}
+      }
+    },
+    "authorizationStatus": {
+      "type": "object", "additionalProperties": false,
+      "required": ["independent_review", "human_gate", "anchoring_authorized", "reuse_authorized", "terminal_authority", "mandatory_evidence"],
+      "properties": {
+        "independent_review": {"const": "pending"},
+        "human_gate": {"enum": ["pending", "not_required"]},
+        "anchoring_authorized": {"const": false},
+        "reuse_authorized": {"const": false},
+        "terminal_authority": {"const": false},
+        "mandatory_evidence": {"const": false}
+      }
+    },
+    "effects": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema", "migration", "database_write", "filesystem_write", "evidence", "event", "outbox", "render", "lifecycle"],
+      "properties": {
+        "schema": {"const": 0}, "migration": {"const": 0},
+        "database_write": {"const": 0}, "filesystem_write": {"const": 0},
+        "evidence": {"const": 0}, "event": {"const": 0}, "outbox": {"const": 0},
+        "render": {"const": 0}, "lifecycle": {"const": 0}
+      }
+    }
+  }
+}

@@ -197,6 +197,19 @@ schema migration, dependency, render, or lifecycle mutation. C4 still owns
 semantic role/canary coverage. See
 [proof-execution-v1.md](proof-execution-v1.md).
 
+P1-C C4 adds a pure, in-memory semantic coverage admission join. A private
+trusted-producer capability binds an exact full-regression/canary policy; C4
+then joins distinct live C2/C3 proof chains only after checking their common
+Task, candidate tree, C1 resolution, bootstrap profile, and canary union. It
+resolves required candidate blobs through a sanitized direct `GitRunner`,
+keeps raw execution ordering separate from sorted audit labels, and derives
+current-proof match, per-role freshness, reasons, and admission state as total
+permutation-invariant functions. Reviewability and promotion suitability are
+facts only: independent/human authorization remains pending and anchor, reuse,
+Evidence, persistence, CLI, terminal, and lifecycle integration remain C5 or
+later work. SQLite stays schema 8 and C4 has no runtime writes or PCL effects.
+See [proof-admission-v1.md](proof-admission-v1.md).
+
 ## Why CLI first
 
 Agent Skills are instructions. They cannot reliably guarantee migrations, validation, deterministic rendering, or guarded state transitions by themselves.
