@@ -472,9 +472,12 @@ def prepare_proof_workspace(
         prepared.state = "retained_failure"
         raise
     else:
-        prepared.state = "complete"
-        lease.cleanup_success()
-        prepared.state = "cleaned_success"
+        if prepared.state == "invalid":
+            prepared.state = "retained_failure"
+        else:
+            prepared.state = "complete"
+            lease.cleanup_success()
+            prepared.state = "cleaned_success"
 
 
 def directory_bundle_manifest(source: Path) -> dict[str, Any]:
@@ -1069,6 +1072,13 @@ def _verify_authority_diff(
         return str(recorded["sha256"])
     base = resolution["base"]["commit_oid"]
     candidate = resolution["candidate"]["commit_oid"]
+    if status == "no_candidate_change" and base != candidate:
+        raise _error(
+            "proof_authority_diff_mismatch",
+            "no_candidate_change requires identical base and candidate commit OIDs.",
+            base_commit_oid=base,
+            candidate_commit_oid=candidate,
+        )
     actual = canonical_git_diff(
         repository,
         base_commit_oid=base,
@@ -1368,7 +1378,9 @@ def _validate_destination_set(
         if destination is None:
             continue
         parts = PurePosixPath(str(destination)).parts
-        if not parts or parts[0].casefold() in _PROTECTED_DESTINATIONS:
+        if not parts or any(
+            part.casefold() in _PROTECTED_DESTINATIONS for part in parts
+        ):
             raise _error(
                 "proof_external_destination_conflict",
                 "A typed input targets a protected proof or repository destination.",
@@ -1899,6 +1911,7 @@ def _complete_check_environment(
         if name in _FORBIDDEN_ENVIRONMENT_NAMES
         or name.startswith("DYLD_")
         or name.startswith("GIT_")
+        or name.startswith("LD_")
     )
     if forbidden:
         raise _error(

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 import subprocess
@@ -32,7 +32,3 @@ class GitRunner:
 
 
 INHERITED_GIT_RUNNER = GitRunner()
-
-
-def git_argv(args: Sequence[str]) -> list[str]:
-    return ["git", *args]

@@ -9,6 +9,7 @@ import socket
 import stat
 import subprocess
 import sys
+import tempfile
 
 import pytest
 
@@ -552,6 +553,29 @@ def test_nonresolved_base_states_are_monotonic_fresh_only(
         assert "proof_authority_reuse_forbidden" in reuse["reason_codes"]
 
 
+def test_no_candidate_change_requires_base_oid_to_equal_candidate_oid(
+    tmp_path: Path,
+) -> None:
+    root, _, base = _repository(tmp_path)
+    _git(root, "commit", "--allow-empty", "-q", "-m", "same tree, distinct commit")
+    candidate = _git(root, "rev-parse", "HEAD")
+
+    def mismatch_base(resolution: dict) -> None:
+        resolution["base"]["commit_oid"] = base
+
+    with pytest.raises(ProofWorkspaceError) as exc_info:
+        with _prepare(
+            root,
+            base,
+            candidate,
+            tmp_path,
+            status="no_candidate_change",
+            resolution_mutator=mismatch_base,
+        ):
+            pass
+    assert exc_info.value.code == "proof_authority_diff_mismatch"
+
+
 def test_literal_false_authority_reuse_is_never_inferred_from_risk(tmp_path: Path) -> None:
     root, base, candidate = _repository(tmp_path)
 
@@ -868,8 +892,13 @@ def test_directory_bundle_rejects_unsafe_filesystem_inputs(
     tmp_path: Path,
     unsafe_kind: str,
 ) -> None:
-    source = tmp_path / unsafe_kind
-    source.mkdir()
+    short_socket_root = None
+    if unsafe_kind == "socket":
+        short_socket_root = tempfile.TemporaryDirectory(prefix="pws-sock-", dir="/tmp")
+        source = Path(short_socket_root.name)
+    else:
+        source = tmp_path / unsafe_kind
+        source.mkdir()
     if unsafe_kind == "fifo":
         os.mkfifo(source / "entry")
     elif unsafe_kind == "socket":
@@ -888,9 +917,20 @@ def test_directory_bundle_rejects_unsafe_filesystem_inputs(
     finally:
         if unsafe_kind == "socket":
             sock.close()
+            short_socket_root.cleanup()
 
 
-@pytest.mark.parametrize("destination", [".git/config", ".project-loop/project.db"])
+@pytest.mark.parametrize(
+    "destination",
+    [
+        ".git/config",
+        ".project-loop/project.db",
+        "pkg/.git/config",
+        "pkg/.git/hooks/pre-commit",
+        "pkg/.project-loop/project.db",
+        "pkg/deep/.project-loop/state",
+    ],
+)
 def test_protected_destinations_fail_closed(tmp_path: Path, destination: str) -> None:
     root, base, candidate = _repository(tmp_path)
     source = tmp_path / "input"
@@ -1027,7 +1067,17 @@ def test_complete_environment_does_not_merge_undeclared_host_values(
         assert "must-not-leak" not in json.dumps(prepared.binding)
 
 
-@pytest.mark.parametrize("forbidden_name", ["BASH_ENV", "DYLD_INSERT_LIBRARIES", "PYTHONHOME"])
+@pytest.mark.parametrize(
+    "forbidden_name",
+    [
+        "BASH_ENV",
+        "DYLD_INSERT_LIBRARIES",
+        "PYTHONHOME",
+        "LD_AUDIT",
+        "LD_BIND_NOW",
+        "LD_PROFILE",
+    ],
+)
 def test_loader_and_shell_startup_environment_is_blocked(
     tmp_path: Path,
     forbidden_name: str,
@@ -1051,6 +1101,22 @@ def test_loader_and_shell_startup_environment_is_blocked(
         ):
             pass
     assert exc_info.value.code == "proof_environment_injection_forbidden"
+
+    with _prepare(
+        root,
+        base,
+        candidate,
+        tmp_path,
+        parent_environment={
+            forbidden_name: "hostile",
+            "LANG": "C",
+            "PATH": os.environ.get("PATH", os.defpath),
+        },
+    ) as prepared:
+        check = prepared.prepared_checks["full-regression"]
+        environment_binding = prepared.binding["checks"][0]["environment"]
+        assert forbidden_name not in check.env
+        assert forbidden_name not in environment_binding["inherited_names"]
 
 
 def test_proof_key_and_logical_spawn_identity_are_stable_across_temp_roots(
@@ -1136,6 +1202,21 @@ def test_success_cleanup_failure_retention_and_identity_refusal(tmp_path: Path) 
             marker.unlink()
             marker.write_bytes(nonce)
     assert marker_refusal.value.code == "proof_cleanup_identity_changed"
+
+
+def test_caught_invalid_state_retains_workspace_on_normal_context_exit(
+    tmp_path: Path,
+) -> None:
+    root, base, candidate = _repository(tmp_path)
+    with _prepare(root, base, candidate, tmp_path) as prepared:
+        retained = prepared.lease_root
+        prepared.binding["state"] = "tampered"
+        with pytest.raises(ProofWorkspaceError) as exc_info:
+            prepared.assert_ready_to_spawn("full-regression")
+        assert exc_info.value.code == "proof_workspace_binding_invalid"
+        assert prepared.state == "invalid"
+    assert retained.exists()
+    assert prepared.state == "retained_failure"
 
 
 def test_cleanup_refuses_name_replacement_after_descriptor_walk(
