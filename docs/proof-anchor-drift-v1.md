@@ -106,8 +106,11 @@ indeterminacy is returned as `withheld` / `indeterminate` /
 `live_reconstruction_indeterminate`. C4 state precedence is applied before
 these soft classifications, so an invalid reason outranks a concurrent
 indeterminate reason; participant aggregate indeterminacy is classified as
-live reconstruction indeterminacy. This ordering prevents those soft
-observations from being collapsed into the generic receiptless
+live reconstruction indeterminacy. When a determinate drift outranks a
+concurrent indeterminate observation, its named `live_*` reasons are preserved
+while the live block uses `indeterminate` with only acquired digests; it is not
+misreported as a completed `mismatched` reconstruction. This ordering prevents
+those soft observations from being collapsed into the generic receiptless
 `proof_anchor_admission_withheld` mapping. Snapshot-required and other internal
 invariant failures remain receiptless, sanitized hard errors.
 

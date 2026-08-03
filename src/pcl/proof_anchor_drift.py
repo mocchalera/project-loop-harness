@@ -407,7 +407,21 @@ def _evaluate_resolution(
     live = _live_observation(live_document)
     reasons = _live_reasons(stored_basis, live_document)
     if reasons:
-        live["reconstruction_status"] = "mismatched"
+        live["reconstruction_status"] = (
+            "indeterminate"
+            if any(
+                live[field] is None
+                for field in (
+                    "basis_sha256",
+                    "policy_sha256",
+                    "coverage_group_sha256",
+                    "admission_sha256",
+                    "current_proof_sha256",
+                    "authority_surface_resolution_sha256",
+                )
+            )
+            else "mismatched"
+        )
         return _receipt(
             **base,
             status="withheld",

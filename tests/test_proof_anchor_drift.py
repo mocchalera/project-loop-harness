@@ -44,6 +44,7 @@ from pcl.proof_anchor import (
 from pcl.proof_admission import (
     ProofCoverageError,
     bind_trusted_coverage_policy,
+    evaluate_proof_coverage,
     issue_trusted_coverage_policy_producer_capability,
 )
 from pcl.proof_execution import ProofExecutionError
@@ -448,6 +449,94 @@ def test_determinate_candidate_blob_drift_is_a_mismatched_withheld_receipt(
         assert "computed_verdict_not_passed" in receipt["reason_codes"]
         assert receipt["effects"] == DRIFT_EFFECTS
         assert validate_proof_anchor_drift_eligibility(receipt).ok
+        assert c5._counts(paths) == before
+    finally:
+        context.__exit__(None, None, None)
+
+
+def _indeterminate_current_proof():
+    raise OSError("sensitive current-proof transient")
+
+
+def _bind_changed_policy(live: dict, *, variant: str):
+    policy = deepcopy(live["policy"])
+    requirement = policy["required_roles"][0]
+    if variant == "candidate-blob":
+        decoy = next(
+            check
+            for check in live["participants"][0].verification_profile["checks"]
+            if check["check_id"] == "policy-id-decoy"
+        )
+        requirement["expected_check"] = {**deepcopy(decoy), "role": "full_regression"}
+        requirement["required_candidate_blobs"] = deepcopy(
+            decoy["referenced_git_blobs"]
+        )
+    else:
+        requirement["expected_check"]["check_id"] = "renamed-policy-check"
+    policy = finalize_proof_coverage_policy(policy)
+    capability = issue_trusted_coverage_policy_producer_capability(
+        kind="external_bootstrap",
+        producer_id="c4-test-producer",
+    )
+    return bind_trusted_coverage_policy(
+        policy,
+        expected_policy_sha256=policy["policy_sha256"],
+        producer_capability=capability,
+    )
+
+
+@pytest.mark.parametrize(
+    ("variant", "live_options", "expected_upstream_reason"),
+    [
+        (
+            "candidate-blob",
+            {"split": False, "include_blob_lookup_decoy": True},
+            "candidate_blob_oid_mismatch",
+        ),
+        ("participant-policy", {}, "participant_policy_mismatch"),
+    ],
+)
+def test_determinate_drift_with_indeterminate_current_proof_is_acquired_only(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    variant: str,
+    live_options: dict,
+    expected_upstream_reason: str,
+) -> None:
+    paths, context, live, basis, anchor = _anchored(tmp_path, **live_options)
+    try:
+        before = c5._counts(paths)
+        changed_policy = _bind_changed_policy(live, variant=variant)
+        admission = evaluate_proof_coverage(
+            policy=changed_policy,
+            participants=live["participants"],
+            authority_provider=lambda: live["authority"],
+            current_proof_provider=_indeterminate_current_proof,
+        )
+        assert admission["admission_state"] == "invalid"
+        assert expected_upstream_reason in admission["state_reason_codes"]
+        assert "current_proof_indeterminate" in admission["state_reason_codes"]
+        assert admission["current_proof"]["proof_sha256"] is None
+
+        monkeypatch.setattr(
+            "pcl.proof_anchor_drift.capture_current_proof_in_snapshot",
+            lambda *args, **kwargs: _indeterminate_current_proof(),
+        )
+        receipt = _evaluate(paths, live, anchor, basis, policy=changed_policy)
+
+        assert receipt["eligibility"]["status"] == "withheld"
+        assert receipt["observation"]["live"]["reconstruction_status"] == (
+            "indeterminate"
+        )
+        assert receipt["observation"]["live"]["current_proof_sha256"] is None
+        assert "computed_verdict_not_passed" in receipt["reason_codes"]
+        assert "live_current_proof_changed" in receipt["reason_codes"]
+        assert "live_execution_binding_changed" in receipt["reason_codes"]
+        assert "live_policy_changed" in receipt["reason_codes"]
+        assert "live_chain_unavailable" not in receipt["reason_codes"]
+        assert receipt["effects"] == DRIFT_EFFECTS
+        assert validate_proof_anchor_drift_eligibility(receipt).ok
+        assert "sensitive current-proof transient" not in json.dumps(receipt)
         assert c5._counts(paths) == before
     finally:
         context.__exit__(None, None, None)
