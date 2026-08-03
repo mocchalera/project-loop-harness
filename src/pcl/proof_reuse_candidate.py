@@ -896,6 +896,154 @@ def _candidate_identity_input(observed: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _current_basis_role_identity(
+    basis: Mapping[str, Any],
+) -> list[dict[str, Any]] | None:
+    policy = basis.get("policy")
+    admission = basis.get("admission")
+    if not isinstance(policy, Mapping) or not isinstance(admission, Mapping):
+        return None
+    requirements = policy.get("required_roles")
+    observations = admission.get("role_observations")
+    participants = admission.get("participants")
+    if (
+        not isinstance(requirements, list)
+        or not 1 <= len(requirements) <= MAX_ROLES
+        or not isinstance(observations, list)
+        or len(observations) != len(requirements)
+        or not isinstance(participants, list)
+        or not 1 <= len(participants) <= MAX_PARTICIPANTS
+        or any(not isinstance(item, Mapping) for item in observations)
+    ):
+        return None
+
+    participant_by_sha: dict[str, Mapping[str, Any]] = {}
+    for participant in participants:
+        if not isinstance(participant, Mapping):
+            return None
+        participant_sha = participant.get("participant_sha256")
+        if not _is_sha(participant_sha) or participant_sha in participant_by_sha:
+            return None
+        participant_by_sha[participant_sha] = participant
+
+    roles: list[dict[str, Any]] = []
+    used_observations: set[int] = set()
+    for requirement in requirements:
+        if not isinstance(requirement, Mapping):
+            return None
+        expected_check = requirement.get("expected_check")
+        expected_execution = requirement.get("expected_execution")
+        if not isinstance(expected_check, Mapping) or not isinstance(
+            expected_execution, Mapping
+        ):
+            return None
+        role_name = requirement.get("role")
+        kind = requirement.get("kind")
+        canary_id = requirement.get("canary_id")
+        requirement_sha = requirement.get("requirement_sha256")
+        check_id = expected_check.get("check_id")
+        if (
+            not _public_identifier(role_name)
+            or not _public_identifier(kind)
+            or (canary_id is not None and not _public_identifier(canary_id))
+            or not _is_sha(requirement_sha)
+            or not _public_identifier(check_id)
+            or expected_check.get("role") != role_name
+        ):
+            return None
+
+        matching_observations = [
+            (index, observation)
+            for index, observation in enumerate(observations)
+            if observation.get("role") == role_name
+            and observation.get("kind") == kind
+            and observation.get("canary_id") == canary_id
+            and observation.get("requirement_sha256") == requirement_sha
+            and observation.get("check_id") == check_id
+        ]
+        if len(matching_observations) != 1:
+            return None
+        observation_index, observation = matching_observations[0]
+        if observation_index in used_observations:
+            return None
+        used_observations.add(observation_index)
+
+        participant_sha = observation.get("selected_participant_sha256")
+        matching_checks = observation.get("matching_checks")
+        if (
+            not _is_sha(participant_sha)
+            or not isinstance(matching_checks, list)
+            or len(matching_checks) != 1
+            or not isinstance(matching_checks[0], Mapping)
+            or set(matching_checks[0]) != {"check_id", "participant_sha256"}
+            or matching_checks[0].get("check_id") != check_id
+            or matching_checks[0].get("participant_sha256") != participant_sha
+        ):
+            return None
+        participant = participant_by_sha.get(participant_sha)
+        if participant is None:
+            return None
+
+        role = {
+            "role": role_name,
+            "kind": kind,
+            "canary_id": canary_id,
+            "requirement_sha256": requirement_sha,
+            "participant_sha256": participant_sha,
+            "check_id": check_id,
+            "plan_sha256": expected_execution.get("plan_sha256"),
+            "tool_identity_sha256": expected_execution.get("tool_identity_sha256"),
+            "public_execution_sha256": expected_execution.get(
+                "public_execution_sha256"
+            ),
+            "spawn_vector_sha256": expected_execution.get("spawn_vector_sha256"),
+            "external_input_binding_sha256": expected_execution.get(
+                "external_input_binding_sha256"
+            ),
+            "execution_binding_sha256": expected_execution.get(
+                "execution_binding_sha256"
+            ),
+            "packet_sha256": participant.get("packet_sha256"),
+            "result_sha256": observation.get("result_sha256"),
+            "receipt_sha256": observation.get("receipt_sha256"),
+            "aggregate_sha256": participant.get("aggregate_sha256"),
+            "bundle_sha256": participant.get("bundle_sha256"),
+        }
+        if participant.get("external_input_binding_sha256") != role[
+            "external_input_binding_sha256"
+        ] or any(
+            not _is_sha(role[name])
+            for name in set(role) - {"role", "kind", "canary_id", "check_id"}
+        ):
+            return None
+        roles.append(role)
+
+    if len(used_observations) != len(observations):
+        return None
+    roles.sort(
+        key=lambda item: (
+            str(item["kind"]),
+            str(item["role"]),
+            str(item["check_id"]),
+            str(item["participant_sha256"]),
+        )
+    )
+    sort_keys = [
+        (
+            item["kind"],
+            item["role"],
+            item["check_id"],
+            item["participant_sha256"],
+        )
+        for item in roles
+    ]
+    if len(sort_keys) != len(set(sort_keys)):
+        return None
+    # C5 does not retain the final checkpoint or receipt effect classification;
+    # those fields remain live-C2/C3-only and are deliberately not fabricated.
+    return roles
+
+
 def _current_head_identity(resolution: Any, head: Any) -> dict[str, Any] | None:
     basis = head.members.get("basis")
     if not isinstance(basis, Mapping):
@@ -911,6 +1059,9 @@ def _current_head_identity(resolution: Any, head: Any) -> dict[str, Any] | None:
         return None
     current_proof = admission.get("current_proof")
     if not isinstance(current_proof, Mapping):
+        return None
+    roles = _current_basis_role_identity(basis)
+    if roles is None:
         return None
     try:
         source = {
@@ -935,6 +1086,7 @@ def _current_head_identity(resolution: Any, head: Any) -> dict[str, Any] | None:
                 "match_status": current_proof["match_status"],
                 "proof_sha256": current_proof["proof_sha256"],
             },
+            "roles": roles,
         }
     except (KeyError, TypeError):
         return None
@@ -1267,10 +1419,36 @@ def _matches_authenticated_identity(
         "current_proof",
         "roles",
     }
-    return set(expected).issubset(identity_fields) and all(
-        candidate.get(name) == value
-        for name, value in expected.items()
-    )
+    if not set(expected).issubset(identity_fields):
+        return False
+    for name, value in expected.items():
+        if name == "roles":
+            if not _matches_authenticated_roles(candidate.get(name), value):
+                return False
+        elif candidate.get(name) != value:
+            return False
+    return True
+
+
+def _matches_authenticated_roles(actual: Any, expected: Any) -> bool:
+    if (
+        not isinstance(actual, list)
+        or not isinstance(expected, list)
+        or not 1 <= len(actual) == len(expected) <= MAX_ROLES
+    ):
+        return False
+    for actual_role, expected_role in zip(actual, expected, strict=True):
+        if (
+            not isinstance(actual_role, Mapping)
+            or not isinstance(expected_role, Mapping)
+            or not set(expected_role).issubset(actual_role)
+            or any(
+                actual_role.get(name) != value
+                for name, value in expected_role.items()
+            )
+        ):
+            return False
+    return True
 
 
 def _nonrecordable_result(*, reasons: Sequence[str], source_health: str) -> Mapping[str, Any]:

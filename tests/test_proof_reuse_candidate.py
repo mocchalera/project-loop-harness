@@ -655,13 +655,136 @@ def test_current_candidate_inventory_selects_current_and_filters_stale_unhealthy
         assert unhealthy.candidate is None
 
 
+def test_current_candidate_inventory_rejects_basis_role_identity_substitution(
+    tmp_path: Path,
+) -> None:
+    with _authentic_c1_c5(tmp_path) as live:
+        first = _record(live)
+        before_authentic_selection = _counts(live["paths"])
+        authentic = candidate_runtime.select_current_proof_reuse_candidate(
+            live["paths"],
+            anchor_event_id=live["anchor"]["event_id"],
+        )
+        assert authentic.status == "selected"
+        assert authentic.candidate == first["candidate"]
+        assert _counts(live["paths"]) == before_authentic_selection
+
+        forged = deepcopy(first["candidate"])
+        forged_role = forged["roles"][0]
+        observation = next(
+            item
+            for item in live["basis"]["admission"]["role_observations"]
+            if item["role"] == forged_role["role"]
+        )
+        assert (
+            forged_role["participant_sha256"]
+            == observation["selected_participant_sha256"]
+        )
+        forged_role["participant_sha256"] = "sha256:" + "9" * 64
+        forged = finalize_proof_reuse_candidate(forged)
+        assert forged["candidate_id"] != first["candidate_id"]
+        _forge_coherent_candidate_quartet(live, forged)
+
+        authentic_path = (
+            candidate_directory(live["paths"], first["candidate_id"])
+            / "candidate.json"
+        )
+        authentic_content = authentic_path.read_bytes()
+        authentic_path.write_bytes(b"X" + authentic_content[1:])
+
+        before = _counts(live["paths"])
+        selection = candidate_runtime.select_current_proof_reuse_candidate(
+            live["paths"],
+            anchor_event_id=live["anchor"]["event_id"],
+        )
+        assert selection.status == "none"
+        assert selection.reason == "current_candidate_not_found"
+        assert selection.current_anchor_event_id == live["anchor"]["event_id"]
+        assert selection.candidate is None
+        assert _counts(live["paths"]) == before
+
+
+def test_current_candidate_inventory_rejects_each_basis_derived_role_field(
+    tmp_path: Path,
+) -> None:
+    with _authentic_c1_c5(tmp_path) as live:
+        first = _record(live)
+        fields = (
+            "role",
+            "kind",
+            "canary_id",
+            "requirement_sha256",
+            "participant_sha256",
+            "check_id",
+            "plan_sha256",
+            "tool_identity_sha256",
+            "public_execution_sha256",
+            "spawn_vector_sha256",
+            "external_input_binding_sha256",
+            "execution_binding_sha256",
+            "packet_sha256",
+            "result_sha256",
+            "receipt_sha256",
+            "aggregate_sha256",
+            "bundle_sha256",
+        )
+        public_fields = {"role", "kind", "canary_id", "check_id"}
+        forged_ids: set[str] = set()
+        for index, field in enumerate(fields):
+            forged = deepcopy(first["candidate"])
+            role_index = 1 if field == "participant_sha256" else index % 2
+            role = forged["roles"][role_index]
+            replacement = (
+                "A"
+                if field == "kind"
+                else f"forged_{field}_{index}"
+                if field in public_fields
+                else "sha256:" + f"{index + 1:064x}"
+            )
+            assert role[field] != replacement
+            role[field] = replacement
+            forged["roles"].sort(
+                key=lambda item: (
+                    item["kind"],
+                    item["role"],
+                    item["check_id"],
+                    item["participant_sha256"],
+                )
+            )
+            forged = finalize_proof_reuse_candidate(forged)
+            assert forged["candidate_id"] != first["candidate_id"]
+            assert forged["candidate_id"] not in forged_ids
+            forged_ids.add(forged["candidate_id"])
+            _forge_coherent_candidate_quartet(live, forged)
+
+        authentic_path = (
+            candidate_directory(live["paths"], first["candidate_id"])
+            / "candidate.json"
+        )
+        authentic_content = authentic_path.read_bytes()
+        authentic_path.write_bytes(b"X" + authentic_content[1:])
+
+        before = _counts(live["paths"])
+        selection = candidate_runtime.select_current_proof_reuse_candidate(
+            live["paths"],
+            anchor_event_id=live["anchor"]["event_id"],
+        )
+        assert selection.status == "none"
+        assert selection.reason == "current_candidate_not_found"
+        assert selection.current_anchor_event_id == live["anchor"]["event_id"]
+        assert selection.candidate is None
+        assert _counts(live["paths"]) == before
+
+
 def test_current_candidate_inventory_reports_equal_hwm_identity_ambiguity(
     tmp_path: Path,
 ) -> None:
     with _authentic_c1_c5(tmp_path) as live:
         first = _record(live)
         second = deepcopy(first["candidate"])
-        second["roles"][0]["participant_sha256"] = "sha256:" + "9" * 64
+        second["roles"][0]["final_authority_checkpoint_sha256"] = (
+            "sha256:" + "9" * 64
+        )
         second = finalize_proof_reuse_candidate(second)
         assert second["candidate_id"] != first["candidate_id"]
         assert (
