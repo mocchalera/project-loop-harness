@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import errno
 import os
 from pathlib import Path
+import stat
 import threading
 import time
 from typing import Iterator
@@ -215,6 +216,131 @@ class AdvisoryLock:
         self.release()
 
 
+class ExistingSharedProjectLockError(Exception):
+    """Sanitized failure from the no-create C6 shared-lock observer."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+class ExistingSharedProjectLock:
+    """Observe an existing POSIX project lock without creating or repairing it."""
+
+    def __init__(self, path: Path, *, timeout_ms: int = SQLITE_BUSY_TIMEOUT_MS) -> None:
+        self.path = path
+        self.timeout_ms = timeout_ms
+        self._fd: int | None = None
+        self._root_identity: tuple[int, int, int, int, int] | None = None
+        self._loop_identity: tuple[int, int, int, int, int] | None = None
+        self._lock_identity: tuple[int, int, int, int, int, int] | None = None
+
+    @property
+    def descriptor(self) -> int | None:
+        return self._fd
+
+    @property
+    def exclusive_capability(self) -> None:
+        return None
+
+    def acquire(self) -> None:
+        if os.name != "posix" or fcntl is None:
+            raise ExistingSharedProjectLockError("lock_unavailable")
+        try:
+            root_identity = _strict_directory_observation(self.path.parent.parent)
+            loop_identity = _strict_directory_observation(self.path.parent)
+            lock_identity = _strict_lock_observation(self.path)
+        except FileNotFoundError as exc:
+            if exc.filename == str(self.path):
+                raise ExistingSharedProjectLockError("lock_unavailable") from None
+            raise ExistingSharedProjectLockError("lock_identity_invalid") from None
+        except OSError:
+            raise ExistingSharedProjectLockError("lock_identity_invalid") from None
+
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            fd = os.open(self.path, flags)
+        except FileNotFoundError:
+            raise ExistingSharedProjectLockError("lock_unavailable") from None
+        except OSError:
+            raise ExistingSharedProjectLockError("lock_identity_invalid") from None
+        deadline = time.monotonic() + self.timeout_ms / 1000
+        try:
+            if _strict_fd_observation(fd) != lock_identity:
+                raise ExistingSharedProjectLockError("lock_identity_invalid")
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+                    break
+                except OSError as exc:
+                    if exc.errno not in {errno.EACCES, errno.EAGAIN}:
+                        raise ExistingSharedProjectLockError("lock_identity_invalid") from None
+                    if time.monotonic() >= deadline:
+                        raise ExistingSharedProjectLockError("lock_unavailable") from None
+                    time.sleep(0.05)
+            self._fd = fd
+            self._root_identity = root_identity
+            self._loop_identity = loop_identity
+            self._lock_identity = lock_identity
+            self.recheck()
+        except BaseException:
+            self._fd = None
+            self._root_identity = None
+            self._loop_identity = None
+            self._lock_identity = None
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+            raise
+
+    def recheck(self) -> None:
+        if (
+            self._fd is None
+            or self._root_identity is None
+            or self._loop_identity is None
+            or self._lock_identity is None
+        ):
+            raise ExistingSharedProjectLockError("lock_identity_invalid")
+        try:
+            if (
+                _strict_directory_observation(self.path.parent.parent) != self._root_identity
+                or _strict_directory_observation(self.path.parent) != self._loop_identity
+                or _strict_lock_observation(self.path) != self._lock_identity
+                or _strict_fd_observation(self._fd) != self._lock_identity
+            ):
+                raise ExistingSharedProjectLockError("lock_identity_invalid")
+        except ExistingSharedProjectLockError:
+            raise
+        except OSError:
+            raise ExistingSharedProjectLockError("lock_identity_invalid") from None
+
+    def release(self) -> None:
+        if self._fd is None:
+            return
+        fd, self._fd = self._fd, None
+        self._root_identity = None
+        self._loop_identity = None
+        self._lock_identity = None
+        try:
+            assert fcntl is not None
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        finally:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    def __enter__(self) -> ExistingSharedProjectLock:
+        self.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self.release()
+
+
 @contextmanager
 def project_operation_lock(
     loop_dir: Path,
@@ -286,6 +412,72 @@ def _directory_identity(value: os.stat_result) -> tuple[int, int, int]:
 
 def _file_identity(value: os.stat_result) -> tuple[int, int, int]:
     return (value.st_dev, value.st_ino, value.st_mode & 0o170000)
+
+
+def _strict_directory_observation(path: Path) -> tuple[int, int, int, int, int]:
+    observed = os.lstat(path)
+    followed = os.stat(path, follow_symlinks=True)
+    if not stat.S_ISDIR(observed.st_mode) or (
+        observed.st_dev,
+        observed.st_ino,
+        observed.st_mode,
+        observed.st_uid,
+        observed.st_gid,
+    ) != (
+        followed.st_dev,
+        followed.st_ino,
+        followed.st_mode,
+        followed.st_uid,
+        followed.st_gid,
+    ):
+        raise OSError(errno.EINVAL, "invalid directory identity", str(path))
+    return (
+        observed.st_dev,
+        observed.st_ino,
+        observed.st_mode,
+        observed.st_uid,
+        observed.st_gid,
+    )
+
+
+def _strict_lock_observation(path: Path) -> tuple[int, int, int, int, int, int]:
+    observed = os.lstat(path)
+    identity = (
+        observed.st_dev,
+        observed.st_ino,
+        observed.st_mode,
+        observed.st_uid,
+        observed.st_gid,
+        observed.st_nlink,
+    )
+    if (
+        not stat.S_ISREG(observed.st_mode)
+        or stat.S_IMODE(observed.st_mode) != 0o600
+        or observed.st_uid != os.geteuid()
+        or observed.st_nlink != 1
+    ):
+        raise OSError(errno.EINVAL, "invalid lock identity", str(path))
+    return identity
+
+
+def _strict_fd_observation(fd: int) -> tuple[int, int, int, int, int, int]:
+    observed = os.fstat(fd)
+    identity = (
+        observed.st_dev,
+        observed.st_ino,
+        observed.st_mode,
+        observed.st_uid,
+        observed.st_gid,
+        observed.st_nlink,
+    )
+    if (
+        not stat.S_ISREG(observed.st_mode)
+        or stat.S_IMODE(observed.st_mode) != 0o600
+        or observed.st_uid != os.geteuid()
+        or observed.st_nlink != 1
+    ):
+        raise OSError(errno.EINVAL, "invalid lock descriptor")
+    return identity
 
 
 def _invalid_project_operation_capability(loop_dir: Path) -> DataStoreError:

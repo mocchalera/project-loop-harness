@@ -190,6 +190,26 @@ class _CommittedAnchor:
         return str(self.payload["base_request_sha256"])
 
 
+@dataclass(frozen=True)
+class ProofAnchorDriftAuthorityResolution:
+    """Event-first, bounded C5 authority view for the read-only C6 predicate."""
+
+    assertion_found: bool
+    authority_corrupt: bool
+    target_id: str | None
+    basis_sha256: str | None
+    tombstone_status: str
+    tombstone_event_id: str | None
+    tombstone_witness: _CommittedAnchor | None
+    valid_chains: tuple[tuple[_CommittedAnchor, ...], ...]
+    malformed_group_present: bool | None
+    exhaustion_witness: _CommittedAnchor | None
+
+
+class ProofAnchorAuthorityCapacityError(Exception):
+    pass
+
+
 def inspect_committed_proof_anchor(
     paths: ProjectPaths,
     conn: sqlite3.Connection,
@@ -278,6 +298,149 @@ def committed_proof_anchor_tombstone_valid(
         == witness.payload["manifest_file_sha256"]
         and payload["exhausted_request_id"] == witness.payload["request_id"]
         and payload["health_sha256"] == witness.health["health_sha256"]
+    )
+
+
+def resolve_proof_anchor_drift_authority(
+    paths: ProjectPaths,
+    conn: sqlite3.Connection,
+    *,
+    anchor_event_id: str,
+    anchor_row_limit: int = 65,
+) -> ProofAnchorDriftAuthorityResolution:
+    """Resolve C5 authority with tombstone precedence and bounded enumeration."""
+    assertion = conn.execute(
+        """
+        SELECT id, event_type, entity_type, entity_id, payload_json
+        FROM events WHERE id = ?
+        """,
+        (anchor_event_id,),
+    ).fetchone()
+    if assertion is None or str(assertion["event_type"]) != PROOF_ANCHOR_EVENT_TYPE:
+        return ProofAnchorDriftAuthorityResolution(
+            assertion_found=False,
+            authority_corrupt=False,
+            target_id=None,
+            basis_sha256=None,
+            tombstone_status="absent",
+            tombstone_event_id=None,
+            tombstone_witness=None,
+            valid_chains=(),
+            malformed_group_present=False,
+            exhaustion_witness=None,
+        )
+    try:
+        payload = json.loads(str(assertion["payload_json"]))
+        structurally_valid = bool(
+            assertion["entity_type"] == "task"
+            and assertion["entity_id"] is not None
+            and validate_proof_anchor_event(payload).ok
+            and anchor_event_id == proof_anchor_event_id(str(payload["request_id"]))
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        structurally_valid = False
+        payload = {}
+    if not structurally_valid:
+        return ProofAnchorDriftAuthorityResolution(
+            assertion_found=True,
+            authority_corrupt=True,
+            target_id=None,
+            basis_sha256=None,
+            tombstone_status="absent",
+            tombstone_event_id=None,
+            tombstone_witness=None,
+            valid_chains=(),
+            malformed_group_present=True,
+            exhaustion_witness=None,
+        )
+    target_id = str(assertion["entity_id"])
+    basis_value = str(payload["basis_sha256"])
+    tombstones = conn.execute(
+        """
+        SELECT id, payload_json FROM events INDEXED BY idx_events_entity
+        WHERE entity_type = 'task' AND entity_id = ? AND event_type = ?
+          AND json_extract(payload_json, '$.contract_version') = ?
+          AND json_extract(payload_json, '$.basis_sha256') = ?
+        ORDER BY sequence DESC, id DESC LIMIT 2
+        """,
+        (
+            target_id,
+            PROOF_ANCHOR_EXHAUSTION_EVENT_TYPE,
+            PROOF_ADMISSION_EXHAUSTION_EVENT_CONTRACT_VERSION,
+            basis_value,
+        ),
+    ).fetchall()
+    if len(tombstones) >= 2:
+        return ProofAnchorDriftAuthorityResolution(
+            assertion_found=True,
+            authority_corrupt=True,
+            target_id=target_id,
+            basis_sha256=basis_value,
+            tombstone_status="multiple",
+            tombstone_event_id=None,
+            tombstone_witness=None,
+            valid_chains=(),
+            malformed_group_present=None,
+            exhaustion_witness=None,
+        )
+    if tombstones:
+        tombstone_id = str(tombstones[0]["id"])
+        valid = committed_proof_anchor_tombstone_valid(
+            paths,
+            conn,
+            event_id=tombstone_id,
+        )
+        witness = None
+        if valid:
+            try:
+                tombstone_payload = json.loads(str(tombstones[0]["payload_json"]))
+                witness = inspect_committed_proof_anchor(
+                    paths,
+                    conn,
+                    event_id=str(tombstone_payload["exhausted_anchor_event_id"]),
+                )
+            except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+                valid = False
+        return ProofAnchorDriftAuthorityResolution(
+            assertion_found=True,
+            authority_corrupt=not valid,
+            target_id=target_id,
+            basis_sha256=basis_value,
+            tombstone_status="valid" if valid else "invalid",
+            tombstone_event_id=tombstone_id if valid else None,
+            tombstone_witness=witness if valid else None,
+            valid_chains=(),
+            malformed_group_present=None,
+            exhaustion_witness=None,
+        )
+    chains = _enumerate_anchor_chains(
+        paths,
+        conn,
+        target_id=target_id,
+        basis_sha256_value=basis_value,
+        row_limit=anchor_row_limit,
+    )
+    valid_chains, corrupt = _classify_chains(chains)
+    witnesses = sorted(
+        (
+            chain[-1]
+            for chain in valid_chains
+            if chain[-1].generation == MAX_RECOVERY_GENERATIONS
+            and chain[-1].health_status == "postcommit_unhealthy"
+        ),
+        key=lambda item: (item.base_request, item.sequence, item.event_id),
+    )
+    return ProofAnchorDriftAuthorityResolution(
+        assertion_found=True,
+        authority_corrupt=corrupt,
+        target_id=target_id,
+        basis_sha256=basis_value,
+        tombstone_status="absent",
+        tombstone_event_id=None,
+        tombstone_witness=None,
+        valid_chains=tuple(tuple(chain) for chain in valid_chains),
+        malformed_group_present=corrupt,
+        exhaustion_witness=witnesses[0] if witnesses else None,
     )
 
 
@@ -1188,9 +1351,9 @@ def _enumerate_anchor_chains(
     target_id: str,
     basis_sha256_value: str,
     exclude_event_id: str | None = None,
+    row_limit: int | None = None,
 ) -> list[list[_CommittedAnchor] | None]:
-    rows = conn.execute(
-        """
+    sql = """
         SELECT id, sequence, payload_json
         FROM events INDEXED BY idx_events_entity
         WHERE entity_type = 'task'
@@ -1199,14 +1362,19 @@ def _enumerate_anchor_chains(
           AND json_extract(payload_json, '$.contract_version') = ?
           AND json_extract(payload_json, '$.basis_sha256') = ?
         ORDER BY sequence, id
-        """,
-        (
-            target_id,
-            PROOF_ANCHOR_EVENT_TYPE,
-            PROOF_ADMISSION_ANCHOR_EVENT_CONTRACT_VERSION,
-            basis_sha256_value,
-        ),
-    ).fetchall()
+        """
+    params: tuple[Any, ...] = (
+        target_id,
+        PROOF_ANCHOR_EVENT_TYPE,
+        PROOF_ADMISSION_ANCHOR_EVENT_CONTRACT_VERSION,
+        basis_sha256_value,
+    )
+    if row_limit is not None:
+        sql += " LIMIT ?"
+        params += (row_limit,)
+    rows = conn.execute(sql, params).fetchall()
+    if row_limit is not None and len(rows) >= row_limit:
+        raise ProofAnchorAuthorityCapacityError
     groups: dict[str, list[sqlite3.Row]] = {}
     for row in rows:
         if exclude_event_id is not None and str(row["id"]) == exclude_event_id:
@@ -1937,7 +2105,10 @@ __all__ = [
     "PROOF_ANCHOR_EXHAUSTION_EVENT_TYPE",
     "PROOF_ANCHOR_LINK_ROLE",
     "ProofAdmissionAuthorizationIssuerCapability",
+    "ProofAnchorAuthorityCapacityError",
+    "ProofAnchorDriftAuthorityResolution",
     "ProofAnchorError",
+    "resolve_proof_anchor_drift_authority",
     "TrustedProofAdmissionAuthorization",
     "anchor_proof_admission",
     "bind_proof_admission_authorization",

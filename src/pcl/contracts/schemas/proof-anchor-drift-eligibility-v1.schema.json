@@ -1,0 +1,189 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "proof-anchor-drift-eligibility/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "subject", "anchor", "observation", "eligibility", "reason_codes", "authorization_status", "handoff", "effects", "eligibility_sha256"],
+  "properties": {
+    "contract_version": {"const": "proof-anchor-drift-eligibility/v1"},
+    "subject": {"$ref": "#/$defs/subject"},
+    "anchor": {"oneOf": [{"$ref": "#/$defs/anchor"}, {"type": "null"}]},
+    "observation": {"$ref": "#/$defs/observation"},
+    "eligibility": {"$ref": "#/$defs/eligibility"},
+    "reason_codes": {"type": "array", "maxItems": 32, "uniqueItems": true, "items": {"enum": ["anchor_actor_independence_changed", "anchor_authority_corrupt", "anchor_authorization_document_invalid", "anchor_basis_mismatch", "anchor_candidate_mismatch", "anchor_exhaustion_pending", "anchor_exhaustion_tombstoned", "anchor_not_current_head", "anchor_not_found", "anchor_parallel_chain_conflict", "anchor_recovery_required", "anchor_target_mismatch", "computed_verdict_not_passed", "live_authority_changed", "live_basis_mismatch", "live_canary_changed", "live_candidate_changed", "live_chain_unavailable", "live_current_proof_changed", "live_execution_binding_changed", "live_policy_changed", "live_reconstruction_indeterminate"]}},
+    "authorization_status": {"oneOf": [{"$ref": "#/$defs/authorizationStatus"}, {"type": "null"}]},
+    "handoff": {"oneOf": [{"$ref": "#/$defs/handoff"}, {"type": "null"}]},
+    "effects": {"$ref": "#/$defs/effects"},
+    "eligibility_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "eventId": {"type": "string", "pattern": "^EV-[0-9A-F]{64}$"},
+    "requestId": {"type": "string", "pattern": "^PA-[0-9A-F]{64}$"},
+    "publicId": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,4095}$"},
+    "nullableSha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "nullableEventId": {"oneOf": [{"$ref": "#/$defs/eventId"}, {"type": "null"}]},
+    "nullablePublicId": {"oneOf": [{"$ref": "#/$defs/publicId"}, {"type": "null"}]},
+    "target": {
+      "type": "object", "additionalProperties": false,
+      "required": ["type", "id"],
+      "properties": {"type": {"const": "task"}, "id": {"$ref": "#/$defs/publicId"}}
+    },
+    "candidate": {
+      "oneOf": [{"$ref": "#/$defs/candidateSha1"}, {"$ref": "#/$defs/candidateSha256"}]
+    },
+    "candidateSha1": {
+      "type": "object", "additionalProperties": false,
+      "required": ["object_format", "commit_oid", "tree_oid"],
+      "properties": {
+        "object_format": {"const": "sha1"},
+        "commit_oid": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "tree_oid": {"type": "string", "pattern": "^[0-9a-f]{40}$"}
+      }
+    },
+    "candidateSha256": {
+      "type": "object", "additionalProperties": false,
+      "required": ["object_format", "commit_oid", "tree_oid"],
+      "properties": {
+        "object_format": {"const": "sha256"},
+        "commit_oid": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "tree_oid": {"type": "string", "pattern": "^[0-9a-f]{64}$"}
+      }
+    },
+    "subject": {
+      "type": "object", "additionalProperties": false,
+      "required": ["contract_version", "project_instance_id", "target", "candidate", "expected_basis_sha256", "anchor_event_id", "requested_use", "subject_sha256"],
+      "properties": {
+        "contract_version": {"const": "proof-anchor-drift-subject/v1"},
+        "project_instance_id": {"$ref": "#/$defs/publicId"},
+        "target": {"$ref": "#/$defs/target"},
+        "candidate": {"$ref": "#/$defs/candidate"},
+        "expected_basis_sha256": {"$ref": "#/$defs/sha256"},
+        "anchor_event_id": {"$ref": "#/$defs/eventId"},
+        "requested_use": {"const": "drift_eligibility_predicate"},
+        "subject_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "anchor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["event_id", "event_sequence", "request_id", "base_request_sha256", "anchor_generation", "basis_sha256", "anchor_sha256", "manifest_file_sha256", "evidence_id", "health_status", "chain_head"],
+      "properties": {
+        "event_id": {"$ref": "#/$defs/eventId"},
+        "event_sequence": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
+        "request_id": {"$ref": "#/$defs/requestId"},
+        "base_request_sha256": {"$ref": "#/$defs/sha256"},
+        "anchor_generation": {"type": "integer", "minimum": 0, "maximum": 3},
+        "basis_sha256": {"$ref": "#/$defs/sha256"},
+        "anchor_sha256": {"$ref": "#/$defs/sha256"},
+        "manifest_file_sha256": {"$ref": "#/$defs/sha256"},
+        "evidence_id": {"$ref": "#/$defs/publicId"},
+        "health_status": {"enum": ["healthy", "postcommit_unhealthy"]},
+        "chain_head": {"oneOf": [{"const": true}, {"type": "null"}]}
+      }
+    },
+    "snapshot": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "evaluated_through_event_sequence", "evaluated_through_event_id"],
+      "properties": {
+        "schema_version": {"const": 8},
+        "evaluated_through_event_sequence": {"type": "integer", "minimum": 0, "maximum": 9223372036854775807},
+        "evaluated_through_event_id": {"$ref": "#/$defs/nullablePublicId"}
+      }
+    },
+    "chain": {
+      "type": "object", "additionalProperties": false,
+      "required": ["valid_chain_count", "malformed_group_present", "tombstone_status", "tombstone_event_id", "exhaustion_witness_status", "selected_head_event_id", "selected_head_generation"],
+      "properties": {
+        "valid_chain_count": {"oneOf": [{"type": "integer", "minimum": 0, "maximum": 64}, {"type": "null"}]},
+        "malformed_group_present": {"type": ["boolean", "null"]},
+        "tombstone_status": {"enum": ["absent", "valid", "invalid", "multiple"]},
+        "tombstone_event_id": {"$ref": "#/$defs/nullableEventId"},
+        "exhaustion_witness_status": {"enum": ["not_evaluated", "absent", "present"]},
+        "selected_head_event_id": {"$ref": "#/$defs/nullableEventId"},
+        "selected_head_generation": {"oneOf": [{"type": "integer", "minimum": 0, "maximum": 3}, {"type": "null"}]}
+      }
+    },
+    "stored": {
+      "type": "object", "additionalProperties": false,
+      "required": ["basis_document_status", "authorization_documents_status", "recorded_actor_independence", "anchor_authorization_granted", "issuer_capability_validation"],
+      "properties": {
+        "basis_document_status": {"enum": ["valid", "invalid", "unavailable"]},
+        "authorization_documents_status": {"enum": ["valid", "invalid", "unavailable"]},
+        "recorded_actor_independence": {"enum": ["matched", "mismatched", "not_observed"]},
+        "anchor_authorization_granted": {"oneOf": [{"const": true}, {"type": "null"}]},
+        "issuer_capability_validation": {"const": "write_time_only_not_reconstituted"}
+      }
+    },
+    "live": {
+      "type": "object", "additionalProperties": false,
+      "required": ["reconstruction_status", "basis_sha256", "policy_sha256", "coverage_group_sha256", "admission_sha256", "current_proof_sha256", "authority_surface_resolution_sha256"],
+      "properties": {
+        "reconstruction_status": {"enum": ["not_run", "matched", "mismatched", "indeterminate", "unavailable"]},
+        "basis_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "policy_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "coverage_group_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "admission_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "current_proof_sha256": {"$ref": "#/$defs/nullableSha256"},
+        "authority_surface_resolution_sha256": {"$ref": "#/$defs/nullableSha256"}
+      }
+    },
+    "observation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["snapshot", "chain", "stored", "live"],
+      "properties": {
+        "snapshot": {"$ref": "#/$defs/snapshot"},
+        "chain": {"$ref": "#/$defs/chain"},
+        "stored": {"$ref": "#/$defs/stored"},
+        "live": {"$ref": "#/$defs/live"}
+      }
+    },
+    "eligibility": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "predicate_kind", "matched", "direct_input_right", "check_skip_authorized", "result_substitution_authorized"],
+      "properties": {
+        "status": {"enum": ["eligible", "withheld", "unavailable", "invalid"]},
+        "predicate_kind": {"const": "drift_eligibility_only"},
+        "matched": {"type": "boolean"},
+        "direct_input_right": {"const": false},
+        "check_skip_authorized": {"const": false},
+        "result_substitution_authorized": {"const": false}
+      }
+    },
+    "authorizationStatus": {
+      "type": "object", "additionalProperties": false,
+      "required": ["independent_review", "human_gate", "anchoring_authorized", "reuse_authorized", "terminal_authority", "mandatory_evidence"],
+      "properties": {
+        "independent_review": {"const": "pending"},
+        "human_gate": {"enum": ["pending", "not_required"]},
+        "anchoring_authorized": {"const": false},
+        "reuse_authorized": {"const": false},
+        "terminal_authority": {"const": false},
+        "mandatory_evidence": {"const": false}
+      }
+    },
+    "handoff": {
+      "type": "object", "additionalProperties": false,
+      "required": ["status", "reuse_consumable", "terminal_consumable", "promotion_authorized"],
+      "properties": {
+        "status": {"const": "anchored_candidate"},
+        "reuse_consumable": {"const": false},
+        "terminal_consumable": {"const": false},
+        "promotion_authorized": {"const": false}
+      }
+    },
+    "effects": {
+      "type": "object", "additionalProperties": false,
+      "required": ["schema_version", "migrations_applied", "dependencies_added", "database_read_only_transaction", "shared_existing_lock_acquired", "filesystem_reads", "filesystem_read_effect_class", "database_writes", "filesystem_authoritative_writes", "evidence_rows_inserted", "evidence_links_inserted", "events_appended", "outbox_records_appended", "directories_published", "rendered", "checks_executed", "checks_skipped", "results_substituted", "lifecycle_transitions", "network_requests", "telemetry_records", "publications"],
+      "properties": {
+        "schema_version": {"const": 8}, "migrations_applied": {"const": 0}, "dependencies_added": {"const": 0},
+        "database_read_only_transaction": {"const": true}, "shared_existing_lock_acquired": {"const": true}, "filesystem_reads": {"const": true},
+        "filesystem_read_effect_class": {"const": "non_authoritative_atime_page_cache_only"},
+        "database_writes": {"const": 0}, "filesystem_authoritative_writes": {"const": 0}, "evidence_rows_inserted": {"const": 0},
+        "evidence_links_inserted": {"const": 0}, "events_appended": {"const": 0}, "outbox_records_appended": {"const": 0},
+        "directories_published": {"const": 0}, "rendered": {"const": 0}, "checks_executed": {"const": 0}, "checks_skipped": {"const": 0},
+        "results_substituted": {"const": 0}, "lifecycle_transitions": {"const": 0}, "network_requests": {"const": 0},
+        "telemetry_records": {"const": 0}, "publications": {"const": 0}
+      }
+    }
+  }
+}

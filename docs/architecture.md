@@ -223,6 +223,17 @@ SQLite remains schema 8 and C5 adds no migration, dependency, public CLI,
 lifecycle mutation, render, network, or publication behavior. See
 [proof-anchor-v1.md](proof-anchor-v1.md).
 
+P1-C C6 adds only an internal, read-only local drift predicate over that C5
+authority. It resolves the asserted anchor event first, gives invalid or
+multiple exhaustion tombstones precedence, observes the existing project lock
+without creating it, and holds one `mode=ro` / `query_only` schema-8 snapshot
+while reconstructing the live C1-C4 basis. Its closed receipt always keeps
+direct-input, check-skip, result-substitution, terminal, lifecycle,
+mandatory-Evidence, promotion, publication, network, and telemetry rights
+false. It writes no database, Evidence, event, outbox, filesystem authority,
+or cache state and has no public CLI/MCP/renderer consumer. See
+[proof-anchor-drift-v1.md](proof-anchor-drift-v1.md).
+
 ## Why CLI first
 
 Agent Skills are instructions. They cannot reliably guarantee migrations, validation, deterministic rendering, or guarded state transitions by themselves.

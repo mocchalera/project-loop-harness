@@ -223,6 +223,21 @@ from .proof_anchor import (
     validate_proof_admission_anchor_result,
     validate_proof_admission_authorization,
 )
+from .proof_anchor_drift import (
+    DRIFT_EFFECTS,
+    DRIFT_ERROR_PHASES,
+    DRIFT_HARD_ERROR_CODES,
+    DRIFT_REASON_CODES,
+    PROOF_ANCHOR_DRIFT_ELIGIBILITY_CONTRACT_VERSION,
+    PROOF_ANCHOR_DRIFT_SUBJECT_CONTRACT_VERSION,
+    ProofAnchorDriftValidationResult,
+    canonical_proof_anchor_drift_bytes,
+    eligibility_sha256,
+    finalize_proof_anchor_drift_eligibility,
+    proof_anchor_drift_eligibility_schema,
+    subject_sha256,
+    validate_proof_anchor_drift_eligibility,
+)
 
 __all__ = [
     "COMPLETION_PACKET_CONTRACT_VERSION",
@@ -406,4 +421,17 @@ __all__ = [
     "validate_proof_admission_anchor_basis",
     "validate_proof_admission_anchor_result",
     "validate_proof_admission_authorization",
+    "DRIFT_EFFECTS",
+    "DRIFT_ERROR_PHASES",
+    "DRIFT_HARD_ERROR_CODES",
+    "DRIFT_REASON_CODES",
+    "PROOF_ANCHOR_DRIFT_ELIGIBILITY_CONTRACT_VERSION",
+    "PROOF_ANCHOR_DRIFT_SUBJECT_CONTRACT_VERSION",
+    "ProofAnchorDriftValidationResult",
+    "canonical_proof_anchor_drift_bytes",
+    "eligibility_sha256",
+    "finalize_proof_anchor_drift_eligibility",
+    "proof_anchor_drift_eligibility_schema",
+    "subject_sha256",
+    "validate_proof_anchor_drift_eligibility",
 ]

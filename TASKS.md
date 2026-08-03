@@ -230,6 +230,7 @@ Give these tasks to coding agents in this order:
 226. `agent-tasks/0221-p1c-proof-execution.md` (P1-C C3 deterministic proof execution and current-proof capture)
 227. `agent-tasks/0222-p1c-proof-admission.md` (P1-C C4 pure semantic coverage admission)
 228. `agent-tasks/0223-p1c-proof-anchor.md` (P1-C C5 durable proof admission anchor and anchor-scoped authorization)
+229. `agent-tasks/0224-p1c-proof-anchor-drift.md` (P1-C C6 internal read-only local proof-anchor drift eligibility with all downstream rights false)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and
