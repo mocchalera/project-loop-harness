@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from dataclasses import replace
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,8 @@ from pcl.contracts.proof_anchor_drift import (
     DRIFT_EFFECTS,
     validate_proof_anchor_drift_eligibility,
 )
+from pcl.contracts.proof_admission import finalize_proof_coverage_policy
+from pcl.contracts.proof_execution import finalize_proof_execution_document
 from pcl.db import connect
 from pcl.locks import ExistingSharedProjectLock, ExistingSharedProjectLockError
 from pcl.paths import ProjectPaths
@@ -28,15 +31,21 @@ from pcl.proof_anchor_drift import (
     ProofAnchorDriftError,
     _classify_sqlite_error,
     _evaluate_resolution,
+    _live_reasons,
     _map_live_domain_error,
     _open_pinned_read_snapshot,
+    _soft_live_reconstruction,
     evaluate_proof_anchor_drift_eligibility,
 )
 from pcl.proof_anchor import (
     ProofAnchorDriftAuthorityResolution,
     ProofAnchorError,
 )
-from pcl.proof_admission import ProofCoverageError
+from pcl.proof_admission import (
+    ProofCoverageError,
+    bind_trusted_coverage_policy,
+    issue_trusted_coverage_policy_producer_capability,
+)
 from pcl.proof_execution import ProofExecutionError
 
 
@@ -54,10 +63,10 @@ def _evaluate(paths: ProjectPaths, live: dict, anchor: dict, basis: dict, **over
     return evaluate_proof_anchor_drift_eligibility(paths, **values)
 
 
-def _anchored(tmp_path: Path):
+def _anchored(tmp_path: Path, **live_options):
     paths = ProjectPaths(tmp_path / "project")
     c5._initialize(paths)
-    live_context = c4._live_join(tmp_path / "live")
+    live_context = c4._live_join(tmp_path / "live", **live_options)
     live = live_context.__enter__()
     basis = c5._basis(live)
     anchor = c5._anchor(paths, live, basis, c5._authorizations(basis))
@@ -362,7 +371,7 @@ def _assert_soft_live_receipt(
     assert validate_proof_anchor_drift_eligibility(receipt).ok
 
 
-def test_live_identity_mismatch_is_a_mismatched_withheld_receipt(
+def test_live_identity_mismatch_uses_only_acquired_live_digests(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -381,22 +390,198 @@ def test_live_identity_mismatch_is_a_mismatched_withheld_receipt(
         receipt = _evaluate(paths, live, anchor, basis)
         _assert_soft_live_receipt(
             receipt,
-            reconstruction_status="mismatched",
+            reconstruction_status="indeterminate",
             reason="live_execution_binding_changed",
         )
-        assert all(
-            receipt["observation"]["live"][field] is not None
-            for field in (
-                "basis_sha256",
-                "policy_sha256",
-                "coverage_group_sha256",
-                "admission_sha256",
-                "current_proof_sha256",
-                "authority_surface_resolution_sha256",
-            )
-        )
+        observed = receipt["observation"]["live"]
+        assert observed["policy_sha256"] == live["policy"]["policy_sha256"]
+        assert observed["coverage_group_sha256"] == live["policy"]["coverage_group_sha256"]
+        assert observed["basis_sha256"] is None
+        assert observed["admission_sha256"] is None
+        assert observed["current_proof_sha256"] is None
+        assert observed["authority_surface_resolution_sha256"] is None
+        assert observed["basis_sha256"] != basis["basis_sha256"]
         assert "sensitive identity detail" not in json.dumps(receipt, sort_keys=True)
         assert c5._counts(paths) == before
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_determinate_candidate_blob_drift_is_a_mismatched_withheld_receipt(
+    tmp_path: Path,
+) -> None:
+    paths, context, live, basis, anchor = _anchored(
+        tmp_path,
+        split=False,
+        include_blob_lookup_decoy=True,
+    )
+    try:
+        before = c5._counts(paths)
+        policy = deepcopy(live["policy"])
+        requirement = policy["required_roles"][0]
+        decoy = next(
+            check
+            for check in live["participants"][0].verification_profile["checks"]
+            if check["check_id"] == "policy-id-decoy"
+        )
+        requirement["expected_check"] = {**deepcopy(decoy), "role": "full_regression"}
+        requirement["required_candidate_blobs"] = deepcopy(
+            decoy["referenced_git_blobs"]
+        )
+        policy = finalize_proof_coverage_policy(policy)
+        capability = issue_trusted_coverage_policy_producer_capability(
+            kind="external_bootstrap",
+            producer_id="c4-test-producer",
+        )
+        changed_policy = bind_trusted_coverage_policy(
+            policy,
+            expected_policy_sha256=policy["policy_sha256"],
+            producer_capability=capability,
+        )
+
+        receipt = _evaluate(paths, live, anchor, basis, policy=changed_policy)
+
+        assert receipt["eligibility"]["status"] == "withheld"
+        assert receipt["observation"]["live"]["reconstruction_status"] == "mismatched"
+        assert "live_policy_changed" in receipt["reason_codes"]
+        assert "live_execution_binding_changed" in receipt["reason_codes"]
+        assert "computed_verdict_not_passed" in receipt["reason_codes"]
+        assert receipt["effects"] == DRIFT_EFFECTS
+        assert validate_proof_anchor_drift_eligibility(receipt).ok
+        assert c5._counts(paths) == before
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_nonpassed_c3_and_withheld_c4_cannot_launder_the_computed_verdict(
+    tmp_path: Path,
+) -> None:
+    paths, context, live, basis, anchor = _anchored(tmp_path)
+    try:
+        before = c5._counts(paths)
+        original = live["participants"][0]
+        aggregate = deepcopy(dict(original.bundle.aggregate))
+        aggregate.update(
+            {
+                "verdict": "failed",
+                "anchoring_eligible": False,
+                "positive_proof_handoff": "withheld",
+                "reuse_disposition": "fresh_only",
+            }
+        )
+        aggregate = finalize_proof_execution_document(aggregate)
+        bundle_receipt = deepcopy(dict(original.bundle.bundle_receipt))
+        bundle_receipt["aggregate_sha256"] = aggregate["aggregate_sha256"]
+        for item in bundle_receipt["objects"]:
+            if item["role"] == "aggregate":
+                item["sha256"] = aggregate["aggregate_sha256"]
+        bundle_receipt["objects"].sort(key=lambda item: (item["role"], item["sha256"]))
+        bundle_receipt = finalize_proof_execution_document(bundle_receipt)
+        failed = replace(
+            original,
+            bundle=replace(
+                original.bundle,
+                aggregate=aggregate,
+                bundle_receipt=bundle_receipt,
+            ),
+        )
+        participants = [failed, *live["participants"][1:]]
+
+        receipt = _evaluate(
+            paths,
+            live,
+            anchor,
+            basis,
+            participants=participants,
+        )
+
+        assert receipt["eligibility"]["status"] == "withheld"
+        assert receipt["observation"]["live"]["reconstruction_status"] == "mismatched"
+        assert "computed_verdict_not_passed" in receipt["reason_codes"]
+        assert "live_execution_binding_changed" in receipt["reason_codes"]
+        assert receipt["eligibility"]["matched"] is False
+        assert receipt["eligibility"]["direct_input_right"] is False
+        assert receipt["eligibility"]["check_skip_authorized"] is False
+        assert receipt["eligibility"]["result_substitution_authorized"] is False
+        assert validate_proof_anchor_drift_eligibility(receipt).ok
+        assert c5._counts(paths) == before
+    finally:
+        context.__exit__(None, None, None)
+
+
+@pytest.mark.parametrize(
+    ("mutation", "expected_reason"),
+    [
+        ("candidate", "live_candidate_changed"),
+        ("policy", "live_policy_changed"),
+        ("authority", "live_authority_changed"),
+        ("canary", "live_canary_changed"),
+        ("current_proof", "live_current_proof_changed"),
+        ("execution", "live_execution_binding_changed"),
+        ("verdict", "computed_verdict_not_passed"),
+    ],
+)
+def test_all_determinate_live_reasons_are_classified(
+    tmp_path: Path,
+    mutation: str,
+    expected_reason: str,
+) -> None:
+    paths, context, live, basis, anchor = _anchored(tmp_path)
+    del paths, live, anchor
+    try:
+        changed = deepcopy(dict(basis))
+        if mutation == "candidate":
+            changed["candidate"]["tree_oid"] = "f" * len(changed["candidate"]["tree_oid"])
+        elif mutation == "policy":
+            changed["bindings"]["policy_sha256"] = "sha256:" + "1" * 64
+        elif mutation == "authority":
+            changed["policy"]["authority_bindings"][
+                "authority_surface_resolution_sha256"
+            ] = "sha256:" + "2" * 64
+        elif mutation == "canary":
+            changed["policy"]["authority_bindings"]["canary_union_sha256"] = (
+                "sha256:" + "3" * 64
+            )
+        elif mutation == "current_proof":
+            changed["admission"]["current_proof"]["proof_sha256"] = "sha256:" + "4" * 64
+        elif mutation == "execution":
+            changed["bindings"]["coverage_group_sha256"] = "sha256:" + "5" * 64
+        else:
+            changed["admission"]["admission_state"] = "invalid"
+        assert expected_reason in _live_reasons(basis, changed)
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_invalid_live_state_precedes_transient_indeterminate_reason(tmp_path: Path) -> None:
+    paths, context, live, basis, anchor = _anchored(tmp_path)
+    del paths, live, anchor
+    try:
+        changed = deepcopy(dict(basis))
+        changed["admission"]["admission_state"] = "invalid"
+        changed["admission"]["state_reason_codes"] = [
+            "candidate_blob_oid_mismatch",
+            "current_proof_indeterminate",
+        ]
+        assert _soft_live_reconstruction(changed) is None
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_participant_aggregate_indeterminate_is_classified(tmp_path: Path) -> None:
+    paths, context, live, basis, anchor = _anchored(tmp_path)
+    del paths, live, anchor
+    try:
+        changed = deepcopy(dict(basis))
+        changed["admission"]["admission_state"] = "indeterminate"
+        changed["admission"]["state_reason_codes"] = [
+            "participant_aggregate_indeterminate"
+        ]
+        classified = _soft_live_reconstruction(changed)
+        assert classified is not None
+        status, reason, _ = classified
+        assert status == "indeterminate"
+        assert reason == "live_reconstruction_indeterminate"
     finally:
         context.__exit__(None, None, None)
 

@@ -29,6 +29,7 @@ from .contracts.proof_anchor_drift import (
     subject_sha256,
     validate_proof_anchor_drift_eligibility,
 )
+from .contracts.proof_admission import REASON_TO_RANK, STATE_PRECEDENCE
 from .db import SQLITE_BUSY_TIMEOUT_MS
 from .errors import EXIT_USAGE, PclError
 from .locks import ExistingSharedProjectLock, ExistingSharedProjectLockError
@@ -362,9 +363,7 @@ def _evaluate_resolution(
         mapped = _map_live_domain_error(exc)
         if mapped is not None:
             raise _error(mapped, "live") from None
-        stored_basis = head.members["basis"]
-        live = _live_observation(stored_basis)
-        live["reconstruction_status"] = "mismatched"
+        live = _acquired_policy_observation(policy)
         return _receipt(
             **base,
             status="withheld",
@@ -385,6 +384,10 @@ def _evaluate_resolution(
         "proof_current_target_invalid",
     }:
         raise _error("drift_internal_error", "live")
+    redacted, changed = redact_value(live_document)
+    del redacted
+    if changed:
+        raise _error("drift_live_domain_error", "live")
     soft = _soft_live_reconstruction(live_document)
     if soft is not None:
         reconstruction_status, reason, live = soft
@@ -400,16 +403,25 @@ def _evaluate_resolution(
             authorization_status=_stored_authorization_status(head),
             handoff=_stored_handoff(head),
         )
-    if not validate_proof_admission_anchor_basis(live_document).ok:
-        raise _error("drift_live_domain_error", "live")
-    redacted, changed = redact_value(live_document)
-    del redacted
-    if changed:
-        raise _error("drift_live_domain_error", "live")
-
     stored_basis = head.members["basis"]
     live = _live_observation(live_document)
     reasons = _live_reasons(stored_basis, live_document)
+    if reasons:
+        live["reconstruction_status"] = "mismatched"
+        return _receipt(
+            **base,
+            status="withheld",
+            reasons=reasons,
+            selected=head,
+            chain_head=True,
+            stored=stored,
+            live=live,
+            authorization_status=_stored_authorization_status(head),
+            handoff=_stored_handoff(head),
+        )
+    if not validate_proof_admission_anchor_basis(live_document).ok:
+        raise _error("drift_live_domain_error", "live")
+
     exact = canonical_proof_anchor_bytes(stored_basis) == canonical_proof_anchor_bytes(live_document)
     if exact and not reasons:
         live["reconstruction_status"] = "matched"
@@ -538,6 +550,16 @@ def _soft_live_reconstruction(
         return None
     reasons = set(raw_reasons)
     live = _live_observation(basis)
+    highest_rank = next(
+        (
+            rank
+            for rank in STATE_PRECEDENCE
+            if any(REASON_TO_RANK.get(reason) == rank for reason in reasons)
+        ),
+        None,
+    )
+    if highest_rank != "indeterminate":
+        return None
     unavailable = {
         "authority_current_indeterminate",
         "current_proof_indeterminate",
@@ -547,9 +569,19 @@ def _soft_live_reconstruction(
         if "authority_current_indeterminate" in reasons:
             live["authority_surface_resolution_sha256"] = None
         return "unavailable", "live_chain_unavailable", live
-    if "candidate_blob_resolution_indeterminate" in reasons:
+    if reasons & {
+        "candidate_blob_resolution_indeterminate",
+        "participant_aggregate_indeterminate",
+    }:
         return "indeterminate", "live_reconstruction_indeterminate", live
     return None
+
+
+def _acquired_policy_observation(policy: TrustedCoveragePolicy) -> dict[str, Any]:
+    live = _empty_live("indeterminate")
+    live["policy_sha256"] = policy.document["policy_sha256"]
+    live["coverage_group_sha256"] = policy.document["coverage_group_sha256"]
+    return live
 
 
 def _live_observation(basis: Mapping[str, Any]) -> dict[str, Any]:

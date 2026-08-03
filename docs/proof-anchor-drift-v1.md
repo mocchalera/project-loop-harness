@@ -95,12 +95,18 @@ phase from `preflight`, `lock`, `snapshot`, `authority`, `live`, `receipt`, or
 inode/device values, retained roots, and leases are never returned.
 
 Live reconstruction observes the C4 admission before applying C5's anchoring
-eligibility guard. A determinate `coverage_live_identity_mismatch` is therefore
-returned as `withheld` / `mismatched` / `live_execution_binding_changed`.
+eligibility guard. A determinate `coverage_live_identity_mismatch` aborts the
+full basis reconstruction, so it is returned as `withheld` / `indeterminate` /
+`live_execution_binding_changed`. Only the acquired live policy and coverage
+group digests are reported; unacquired digests remain null and stored digests
+are never substituted as live observations.
 Current-proof or authority-provider indeterminacy is returned as `withheld` /
 `unavailable` / `live_chain_unavailable`; Git or object-tool currentness
 indeterminacy is returned as `withheld` / `indeterminate` /
-`live_reconstruction_indeterminate`. This ordering prevents those three soft
+`live_reconstruction_indeterminate`. C4 state precedence is applied before
+these soft classifications, so an invalid reason outranks a concurrent
+indeterminate reason; participant aggregate indeterminacy is classified as
+live reconstruction indeterminacy. This ordering prevents those soft
 observations from being collapsed into the generic receiptless
 `proof_anchor_admission_withheld` mapping. Snapshot-required and other internal
 invariant failures remain receiptless, sanitized hard errors.
