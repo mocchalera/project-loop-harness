@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "proof-reuse-candidate-result/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract_version", "ok", "status", "status_rank", "changed", "idempotent", "mutation_committed", "safe_to_retry_original", "candidate_id", "candidate", "reason_codes", "projection", "outbox_delivery", "health", "effects", "result_sha256"],
+  "properties": {
+    "contract_version": {"const": "proof-reuse-candidate-result/v1"},
+    "ok": {"type": "boolean"},
+    "status": {"enum": ["recordable", "withheld", "unavailable", "invalid"]},
+    "status_rank": {"type": "integer", "minimum": 0, "maximum": 3},
+    "changed": {"type": "boolean"},
+    "idempotent": {"type": "boolean"},
+    "mutation_committed": {"type": "boolean"},
+    "safe_to_retry_original": {"type": "boolean"},
+    "candidate_id": {"oneOf": [{"type": "string", "pattern": "^PRC-[0-9A-F]{64}$"}, {"type": "null"}]},
+    "candidate": {"oneOf": [{"$ref": "proof-reuse-candidate/v1"}, {"type": "null"}]},
+    "reason_codes": {"type": "array", "maxItems": 18, "uniqueItems": true, "items": {"enum": ["source_anchor_authority_corrupt", "source_anchor_exhaustion_pending", "source_anchor_exhaustion_tombstoned", "source_anchor_not_current", "source_anchor_not_found", "source_anchor_parallel_chain", "source_anchor_recovery_required", "source_anchor_unhealthy", "source_authorization_invalid", "source_current_proof_changed", "source_live_basis_changed", "source_reuse_forbidden", "source_role_coverage_incomplete", "source_verdict_not_passed", "source_output_uncommitted", "source_effect_not_read_only", "source_declared_outputs_present", "source_private_identity"]}},
+    "projection": {"$ref": "#/$defs/projection"},
+    "outbox_delivery": {"enum": ["not_applicable", "pending", "delivered", "failed_needs_review"]},
+    "health": {"$ref": "#/$defs/health"},
+    "effects": {"oneOf": [{"$ref": "#/$defs/effects_success"}, {"$ref": "#/$defs/effects_zero"}]},
+    "result_sha256": {"$ref": "#/$defs/sha256"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "projection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "evidence_id", "event_id", "event_sequence", "outbox_id", "artifact_id"],
+      "properties": {
+        "status": {"enum": ["none", "committed", "replayed"]},
+        "evidence_id": {"oneOf": [{"type": "string", "pattern": "^E-[0-9A-Z]+$"}, {"type": "null"}]},
+        "event_id": {"oneOf": [{"type": "string", "pattern": "^EV-[0-9A-F]{64}$"}, {"type": "null"}]},
+        "event_sequence": {"oneOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]},
+        "outbox_id": {"oneOf": [{"type": "string", "pattern": "^OB-[0-9A-F]{64}$"}, {"type": "null"}]},
+        "artifact_id": {"oneOf": [{"type": "string", "pattern": "^PRC-[0-9A-F]{64}$"}, {"type": "null"}]}
+      }
+    },
+    "health": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_anchor", "candidate_artifact", "postcommit_checked"],
+      "properties": {
+        "source_anchor": {"enum": ["invalid", "unavailable", "recovery_required", "unhealthy", "healthy"]},
+        "candidate_artifact": {"enum": ["not_applicable", "healthy", "postcommit_unhealthy"]},
+        "postcommit_checked": {"type": "boolean"}
+      }
+    },
+    "effects_success": {"const": {"schema_version": 8, "migrations_applied": 0, "dependencies_added": 0, "evidence_rows_inserted": 1, "evidence_links_inserted": 1, "events_appended": 1, "outbox_records_appended": 1, "directories_published": 1, "rows_updated": 0, "rows_deleted": 0, "rendered": 0, "lifecycle_transitions": 0, "network_requests": 0}},
+    "effects_zero": {"const": {"schema_version": 8, "migrations_applied": 0, "dependencies_added": 0, "evidence_rows_inserted": 0, "evidence_links_inserted": 0, "events_appended": 0, "outbox_records_appended": 0, "directories_published": 0, "rows_updated": 0, "rows_deleted": 0, "rendered": 0, "lifecycle_transitions": 0, "network_requests": 0}}
+  }
+}
