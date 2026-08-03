@@ -48,8 +48,10 @@ from .proof_anchor import (
 )
 from .proof_execution import AuthorityInputSnapshot
 from .proof_reuse_candidate_store import (
+    CANDIDATE_FILE_NAME,
     PublishedProofReuseCandidate,
     assess_proof_reuse_candidate_artifact,
+    candidate_directory,
     platform_supported,
     publish_proof_reuse_candidate,
     remove_published_proof_reuse_candidate,
@@ -200,6 +202,7 @@ def select_current_proof_reuse_candidate(
                 expected_identity["target"]["id"],
             ),
         ).fetchall()
+        ledger_hwm = _event_hwm(conn)
         candidates: dict[str, tuple[int, Mapping[str, Any]]] = {}
         for row in rows:
             try:
@@ -221,6 +224,12 @@ def select_current_proof_reuse_candidate(
             observation_sequence = candidate["observation"][
                 "observed_through_event_sequence"
             ]
+            if (
+                observation_sequence > ledger_hwm
+                or candidate["observation"]["observed_through_event_id"]
+                != _event_at_sequence(conn, observation_sequence)
+            ):
+                continue
             candidates[candidate_id] = (observation_sequence, candidate)
         if not candidates:
             return ProofReuseCandidateInventorySelection(
@@ -383,17 +392,45 @@ def _record(
                 content=candidate_bytes,
             )
         except FileExistsError:
-            raise _error(
-                "reuse_candidate_idempotency_conflict",
-                "publication",
-                EXIT_DATA_ERROR,
-            ) from None
+            try:
+                assessment = assess_proof_reuse_candidate_artifact(
+                    paths,
+                    candidate_id=candidate_id,
+                    expected_sha256=artifact_file_sha256,
+                    expected_size_bytes=len(candidate_bytes),
+                )
+                existing_bytes = (
+                    None
+                    if assessment.candidate is None
+                    else canonical_proof_reuse_candidate_bytes(assessment.candidate)
+                )
+            except (OSError, TypeError, ValueError):
+                assessment = None
+                existing_bytes = None
+            if (
+                assessment is None
+                or not assessment.healthy
+                or existing_bytes != candidate_bytes
+            ):
+                raise _error(
+                    "reuse_candidate_idempotency_conflict",
+                    "publication",
+                    EXIT_DATA_ERROR,
+                ) from None
+            relative_candidate_path = (
+                candidate_directory(paths, candidate_id)
+                .relative_to(paths.root)
+                .joinpath(CANDIDATE_FILE_NAME)
+                .as_posix()
+            )
         except (OSError, TypeError, ValueError):
             raise _error(
                 "reuse_candidate_store_invalid",
                 "publication",
                 EXIT_DATA_ERROR,
             ) from None
+        else:
+            relative_candidate_path = publication.relative_candidate_path
 
         evidence_id = next_prefixed_id(conn, "evidence", "E")
         event_id = _candidate_event_id(candidate_id)
@@ -417,7 +454,7 @@ def _record(
             (
                 evidence_id,
                 PROOF_REUSE_CANDIDATE_EVIDENCE_TYPE,
-                publication.relative_candidate_path,
+                relative_candidate_path,
                 json.dumps(summary, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
                 now,
             ),

@@ -805,6 +805,39 @@ def test_current_candidate_inventory_reports_equal_hwm_identity_ambiguity(
         assert _counts(live["paths"]) == before
 
 
+@pytest.mark.parametrize("attack", ["future_sequence", "event_id_mismatch"])
+def test_current_candidate_inventory_authenticates_observation_against_ledger(
+    tmp_path: Path,
+    attack: str,
+) -> None:
+    with _authentic_c1_c5(tmp_path) as live:
+        first = _record(live)
+        forged = deepcopy(first["candidate"])
+        forged["roles"][0]["final_authority_checkpoint_sha256"] = (
+            "sha256:" + "9" * 64
+        )
+        if attack == "future_sequence":
+            forged["observation"]["observed_through_event_sequence"] += 10_000
+        else:
+            forged["observation"]["observed_through_event_id"] = (
+                "EV-" + "A" * 64
+            )
+        forged = finalize_proof_reuse_candidate(forged)
+        assert forged["candidate_id"] != first["candidate_id"]
+        _forge_coherent_candidate_quartet(live, forged)
+
+        before = _counts(live["paths"])
+        selected = candidate_runtime.select_current_proof_reuse_candidate(
+            live["paths"],
+            anchor_event_id=live["anchor"]["event_id"],
+        )
+        assert selected.status == "selected"
+        assert selected.reason == "selected"
+        assert selected.current_anchor_event_id == live["anchor"]["event_id"]
+        assert selected.candidate == first["candidate"]
+        assert _counts(live["paths"]) == before
+
+
 def test_current_candidate_inventory_rejects_coherent_anchor_sequence_substitution(
     tmp_path: Path,
 ) -> None:
@@ -1067,12 +1100,75 @@ def test_crash_boundaries_preserve_one_quartet_or_zero(
             "events": 1 if committed else 0,
             "outbox": 1 if committed else 0,
         }
-        if committed:
+        recoverable_publication = fault_point in {
+            "proof_reuse_candidate_after_publish",
+            "proof_reuse_candidate_after_publish_before_database",
+        }
+        if recoverable_publication:
+            recovered = _record(live)
+            assert recovered["changed"] is True
+            assert recovered["idempotent"] is False
+            assert recovered["mutation_committed"] is True
+            assert recovered["projection"]["status"] == "committed"
+            assert recovered["outbox_delivery"] == "delivered"
+            assert _counts(live["paths"]) == {
+                "evidence": 1,
+                "links": 1,
+                "events": 1,
+                "outbox": 1,
+            }
+            replay = _record(live)
+            assert replay["projection"]["status"] == "replayed"
+            assert replay["effects"]["events_appended"] == 0
+            assert _counts(live["paths"])["events"] == 1
+        elif committed:
             replay = _record(live)
             assert replay["projection"]["status"] == "replayed"
             assert replay["outbox_delivery"] == "delivered"
             assert replay["effects"]["events_appended"] == 0
             assert _counts(live["paths"])["events"] == 1
+
+
+def test_orphan_publication_adoption_rejects_corrupt_artifact(tmp_path: Path) -> None:
+    if not hasattr(os, "fork"):
+        pytest.skip("C7 crash fixture requires POSIX fork")
+    with _authentic_c1_c5(tmp_path) as live:
+        pid = os.fork()
+        if pid == 0:  # pragma: no cover - child is intentionally killed
+            os.environ["PCL_ENABLE_TEST_FAULTS"] = "1"
+            os.environ["PCL_TEST_FAULT_POINT"] = (
+                "proof_reuse_candidate_after_publish"
+            )
+            os.environ["PCL_TEST_FAULT_OCCURRENCE"] = "1"
+            _record(live)
+            os._exit(0)
+        _waited, status = os.waitpid(pid, 0)
+        assert status != 0
+        assert _counts(live["paths"]) == {
+            "evidence": 0,
+            "links": 0,
+            "events": 0,
+            "outbox": 0,
+        }
+
+        storage = live["paths"].evidence_dir / candidate_store.CANDIDATE_STORAGE_NAME
+        orphan_directories = tuple(storage.iterdir())
+        assert len(orphan_directories) == 1
+        candidate_path = orphan_directories[0] / candidate_store.CANDIDATE_FILE_NAME
+        corrupt = b"X" + candidate_path.read_bytes()[1:]
+        candidate_path.write_bytes(corrupt)
+
+        with pytest.raises(ProofReuseCandidateError) as conflict:
+            _record(live)
+        assert conflict.value.code == "reuse_candidate_idempotency_conflict"
+        assert conflict.value.details == {"phase": "publication"}
+        assert candidate_path.read_bytes() == corrupt
+        assert _counts(live["paths"]) == {
+            "evidence": 0,
+            "links": 0,
+            "events": 0,
+            "outbox": 0,
+        }
 
 
 @pytest.mark.parametrize(
