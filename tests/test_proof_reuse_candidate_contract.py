@@ -277,6 +277,32 @@ def test_result_schema_rejects_adversarial_profile_mutations() -> None:
         assert list(validator.iter_errors(mutant))
 
 
+def test_identifier_schemas_and_python_validation_close_character_and_byte_caps() -> None:
+    candidate_schema = proof_reuse_candidate_schema()
+    result_schema = proof_reuse_candidate_result_schema()
+    assert candidate_schema["$defs"]["sha256"]["maxLength"] == 71
+    assert candidate_schema["$defs"]["candidate_id"]["maxLength"] == 68
+    assert candidate_schema["$defs"]["event_id"]["maxLength"] == 67
+    assert candidate_schema["$defs"]["public_id"]["maxLength"] == 4096
+    assert result_schema["$defs"]["sha256"]["maxLength"] == 71
+    assert result_schema["$defs"]["candidate_id"]["maxLength"] == 68
+    assert result_schema["$defs"]["evidence_id"]["maxLength"] == 4096
+    assert result_schema["$defs"]["event_id"]["maxLength"] == 67
+    assert result_schema["$defs"]["outbox_id"]["maxLength"] == 67
+
+    oversized_candidate = _candidate()
+    oversized_candidate["target"]["id"] = "T" * 4097
+    oversized_candidate = finalize_proof_reuse_candidate(oversized_candidate)
+    assert list(Draft202012Validator(candidate_schema).iter_errors(oversized_candidate))
+    assert not validate_proof_reuse_candidate(oversized_candidate).ok
+
+    oversized_result = _result("replay")
+    oversized_result["projection"]["evidence_id"] = "E-" + "A" * 4095
+    oversized_result = finalize_proof_reuse_candidate_result(oversized_result)
+    assert list(_result_schema_validator().iter_errors(oversized_result))
+    assert not validate_proof_reuse_candidate_result(oversized_result).ok
+
+
 def test_hwm_is_excluded_from_identity_but_first_writer_body_remains_bound() -> None:
     first = _candidate()
     later = deepcopy(first)

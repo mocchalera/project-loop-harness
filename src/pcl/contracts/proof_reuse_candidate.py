@@ -261,7 +261,7 @@ def validate_proof_reuse_candidate(value: Any) -> ProofReuseCandidateValidationR
         errors.append("handoff must be the C7 const object")
     if value.get("effects") != REUSE_CANDIDATE_EFFECTS_SUCCESS:
         errors.append("effects must be the C7 success const object")
-    if not _CANDIDATE_ID.fullmatch(str(value.get("candidate_id") or "")):
+    if not _identifier(value.get("candidate_id"), _CANDIDATE_ID):
         errors.append("candidate_id is invalid")
     else:
         try:
@@ -340,7 +340,7 @@ def validate_proof_reuse_candidate_result(value: Any) -> ProofReuseCandidateVali
         validation = validate_proof_reuse_candidate(candidate_value)
         if not validation.ok:
             errors.append("candidate is invalid")
-        if not _CANDIDATE_ID.fullmatch(str(candidate_id_value or "")):
+        if not _identifier(candidate_id_value, _CANDIDATE_ID):
             errors.append("candidate_id is invalid")
         elif candidate_value.get("candidate_id") != candidate_id_value:
             errors.append("candidate_id does not match candidate")
@@ -404,7 +404,7 @@ def _validate_source(value: Any, errors: list[str]) -> None:
         errors.append("source must be an object")
         return
     _exact(value, fields, "source", errors)
-    if not _EVENT_ID.fullmatch(str(value.get("anchor_event_id") or "")):
+    if not _identifier(value.get("anchor_event_id"), _EVENT_ID):
         errors.append("source.anchor_event_id is invalid")
     if type(value.get("anchor_event_sequence")) is not int or value["anchor_event_sequence"] < 1:
         errors.append("source.anchor_event_sequence is invalid")
@@ -430,7 +430,7 @@ def _validate_observation(value: Any, source: Any, errors: list[str]) -> None:
         errors.append("observation sequence is invalid")
     if not _public_id(value.get("observed_through_event_id")):
         errors.append("observation event id is invalid")
-    if not _EVENT_ID.fullmatch(str(value.get("observed_through_anchor_event_id") or "")):
+    if not _identifier(value.get("observed_through_anchor_event_id"), _EVENT_ID):
         errors.append("observation anchor id is invalid")
     if isinstance(source, Mapping):
         if type(sequence) is int and sequence < int(source.get("anchor_event_sequence") or 0):
@@ -459,7 +459,7 @@ def _validate_git_candidate(value: Any, errors: list[str]) -> None:
         errors.append("candidate object_format is invalid")
     for name in ("commit_oid", "tree_oid"):
         item = value.get(name)
-        if not isinstance(item, str) or len(item) != width or not _OID.fullmatch(item):
+        if not isinstance(item, str) or len(item) != width or not _identifier(item, _OID):
             errors.append(f"candidate {name} is invalid")
 
 
@@ -568,7 +568,7 @@ def _validate_projection(value: Any, errors: list[str]) -> None:
             errors.append("none projection identifiers must be null")
         return
     for name, pattern in identifiers.items():
-        if not pattern.fullmatch(str(value.get(name) or "")):
+        if not _identifier(value.get(name), pattern):
             errors.append(f"projection {name} is invalid")
     if type(value.get("event_sequence")) is not int or value["event_sequence"] < 1:
         errors.append("projection event_sequence is invalid")
@@ -688,11 +688,21 @@ def _exact(value: Mapping[str, Any], expected: set[str], path: str, errors: list
 
 
 def _public_id(value: Any) -> bool:
-    return isinstance(value, str) and len(value.encode("utf-8")) <= MAX_PUBLIC_ID_BYTES and bool(_PUBLIC_ID.fullmatch(value))
+    return _identifier(value, _PUBLIC_ID)
 
 
 def _is_sha(value: Any) -> bool:
-    return isinstance(value, str) and bool(_SHA.fullmatch(value))
+    return _identifier(value, _SHA)
+
+
+def _identifier(value: Any, pattern: re.Pattern[str]) -> bool:
+    if not isinstance(value, str):
+        return False
+    try:
+        size = len(value.encode("utf-8"))
+    except UnicodeEncodeError:
+        return False
+    return 1 <= size <= MAX_PUBLIC_ID_BYTES and pattern.fullmatch(value) is not None
 
 
 def _without(value: Mapping[str, Any], field: str) -> dict[str, Any]:

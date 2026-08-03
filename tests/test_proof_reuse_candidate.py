@@ -319,6 +319,170 @@ def _forge_coherent_candidate_quartet(
         conn.close()
 
 
+def _rewrite_committed_candidate_quartet(
+    live: dict[str, Any],
+    result: dict[str, Any],
+    candidate: dict[str, Any],
+) -> None:
+    candidate_id = result["candidate_id"]
+    assert candidate["candidate_id"] == candidate_id
+    content = canonical_proof_reuse_candidate_bytes(candidate)
+    artifact_file_sha256 = "sha256:" + hashlib.sha256(content).hexdigest()
+    candidate_path = candidate_directory(live["paths"], candidate_id) / "candidate.json"
+    candidate_path.write_bytes(content)
+
+    evidence_id = result["projection"]["evidence_id"]
+    event_id = result["projection"]["event_id"]
+    summary = {
+        "contract_version": (
+            candidate_runtime.PROOF_REUSE_CANDIDATE_EVIDENCE_SUMMARY_VERSION
+        ),
+        "candidate_id": candidate_id,
+        "candidate_sha256": candidate["candidate_sha256"],
+        "artifact_file_sha256": artifact_file_sha256,
+        "artifact_size_bytes": len(content),
+        "source_anchor_event_id": candidate["source"]["anchor_event_id"],
+        "target": deepcopy(candidate["target"]),
+    }
+    conn = connect(live["paths"].db_path)
+    try:
+        event = conn.execute(
+            "SELECT payload_json FROM events WHERE id = ?",
+            (event_id,),
+        ).fetchone()
+        assert event is not None
+        payload = json.loads(str(event["payload_json"]))
+        payload.update(
+            {
+                "candidate_sha256": candidate["candidate_sha256"],
+                "artifact_file_sha256": artifact_file_sha256,
+                "artifact_size_bytes": len(content),
+                "source_anchor_event_id": candidate["source"]["anchor_event_id"],
+            }
+        )
+        conn.execute(
+            "UPDATE evidence SET summary = ? WHERE id = ?",
+            (
+                json.dumps(
+                    summary,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                evidence_id,
+            ),
+        )
+        conn.execute(
+            """
+            UPDATE evidence_links
+            SET target_type = ?, target_id = ?
+            WHERE evidence_id = ?
+            """,
+            (candidate["target"]["type"], candidate["target"]["id"], evidence_id),
+        )
+        conn.execute(
+            """
+            UPDATE events
+            SET entity_type = ?, entity_id = ?, payload_json = ?
+            WHERE id = ?
+            """,
+            (
+                candidate["target"]["type"],
+                candidate["target"]["id"],
+                json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                event_id,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _rewrite_committed_evidence_id(
+    live: dict[str, Any],
+    result: dict[str, Any],
+    evidence_id: str,
+) -> None:
+    previous_id = result["projection"]["evidence_id"]
+    event_id = result["projection"]["event_id"]
+    conn = connect(live["paths"].db_path)
+    try:
+        previous = conn.execute(
+            """
+            SELECT type, path, command, summary, created_at
+            FROM evidence WHERE id = ?
+            """,
+            (previous_id,),
+        ).fetchone()
+        link = conn.execute(
+            """
+            SELECT target_type, target_id, link_role, created_at
+            FROM evidence_links WHERE evidence_id = ?
+            """,
+            (previous_id,),
+        ).fetchone()
+        event = conn.execute(
+            "SELECT payload_json FROM events WHERE id = ?",
+            (event_id,),
+        ).fetchone()
+        assert previous is not None and link is not None and event is not None
+        conn.execute(
+            """
+            INSERT INTO evidence(id, type, path, command, summary, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                evidence_id,
+                previous["type"],
+                previous["path"],
+                previous["command"],
+                previous["summary"],
+                previous["created_at"],
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO evidence_links(
+                evidence_id, target_type, target_id, link_role, created_at
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                evidence_id,
+                link["target_type"],
+                link["target_id"],
+                link["link_role"],
+                link["created_at"],
+            ),
+        )
+        payload = json.loads(str(event["payload_json"]))
+        payload["evidence_id"] = evidence_id
+        conn.execute(
+            "UPDATE events SET payload_json = ? WHERE id = ?",
+            (
+                json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ),
+                event_id,
+            ),
+        )
+        conn.execute(
+            "DELETE FROM evidence_links WHERE evidence_id = ?",
+            (previous_id,),
+        )
+        conn.execute("DELETE FROM evidence WHERE id = ?", (previous_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def test_authentic_c1_c5_source_can_record_one_c7_candidate(tmp_path: Path) -> None:
     with _authentic_c1_c5(tmp_path) as live:
         result = _record(live)
@@ -404,6 +568,25 @@ def test_replay_rejects_coherently_forged_event_and_link_target(
             conn.commit()
         finally:
             conn.close()
+        before = _counts(live["paths"])
+        with pytest.raises(ProofReuseCandidateError) as conflict:
+            _record(live)
+        assert conflict.value.code == "reuse_candidate_idempotency_conflict"
+        assert conflict.value.details == {"phase": "replay"}
+        assert _counts(live["paths"]) == before
+
+
+def test_replay_rejects_coherent_full_target_substitution_against_live_basis(
+    tmp_path: Path,
+) -> None:
+    with _authentic_c1_c5(tmp_path) as live:
+        first = _record(live)
+        forged = deepcopy(first["candidate"])
+        forged["target"] = {"type": "task", "id": "T-FORGED"}
+        forged = finalize_proof_reuse_candidate(forged)
+        assert forged["candidate_id"] == first["candidate_id"]
+        _rewrite_committed_candidate_quartet(live, first, forged)
+
         before = _counts(live["paths"])
         with pytest.raises(ProofReuseCandidateError) as conflict:
             _record(live)
@@ -499,6 +682,30 @@ def test_current_candidate_inventory_reports_equal_hwm_identity_ambiguity(
         assert _counts(live["paths"]) == before
 
 
+def test_current_candidate_inventory_rejects_coherent_anchor_sequence_substitution(
+    tmp_path: Path,
+) -> None:
+    with _authentic_c1_c5(tmp_path) as live:
+        first = _record(live)
+        assert first["candidate"]["source"]["anchor_event_sequence"] == 11
+        forged = deepcopy(first["candidate"])
+        forged["source"]["anchor_event_sequence"] = 1
+        forged = finalize_proof_reuse_candidate(forged)
+        assert forged["candidate_id"] == first["candidate_id"]
+        _rewrite_committed_candidate_quartet(live, first, forged)
+
+        before = _counts(live["paths"])
+        selection = candidate_runtime.select_current_proof_reuse_candidate(
+            live["paths"],
+            anchor_event_id=live["anchor"]["event_id"],
+        )
+        assert selection.status == "none"
+        assert selection.reason == "current_candidate_not_found"
+        assert selection.current_anchor_event_id == live["anchor"]["event_id"]
+        assert selection.candidate is None
+        assert _counts(live["paths"]) == before
+
+
 def test_assertion_failure_and_unhealthy_c5_have_zero_c7_effect(tmp_path: Path) -> None:
     with _authentic_c1_c5(tmp_path) as live:
         before = _counts(live["paths"])
@@ -512,6 +719,23 @@ def test_assertion_failure_and_unhealthy_c5_have_zero_c7_effect(tmp_path: Path) 
         unavailable = _record(live)
         assert unavailable["status"] == "withheld"
         assert unavailable["reason_codes"] == ["source_anchor_recovery_required"]
+        assert _counts(live["paths"]) == before
+
+
+def test_replay_rejects_4097_byte_stored_evidence_id_receiptlessly(
+    tmp_path: Path,
+) -> None:
+    with _authentic_c1_c5(tmp_path) as live:
+        first = _record(live)
+        oversized_evidence_id = "E-" + "A" * 4095
+        assert len(oversized_evidence_id.encode("utf-8")) == 4097
+        _rewrite_committed_evidence_id(live, first, oversized_evidence_id)
+
+        before = _counts(live["paths"])
+        with pytest.raises(ProofReuseCandidateError) as capacity:
+            _record(live)
+        assert capacity.value.code == "reuse_candidate_capacity_exceeded"
+        assert capacity.value.details == {"phase": "replay"}
         assert _counts(live["paths"]) == before
 
 

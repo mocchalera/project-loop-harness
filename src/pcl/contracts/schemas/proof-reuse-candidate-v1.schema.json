@@ -19,10 +19,10 @@
     "candidate_sha256": {"$ref": "#/$defs/sha256"}
   },
   "$defs": {
-    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-    "candidate_id": {"type": "string", "pattern": "^PRC-[0-9A-F]{64}$"},
-    "event_id": {"type": "string", "pattern": "^EV-[0-9A-F]{64}$"},
-    "public_id": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,4095}$"},
+    "sha256": {"type": "string", "minLength": 71, "maxLength": 71, "pattern": "^sha256:[0-9a-f]{64}$"},
+    "candidate_id": {"type": "string", "minLength": 68, "maxLength": 68, "pattern": "^PRC-[0-9A-F]{64}$"},
+    "event_id": {"type": "string", "minLength": 67, "maxLength": 67, "pattern": "^EV-[0-9A-F]{64}$"},
+    "public_id": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,4095}$"},
     "source": {
       "type": "object",
       "additionalProperties": false,
@@ -61,8 +61,8 @@
       "required": ["object_format", "commit_oid", "tree_oid"],
       "properties": {
         "object_format": {"enum": ["sha1", "sha256"]},
-        "commit_oid": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
-        "tree_oid": {"type": "string", "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"}
+        "commit_oid": {"type": "string", "minLength": 40, "maxLength": 64, "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"},
+        "tree_oid": {"type": "string", "minLength": 40, "maxLength": 64, "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"}
       },
       "allOf": [
         {
@@ -82,8 +82,8 @@
             "required": ["object_format", "commit_oid", "tree_oid"],
             "properties": {
               "object_format": {},
-              "commit_oid": {"pattern": "^[0-9a-f]{40}$"},
-              "tree_oid": {"pattern": "^[0-9a-f]{40}$"}
+              "commit_oid": {"minLength": 40, "maxLength": 40, "pattern": "^[0-9a-f]{40}$"},
+              "tree_oid": {"minLength": 40, "maxLength": 40, "pattern": "^[0-9a-f]{40}$"}
             }
           }
         },
@@ -104,8 +104,8 @@
             "required": ["object_format", "commit_oid", "tree_oid"],
             "properties": {
               "object_format": {},
-              "commit_oid": {"pattern": "^[0-9a-f]{64}$"},
-              "tree_oid": {"pattern": "^[0-9a-f]{64}$"}
+              "commit_oid": {"minLength": 64, "maxLength": 64, "pattern": "^[0-9a-f]{64}$"},
+              "tree_oid": {"minLength": 64, "maxLength": 64, "pattern": "^[0-9a-f]{64}$"}
             }
           }
         }

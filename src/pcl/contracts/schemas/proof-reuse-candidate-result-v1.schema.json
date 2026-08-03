@@ -29,11 +29,11 @@
     {"$ref": "#/$defs/profile_postcommit_unhealthy"}
   ],
   "$defs": {
-    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
-    "candidate_id": {"type": "string", "pattern": "^PRC-[0-9A-F]{64}$"},
-    "evidence_id": {"type": "string", "pattern": "^E-[0-9A-Z]+$"},
-    "event_id": {"type": "string", "pattern": "^EV-[0-9A-F]{64}$"},
-    "outbox_id": {"type": "string", "pattern": "^OB-[0-9A-F]{64}$"},
+    "sha256": {"type": "string", "minLength": 71, "maxLength": 71, "pattern": "^sha256:[0-9a-f]{64}$"},
+    "candidate_id": {"type": "string", "minLength": 68, "maxLength": 68, "pattern": "^PRC-[0-9A-F]{64}$"},
+    "evidence_id": {"type": "string", "minLength": 3, "maxLength": 4096, "pattern": "^E-[0-9A-Z]+$"},
+    "event_id": {"type": "string", "minLength": 67, "maxLength": 67, "pattern": "^EV-[0-9A-F]{64}$"},
+    "outbox_id": {"type": "string", "minLength": 67, "maxLength": 67, "pattern": "^OB-[0-9A-F]{64}$"},
     "projection": {
       "type": "object",
       "additionalProperties": false,

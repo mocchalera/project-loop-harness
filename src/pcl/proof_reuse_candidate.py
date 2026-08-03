@@ -71,12 +71,20 @@ PROOF_REUSE_CANDIDATE_DATABASE_SCHEMA_VERSION = "8"
 _CANDIDATE_IDENTIFIER = re.compile(r"^PRC-[0-9A-F]{64}$")
 _EVENT_IDENTIFIER = re.compile(r"^EV-[0-9A-F]{64}$")
 _EVIDENCE_IDENTIFIER = re.compile(r"^E-[0-9A-Z]+$")
+_OUTBOX_IDENTIFIER = re.compile(r"^OB-[0-9A-F]{64}$")
 _PUBLIC_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
+_SHA_IDENTIFIER = re.compile(r"^sha256:[0-9a-f]{64}$")
 _OID = re.compile(r"^[0-9a-f]+$")
 
 
 class ProofReuseCandidateError(PclError):
     pass
+
+
+class _StoredIdentifierError(ValueError):
+    def __init__(self, code: str) -> None:
+        super().__init__("Stored C7 identifier is invalid.")
+        self.code = code
 
 
 @dataclass(frozen=True, slots=True)
@@ -172,14 +180,25 @@ def select_current_proof_reuse_candidate(
                 current_anchor_event_id=None,
                 candidate=None,
             )
+        expected_identity = _current_head_identity(resolution, head)
+        if expected_identity is None:
+            return ProofReuseCandidateInventorySelection(
+                status="none",
+                reason="current_anchor_unavailable",
+                current_anchor_event_id=None,
+                candidate=None,
+            )
         rows = conn.execute(
             """
-            SELECT id, payload_json
+            SELECT payload_json
             FROM events
             WHERE event_type = ? AND entity_type = 'task' AND entity_id = ?
             ORDER BY sequence, id
             """,
-            (PROOF_REUSE_CANDIDATE_EVENT_TYPE, resolution.target_id),
+            (
+                PROOF_REUSE_CANDIDATE_EVENT_TYPE,
+                expected_identity["target"]["id"],
+            ),
         ).fetchall()
         candidates: dict[str, tuple[int, Mapping[str, Any]]] = {}
         for row in rows:
@@ -194,16 +213,11 @@ def select_current_proof_reuse_candidate(
                 paths,
                 conn,
                 candidate_id=candidate_id,
+                expected_identity=expected_identity,
             )
             if committed is None or not committed["healthy"]:
                 continue
             candidate = committed["candidate"]
-            if (
-                candidate["source"]["anchor_event_id"] != head.event_id
-                or candidate["target"]
-                != {"type": "task", "id": resolution.target_id}
-            ):
-                continue
             observation_sequence = candidate["observation"][
                 "observed_through_event_sequence"
             ]
@@ -303,10 +317,21 @@ def _record(
             "candidate_sha256": "sha256:" + "0" * 64,
         }
         candidate_id = finalize_proof_reuse_candidate(provisional)["candidate_id"]
-        committed = _read_committed_candidate(paths, conn, candidate_id=candidate_id)
+        committed = _read_committed_candidate(
+            paths,
+            conn,
+            candidate_id=candidate_id,
+            expected_identity={**identity_input, "candidate_id": candidate_id},
+        )
         if committed is not None:
             conn.rollback()
             if not committed["healthy"]:
+                error_code = committed.get("error_code")
+                if error_code in {
+                    "reuse_candidate_capacity_exceeded",
+                    "reuse_candidate_contract_invalid",
+                }:
+                    raise _error(error_code, "replay", EXIT_DATA_ERROR)
                 raise _error(
                     "reuse_candidate_idempotency_conflict",
                     "replay",
@@ -871,12 +896,95 @@ def _candidate_identity_input(observed: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _current_head_identity(resolution: Any, head: Any) -> dict[str, Any] | None:
+    basis = head.members.get("basis")
+    if not isinstance(basis, Mapping):
+        return None
+    bindings = basis.get("bindings")
+    admission = basis.get("admission")
+    target = basis.get("target")
+    git_candidate = basis.get("candidate")
+    if not all(
+        isinstance(item, Mapping)
+        for item in (bindings, admission, target, git_candidate)
+    ):
+        return None
+    current_proof = admission.get("current_proof")
+    if not isinstance(current_proof, Mapping):
+        return None
+    try:
+        source = {
+            "anchor_event_id": head.event_id,
+            "anchor_event_sequence": head.sequence,
+            "anchor_generation": head.generation,
+            "anchor_sha256": head.payload["anchor_sha256"],
+            "manifest_file_sha256": head.payload["manifest_file_sha256"],
+            "basis_sha256": basis["basis_sha256"],
+            "policy_sha256": bindings["policy_sha256"],
+            "coverage_group_sha256": bindings["coverage_group_sha256"],
+            "admission_sha256": bindings["admission_sha256"],
+        }
+        expected = {
+            "contract_version": PROOF_REUSE_CANDIDATE_CONTRACT_VERSION,
+            "source": source,
+            "target": deepcopy(target),
+            "candidate": deepcopy(git_candidate),
+            "current_proof": {
+                "scope": current_proof["scope"],
+                "status": current_proof["status"],
+                "match_status": current_proof["match_status"],
+                "proof_sha256": current_proof["proof_sha256"],
+            },
+        }
+    except (KeyError, TypeError):
+        return None
+    if (
+        resolution.target_id != expected["target"].get("id")
+        or resolution.basis_sha256 != source["basis_sha256"]
+        or head.payload.get("basis_sha256") != source["basis_sha256"]
+        or set(expected["target"]) != {"type", "id"}
+        or expected["target"].get("type") != "task"
+        or not _public_identifier(expected["target"].get("id"))
+        or set(expected["candidate"]) != {"object_format", "commit_oid", "tree_oid"}
+        or not _git_candidate_assertion(expected["candidate"])
+        or set(expected["current_proof"])
+        != {"scope", "status", "match_status", "proof_sha256"}
+        or expected["current_proof"].get("scope") != "feature"
+        or expected["current_proof"].get("status") != "healthy"
+        or expected["current_proof"].get("match_status") != "matched"
+        or not _is_sha(expected["current_proof"].get("proof_sha256"))
+        or not _event_identifier(source["anchor_event_id"])
+        or type(source["anchor_event_sequence"]) is not int
+        or source["anchor_event_sequence"] < 1
+        or type(source["anchor_generation"]) is not int
+        or not 0 <= source["anchor_generation"] <= 3
+        or any(
+            not _is_sha(source[name])
+            for name in (
+                "anchor_sha256",
+                "manifest_file_sha256",
+                "basis_sha256",
+                "policy_sha256",
+                "coverage_group_sha256",
+                "admission_sha256",
+            )
+        )
+    ):
+        return None
+    return expected
+
+
 def _read_committed_candidate(
     paths: ProjectPaths,
     conn: sqlite3.Connection,
     *,
     candidate_id: str,
+    expected_identity: Mapping[str, Any] | None = None,
 ) -> dict[str, Any] | None:
+    try:
+        _require_stored_identifier(candidate_id, _CANDIDATE_IDENTIFIER)
+    except _StoredIdentifierError as exc:
+        return {"healthy": False, "error_code": exc.code}
     event_id = _candidate_event_id(candidate_id)
     row = conn.execute(
         """
@@ -888,6 +996,9 @@ def _read_committed_candidate(
     if row is None:
         return None
     try:
+        _require_stored_identifier(row["id"], _EVENT_IDENTIFIER)
+        _require_stored_identifier(row["entity_type"], _PUBLIC_IDENTIFIER)
+        _require_stored_identifier(row["entity_id"], _PUBLIC_IDENTIFIER)
         payload = json.loads(str(row["payload_json"]))
         _require_event_payload(payload)
         evidence = conn.execute(
@@ -911,6 +1022,21 @@ def _read_committed_candidate(
             (event_id,),
         ).fetchall()
         summary = None if evidence is None else json.loads(str(evidence["summary"]))
+        if evidence is not None:
+            _require_stored_identifier(evidence["id"], _EVIDENCE_IDENTIFIER)
+            _require_stored_identifier(evidence["type"], _PUBLIC_IDENTIFIER)
+        for link in links:
+            _require_stored_identifier(link["target_type"], _PUBLIC_IDENTIFIER)
+            _require_stored_identifier(link["target_id"], _PUBLIC_IDENTIFIER)
+            _require_stored_identifier(link["link_role"], _PUBLIC_IDENTIFIER)
+        for outbox in outboxes:
+            _require_stored_identifier(outbox["id"], _OUTBOX_IDENTIFIER)
+            _require_stored_identifier(outbox["event_id"], _EVENT_IDENTIFIER)
+            _require_stored_identifier(outbox["sink"], _PUBLIC_IDENTIFIER)
+            _require_stored_identifier(outbox["idempotency_key"], _PUBLIC_IDENTIFIER)
+        _require_evidence_summary_identifiers(summary)
+    except _StoredIdentifierError as exc:
+        return {"healthy": False, "error_code": exc.code}
     except (KeyError, TypeError, ValueError, json.JSONDecodeError, sqlite3.Error):
         return {"healthy": False}
     assessment = assess_proof_reuse_candidate_artifact(
@@ -922,6 +1048,12 @@ def _read_committed_candidate(
     if not assessment.healthy or assessment.candidate is None:
         return {"healthy": False}
     candidate = assessment.candidate
+    try:
+        _require_candidate_identifiers(candidate)
+    except _StoredIdentifierError as exc:
+        return {"healthy": False, "error_code": exc.code}
+    except (KeyError, TypeError, ValueError):
+        return {"healthy": False}
     target = candidate.get("target")
     source = candidate.get("source")
     if not isinstance(target, Mapping) or not isinstance(source, Mapping):
@@ -964,6 +1096,11 @@ def _read_committed_candidate(
         or outbox["event_id"] != event_id
         or outbox["sink"] != "jsonl"
         or outbox["idempotency_key"] != f"jsonl:{event_id}"
+    ):
+        return {"healthy": False}
+    if expected_identity is not None and not _matches_authenticated_identity(
+        candidate,
+        expected_identity,
     ):
         return {"healthy": False}
     return {
@@ -1009,15 +1146,131 @@ def _require_event_payload(payload: Mapping[str, Any]) -> None:
         not isinstance(payload, Mapping)
         or set(payload) != expected
         or payload.get("contract_version") != PROOF_REUSE_CANDIDATE_EVENT_CONTRACT_VERSION
-        or not _candidate_identifier(payload.get("candidate_id"))
-        or not _is_sha(payload.get("candidate_sha256"))
-        or not _is_sha(payload.get("artifact_file_sha256"))
         or type(payload.get("artifact_size_bytes")) is not int
         or not 1 <= payload["artifact_size_bytes"] <= 8 * 1024 * 1024
-        or not _event_identifier(payload.get("source_anchor_event_id"))
-        or not _evidence_identifier(payload.get("evidence_id"))
     ):
         raise ValueError("Invalid C7 event payload.")
+    _require_stored_identifier(payload.get("candidate_id"), _CANDIDATE_IDENTIFIER)
+    _require_stored_identifier(payload.get("candidate_sha256"), _SHA_IDENTIFIER)
+    _require_stored_identifier(payload.get("artifact_file_sha256"), _SHA_IDENTIFIER)
+    _require_stored_identifier(payload.get("source_anchor_event_id"), _EVENT_IDENTIFIER)
+    _require_stored_identifier(payload.get("evidence_id"), _EVIDENCE_IDENTIFIER)
+
+
+def _require_evidence_summary_identifiers(summary: Any) -> None:
+    expected = {
+        "contract_version",
+        "candidate_id",
+        "candidate_sha256",
+        "artifact_file_sha256",
+        "artifact_size_bytes",
+        "source_anchor_event_id",
+        "target",
+    }
+    if (
+        not isinstance(summary, Mapping)
+        or set(summary) != expected
+        or summary.get("contract_version")
+        != PROOF_REUSE_CANDIDATE_EVIDENCE_SUMMARY_VERSION
+        or type(summary.get("artifact_size_bytes")) is not int
+        or not 1 <= summary["artifact_size_bytes"] <= 8 * 1024 * 1024
+    ):
+        raise ValueError("Invalid C7 Evidence summary.")
+    target = summary.get("target")
+    if not isinstance(target, Mapping) or set(target) != {"type", "id"}:
+        raise ValueError("Invalid C7 Evidence target.")
+    _require_stored_identifier(summary.get("candidate_id"), _CANDIDATE_IDENTIFIER)
+    _require_stored_identifier(summary.get("candidate_sha256"), _SHA_IDENTIFIER)
+    _require_stored_identifier(summary.get("artifact_file_sha256"), _SHA_IDENTIFIER)
+    _require_stored_identifier(summary.get("source_anchor_event_id"), _EVENT_IDENTIFIER)
+    _require_stored_identifier(target.get("type"), _PUBLIC_IDENTIFIER)
+    _require_stored_identifier(target.get("id"), _PUBLIC_IDENTIFIER)
+
+
+def _require_candidate_identifiers(candidate: Mapping[str, Any]) -> None:
+    _require_stored_identifier(candidate.get("candidate_id"), _CANDIDATE_IDENTIFIER)
+    _require_stored_identifier(candidate.get("candidate_sha256"), _SHA_IDENTIFIER)
+    source = candidate.get("source")
+    observation = candidate.get("observation")
+    target = candidate.get("target")
+    git_candidate = candidate.get("candidate")
+    current_proof = candidate.get("current_proof")
+    roles = candidate.get("roles")
+    if not all(
+        isinstance(item, Mapping)
+        for item in (source, observation, target, git_candidate, current_proof)
+    ) or not isinstance(roles, list):
+        raise ValueError("Invalid C7 candidate identifiers.")
+    _require_stored_identifier(source.get("anchor_event_id"), _EVENT_IDENTIFIER)
+    for name in (
+        "anchor_sha256",
+        "manifest_file_sha256",
+        "basis_sha256",
+        "policy_sha256",
+        "coverage_group_sha256",
+        "admission_sha256",
+    ):
+        _require_stored_identifier(source.get(name), _SHA_IDENTIFIER)
+    _require_stored_identifier(
+        observation.get("observed_through_event_id"),
+        _PUBLIC_IDENTIFIER,
+    )
+    _require_stored_identifier(
+        observation.get("observed_through_anchor_event_id"),
+        _EVENT_IDENTIFIER,
+    )
+    _require_stored_identifier(target.get("type"), _PUBLIC_IDENTIFIER)
+    _require_stored_identifier(target.get("id"), _PUBLIC_IDENTIFIER)
+    _require_stored_identifier(git_candidate.get("object_format"), _PUBLIC_IDENTIFIER)
+    _require_stored_identifier(git_candidate.get("commit_oid"), _OID)
+    _require_stored_identifier(git_candidate.get("tree_oid"), _OID)
+    for name in ("scope", "status", "match_status"):
+        _require_stored_identifier(current_proof.get(name), _PUBLIC_IDENTIFIER)
+    _require_stored_identifier(current_proof.get("proof_sha256"), _SHA_IDENTIFIER)
+    role_sha_fields = {
+        "requirement_sha256",
+        "participant_sha256",
+        "plan_sha256",
+        "tool_identity_sha256",
+        "public_execution_sha256",
+        "spawn_vector_sha256",
+        "external_input_binding_sha256",
+        "execution_binding_sha256",
+        "packet_sha256",
+        "final_authority_checkpoint_sha256",
+        "result_sha256",
+        "receipt_sha256",
+        "aggregate_sha256",
+        "bundle_sha256",
+    }
+    for role in roles:
+        if not isinstance(role, Mapping):
+            raise ValueError("Invalid C7 role identifiers.")
+        for name in ("role", "kind", "check_id"):
+            _require_stored_identifier(role.get(name), _PUBLIC_IDENTIFIER)
+        if role.get("canary_id") is not None:
+            _require_stored_identifier(role.get("canary_id"), _PUBLIC_IDENTIFIER)
+        for name in role_sha_fields:
+            _require_stored_identifier(role.get(name), _SHA_IDENTIFIER)
+
+
+def _matches_authenticated_identity(
+    candidate: Mapping[str, Any],
+    expected: Mapping[str, Any],
+) -> bool:
+    identity_fields = {
+        "contract_version",
+        "candidate_id",
+        "source",
+        "target",
+        "candidate",
+        "current_proof",
+        "roles",
+    }
+    return set(expected).issubset(identity_fields) and all(
+        candidate.get(name) == value
+        for name, value in expected.items()
+    )
 
 
 def _nonrecordable_result(*, reasons: Sequence[str], source_health: str) -> Mapping[str, Any]:
@@ -1277,25 +1530,39 @@ def _contains_private_identity(value: Mapping[str, Any]) -> bool:
 
 
 def _public_identifier(value: Any) -> bool:
-    size = _utf8_size(value)
-    return bool(
-        isinstance(value, str)
-        and size is not None
-        and 1 <= size <= MAX_PUBLIC_ID_BYTES
-        and _PUBLIC_IDENTIFIER.fullmatch(value)
-    )
+    return _identifier_issue(value, _PUBLIC_IDENTIFIER) is None
 
 
 def _candidate_identifier(value: Any) -> bool:
-    return isinstance(value, str) and bool(_CANDIDATE_IDENTIFIER.fullmatch(value))
+    return _identifier_issue(value, _CANDIDATE_IDENTIFIER) is None
 
 
 def _event_identifier(value: Any) -> bool:
-    return isinstance(value, str) and bool(_EVENT_IDENTIFIER.fullmatch(value))
+    return _identifier_issue(value, _EVENT_IDENTIFIER) is None
 
 
 def _evidence_identifier(value: Any) -> bool:
-    return isinstance(value, str) and bool(_EVIDENCE_IDENTIFIER.fullmatch(value))
+    return _identifier_issue(value, _EVIDENCE_IDENTIFIER) is None
+
+
+def _identifier_issue(value: Any, pattern: re.Pattern[str]) -> str | None:
+    size = _utf8_size(value)
+    if size is not None and size > MAX_PUBLIC_ID_BYTES:
+        return "reuse_candidate_capacity_exceeded"
+    if (
+        not isinstance(value, str)
+        or size is None
+        or size < 1
+        or pattern.fullmatch(value) is None
+    ):
+        return "reuse_candidate_contract_invalid"
+    return None
+
+
+def _require_stored_identifier(value: Any, pattern: re.Pattern[str]) -> None:
+    issue = _identifier_issue(value, pattern)
+    if issue is not None:
+        raise _StoredIdentifierError(issue)
 
 
 def _git_candidate_assertion(value: Mapping[str, Any]) -> bool:
@@ -1322,12 +1589,7 @@ def _utf8_size(value: Any) -> int | None:
 
 
 def _is_sha(value: Any) -> bool:
-    return (
-        isinstance(value, str)
-        and len(value) == 71
-        and value.startswith("sha256:")
-        and all(character in "0123456789abcdef" for character in value[7:])
-    )
+    return _identifier_issue(value, _SHA_IDENTIFIER) is None
 
 
 def _json_copy(value: Mapping[str, Any]) -> dict[str, Any]:
