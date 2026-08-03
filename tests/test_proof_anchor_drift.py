@@ -13,6 +13,7 @@ import pytest
 
 import pcl.cli as cli
 import pcl.mcp_server as mcp_server
+import pcl.proof_admission as proof_admission
 import pcl.renderer as renderer
 import test_proof_admission as c4
 import test_proof_anchor as c5
@@ -36,6 +37,7 @@ from pcl.proof_anchor import (
     ProofAnchorError,
 )
 from pcl.proof_admission import ProofCoverageError
+from pcl.proof_execution import ProofExecutionError
 
 
 def _evaluate(paths: ProjectPaths, live: dict, anchor: dict, basis: dict, **overrides):
@@ -329,11 +331,210 @@ def test_sqlite_mapping_never_swallows_control_flow() -> None:
             ProofCoverageError("x", code="coverage_public_identifier_secret_shaped"),
             "drift_secret_shaped_identifier",
         ),
+        (
+            ProofCoverageError("x", code="coverage_live_identity_mismatch"),
+            None,
+        ),
         (ProofCoverageError("raw", code="future_domain_code"), "drift_live_domain_error"),
     ],
 )
 def test_live_domain_error_mapping_is_closed_and_sanitized(error, expected) -> None:
     assert _map_live_domain_error(error) == expected
+
+
+def _assert_soft_live_receipt(
+    receipt: dict,
+    *,
+    reconstruction_status: str,
+    reason: str,
+) -> None:
+    assert receipt["eligibility"] == {
+        "status": "withheld",
+        "predicate_kind": "drift_eligibility_only",
+        "matched": False,
+        "direct_input_right": False,
+        "check_skip_authorized": False,
+        "result_substitution_authorized": False,
+    }
+    assert receipt["reason_codes"] == [reason]
+    assert receipt["observation"]["live"]["reconstruction_status"] == reconstruction_status
+    assert receipt["effects"] == DRIFT_EFFECTS
+    assert validate_proof_anchor_drift_eligibility(receipt).ok
+
+
+def test_live_identity_mismatch_is_a_mismatched_withheld_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, context, live, basis, anchor = _anchored(tmp_path)
+    try:
+        before = c5._counts(paths)
+
+        def changed_identity(*args, **kwargs):
+            del args, kwargs
+            raise ProofCoverageError(
+                "sensitive identity detail",
+                code="coverage_live_identity_mismatch",
+            )
+
+        monkeypatch.setattr(proof_admission, "_source_snapshot", changed_identity)
+        receipt = _evaluate(paths, live, anchor, basis)
+        _assert_soft_live_receipt(
+            receipt,
+            reconstruction_status="mismatched",
+            reason="live_execution_binding_changed",
+        )
+        assert all(
+            receipt["observation"]["live"][field] is not None
+            for field in (
+                "basis_sha256",
+                "policy_sha256",
+                "coverage_group_sha256",
+                "admission_sha256",
+                "current_proof_sha256",
+                "authority_surface_resolution_sha256",
+            )
+        )
+        assert "sensitive identity detail" not in json.dumps(receipt, sort_keys=True)
+        assert c5._counts(paths) == before
+    finally:
+        context.__exit__(None, None, None)
+
+
+@pytest.mark.parametrize(
+    "failure_code",
+    [
+        "proof_current_task_missing",
+        "proof_current_evidence_inconclusive",
+        None,
+    ],
+    ids=["task-missing", "evidence-inconclusive", "provider-unavailable"],
+)
+def test_current_proof_unavailable_is_an_unavailable_withheld_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure_code: str | None,
+) -> None:
+    paths, context, live, basis, anchor = _anchored(tmp_path)
+    try:
+        before = c5._counts(paths)
+
+        def unavailable_current_proof(*args, **kwargs):
+            del args, kwargs
+            if failure_code is None:
+                raise RuntimeError("sensitive current-proof provider detail")
+            raise ProofExecutionError(
+                "sensitive current-proof detail",
+                code=failure_code,
+            )
+
+        monkeypatch.setattr(
+            "pcl.proof_anchor_drift.capture_current_proof_in_snapshot",
+            unavailable_current_proof,
+        )
+        receipt = _evaluate(paths, live, anchor, basis)
+        _assert_soft_live_receipt(
+            receipt,
+            reconstruction_status="unavailable",
+            reason="live_chain_unavailable",
+        )
+        assert receipt["observation"]["live"]["current_proof_sha256"] is None
+        assert "sensitive current-proof detail" not in json.dumps(receipt, sort_keys=True)
+        assert "sensitive current-proof provider detail" not in json.dumps(
+            receipt,
+            sort_keys=True,
+        )
+        assert c5._counts(paths) == before
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_authority_provider_unavailable_is_an_unavailable_withheld_receipt(
+    tmp_path: Path,
+) -> None:
+    paths, context, live, basis, anchor = _anchored(tmp_path)
+    try:
+        before = c5._counts(paths)
+
+        def unavailable_authority():
+            raise RuntimeError("sensitive authority detail")
+
+        receipt = _evaluate(
+            paths,
+            live,
+            anchor,
+            basis,
+            authority_provider=unavailable_authority,
+        )
+        _assert_soft_live_receipt(
+            receipt,
+            reconstruction_status="unavailable",
+            reason="live_chain_unavailable",
+        )
+        assert (
+            receipt["observation"]["live"]["authority_surface_resolution_sha256"]
+            is None
+        )
+        assert "sensitive authority detail" not in json.dumps(receipt, sort_keys=True)
+        assert c5._counts(paths) == before
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_git_currentness_unavailable_is_an_indeterminate_withheld_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, context, live, basis, anchor = _anchored(tmp_path)
+    try:
+        before = c5._counts(paths)
+
+        def unavailable_git(*args, **kwargs):
+            del args, kwargs
+            raise proof_admission._GitObservationIndeterminate
+
+        monkeypatch.setattr(proof_admission, "_source_snapshot", unavailable_git)
+        receipt = _evaluate(paths, live, anchor, basis)
+        _assert_soft_live_receipt(
+            receipt,
+            reconstruction_status="indeterminate",
+            reason="live_reconstruction_indeterminate",
+        )
+        assert c5._counts(paths) == before
+    finally:
+        context.__exit__(None, None, None)
+
+
+def test_current_proof_snapshot_invariant_remains_a_sanitized_hard_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    paths, context, live, basis, anchor = _anchored(tmp_path)
+    try:
+        before = c5._counts(paths)
+
+        def invalid_snapshot(*args, **kwargs):
+            del args, kwargs
+            raise ProofExecutionError(
+                "sensitive snapshot invariant detail",
+                code="proof_current_snapshot_required",
+            )
+
+        monkeypatch.setattr(
+            "pcl.proof_anchor_drift.capture_current_proof_in_snapshot",
+            invalid_snapshot,
+        )
+        with pytest.raises(ProofAnchorDriftError) as exc_info:
+            _evaluate(paths, live, anchor, basis)
+        assert exc_info.value.code == "drift_internal_error"
+        assert exc_info.value.details == {"phase": "live"}
+        assert "sensitive snapshot invariant detail" not in json.dumps(
+            exc_info.value.to_dict(),
+            sort_keys=True,
+        )
+        assert c5._counts(paths) == before
+    finally:
+        context.__exit__(None, None, None)
 
 
 @pytest.mark.skipif(os.name != "posix", reason="C6 is POSIX-only")

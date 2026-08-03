@@ -43,7 +43,7 @@ from .proof_anchor import (
     ProofAnchorAuthorityCapacityError,
     ProofAnchorDriftAuthorityResolution,
     ProofAnchorError,
-    build_proof_admission_anchor_basis,
+    _observe_proof_admission_anchor_basis,
     resolve_proof_anchor_drift_authority,
 )
 from .proof_execution import AuthorityInputSnapshot, capture_current_proof_in_snapshot
@@ -334,17 +334,27 @@ def _evaluate_resolution(
             handoff=_stored_handoff(head),
         )
 
-    try:
-        live_basis = build_proof_admission_anchor_basis(
-            policy=policy,
-            participants=participants,
-            authority_provider=authority_provider,
-            current_proof_provider=lambda: capture_current_proof_in_snapshot(
+    current_proof_failure_code: str | None = None
+
+    def current_proof_provider():
+        nonlocal current_proof_failure_code
+        try:
+            return capture_current_proof_in_snapshot(
                 paths,
                 conn,
                 {"type": "task", "id": resolution.target_id},
                 hwm=int(snapshot["evaluated_through_event_sequence"]),
-            ),
+            )
+        except Exception as exc:
+            current_proof_failure_code = _safe_exception_code(exc)
+            raise
+
+    try:
+        live_basis = _observe_proof_admission_anchor_basis(
+            policy=policy,
+            participants=participants,
+            authority_provider=authority_provider,
+            current_proof_provider=current_proof_provider,
         )
     except (KeyboardInterrupt, SystemExit, GeneratorExit):
         raise
@@ -352,22 +362,52 @@ def _evaluate_resolution(
         mapped = _map_live_domain_error(exc)
         if mapped is not None:
             raise _error(mapped, "live") from None
+        stored_basis = head.members["basis"]
+        live = _live_observation(stored_basis)
+        live["reconstruction_status"] = "mismatched"
         return _receipt(
             **base,
             status="withheld",
-            reasons=["live_chain_unavailable"],
+            reasons=["live_execution_binding_changed"],
             selected=head,
             chain_head=True,
             stored=stored,
-            live=_empty_live("unavailable"),
+            live=live,
             authorization_status=_stored_authorization_status(head),
             handoff=_stored_handoff(head),
         )
     except Exception:
         raise _error("drift_internal_error", "live") from None
 
-    stored_basis = head.members["basis"]
     live_document = json.loads(canonical_proof_anchor_bytes(live_basis))
+    if current_proof_failure_code in {
+        "proof_current_snapshot_required",
+        "proof_current_target_invalid",
+    }:
+        raise _error("drift_internal_error", "live")
+    soft = _soft_live_reconstruction(live_document)
+    if soft is not None:
+        reconstruction_status, reason, live = soft
+        live["reconstruction_status"] = reconstruction_status
+        return _receipt(
+            **base,
+            status="withheld",
+            reasons=[reason],
+            selected=head,
+            chain_head=True,
+            stored=stored,
+            live=live,
+            authorization_status=_stored_authorization_status(head),
+            handoff=_stored_handoff(head),
+        )
+    if not validate_proof_admission_anchor_basis(live_document).ok:
+        raise _error("drift_live_domain_error", "live")
+    redacted, changed = redact_value(live_document)
+    del redacted
+    if changed:
+        raise _error("drift_live_domain_error", "live")
+
+    stored_basis = head.members["basis"]
     live = _live_observation(live_document)
     reasons = _live_reasons(stored_basis, live_document)
     exact = canonical_proof_anchor_bytes(stored_basis) == canonical_proof_anchor_bytes(live_document)
@@ -483,6 +523,33 @@ def _computed_verdict_passed(basis: Mapping[str, Any]) -> bool:
         )
     except (KeyError, TypeError):
         return False
+
+
+def _soft_live_reconstruction(
+    basis: Mapping[str, Any],
+) -> tuple[str, str, dict[str, Any]] | None:
+    admission = basis.get("admission")
+    if not isinstance(admission, Mapping):
+        return None
+    raw_reasons = admission.get("state_reason_codes")
+    if not isinstance(raw_reasons, list) or any(
+        not isinstance(reason, str) for reason in raw_reasons
+    ):
+        return None
+    reasons = set(raw_reasons)
+    live = _live_observation(basis)
+    unavailable = {
+        "authority_current_indeterminate",
+        "current_proof_indeterminate",
+        "participant_current_proof_indeterminate",
+    }
+    if reasons & unavailable:
+        if "authority_current_indeterminate" in reasons:
+            live["authority_surface_resolution_sha256"] = None
+        return "unavailable", "live_chain_unavailable", live
+    if "candidate_blob_resolution_indeterminate" in reasons:
+        return "indeterminate", "live_reconstruction_indeterminate", live
+    return None
 
 
 def _live_observation(basis: Mapping[str, Any]) -> dict[str, Any]:
@@ -762,6 +829,14 @@ def _map_live_domain_error(exc: Exception) -> str | None:
     if code == "coverage_live_identity_mismatch":
         return None
     return hard.get(code, "drift_live_domain_error")
+
+
+def _safe_exception_code(exc: Exception) -> str | None:
+    try:
+        code = getattr(exc, "code", None)
+    except Exception:
+        return None
+    return code if isinstance(code, str) else None
 
 
 def _classify_sqlite_error(exc: sqlite3.Error) -> str:

@@ -542,6 +542,27 @@ def build_proof_admission_anchor_basis(
     authority_provider: Callable[[], AuthorityInputSnapshot],
     current_proof_provider: Callable[[], CurrentProofSnapshot],
 ) -> Mapping[str, Any]:
+    basis = _observe_proof_admission_anchor_basis(
+        policy=policy,
+        participants=participants,
+        authority_provider=authority_provider,
+        current_proof_provider=current_proof_provider,
+    )
+    validation = validate_proof_admission_anchor_basis(basis)
+    if not validation.ok:
+        raise _error("proof_anchor_admission_withheld", "basis")
+    _require_sensitive_content_absent(basis)
+    return basis
+
+
+def _observe_proof_admission_anchor_basis(
+    *,
+    policy: TrustedCoveragePolicy,
+    participants: Sequence[ProofCoverageParticipant],
+    authority_provider: Callable[[], AuthorityInputSnapshot],
+    current_proof_provider: Callable[[], CurrentProofSnapshot],
+) -> Mapping[str, Any]:
+    """Build one live basis observation before C5 anchoring eligibility is required."""
     admission = evaluate_proof_coverage(
         policy=policy,
         participants=participants,
@@ -571,10 +592,6 @@ def build_proof_admission_anchor_basis(
             "basis_sha256": "sha256:" + "0" * 64,
         }
     )
-    validation = validate_proof_admission_anchor_basis(basis)
-    if not validation.ok:
-        raise _error("proof_anchor_admission_withheld", "basis")
-    _require_sensitive_content_absent(basis)
     return MappingProxyType(basis)
 
 
