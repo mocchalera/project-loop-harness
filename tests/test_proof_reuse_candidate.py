@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, ExitStack
 from copy import deepcopy
 from dataclasses import replace
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -23,8 +24,14 @@ from pcl.contracts.authority_surface import authority_document_sha256
 from pcl.contracts.proof_admission import (
     canary_item_sha256,
 )
+from pcl.contracts.proof_reuse_candidate import (
+    canonical_proof_reuse_candidate_bytes,
+    finalize_proof_reuse_candidate,
+)
 from pcl.init_project import init_project
 from pcl.db import connect
+from pcl.events import append_event
+from pcl.ids import next_prefixed_id
 from pcl.outbox import ProjectionResult
 from pcl.paths import ProjectPaths
 from pcl.proof_admission import (
@@ -43,6 +50,8 @@ from pcl.proof_reuse_candidate import (
     record_proof_reuse_candidate,
 )
 from pcl.proof_reuse_candidate_store import candidate_directory
+from pcl.proof_reuse_candidate_store import publish_proof_reuse_candidate
+from pcl.timeutil import utc_now_iso
 
 
 @contextmanager
@@ -229,6 +238,87 @@ def _counts(paths: ProjectPaths) -> dict[str, int]:
         conn.close()
 
 
+def _forge_coherent_candidate_quartet(
+    live: dict[str, Any],
+    candidate: dict[str, Any],
+) -> None:
+    paths = live["paths"]
+    candidate_id = candidate["candidate_id"]
+    content = canonical_proof_reuse_candidate_bytes(candidate)
+    publication = publish_proof_reuse_candidate(
+        paths,
+        candidate_id=candidate_id,
+        content=content,
+    )
+    artifact_file_sha256 = "sha256:" + hashlib.sha256(content).hexdigest()
+    conn = connect(paths.db_path)
+    try:
+        evidence_id = next_prefixed_id(conn, "evidence", "E")
+        event_id = candidate_runtime._candidate_event_id(candidate_id)
+        outbox_id = candidate_runtime._candidate_outbox_id(candidate_id)
+        now = utc_now_iso()
+        summary = {
+            "contract_version": (
+                candidate_runtime.PROOF_REUSE_CANDIDATE_EVIDENCE_SUMMARY_VERSION
+            ),
+            "candidate_id": candidate_id,
+            "candidate_sha256": candidate["candidate_sha256"],
+            "artifact_file_sha256": artifact_file_sha256,
+            "artifact_size_bytes": len(content),
+            "source_anchor_event_id": candidate["source"]["anchor_event_id"],
+            "target": deepcopy(candidate["target"]),
+        }
+        conn.execute(
+            """
+            INSERT INTO evidence(id, type, path, command, summary, created_at)
+            VALUES (?, ?, ?, NULL, ?, ?)
+            """,
+            (
+                evidence_id,
+                PROOF_REUSE_CANDIDATE_EVIDENCE_TYPE,
+                publication.relative_candidate_path,
+                json.dumps(summary, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+                now,
+            ),
+        )
+        conn.execute(
+            """
+            INSERT INTO evidence_links(evidence_id, target_type, target_id, link_role, created_at)
+            VALUES (?, 'task', ?, ?, ?)
+            """,
+            (
+                evidence_id,
+                candidate["target"]["id"],
+                PROOF_REUSE_CANDIDATE_LINK_ROLE,
+                now,
+            ),
+        )
+        append_event(
+            conn=conn,
+            events_path=paths.events_path,
+            event_type=PROOF_REUSE_CANDIDATE_EVENT_TYPE,
+            entity_type="task",
+            entity_id=candidate["target"]["id"],
+            payload={
+                "contract_version": (
+                    candidate_runtime.PROOF_REUSE_CANDIDATE_EVENT_CONTRACT_VERSION
+                ),
+                "candidate_id": candidate_id,
+                "candidate_sha256": candidate["candidate_sha256"],
+                "artifact_file_sha256": artifact_file_sha256,
+                "artifact_size_bytes": len(content),
+                "source_anchor_event_id": candidate["source"]["anchor_event_id"],
+                "evidence_id": evidence_id,
+            },
+            event_id=event_id,
+            outbox_id=outbox_id,
+            created_at=now,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def test_authentic_c1_c5_source_can_record_one_c7_candidate(tmp_path: Path) -> None:
     with _authentic_c1_c5(tmp_path) as live:
         result = _record(live)
@@ -296,6 +386,119 @@ def test_first_writer_stored_body_replay_and_16_way_concurrency(tmp_path: Path) 
         ) == 1
 
 
+def test_replay_rejects_coherently_forged_event_and_link_target(
+    tmp_path: Path,
+) -> None:
+    with _authentic_c1_c5(tmp_path) as live:
+        first = _record(live)
+        conn = connect(live["paths"].db_path)
+        try:
+            conn.execute(
+                "UPDATE events SET entity_id='T-FORGED' WHERE id=?",
+                (first["projection"]["event_id"],),
+            )
+            conn.execute(
+                "UPDATE evidence_links SET target_id='T-FORGED' WHERE evidence_id=?",
+                (first["projection"]["evidence_id"],),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        before = _counts(live["paths"])
+        with pytest.raises(ProofReuseCandidateError) as conflict:
+            _record(live)
+        assert conflict.value.code == "reuse_candidate_idempotency_conflict"
+        assert conflict.value.details == {"phase": "replay"}
+        assert _counts(live["paths"]) == before
+
+
+def test_current_candidate_inventory_selects_current_and_filters_stale_unhealthy(
+    tmp_path: Path,
+) -> None:
+    with _authentic_c1_c5(tmp_path) as live:
+        first = _record(live)
+        before = _counts(live["paths"])
+        selected = candidate_runtime.select_current_proof_reuse_candidate(
+            live["paths"],
+            anchor_event_id=live["anchor"]["event_id"],
+        )
+        assert selected.status == "selected"
+        assert selected.reason == "selected"
+        assert selected.current_anchor_event_id == live["anchor"]["event_id"]
+        assert selected.candidate == first["candidate"]
+        assert _counts(live["paths"]) == before
+
+        c5._tamper_basis(live["paths"], live["anchor"])
+        recovered = c5._anchor(
+            live["paths"],
+            {
+                "bound": live["policy"],
+                "participants": live["participants"],
+                "authority": live["authority"],
+            },
+            live["basis"],
+            c5._authorizations(live["basis"], revision=1),
+        )
+        stale = candidate_runtime.select_current_proof_reuse_candidate(
+            live["paths"],
+            anchor_event_id=live["anchor"]["event_id"],
+        )
+        assert stale.status == "none"
+        assert stale.reason == "current_candidate_not_found"
+        assert stale.current_anchor_event_id == recovered["event_id"]
+        assert stale.candidate is None
+
+        current = _record(live, anchor_event_id=recovered["event_id"])
+        current_selection = candidate_runtime.select_current_proof_reuse_candidate(
+            live["paths"],
+            anchor_event_id=recovered["event_id"],
+        )
+        assert current_selection.status == "selected"
+        assert current_selection.candidate == current["candidate"]
+
+        current_path = (
+            candidate_directory(live["paths"], current["candidate_id"])
+            / "candidate.json"
+        )
+        original = current_path.read_bytes()
+        current_path.write_bytes(b"X" + original[1:])
+        unhealthy = candidate_runtime.select_current_proof_reuse_candidate(
+            live["paths"],
+            anchor_event_id=recovered["event_id"],
+        )
+        assert unhealthy.status == "none"
+        assert unhealthy.reason == "current_candidate_not_found"
+        assert unhealthy.current_anchor_event_id == recovered["event_id"]
+        assert unhealthy.candidate is None
+
+
+def test_current_candidate_inventory_reports_equal_hwm_identity_ambiguity(
+    tmp_path: Path,
+) -> None:
+    with _authentic_c1_c5(tmp_path) as live:
+        first = _record(live)
+        second = deepcopy(first["candidate"])
+        second["roles"][0]["participant_sha256"] = "sha256:" + "9" * 64
+        second = finalize_proof_reuse_candidate(second)
+        assert second["candidate_id"] != first["candidate_id"]
+        assert (
+            second["observation"]["observed_through_event_sequence"]
+            == first["candidate"]["observation"]["observed_through_event_sequence"]
+        )
+        _forge_coherent_candidate_quartet(live, second)
+        before = _counts(live["paths"])
+
+        ambiguous = candidate_runtime.select_current_proof_reuse_candidate(
+            live["paths"],
+            anchor_event_id=live["anchor"]["event_id"],
+        )
+        assert ambiguous.status == "ambiguous"
+        assert ambiguous.reason == "current_candidate_ambiguous"
+        assert ambiguous.current_anchor_event_id == live["anchor"]["event_id"]
+        assert ambiguous.candidate is None
+        assert _counts(live["paths"]) == before
+
+
 def test_assertion_failure_and_unhealthy_c5_have_zero_c7_effect(tmp_path: Path) -> None:
     with _authentic_c1_c5(tmp_path) as live:
         before = _counts(live["paths"])
@@ -309,6 +512,74 @@ def test_assertion_failure_and_unhealthy_c5_have_zero_c7_effect(tmp_path: Path) 
         unavailable = _record(live)
         assert unavailable["status"] == "withheld"
         assert unavailable["reason_codes"] == ["source_anchor_recovery_required"]
+        assert _counts(live["paths"]) == before
+
+
+def test_public_input_identifiers_fail_receiptless_at_shape_and_utf8_byte_caps(
+    tmp_path: Path,
+) -> None:
+    with _authentic_c1_c5(tmp_path) as live:
+        before = _counts(live["paths"])
+        cases = {
+            "anchor-cap": (
+                {"anchor_event_id": "EV-" + "A" * 4094},
+                "reuse_candidate_capacity_exceeded",
+            ),
+            "anchor-shape": (
+                {"anchor_event_id": "EV-" + "G" * 64},
+                "reuse_candidate_contract_invalid",
+            ),
+            "target-cap": (
+                {"expected_target_id": "T" * 4097},
+                "reuse_candidate_capacity_exceeded",
+            ),
+            "target-shape": (
+                {"expected_target_id": "Ｔ-0001"},
+                "reuse_candidate_contract_invalid",
+            ),
+            "candidate-cap": (
+                {
+                    "expected_candidate": {
+                        **live["basis"]["candidate"],
+                        "commit_oid": "a" * 4097,
+                    }
+                },
+                "reuse_candidate_capacity_exceeded",
+            ),
+            "candidate-shape": (
+                {
+                    "expected_candidate": {
+                        **live["basis"]["candidate"],
+                        "commit_oid": "g" * 40,
+                    }
+                },
+                "reuse_candidate_contract_invalid",
+            ),
+            "basis-cap": (
+                {"expected_basis_sha256": "sha256:" + "a" * 4090},
+                "reuse_candidate_capacity_exceeded",
+            ),
+            "basis-shape": (
+                {"expected_basis_sha256": "sha256:" + "g" * 64},
+                "reuse_candidate_contract_invalid",
+            ),
+        }
+        observed: dict[str, tuple[str, str, dict[str, Any] | list[str]]] = {}
+        for name, (overrides, _expected_code) in cases.items():
+            try:
+                result = _record(live, **overrides)
+            except ProofReuseCandidateError as exc:
+                observed[name] = ("error", exc.code, exc.details)
+            else:
+                observed[name] = (
+                    "receipt",
+                    result["status"],
+                    result["reason_codes"],
+                )
+        assert observed == {
+            name: ("error", expected_code, {"phase": "preflight"})
+            for name, (_overrides, expected_code) in cases.items()
+        }
         assert _counts(live["paths"]) == before
 
 

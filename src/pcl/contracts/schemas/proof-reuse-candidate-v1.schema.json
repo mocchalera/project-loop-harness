@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "proof-reuse-candidate/v1",
+  "$id": "https://project-loop.local/contracts/proof-reuse-candidate-v1.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": ["contract_version", "candidate_id", "source", "observation", "target", "candidate", "current_proof", "roles", "authorization", "handoff", "effects", "candidate_sha256"],

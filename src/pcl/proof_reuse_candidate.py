@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from copy import deepcopy
+from dataclasses import dataclass
 import hashlib
 import json
+import re
 import sqlite3
 from typing import Any
 
@@ -12,6 +14,7 @@ from .contracts.proof_anchor import canonical_proof_anchor_bytes
 from .contracts.proof_reuse_candidate import (
     MAX_ANCHOR_ROWS,
     MAX_PARTICIPANTS,
+    MAX_PUBLIC_ID_BYTES,
     MAX_ROLES,
     PROOF_REUSE_CANDIDATE_CONTRACT_VERSION,
     PROOF_REUSE_CANDIDATE_RESULT_CONTRACT_VERSION,
@@ -28,7 +31,7 @@ from .contracts.proof_reuse_candidate import (
     validate_proof_reuse_candidate,
     validate_proof_reuse_candidate_result,
 )
-from .db import MutationConnection, connect, connect_mutation
+from .db import MutationConnection, connect, connect_mutation, connect_read_only
 from .errors import EXIT_DATA_ERROR, EXIT_USAGE, PclError, ProjectionPendingError
 from .events import append_event
 from .ids import next_prefixed_id
@@ -65,9 +68,25 @@ PROOF_REUSE_CANDIDATE_EVIDENCE_SUMMARY_VERSION = (
 )
 PROOF_REUSE_CANDIDATE_DATABASE_SCHEMA_VERSION = "8"
 
+_CANDIDATE_IDENTIFIER = re.compile(r"^PRC-[0-9A-F]{64}$")
+_EVENT_IDENTIFIER = re.compile(r"^EV-[0-9A-F]{64}$")
+_EVIDENCE_IDENTIFIER = re.compile(r"^E-[0-9A-Z]+$")
+_PUBLIC_IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
+_OID = re.compile(r"^[0-9a-f]+$")
+
 
 class ProofReuseCandidateError(PclError):
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class ProofReuseCandidateInventorySelection:
+    """Read-only inventory selection; never a reuse or lifecycle capability."""
+
+    status: str
+    reason: str
+    current_anchor_event_id: str | None
+    candidate: Mapping[str, Any] | None
 
 
 def record_proof_reuse_candidate(
@@ -123,6 +142,115 @@ def record_proof_reuse_candidate(
         raise _error("reuse_candidate_store_invalid", "publication", EXIT_DATA_ERROR) from None
     except (KeyError, TypeError, ValueError, AssertionError):
         raise _error("reuse_candidate_internal_error", "live", EXIT_DATA_ERROR) from None
+
+
+def select_current_proof_reuse_candidate(
+    paths: ProjectPaths,
+    *,
+    anchor_event_id: str,
+) -> ProofReuseCandidateInventorySelection:
+    """Select the current C7 inventory item without granting or mutating authority."""
+    if not platform_supported():
+        raise _error("reuse_candidate_platform_unsupported", "preflight", EXIT_USAGE)
+    _require_inventory_inputs(paths, anchor_event_id)
+    conn: sqlite3.Connection | None = None
+    try:
+        conn = connect_read_only(paths.db_path)
+        conn.execute("BEGIN")
+        _require_schema(conn)
+        resolution = resolve_proof_anchor_drift_authority(
+            paths,
+            conn,
+            anchor_event_id=anchor_event_id,
+            anchor_row_limit=MAX_ANCHOR_ROWS + 1,
+        )
+        head = _healthy_current_anchor(resolution)
+        if head is None:
+            return ProofReuseCandidateInventorySelection(
+                status="none",
+                reason="current_anchor_unavailable",
+                current_anchor_event_id=None,
+                candidate=None,
+            )
+        rows = conn.execute(
+            """
+            SELECT id, payload_json
+            FROM events
+            WHERE event_type = ? AND entity_type = 'task' AND entity_id = ?
+            ORDER BY sequence, id
+            """,
+            (PROOF_REUSE_CANDIDATE_EVENT_TYPE, resolution.target_id),
+        ).fetchall()
+        candidates: dict[str, tuple[int, Mapping[str, Any]]] = {}
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+                candidate_id = payload["candidate_id"]
+            except (KeyError, TypeError, json.JSONDecodeError):
+                continue
+            if not _candidate_identifier(candidate_id):
+                continue
+            committed = _read_committed_candidate(
+                paths,
+                conn,
+                candidate_id=candidate_id,
+            )
+            if committed is None or not committed["healthy"]:
+                continue
+            candidate = committed["candidate"]
+            if (
+                candidate["source"]["anchor_event_id"] != head.event_id
+                or candidate["target"]
+                != {"type": "task", "id": resolution.target_id}
+            ):
+                continue
+            observation_sequence = candidate["observation"][
+                "observed_through_event_sequence"
+            ]
+            candidates[candidate_id] = (observation_sequence, candidate)
+        if not candidates:
+            return ProofReuseCandidateInventorySelection(
+                status="none",
+                reason="current_candidate_not_found",
+                current_anchor_event_id=head.event_id,
+                candidate=None,
+            )
+        maximum = max(item[0] for item in candidates.values())
+        winners = sorted(
+            (candidate_id, candidate)
+            for candidate_id, (sequence, candidate) in candidates.items()
+            if sequence == maximum
+        )
+        if len(winners) != 1:
+            return ProofReuseCandidateInventorySelection(
+                status="ambiguous",
+                reason="current_candidate_ambiguous",
+                current_anchor_event_id=head.event_id,
+                candidate=None,
+            )
+        return ProofReuseCandidateInventorySelection(
+            status="selected",
+            reason="selected",
+            current_anchor_event_id=head.event_id,
+            candidate=winners[0][1],
+        )
+    except ProofReuseCandidateError:
+        raise
+    except ProofAnchorAuthorityCapacityError:
+        raise _error("reuse_candidate_capacity_exceeded", "authority", EXIT_DATA_ERROR) from None
+    except sqlite3.DatabaseError:
+        raise _error(
+            "reuse_candidate_database_schema_unsupported",
+            "preflight",
+            EXIT_DATA_ERROR,
+        ) from None
+    except (OSError, UnicodeError):
+        raise _error("reuse_candidate_store_invalid", "replay", EXIT_DATA_ERROR) from None
+    except (KeyError, TypeError, ValueError, AssertionError):
+        raise _error("reuse_candidate_internal_error", "replay", EXIT_DATA_ERROR) from None
+    finally:
+        if conn is not None:
+            conn.close()
 
 
 def _record(
@@ -253,6 +381,7 @@ def _record(
             "artifact_file_sha256": artifact_file_sha256,
             "artifact_size_bytes": len(candidate_bytes),
             "source_anchor_event_id": anchor_event_id,
+            "target": deepcopy(candidate["target"]),
         }
         crash_if_requested("proof_reuse_candidate_after_publish_before_database")
         conn.execute(
@@ -524,6 +653,22 @@ def _authority_disposition(resolution: Any, anchor_event_id: str) -> tuple[str, 
     return None
 
 
+def _healthy_current_anchor(resolution: Any) -> Any | None:
+    if (
+        resolution.tombstone_status != "absent"
+        or resolution.exhaustion_witness is not None
+        or not resolution.assertion_found
+        or resolution.authority_corrupt
+        or resolution.malformed_group_present
+        or len(resolution.valid_chains) != 1
+        or not resolution.valid_chains[0]
+        or resolution.target_id is None
+    ):
+        return None
+    head = resolution.valid_chains[0][-1]
+    return head if head.health_status == "healthy" else None
+
+
 def _normalize_roles(
     basis: Mapping[str, Any],
     *,
@@ -749,55 +894,24 @@ def _read_committed_candidate(
             "SELECT id, type, path, summary FROM evidence WHERE id = ?",
             (payload["evidence_id"],),
         ).fetchone()
-        links = int(
-            conn.execute(
-                """
-                SELECT COUNT(*) FROM evidence_links
-                WHERE evidence_id = ? AND target_type = 'task'
-                  AND target_id = ? AND link_role = ?
-                """,
-                (
-                    payload["evidence_id"],
-                    row["entity_id"],
-                    PROOF_REUSE_CANDIDATE_LINK_ROLE,
-                ),
-            ).fetchone()[0]
-        )
+        links = conn.execute(
+            """
+            SELECT target_type, target_id, link_role
+            FROM evidence_links WHERE evidence_id = ?
+            ORDER BY target_type, target_id, link_role LIMIT 2
+            """,
+            (payload["evidence_id"],),
+        ).fetchall()
         outbox_id = _candidate_outbox_id(candidate_id)
-        outbox = conn.execute(
-            "SELECT id, event_id, sink, idempotency_key FROM outbox_records WHERE event_id = ?",
+        outboxes = conn.execute(
+            """
+            SELECT id, event_id, sink, idempotency_key
+            FROM outbox_records WHERE event_id = ? ORDER BY id LIMIT 2
+            """,
             (event_id,),
-        ).fetchone()
+        ).fetchall()
         summary = None if evidence is None else json.loads(str(evidence["summary"]))
     except (KeyError, TypeError, ValueError, json.JSONDecodeError, sqlite3.Error):
-        return {"healthy": False}
-    expected_summary = {
-        "contract_version": PROOF_REUSE_CANDIDATE_EVIDENCE_SUMMARY_VERSION,
-        "candidate_id": candidate_id,
-        "candidate_sha256": payload["candidate_sha256"],
-        "artifact_file_sha256": payload["artifact_file_sha256"],
-        "artifact_size_bytes": payload["artifact_size_bytes"],
-        "source_anchor_event_id": payload["source_anchor_event_id"],
-    }
-    expected_path = (
-        ".project-loop/evidence/proof-reuse-candidates/"
-        f"{candidate_id[4:].lower()}/candidate.json"
-    )
-    if (
-        row["entity_type"] != "task"
-        or row["entity_id"] is None
-        or payload["candidate_id"] != candidate_id
-        or evidence is None
-        or evidence["type"] != PROOF_REUSE_CANDIDATE_EVIDENCE_TYPE
-        or evidence["path"] != expected_path
-        or summary != expected_summary
-        or links != 1
-        or outbox is None
-        or outbox["id"] != outbox_id
-        or outbox["event_id"] != event_id
-        or outbox["sink"] != "jsonl"
-        or outbox["idempotency_key"] != f"jsonl:{event_id}"
-    ):
         return {"healthy": False}
     assessment = assess_proof_reuse_candidate_artifact(
         paths,
@@ -805,15 +919,56 @@ def _read_committed_candidate(
         expected_sha256=payload["artifact_file_sha256"],
         expected_size_bytes=int(payload["artifact_size_bytes"]),
     )
+    if not assessment.healthy or assessment.candidate is None:
+        return {"healthy": False}
+    candidate = assessment.candidate
+    target = candidate.get("target")
+    source = candidate.get("source")
+    if not isinstance(target, Mapping) or not isinstance(source, Mapping):
+        return {"healthy": False}
+    target_type = target.get("type")
+    target_id = target.get("id")
+    expected_summary = {
+        "contract_version": PROOF_REUSE_CANDIDATE_EVIDENCE_SUMMARY_VERSION,
+        "candidate_id": candidate_id,
+        "candidate_sha256": payload["candidate_sha256"],
+        "artifact_file_sha256": payload["artifact_file_sha256"],
+        "artifact_size_bytes": payload["artifact_size_bytes"],
+        "source_anchor_event_id": payload["source_anchor_event_id"],
+        "target": {"type": target_type, "id": target_id},
+    }
+    expected_path = (
+        ".project-loop/evidence/proof-reuse-candidates/"
+        f"{candidate_id[4:].lower()}/candidate.json"
+    )
+    outbox = outboxes[0] if len(outboxes) == 1 else None
     if (
-        not assessment.healthy
-        or assessment.candidate is None
-        or assessment.candidate.get("candidate_sha256") != payload["candidate_sha256"]
+        row["id"] != event_id
+        or row["entity_type"] != target_type
+        or row["entity_id"] != target_id
+        or payload["candidate_id"] != candidate_id
+        or payload["candidate_sha256"] != candidate.get("candidate_sha256")
+        or payload["source_anchor_event_id"] != source.get("anchor_event_id")
+        or evidence is None
+        or evidence["id"] != payload["evidence_id"]
+        or evidence["type"] != PROOF_REUSE_CANDIDATE_EVIDENCE_TYPE
+        or evidence["path"] != expected_path
+        or summary != expected_summary
+        or len(links) != 1
+        or links[0]["target_type"] != target_type
+        or links[0]["target_id"] != target_id
+        or links[0]["link_role"] != PROOF_REUSE_CANDIDATE_LINK_ROLE
+        or len(outboxes) != 1
+        or outbox is None
+        or outbox["id"] != outbox_id
+        or outbox["event_id"] != event_id
+        or outbox["sink"] != "jsonl"
+        or outbox["idempotency_key"] != f"jsonl:{event_id}"
     ):
         return {"healthy": False}
     return {
         "healthy": True,
-        "candidate": assessment.candidate,
+        "candidate": candidate,
         "evidence_id": str(evidence["id"]),
         "event_id": event_id,
         "event_sequence": int(row["sequence"]),
@@ -854,16 +1009,13 @@ def _require_event_payload(payload: Mapping[str, Any]) -> None:
         not isinstance(payload, Mapping)
         or set(payload) != expected
         or payload.get("contract_version") != PROOF_REUSE_CANDIDATE_EVENT_CONTRACT_VERSION
-        or not isinstance(payload.get("candidate_id"), str)
-        or not payload["candidate_id"].startswith("PRC-")
+        or not _candidate_identifier(payload.get("candidate_id"))
         or not _is_sha(payload.get("candidate_sha256"))
         or not _is_sha(payload.get("artifact_file_sha256"))
         or type(payload.get("artifact_size_bytes")) is not int
         or not 1 <= payload["artifact_size_bytes"] <= 8 * 1024 * 1024
-        or not isinstance(payload.get("source_anchor_event_id"), str)
-        or not payload["source_anchor_event_id"].startswith("EV-")
-        or not isinstance(payload.get("evidence_id"), str)
-        or not payload["evidence_id"].startswith("E-")
+        or not _event_identifier(payload.get("source_anchor_event_id"))
+        or not _evidence_identifier(payload.get("evidence_id"))
     ):
         raise ValueError("Invalid C7 event payload.")
 
@@ -1052,12 +1204,28 @@ def _require_inputs(
         or not callable(authority_provider)
     ):
         raise _error("reuse_candidate_input_type_invalid", "preflight", EXIT_USAGE)
+    asserted_identifiers = [
+        anchor_event_id,
+        expected_target_id,
+        expected_basis_sha256,
+        *(
+            item
+            for item in expected_candidate.values()
+            if isinstance(item, str)
+        ),
+    ]
+    if len(participants) > MAX_PARTICIPANTS or any(
+        (_utf8_size(item) or 0) > MAX_PUBLIC_ID_BYTES
+        for item in asserted_identifiers
+    ):
+        raise _error("reuse_candidate_capacity_exceeded", "preflight", EXIT_USAGE)
     if (
-        not anchor_event_id.startswith("EV-")
+        any(_utf8_size(item) is None for item in asserted_identifiers)
+        or not _event_identifier(anchor_event_id)
         or not _public_identifier(expected_target_id)
         or not _is_sha(expected_basis_sha256)
         or set(expected_candidate) != {"object_format", "commit_oid", "tree_oid"}
-        or len(participants) > MAX_PARTICIPANTS
+        or not _git_candidate_assertion(expected_candidate)
     ):
         raise _error("reuse_candidate_contract_invalid", "preflight", EXIT_USAGE)
     redacted, changed = redact_value(
@@ -1066,6 +1234,24 @@ def _require_inputs(
             "expected_target_id": expected_target_id,
         }
     )
+    del redacted
+    if changed:
+        raise _error(
+            "reuse_candidate_secret_shaped_identifier",
+            "preflight",
+            EXIT_USAGE,
+        )
+
+
+def _require_inventory_inputs(paths: ProjectPaths, anchor_event_id: str) -> None:
+    if type(paths) is not ProjectPaths or type(anchor_event_id) is not str:
+        raise _error("reuse_candidate_input_type_invalid", "preflight", EXIT_USAGE)
+    size = _utf8_size(anchor_event_id)
+    if size is not None and size > MAX_PUBLIC_ID_BYTES:
+        raise _error("reuse_candidate_capacity_exceeded", "preflight", EXIT_USAGE)
+    if size is None or not _event_identifier(anchor_event_id):
+        raise _error("reuse_candidate_contract_invalid", "preflight", EXIT_USAGE)
+    redacted, changed = redact_value({"anchor_event_id": anchor_event_id})
     del redacted
     if changed:
         raise _error(
@@ -1091,11 +1277,48 @@ def _contains_private_identity(value: Mapping[str, Any]) -> bool:
 
 
 def _public_identifier(value: Any) -> bool:
-    if not isinstance(value, str) or not 1 <= len(value.encode("utf-8")) <= 4096:
-        return False
-    return value[0].isalnum() and all(
-        character.isalnum() or character in "_.:-" for character in value
+    size = _utf8_size(value)
+    return bool(
+        isinstance(value, str)
+        and size is not None
+        and 1 <= size <= MAX_PUBLIC_ID_BYTES
+        and _PUBLIC_IDENTIFIER.fullmatch(value)
     )
+
+
+def _candidate_identifier(value: Any) -> bool:
+    return isinstance(value, str) and bool(_CANDIDATE_IDENTIFIER.fullmatch(value))
+
+
+def _event_identifier(value: Any) -> bool:
+    return isinstance(value, str) and bool(_EVENT_IDENTIFIER.fullmatch(value))
+
+
+def _evidence_identifier(value: Any) -> bool:
+    return isinstance(value, str) and bool(_EVIDENCE_IDENTIFIER.fullmatch(value))
+
+
+def _git_candidate_assertion(value: Mapping[str, Any]) -> bool:
+    object_format = value.get("object_format")
+    width = 40 if object_format == "sha1" else 64 if object_format == "sha256" else 0
+    return bool(
+        width
+        and all(
+            isinstance(value.get(name), str)
+            and len(value[name]) == width
+            and _OID.fullmatch(value[name])
+            for name in ("commit_oid", "tree_oid")
+        )
+    )
+
+
+def _utf8_size(value: Any) -> int | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        return len(value.encode("utf-8"))
+    except UnicodeEncodeError:
+        return None
 
 
 def _is_sha(value: Any) -> bool:
@@ -1125,5 +1348,7 @@ __all__ = [
     "PROOF_REUSE_CANDIDATE_EVENT_TYPE",
     "PROOF_REUSE_CANDIDATE_LINK_ROLE",
     "ProofReuseCandidateError",
+    "ProofReuseCandidateInventorySelection",
     "record_proof_reuse_candidate",
+    "select_current_proof_reuse_candidate",
 ]

@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 
 from jsonschema import Draft202012Validator
+from referencing import Registry, Resource
 
 from pcl.contracts.proof_reuse_candidate import (
     PROOF_REUSE_CANDIDATE_CONTRACT_VERSION,
@@ -188,6 +189,18 @@ def _nonrecordable(reason: str) -> dict:
     )
 
 
+def _result_schema_validator() -> Draft202012Validator:
+    candidate_schema = proof_reuse_candidate_schema()
+    registry = Registry().with_resource(
+        candidate_schema["$id"],
+        Resource.from_contents(candidate_schema),
+    )
+    return Draft202012Validator(
+        proof_reuse_candidate_result_schema(),
+        registry=registry,
+    )
+
+
 def test_exactly_two_closed_draft_2020_12_schemas_and_golden_digests() -> None:
     candidate_schema = proof_reuse_candidate_schema()
     result_schema = proof_reuse_candidate_result_schema()
@@ -219,6 +232,49 @@ def test_exactly_two_closed_draft_2020_12_schemas_and_golden_digests() -> None:
         "replay",
         "postcommit_unhealthy",
     ))
+
+
+def test_result_schema_resolves_candidate_with_standard_registry() -> None:
+    validator = _result_schema_validator()
+    values = [
+        _result("fresh"),
+        _result("replay"),
+        _result("postcommit_unhealthy"),
+        _nonrecordable("source_anchor_not_found"),
+    ]
+    for value in values:
+        assert list(validator.iter_errors(value)) == []
+
+
+def test_result_schema_rejects_adversarial_profile_mutations() -> None:
+    validator = _result_schema_validator()
+    mutants: list[dict] = []
+
+    fresh = _result("fresh")
+    fresh["mutation_committed"] = False
+    mutants.append(finalize_proof_reuse_candidate_result(fresh))
+
+    replay = _result("replay")
+    replay["changed"] = True
+    mutants.append(finalize_proof_reuse_candidate_result(replay))
+
+    nonrecordable = _nonrecordable("source_authorization_invalid")
+    nonrecordable.update(
+        {
+            "status_rank": 0,
+            "ok": True,
+            "changed": True,
+            "mutation_committed": True,
+        }
+    )
+    mutants.append(finalize_proof_reuse_candidate_result(nonrecordable))
+
+    unhealthy = _result("postcommit_unhealthy")
+    unhealthy["safe_to_retry_original"] = True
+    mutants.append(finalize_proof_reuse_candidate_result(unhealthy))
+
+    for mutant in mutants:
+        assert list(validator.iter_errors(mutant))
 
 
 def test_hwm_is_excluded_from_identity_but_first_writer_body_remains_bound() -> None:

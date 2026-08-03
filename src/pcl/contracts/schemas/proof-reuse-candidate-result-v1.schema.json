@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "proof-reuse-candidate-result/v1",
+  "$id": "https://project-loop.local/contracts/proof-reuse-candidate-result-v1.schema.json",
   "type": "object",
   "additionalProperties": false,
   "required": ["contract_version", "ok", "status", "status_rank", "changed", "idempotent", "mutation_committed", "safe_to_retry_original", "candidate_id", "candidate", "reason_codes", "projection", "outbox_delivery", "health", "effects", "result_sha256"],
@@ -13,8 +13,8 @@
     "idempotent": {"type": "boolean"},
     "mutation_committed": {"type": "boolean"},
     "safe_to_retry_original": {"type": "boolean"},
-    "candidate_id": {"oneOf": [{"type": "string", "pattern": "^PRC-[0-9A-F]{64}$"}, {"type": "null"}]},
-    "candidate": {"oneOf": [{"$ref": "proof-reuse-candidate/v1"}, {"type": "null"}]},
+    "candidate_id": {"oneOf": [{"$ref": "#/$defs/candidate_id"}, {"type": "null"}]},
+    "candidate": {"oneOf": [{"$ref": "https://project-loop.local/contracts/proof-reuse-candidate-v1.schema.json"}, {"type": "null"}]},
     "reason_codes": {"type": "array", "maxItems": 18, "uniqueItems": true, "items": {"enum": ["source_anchor_authority_corrupt", "source_anchor_exhaustion_pending", "source_anchor_exhaustion_tombstoned", "source_anchor_not_current", "source_anchor_not_found", "source_anchor_parallel_chain", "source_anchor_recovery_required", "source_anchor_unhealthy", "source_authorization_invalid", "source_current_proof_changed", "source_live_basis_changed", "source_reuse_forbidden", "source_role_coverage_incomplete", "source_verdict_not_passed", "source_output_uncommitted", "source_effect_not_read_only", "source_declared_outputs_present", "source_private_identity"]}},
     "projection": {"$ref": "#/$defs/projection"},
     "outbox_delivery": {"enum": ["not_applicable", "pending", "delivered", "failed_needs_review"]},
@@ -22,19 +22,68 @@
     "effects": {"oneOf": [{"$ref": "#/$defs/effects_success"}, {"$ref": "#/$defs/effects_zero"}]},
     "result_sha256": {"$ref": "#/$defs/sha256"}
   },
+  "oneOf": [
+    {"$ref": "#/$defs/profile_fresh_commit"},
+    {"$ref": "#/$defs/profile_replay"},
+    {"$ref": "#/$defs/profile_nonrecordable"},
+    {"$ref": "#/$defs/profile_postcommit_unhealthy"}
+  ],
   "$defs": {
     "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "candidate_id": {"type": "string", "pattern": "^PRC-[0-9A-F]{64}$"},
+    "evidence_id": {"type": "string", "pattern": "^E-[0-9A-Z]+$"},
+    "event_id": {"type": "string", "pattern": "^EV-[0-9A-F]{64}$"},
+    "outbox_id": {"type": "string", "pattern": "^OB-[0-9A-F]{64}$"},
     "projection": {
       "type": "object",
       "additionalProperties": false,
       "required": ["status", "evidence_id", "event_id", "event_sequence", "outbox_id", "artifact_id"],
       "properties": {
         "status": {"enum": ["none", "committed", "replayed"]},
-        "evidence_id": {"oneOf": [{"type": "string", "pattern": "^E-[0-9A-Z]+$"}, {"type": "null"}]},
-        "event_id": {"oneOf": [{"type": "string", "pattern": "^EV-[0-9A-F]{64}$"}, {"type": "null"}]},
+        "evidence_id": {"oneOf": [{"$ref": "#/$defs/evidence_id"}, {"type": "null"}]},
+        "event_id": {"oneOf": [{"$ref": "#/$defs/event_id"}, {"type": "null"}]},
         "event_sequence": {"oneOf": [{"type": "integer", "minimum": 1}, {"type": "null"}]},
-        "outbox_id": {"oneOf": [{"type": "string", "pattern": "^OB-[0-9A-F]{64}$"}, {"type": "null"}]},
-        "artifact_id": {"oneOf": [{"type": "string", "pattern": "^PRC-[0-9A-F]{64}$"}, {"type": "null"}]}
+        "outbox_id": {"oneOf": [{"$ref": "#/$defs/outbox_id"}, {"type": "null"}]},
+        "artifact_id": {"oneOf": [{"$ref": "#/$defs/candidate_id"}, {"type": "null"}]}
+      }
+    },
+    "projection_none": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "evidence_id", "event_id", "event_sequence", "outbox_id", "artifact_id"],
+      "properties": {
+        "status": {"const": "none"},
+        "evidence_id": {"type": "null"},
+        "event_id": {"type": "null"},
+        "event_sequence": {"type": "null"},
+        "outbox_id": {"type": "null"},
+        "artifact_id": {"type": "null"}
+      }
+    },
+    "projection_committed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "evidence_id", "event_id", "event_sequence", "outbox_id", "artifact_id"],
+      "properties": {
+        "status": {"const": "committed"},
+        "evidence_id": {"$ref": "#/$defs/evidence_id"},
+        "event_id": {"$ref": "#/$defs/event_id"},
+        "event_sequence": {"type": "integer", "minimum": 1},
+        "outbox_id": {"$ref": "#/$defs/outbox_id"},
+        "artifact_id": {"$ref": "#/$defs/candidate_id"}
+      }
+    },
+    "projection_replayed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "evidence_id", "event_id", "event_sequence", "outbox_id", "artifact_id"],
+      "properties": {
+        "status": {"const": "replayed"},
+        "evidence_id": {"$ref": "#/$defs/evidence_id"},
+        "event_id": {"$ref": "#/$defs/event_id"},
+        "event_sequence": {"type": "integer", "minimum": 1},
+        "outbox_id": {"$ref": "#/$defs/outbox_id"},
+        "artifact_id": {"$ref": "#/$defs/candidate_id"}
       }
     },
     "health": {
@@ -45,6 +94,201 @@
         "source_anchor": {"enum": ["invalid", "unavailable", "recovery_required", "unhealthy", "healthy"]},
         "candidate_artifact": {"enum": ["not_applicable", "healthy", "postcommit_unhealthy"]},
         "postcommit_checked": {"type": "boolean"}
+      }
+    },
+    "health_fresh": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_anchor", "candidate_artifact", "postcommit_checked"],
+      "properties": {
+        "source_anchor": {"const": "healthy"},
+        "candidate_artifact": {"const": "healthy"},
+        "postcommit_checked": {"const": true}
+      }
+    },
+    "health_postcommit_unhealthy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_anchor", "candidate_artifact", "postcommit_checked"],
+      "properties": {
+        "source_anchor": {"const": "healthy"},
+        "candidate_artifact": {"const": "postcommit_unhealthy"},
+        "postcommit_checked": {"const": true}
+      }
+    },
+    "health_nonrecordable_invalid": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_anchor", "candidate_artifact", "postcommit_checked"],
+      "properties": {
+        "source_anchor": {"enum": ["invalid", "healthy"]},
+        "candidate_artifact": {"const": "not_applicable"},
+        "postcommit_checked": {"const": false}
+      }
+    },
+    "health_nonrecordable_unavailable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_anchor", "candidate_artifact", "postcommit_checked"],
+      "properties": {
+        "source_anchor": {"enum": ["unavailable", "healthy"]},
+        "candidate_artifact": {"const": "not_applicable"},
+        "postcommit_checked": {"const": false}
+      }
+    },
+    "health_nonrecordable_withheld": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_anchor", "candidate_artifact", "postcommit_checked"],
+      "properties": {
+        "source_anchor": {"enum": ["recovery_required", "unhealthy", "healthy"]},
+        "candidate_artifact": {"const": "not_applicable"},
+        "postcommit_checked": {"const": false}
+      }
+    },
+    "profile_fresh_commit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_version", "ok", "status", "status_rank", "changed", "idempotent", "mutation_committed", "safe_to_retry_original", "candidate_id", "candidate", "reason_codes", "projection", "outbox_delivery", "health", "effects", "result_sha256"],
+      "properties": {
+        "contract_version": {"const": "proof-reuse-candidate-result/v1"},
+        "ok": {"const": true},
+        "status": {"const": "recordable"},
+        "status_rank": {"const": 0},
+        "changed": {"const": true},
+        "idempotent": {"const": false},
+        "mutation_committed": {"const": true},
+        "safe_to_retry_original": {"const": false},
+        "candidate_id": {"$ref": "#/$defs/candidate_id"},
+        "candidate": {"$ref": "https://project-loop.local/contracts/proof-reuse-candidate-v1.schema.json"},
+        "reason_codes": {"type": "array", "maxItems": 0},
+        "projection": {"$ref": "#/$defs/projection_committed"},
+        "outbox_delivery": {"enum": ["pending", "delivered", "failed_needs_review"]},
+        "health": {"$ref": "#/$defs/health_fresh"},
+        "effects": {"$ref": "#/$defs/effects_success"},
+        "result_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "profile_replay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_version", "ok", "status", "status_rank", "changed", "idempotent", "mutation_committed", "safe_to_retry_original", "candidate_id", "candidate", "reason_codes", "projection", "outbox_delivery", "health", "effects", "result_sha256"],
+      "properties": {
+        "contract_version": {"const": "proof-reuse-candidate-result/v1"},
+        "ok": {"const": true},
+        "status": {"const": "recordable"},
+        "status_rank": {"const": 0},
+        "changed": {"const": false},
+        "idempotent": {"const": true},
+        "mutation_committed": {"const": false},
+        "safe_to_retry_original": {"const": true},
+        "candidate_id": {"$ref": "#/$defs/candidate_id"},
+        "candidate": {"$ref": "https://project-loop.local/contracts/proof-reuse-candidate-v1.schema.json"},
+        "reason_codes": {"type": "array", "maxItems": 0},
+        "projection": {"$ref": "#/$defs/projection_replayed"},
+        "outbox_delivery": {"enum": ["pending", "delivered", "failed_needs_review"]},
+        "health": {"$ref": "#/$defs/health_fresh"},
+        "effects": {"$ref": "#/$defs/effects_zero"},
+        "result_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "profile_postcommit_unhealthy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_version", "ok", "status", "status_rank", "changed", "idempotent", "mutation_committed", "safe_to_retry_original", "candidate_id", "candidate", "reason_codes", "projection", "outbox_delivery", "health", "effects", "result_sha256"],
+      "properties": {
+        "contract_version": {"const": "proof-reuse-candidate-result/v1"},
+        "ok": {"const": false},
+        "status": {"const": "recordable"},
+        "status_rank": {"const": 0},
+        "changed": {"const": true},
+        "idempotent": {"const": false},
+        "mutation_committed": {"const": true},
+        "safe_to_retry_original": {"const": false},
+        "candidate_id": {"$ref": "#/$defs/candidate_id"},
+        "candidate": {"$ref": "https://project-loop.local/contracts/proof-reuse-candidate-v1.schema.json"},
+        "reason_codes": {"type": "array", "maxItems": 0},
+        "projection": {"$ref": "#/$defs/projection_committed"},
+        "outbox_delivery": {"enum": ["pending", "delivered", "failed_needs_review"]},
+        "health": {"$ref": "#/$defs/health_postcommit_unhealthy"},
+        "effects": {"$ref": "#/$defs/effects_success"},
+        "result_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "profile_nonrecordable": {
+      "oneOf": [
+        {"$ref": "#/$defs/profile_nonrecordable_invalid"},
+        {"$ref": "#/$defs/profile_nonrecordable_unavailable"},
+        {"$ref": "#/$defs/profile_nonrecordable_withheld"}
+      ]
+    },
+    "profile_nonrecordable_invalid": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_version", "ok", "status", "status_rank", "changed", "idempotent", "mutation_committed", "safe_to_retry_original", "candidate_id", "candidate", "reason_codes", "projection", "outbox_delivery", "health", "effects", "result_sha256"],
+      "properties": {
+        "contract_version": {"const": "proof-reuse-candidate-result/v1"},
+        "ok": {"const": false},
+        "status": {"const": "invalid"},
+        "status_rank": {"const": 3},
+        "changed": {"const": false},
+        "idempotent": {"const": false},
+        "mutation_committed": {"const": false},
+        "safe_to_retry_original": {"const": true},
+        "candidate_id": {"type": "null"},
+        "candidate": {"type": "null"},
+        "reason_codes": {"type": "array", "minItems": 1, "maxItems": 18, "uniqueItems": true, "items": {"enum": ["source_anchor_authority_corrupt", "source_anchor_exhaustion_pending", "source_anchor_exhaustion_tombstoned", "source_anchor_not_current", "source_anchor_not_found", "source_anchor_parallel_chain", "source_anchor_recovery_required", "source_anchor_unhealthy", "source_authorization_invalid", "source_current_proof_changed", "source_live_basis_changed", "source_reuse_forbidden", "source_role_coverage_incomplete", "source_verdict_not_passed", "source_output_uncommitted", "source_effect_not_read_only", "source_declared_outputs_present", "source_private_identity"]}, "contains": {"enum": ["source_anchor_authority_corrupt", "source_anchor_parallel_chain", "source_authorization_invalid"]}, "minContains": 1},
+        "projection": {"$ref": "#/$defs/projection_none"},
+        "outbox_delivery": {"const": "not_applicable"},
+        "health": {"$ref": "#/$defs/health_nonrecordable_invalid"},
+        "effects": {"$ref": "#/$defs/effects_zero"},
+        "result_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "profile_nonrecordable_unavailable": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_version", "ok", "status", "status_rank", "changed", "idempotent", "mutation_committed", "safe_to_retry_original", "candidate_id", "candidate", "reason_codes", "projection", "outbox_delivery", "health", "effects", "result_sha256"],
+      "properties": {
+        "contract_version": {"const": "proof-reuse-candidate-result/v1"},
+        "ok": {"const": false},
+        "status": {"const": "unavailable"},
+        "status_rank": {"const": 2},
+        "changed": {"const": false},
+        "idempotent": {"const": false},
+        "mutation_committed": {"const": false},
+        "safe_to_retry_original": {"const": true},
+        "candidate_id": {"type": "null"},
+        "candidate": {"type": "null"},
+        "reason_codes": {"type": "array", "minItems": 1, "maxItems": 18, "uniqueItems": true, "items": {"enum": ["source_anchor_exhaustion_pending", "source_anchor_exhaustion_tombstoned", "source_anchor_not_current", "source_anchor_not_found", "source_anchor_recovery_required", "source_anchor_unhealthy", "source_current_proof_changed", "source_live_basis_changed", "source_reuse_forbidden", "source_role_coverage_incomplete", "source_verdict_not_passed", "source_output_uncommitted", "source_effect_not_read_only", "source_declared_outputs_present", "source_private_identity"]}, "contains": {"enum": ["source_anchor_exhaustion_pending", "source_anchor_exhaustion_tombstoned", "source_anchor_not_current", "source_anchor_not_found", "source_current_proof_changed", "source_live_basis_changed"]}, "minContains": 1},
+        "projection": {"$ref": "#/$defs/projection_none"},
+        "outbox_delivery": {"const": "not_applicable"},
+        "health": {"$ref": "#/$defs/health_nonrecordable_unavailable"},
+        "effects": {"$ref": "#/$defs/effects_zero"},
+        "result_sha256": {"$ref": "#/$defs/sha256"}
+      }
+    },
+    "profile_nonrecordable_withheld": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["contract_version", "ok", "status", "status_rank", "changed", "idempotent", "mutation_committed", "safe_to_retry_original", "candidate_id", "candidate", "reason_codes", "projection", "outbox_delivery", "health", "effects", "result_sha256"],
+      "properties": {
+        "contract_version": {"const": "proof-reuse-candidate-result/v1"},
+        "ok": {"const": false},
+        "status": {"const": "withheld"},
+        "status_rank": {"const": 1},
+        "changed": {"const": false},
+        "idempotent": {"const": false},
+        "mutation_committed": {"const": false},
+        "safe_to_retry_original": {"const": true},
+        "candidate_id": {"type": "null"},
+        "candidate": {"type": "null"},
+        "reason_codes": {"type": "array", "minItems": 1, "maxItems": 18, "uniqueItems": true, "items": {"enum": ["source_anchor_recovery_required", "source_anchor_unhealthy", "source_reuse_forbidden", "source_role_coverage_incomplete", "source_verdict_not_passed", "source_output_uncommitted", "source_effect_not_read_only", "source_declared_outputs_present", "source_private_identity"]}},
+        "projection": {"$ref": "#/$defs/projection_none"},
+        "outbox_delivery": {"const": "not_applicable"},
+        "health": {"$ref": "#/$defs/health_nonrecordable_withheld"},
+        "effects": {"$ref": "#/$defs/effects_zero"},
+        "result_sha256": {"$ref": "#/$defs/sha256"}
       }
     },
     "effects_success": {"const": {"schema_version": 8, "migrations_applied": 0, "dependencies_added": 0, "evidence_rows_inserted": 1, "evidence_links_inserted": 1, "events_appended": 1, "outbox_records_appended": 1, "directories_published": 1, "rows_updated": 0, "rows_deleted": 0, "rendered": 0, "lifecycle_transitions": 0, "network_requests": 0}},
