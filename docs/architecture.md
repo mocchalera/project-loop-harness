@@ -237,11 +237,13 @@ or cache state and has no public CLI/MCP/renderer consumer. See
 v0.6.0 adds an independent opt-in Mainline Progress Guard at the ordinary
 continuation seams. It keys policy state by project instance, Goal, and logical
 Exit Gate, reconstructs counters from schema-8 Events, and stops `next`,
-attached successor creation, and workflow Run/Job creation after the configured
-consecutive-zero limit. Task/Run/Route/environment aliases are observation
-metadata rather than lineage identity. Operator replan is an audited caller
-attestation, not cryptographic human authentication. This is cooperative policy
-enforcement, not malicious-agent resistance or external Cockpit containment.
+`pcl start --goal` successor creation, and workflow Run/Job creation after the
+configured consecutive-zero limit. Manual `pcl task create` and external
+Cockpit task creation are not blocked. Task/Run/Route/environment aliases are
+observation metadata rather than lineage identity. Operator replan is an
+audited caller attestation, not cryptographic human authentication. This is
+cooperative policy enforcement, not malicious-agent resistance or external
+Cockpit containment.
 See [mainline-progress-guard-v1.md](mainline-progress-guard-v1.md).
 
 ## Why CLI first

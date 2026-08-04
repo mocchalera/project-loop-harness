@@ -1,0 +1,25 @@
+RC correction target: independent reviewer task 1c917e51, M-1 and related L-1 only
+Parent commit: 13f9c76f8d39ad8c4f4d412892465666a430592c
+
+Command:
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:tests pytest -p no:cacheprovider --basetemp /private/tmp/pcl-v060-rc-m1-green2-20260804T1132 tests/test_progress_guard.py -q
+Result:
+6 passed in 0.79s
+
+Command:
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:tests pytest -p no:cacheprovider --basetemp /private/tmp/pcl-v060-rc-m1-doc-green-20260804T1133 tests/test_progress_guard.py::test_v060_metadata_keeps_schema8_migration0_dependency0_and_documents_boundary -q
+Result:
+1 passed in 0.15s
+
+Command:
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:tests ruff check --no-cache tests/test_progress_guard.py
+Result:
+All checks passed!
+
+Invariant checks:
+version=0.6.0
+schema=8
+dependencies=[]
+latest migration=008_event_outbox.sql
+runtime/public JSON/CLI/Event diff from parent=none
+git diff --check=passed

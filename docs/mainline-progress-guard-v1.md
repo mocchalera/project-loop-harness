@@ -94,8 +94,8 @@ While stopped:
   reject before creating a Run, Job, or prompt artifact.
 
 This release intentionally does not install a broad mutation interceptor. It
-does not block arbitrary direct database/file edits, external Cockpit task
-creation, or every manual PCL mutation.
+does not block manual `pcl task create`, arbitrary direct database/file edits,
+or external Cockpit task creation.
 
 ## Operator replan and resume
 
@@ -151,6 +151,18 @@ tamper-proof against a caller that edits the database or files, bypasses PCL,
 or falsely supplies operator confirmation. It does not enforce external
 Cockpit task creation, provide cryptographic human authentication, supervise
 processes, seal artifacts, or resist a malicious same-UID agent.
+
+Delta-1 observations are unverified caller attestations. `--criterion`,
+`--surface`, `--value-kind`, `--value-token`, and `--evidence-ref` are
+syntactically validated and recorded, but v0.6.0 does not resolve them against
+registered criterion, Test, Evidence, or artifact state. The guard therefore
+cannot detect a cooperative but over-optimistic agent that mislabels zero-value
+work as behavior-facing value. The durable audit trail is the detection and
+review mechanism for that mismatch.
+
+Statements elsewhere that plans, reviews, receipts, hashes,
+route/tool/model/environment changes, harness work, and backlog work are delta
+0 are operator/agent policy guidance, not an authenticated runtime oracle.
 
 Those limitations are explicit product boundaries, not deferred claims that
 v0.6.0 already provides security-grade containment.

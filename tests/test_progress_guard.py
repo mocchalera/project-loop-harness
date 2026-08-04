@@ -570,3 +570,28 @@ def test_v060_metadata_keeps_schema8_migration0_dependency0_and_documents_bounda
     assert "not security-grade authorization" in normalized_docs
     assert "external Cockpit task creation" in normalized_docs
     assert "not cryptographic authentication" in normalized_docs
+    assert "Delta-1 observations are unverified caller attestations." in normalized_docs
+    assert (
+        "`--criterion`, `--surface`, `--value-kind`, `--value-token`, and "
+        "`--evidence-ref` are syntactically validated and recorded"
+    ) in normalized_docs
+    assert (
+        "does not resolve them against registered criterion, Test, Evidence, or "
+        "artifact state"
+    ) in normalized_docs
+    assert "cannot detect a cooperative but over-optimistic agent" in normalized_docs
+    assert "durable audit trail is the detection and review mechanism" in normalized_docs
+    assert (
+        "operator/agent policy guidance, not an authenticated runtime oracle"
+    ) in normalized_docs
+    assert "manual `pcl task create`" in normalized_docs
+
+    architecture = (root / "docs" / "architecture.md").read_text(encoding="utf-8")
+    normalized_architecture = " ".join(architecture.split())
+    task_index = (root / "agent-tasks" / "README.md").read_text(encoding="utf-8")
+    normalized_task_index = " ".join(task_index.split())
+    for scoped_doc in (normalized_architecture, normalized_task_index):
+        assert "`pcl start --goal` successor creation" in scoped_doc
+        assert "attached successor" not in scoped_doc
+        assert "Manual `pcl task create`" in scoped_doc
+        assert "external Cockpit task creation" in scoped_doc

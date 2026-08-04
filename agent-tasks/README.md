@@ -249,9 +249,10 @@ announcement or external adoption claim was made.
 
 v0.6.0 adds one practical opt-in Mainline Progress Guard vertical package.
 Task **0225** derives Goal/Exit-Gate lineage state from schema-8 Events, stops
-normal `next`, attached successor, and Run/Job creation seams after two
-consecutive zero-value observations, and resumes only after an explicit
-operator replan event. It is cooperative policy enforcement, not a
+normal `next`, `pcl start --goal` successor creation, and Run/Job creation seams
+after two consecutive zero-value observations, and resumes only after an
+explicit operator replan event. Manual `pcl task create` and external Cockpit
+task creation are not blocked. It is cooperative policy enforcement, not a
 security-grade authorization or process-containment system. Publication stays
 outside the task.
 

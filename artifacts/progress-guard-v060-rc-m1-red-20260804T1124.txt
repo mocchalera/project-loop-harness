@@ -1,0 +1,12 @@
+Command:
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=src:tests pytest -p no:cacheprovider --basetemp /private/tmp/pcl-v060-rc-m1-red-20260804T1124 tests/test_progress_guard.py::test_v060_metadata_keeps_schema8_migration0_dependency0_and_documents_boundary -q
+
+Result:
+FAILED tests/test_progress_guard.py::test_v060_metadata_keeps_schema8_migration0_dependency0_and_documents_boundary
+
+Failure:
+AssertionError: expected docs/mainline-progress-guard-v1.md to state
+"Delta-1 observations are unverified caller attestations."
+
+Summary:
+1 failed in 0.15s
