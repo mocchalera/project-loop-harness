@@ -11,8 +11,8 @@ Coding agents can produce changes quickly. They are less reliable at preserving
 project state, proving completion, stopping at human decisions, and handing work
 to another session or model.
 
-Project Loop Harness (`pcl`) gives Codex, Claude Code, and similar agents one
-local, model-neutral loop:
+Project Loop Harness (`pcl`) gives Codex, Claude Code, and similar agents one local,
+model-neutral loop:
 
 ```text
 intent → bounded work → checks → copied evidence → completion packet → next step
@@ -20,8 +20,7 @@ intent → bounded work → checks → copied evidence → completion packet →
 
 - SQLite keeps current state; JSONL keeps an auditable event projection.
 - Tests, artifacts, reviews, and completion packets preserve what “done” means.
-- Agents continue routine safe work; humans decide product, permission, security,
-  destructive, and external-service questions.
+- Agents continue routine safe work; humans decide product, permission, security, destructive, and external-service questions.
 - The runtime does not call an LLM or depend on one agent vendor.
 
 It is for people coordinating coding agents, not another chat wrapper.
@@ -72,6 +71,7 @@ Want to see the result before adopting it? Run the isolated
 | Adopt | `pcl init --dry-run --json`, then `pcl init` | Inspect and install local policy/state |
 | Start | `pcl start "<outcome>"` or `--task T-XXXX` / `--goal G-XXXX` | Create minimal active work or attach without duplicates |
 | Orient | `pcl next --json` or `pcl resume` | Continue or hand off safely |
+| Stop stagnation (opt-in) | `pcl progress guard activate ...` | Stop repeated zero-value automatic continuation at one Exit Gate |
 | Verify | `pcl finish --emit-packet --goal G-XXXX` | Rerun checks and pin evidence |
 | Review | `pcl render` | Generate the human dashboard |
 
@@ -98,8 +98,7 @@ Agents must not edit `.project-loop/project.db`, `.project-loop/events.jsonl`, o
 generated dashboard HTML. State mutations go through `pcl`; machine context
 comes from JSON commands, evidence paths, reports, or `dashboard-data.json`.
 
-The protected and internal compatibility surfaces are documented in the
-[Alpha Stability Policy](docs/stability-policy.md).
+The protected and internal compatibility surfaces are documented in the [Alpha Stability Policy](docs/stability-policy.md).
 
 ## Install and inspect in more detail
 
@@ -136,7 +135,7 @@ first use in real repositories: time to healthy setup, time to a verified
 completion packet, maintainer interventions, safety violations, and voluntary
 reuse.
 
-As of v0.5.5, no version-current external cohort result has been recorded, so
+As of v0.6.0, no version-current external cohort result has been recorded, so
 the project does not claim external adoption. The
 [v0.5.2 Adoption Proof](docs/adoption-proof-v0.5.2.md) remains available as a
 historical study contract, not as current work or a successful outcome.
@@ -154,6 +153,7 @@ historical study contract, not as current work or a successful outcome.
   Goal/Task/Feature/Story/Test setup and idempotent recovery.
 - [CLI Guide](docs/command-guide.md) — task-oriented command discovery.
 - [Recovery Playbook](docs/recovery-playbook.md) — safe diagnosis and repair.
+- [Mainline Progress Guard v1](docs/mainline-progress-guard-v1.md) — opt-in Goal/Exit-Gate stagnation policy and explicit security boundary.
 - [MCP compatibility](docs/mcp-compatibility.md) — optional client boundary.
 - [Security](SECURITY.md) and [Contributing](CONTRIBUTING.md).
 

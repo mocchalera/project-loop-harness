@@ -26,6 +26,12 @@ from .errors import InvalidInputError
 from .paths import ProjectPaths
 from .presentation import format_context_check_summary, impact_text_payload, to_pretty_json
 from .progress import record_progress
+from .progress_guard import (
+    activate_progress_guard,
+    progress_guard_status,
+    record_progress_guard_observation,
+    replan_progress_guard,
+)
 from .receipt_show import receipt_summary_for_ref
 from .timeutil import utc_now_iso
 
@@ -76,6 +82,58 @@ def handle_context_command(
                 f"{receipt['status']} {receipt['milestone']} "
                 f"({result['evidence_id']})"
             )
+        return 0
+
+    if args.command == "progress" and args.progress_command == "guard":
+        if args.progress_guard_command == "activate":
+            result = activate_progress_guard(
+                paths,
+                goal_id=args.goal_id,
+                exit_gate=args.exit_gate,
+                limit=args.limit,
+                now=now_factory(),
+            )
+        elif args.progress_guard_command == "status":
+            result = {
+                "ok": True,
+                "progressGuard": progress_guard_status(
+                    paths,
+                    goal_id=args.goal_id,
+                    exit_gate=args.exit_gate,
+                ),
+            }
+        elif args.progress_guard_command == "observe":
+            result = record_progress_guard_observation(
+                paths,
+                goal_id=args.goal_id,
+                exit_gate=args.exit_gate,
+                delta=args.delta,
+                classification=args.classification,
+                value_kind=args.value_kind,
+                criterion=args.criterion,
+                surface=args.surface,
+                value_token=args.value_token,
+                summary=args.summary,
+                evidence_ref=args.evidence_ref,
+                task_label=args.task_label,
+                run_label=args.run_label,
+                route_label=args.route_label,
+                now=now_factory(),
+            )
+        else:
+            result = replan_progress_guard(
+                paths,
+                goal_id=args.goal_id,
+                exit_gate=args.exit_gate,
+                revision_token=args.revision_token,
+                reason=args.reason,
+                operator=args.operator,
+                now=now_factory(),
+            )
+        if json_output:
+            _print_json(result)
+        else:
+            print(to_pretty_json(result.get("progressGuard", result)))
         return 0
 
     if args.command == "context" and args.context_command == "pack":

@@ -69,8 +69,9 @@ is a regression, not an automatic regeneration result.
   include additive read-only `--target`, `--active-only`, and `--summary`
   validation projection flags. Validation still evaluates the full project;
   no-flag output and exit semantics remain unchanged.
-- 2026-07-29 — `snapshots/pcl-version.json` regenerated for the v0.5.5 local
-  release candidate bump (`0.5.4` → `0.5.5`).
+- 2026-08-04 — `snapshots/pcl-version.json` regenerated for the v0.6.0 local
+  Progress Guard candidate bump (`0.5.5` → `0.6.0`), and `pcl-help.json`
+  records the additive opt-in guard in the existing `progress` group.
 - 2026-07-28 — `snapshots/pcl-help.json` regenerated for P0-6 to include the
   additive `progress record` command. It records a target-bound,
   hash-anchored execution progress receipt and does not change target

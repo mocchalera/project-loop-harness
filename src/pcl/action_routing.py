@@ -19,6 +19,10 @@ from .links import linked_decisions_for_escalation
 from .locales import HUMAN_GATE_JA
 from .paths import ProjectPaths
 from .project_config import finish_check_configuration
+from .progress_guard import (
+    first_stopped_progress_guard,
+    stopped_progress_guard_for_goal,
+)
 from .target_resolver import (
     ResolvedRoutingTarget,
     TaskGoalTargetNotFoundError,
@@ -401,6 +405,12 @@ def next_action(paths: ProjectPaths, *, target: str | None = None) -> dict:
     needs_human = _needs_human_escalation_next_action(paths)
     if needs_human is not None:
         return needs_human
+    stopped_guard = first_stopped_progress_guard(paths)
+    if stopped_guard is not None:
+        return _progress_guard_stop_action(
+            stopped_guard,
+            target={"type": "goal", "id": stopped_guard["goal"]},
+        )
     unfinished_executor = _unfinished_executor_next_action(paths)
     if unfinished_executor is not None:
         return unfinished_executor
@@ -455,6 +465,18 @@ def _targeted_next_action(paths: ProjectPaths, *, target_id: str) -> dict:
     ):
         if action is not None:
             return _bind_next_action(action, binding=binding, routing_scope="target")
+
+    stopped_guard = (
+        stopped_progress_guard_for_goal(paths, goal_id=resolved.goal_id)
+        if resolved.goal_id is not None
+        else None
+    )
+    if stopped_guard is not None:
+        return _bind_next_action(
+            _progress_guard_stop_action(stopped_guard, target=target),
+            binding=binding,
+            routing_scope="target",
+        )
 
     expired_leases = _expired_lease_next_action(paths, goal_id=resolved.goal_id)
     if expired_leases is not None:
@@ -529,6 +551,39 @@ def _targeted_next_action(paths: ProjectPaths, *, target_id: str) -> dict:
     else:
         action = _continue_goal_next_action(target)
     return _bind_next_action(action, binding=binding, routing_scope="target")
+
+
+def _progress_guard_stop_action(
+    status: dict[str, Any],
+    *,
+    target: dict[str, Any],
+) -> dict[str, Any]:
+    command = (
+        "pcl progress guard replan "
+        f"--goal {status['goal']} --exit-gate {status['gate']} "
+        "--revision-token '<new-plan-revision>' "
+        "--reason '<operator reason>' --operator '<operator identity>'"
+    )
+    return {
+        **build_next_action(
+            action_type="stop_and_replan",
+            command=command,
+            reason=(
+                f"Mainline Progress Guard observed {status['consecutiveZero']} "
+                f"consecutive zero-value observations for Exit Gate {status['gate']}."
+            ),
+            target=target,
+            priority=0,
+            blocking=True,
+            requires_human=True,
+            safe_to_run=False,
+            expected_after=(
+                "An operator records a new plan/revision attestation; automatic "
+                "product continuation remains stopped until then."
+            ),
+        ),
+        "progressGuard": status,
+    }
 
 
 def _resolve_next_target(paths: ProjectPaths, *, target_id: str) -> ResolvedRoutingTarget:

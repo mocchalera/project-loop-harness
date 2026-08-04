@@ -36,6 +36,7 @@ from .ids import next_prefixed_id
 from .init_project import init_project, plan_init_project
 from .paths import ProjectPaths
 from .project_config import finish_check_configuration_warning
+from .progress_guard import require_goal_progress_continuation
 from .mutation_tail import (
     apply_direct_setup_tail,
     direct_setup_tail_exception_result,
@@ -586,6 +587,7 @@ def _commit_start(
         elif goal_id:
             target = _resolve_start_target(conn, goal_id, expected_type="goal")
             _require_startable_target(target)
+            require_goal_progress_continuation(conn, goal_id=target.id)
             task = create_task_in_transaction(
                 conn,
                 paths,

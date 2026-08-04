@@ -7,7 +7,7 @@ from .context import DEFAULT_MAX_TOKENS
 def add_context_parsers(sub) -> None:
     p_progress = sub.add_parser(
         "progress",
-        help="Record target-bound execution progress receipts",
+        help="Record progress receipts and manage the optional Progress Guard",
     )
     progress_sub = p_progress.add_subparsers(
         dest="progress_command",
@@ -48,6 +48,77 @@ def add_context_parsers(sub) -> None:
     p_progress_record.add_argument("--ci-provider", default=None)
     p_progress_record.add_argument("--ci-run-id", default=None)
     p_progress_record.add_argument("--ci-run-url", default=None)
+
+    p_progress_guard = progress_sub.add_parser(
+        "guard",
+        help="Manage the opt-in cooperative Mainline Progress Guard",
+        description=(
+            "Practical policy enforcement for normal PCL agents. This is not "
+            "tamper-proof security or cryptographic human authentication."
+        ),
+    )
+    guard_sub = p_progress_guard.add_subparsers(
+        dest="progress_guard_command",
+        required=True,
+    )
+
+    def add_lineage(parser) -> None:
+        parser.add_argument("--goal", dest="goal_id", required=True)
+        parser.add_argument("--exit-gate", required=True)
+
+    p_guard_activate = guard_sub.add_parser(
+        "activate",
+        help="Opt one existing Goal/Exit-Gate lineage into the policy",
+    )
+    add_lineage(p_guard_activate)
+    p_guard_activate.add_argument("--limit", type=int, default=2)
+
+    p_guard_status = guard_sub.add_parser(
+        "status",
+        help="Derive deterministic current guard state from Events",
+    )
+    add_lineage(p_guard_status)
+
+    p_guard_observe = guard_sub.add_parser(
+        "observe",
+        help="Record one bound mainline/support/deferred observation",
+    )
+    add_lineage(p_guard_observe)
+    p_guard_observe.add_argument("--delta", type=int, choices=[0, 1], required=True)
+    p_guard_observe.add_argument(
+        "--classification",
+        choices=["mainline_product", "harness_support", "deferred"],
+        required=True,
+    )
+    p_guard_observe.add_argument(
+        "--value-kind",
+        choices=[
+            "criterion_closed",
+            "gate_bound_artifact_ready",
+            "human_acceptance",
+            "integrated_behavior",
+        ],
+    )
+    p_guard_observe.add_argument("--criterion", required=True)
+    p_guard_observe.add_argument("--surface", required=True)
+    p_guard_observe.add_argument("--value-token", required=True)
+    p_guard_observe.add_argument("--summary", required=True)
+    p_guard_observe.add_argument("--evidence-ref", required=True)
+    p_guard_observe.add_argument("--task-label")
+    p_guard_observe.add_argument("--run-label")
+    p_guard_observe.add_argument("--route-label")
+
+    p_guard_replan = guard_sub.add_parser(
+        "replan",
+        help=(
+            "Record an operator attestation and resume; this is visible audit "
+            "state, not cryptographic human authentication"
+        ),
+    )
+    add_lineage(p_guard_replan)
+    p_guard_replan.add_argument("--revision-token", required=True)
+    p_guard_replan.add_argument("--reason", required=True)
+    p_guard_replan.add_argument("--operator", required=True)
 
     p_context = sub.add_parser("context", help="Build focused machine context packages")
     context_sub = p_context.add_subparsers(dest="context_command", required=True)

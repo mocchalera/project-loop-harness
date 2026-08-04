@@ -247,6 +247,14 @@ Publishing, verify PyPI provenance and artifact hashes, run a normal public
 install plus strict independent consumer dogfood, and upgrade pipx. No release
 announcement or external adoption claim was made.
 
+v0.6.0 adds one practical opt-in Mainline Progress Guard vertical package.
+Task **0225** derives Goal/Exit-Gate lineage state from schema-8 Events, stops
+normal `next`, attached successor, and Run/Job creation seams after two
+consecutive zero-value observations, and resumes only after an explicit
+operator replan event. It is cooperative policy enforcement, not a
+security-grade authorization or process-containment system. Publication stays
+outside the task.
+
 ## Planned next (see growth plan for scope)
 
 | Milestone | Theme |
@@ -266,6 +274,7 @@ announcement or external adoption claim was made.
 | post-v0.5.3 | complete frozen CLI/commands refactor: 0204 → 0205 → 0206 → 0207 → 0208 → 0209 |
 | v0.5.4 | published and publicly verified; behavior-preserving CLI/commands maintainability release → 0210 local RC → 0211 publication closeout |
 | v0.5.5 | published and publicly verified; finish reliability and operability → P0 real-use friction remediation → P1 progress/compact output → 0212 exact Goal close routing → 0213 local RC → 0214 non-HEAD base correction → 0215 publication closeout |
+| v0.6.0 | practical opt-in Mainline Progress Guard → 0225 local implementation and independent-review handoff; no publication authorization |
 
 Everything with an ID below 0102 is completed design history; see `TASKS.md`
 for the one-line summary of each.

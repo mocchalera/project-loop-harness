@@ -1,0 +1,584 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.13.12, pytest-9.0.2, pluggy-1.6.0
+rootdir: /Users/mocchalera/.agi-tools/worktrees/project-loop-harness-codex-plh-mutation-tail-p0a-20260730
+configfile: pyproject.toml
+plugins: anyio-4.12.1
+collected 5 items
+
+tests/test_progress_guard.py FFFFF                                       [100%]
+
+=================================== FAILURES ===================================
+_____ test_plh_lineage_survives_aliases_restart_duplicate_replan_and_value _____
+
+self = ArgumentParser(prog='pcl progress', usage=None, description=None, formatter_class=<class 'argparse.HelpFormatter'>, conflict_handler='error', add_help=True)
+args = ['guard', 'activate', '--goal', 'G-0001', '--exit-gate', 'release-ready']
+namespace = Namespace(progress_command=None), intermixed = False
+
+    def _parse_known_args2(self, args, namespace, intermixed):
+        if args is None:
+            # args default to the system args
+            args = _sys.argv[1:]
+        else:
+            # make sure that args are mutable
+            args = list(args)
+    
+        # default Namespace built from parser defaults
+        if namespace is None:
+            namespace = Namespace()
+    
+        # add any action defaults that aren't present
+        for action in self._actions:
+            if action.dest is not SUPPRESS:
+                if not hasattr(namespace, action.dest):
+                    if action.default is not SUPPRESS:
+                        setattr(namespace, action.dest, action.default)
+    
+        # add any parser defaults that aren't present
+        for dest in self._defaults:
+            if not hasattr(namespace, dest):
+                setattr(namespace, dest, self._defaults[dest])
+    
+        # parse the arguments and exit if there are any errors
+        if self.exit_on_error:
+            try:
+>               namespace, args = self._parse_known_args(args, namespace, intermixed)
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1965: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2197: in _parse_known_args
+    positionals_end_index = consume_positionals(start_index)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2172: in consume_positionals
+    take_action(action, args)
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2026: in take_action
+    argument_values = self._get_values(action, argument_strings)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2556: in _get_values
+    self._check_value(action, value[0])
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ArgumentParser(prog='pcl progress', usage=None, description=None, formatter_class=<class 'argparse.HelpFormatter'>, conflict_handler='error', add_help=True)
+action = _SubParsersAction(option_strings=[], dest='progress_command', nargs='A...', const=None, default=None, type=None, choic...e.HelpFormatter'>, conflict_handler='error', add_help=True)}, required=True, help=None, metavar=None, deprecated=False)
+value = 'guard'
+
+    def _check_value(self, action, value):
+        # converted value must be one of the choices (if specified)
+        choices = action.choices
+        if choices is not None:
+            if isinstance(choices, str):
+                choices = iter(choices)
+            if value not in choices:
+                args = {'value': str(value),
+                        'choices': ', '.join(map(str, action.choices))}
+                msg = _('invalid choice: %(value)r (choose from %(choices)s)')
+>               raise ArgumentError(action, msg % args)
+E               argparse.ArgumentError: argument progress_command: invalid choice: 'guard' (choose from record)
+
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2606: ArgumentError
+
+During handling of the above exception, another exception occurred:
+
+tmp_path = PosixPath('/private/tmp/pcl-v060-red-20260804T0038/test_plh_lineage_survives_alia0')
+capsys = <_pytest.capture.CaptureFixture object at 0x104615940>
+
+    def test_plh_lineage_survives_aliases_restart_duplicate_replan_and_value(
+        tmp_path: Path,
+        capsys,
+    ) -> None:
+        root = tmp_path / "project"
+        _init_goal(root, capsys)
+    
+>       activated = _activate(root, capsys)
+                    ^^^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_progress_guard.py:112: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_progress_guard.py:31: in _activate
+    assert main([
+src/pcl/cli.py:140: in main
+    args = parser.parse_args(argv)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1926: in parse_args
+    args, argv = self.parse_known_args(args, namespace)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1936: in parse_known_args
+    return self._parse_known_args2(args, namespace, intermixed=False)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1965: in _parse_known_args2
+    namespace, args = self._parse_known_args(args, namespace, intermixed)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2197: in _parse_known_args
+    positionals_end_index = consume_positionals(start_index)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2172: in consume_positionals
+    take_action(action, args)
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2041: in take_action
+    action(self, namespace, argument_values, option_string)
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1286: in __call__
+    subnamespace, arg_strings = subparser.parse_known_args(arg_strings, None)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1936: in parse_known_args
+    return self._parse_known_args2(args, namespace, intermixed=False)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1967: in _parse_known_args2
+    self.error(str(err))
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2686: in error
+    self.exit(2, _('%(prog)s: error: %(message)s\n') % args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ArgumentParser(prog='pcl progress', usage=None, description=None, formatter_class=<class 'argparse.HelpFormatter'>, conflict_handler='error', add_help=True)
+status = 2
+message = "pcl progress: error: argument progress_command: invalid choice: 'guard' (choose from record)\n"
+
+    def exit(self, status=0, message=None):
+        if message:
+            self._print_message(message, _sys.stderr)
+>       _sys.exit(status)
+E       SystemExit: 2
+
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2673: SystemExit
+----------------------------- Captured stderr call -----------------------------
+usage: pcl progress [-h] {record} ...
+pcl progress: error: argument progress_command: invalid choice: 'guard' (choose from record)
+_______ test_video_os_stop_blocks_next_successor_and_workflow_pre_effect _______
+
+self = ArgumentParser(prog='pcl progress', usage=None, description=None, formatter_class=<class 'argparse.HelpFormatter'>, conflict_handler='error', add_help=True)
+args = ['guard', 'activate', '--goal', 'G-0054', '--exit-gate', 'fresh-final-render']
+namespace = Namespace(progress_command=None), intermixed = False
+
+    def _parse_known_args2(self, args, namespace, intermixed):
+        if args is None:
+            # args default to the system args
+            args = _sys.argv[1:]
+        else:
+            # make sure that args are mutable
+            args = list(args)
+    
+        # default Namespace built from parser defaults
+        if namespace is None:
+            namespace = Namespace()
+    
+        # add any action defaults that aren't present
+        for action in self._actions:
+            if action.dest is not SUPPRESS:
+                if not hasattr(namespace, action.dest):
+                    if action.default is not SUPPRESS:
+                        setattr(namespace, action.dest, action.default)
+    
+        # add any parser defaults that aren't present
+        for dest in self._defaults:
+            if not hasattr(namespace, dest):
+                setattr(namespace, dest, self._defaults[dest])
+    
+        # parse the arguments and exit if there are any errors
+        if self.exit_on_error:
+            try:
+>               namespace, args = self._parse_known_args(args, namespace, intermixed)
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1965: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2197: in _parse_known_args
+    positionals_end_index = consume_positionals(start_index)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2172: in consume_positionals
+    take_action(action, args)
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2026: in take_action
+    argument_values = self._get_values(action, argument_strings)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2556: in _get_values
+    self._check_value(action, value[0])
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ArgumentParser(prog='pcl progress', usage=None, description=None, formatter_class=<class 'argparse.HelpFormatter'>, conflict_handler='error', add_help=True)
+action = _SubParsersAction(option_strings=[], dest='progress_command', nargs='A...', const=None, default=None, type=None, choic...e.HelpFormatter'>, conflict_handler='error', add_help=True)}, required=True, help=None, metavar=None, deprecated=False)
+value = 'guard'
+
+    def _check_value(self, action, value):
+        # converted value must be one of the choices (if specified)
+        choices = action.choices
+        if choices is not None:
+            if isinstance(choices, str):
+                choices = iter(choices)
+            if value not in choices:
+                args = {'value': str(value),
+                        'choices': ', '.join(map(str, action.choices))}
+                msg = _('invalid choice: %(value)r (choose from %(choices)s)')
+>               raise ArgumentError(action, msg % args)
+E               argparse.ArgumentError: argument progress_command: invalid choice: 'guard' (choose from record)
+
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2606: ArgumentError
+
+During handling of the above exception, another exception occurred:
+
+tmp_path = PosixPath('/private/tmp/pcl-v060-red-20260804T0038/test_video_os_stop_blocks_next0')
+capsys = <_pytest.capture.CaptureFixture object at 0x1055039d0>
+
+    def test_video_os_stop_blocks_next_successor_and_workflow_pre_effect(
+        tmp_path: Path,
+        capsys,
+    ) -> None:
+        root = tmp_path / "video-os"
+        assert main(["init", "--target", str(root)]) == 0
+        capsys.readouterr()
+        _seed_video_os_fixture(root)
+>       _activate(root, capsys, goal_id="G-0054", gate="fresh-final-render")
+
+tests/test_progress_guard.py:306: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_progress_guard.py:31: in _activate
+    assert main([
+src/pcl/cli.py:140: in main
+    args = parser.parse_args(argv)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1926: in parse_args
+    args, argv = self.parse_known_args(args, namespace)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1936: in parse_known_args
+    return self._parse_known_args2(args, namespace, intermixed=False)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1965: in _parse_known_args2
+    namespace, args = self._parse_known_args(args, namespace, intermixed)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2197: in _parse_known_args
+    positionals_end_index = consume_positionals(start_index)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2172: in consume_positionals
+    take_action(action, args)
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2041: in take_action
+    action(self, namespace, argument_values, option_string)
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1286: in __call__
+    subnamespace, arg_strings = subparser.parse_known_args(arg_strings, None)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1936: in parse_known_args
+    return self._parse_known_args2(args, namespace, intermixed=False)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1967: in _parse_known_args2
+    self.error(str(err))
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2686: in error
+    self.exit(2, _('%(prog)s: error: %(message)s\n') % args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ArgumentParser(prog='pcl progress', usage=None, description=None, formatter_class=<class 'argparse.HelpFormatter'>, conflict_handler='error', add_help=True)
+status = 2
+message = "pcl progress: error: argument progress_command: invalid choice: 'guard' (choose from record)\n"
+
+    def exit(self, status=0, message=None):
+        if message:
+            self._print_message(message, _sys.stderr)
+>       _sys.exit(status)
+E       SystemExit: 2
+
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2673: SystemExit
+----------------------------- Captured stderr call -----------------------------
+usage: pcl progress [-h] {record} ...
+pcl progress: error: argument progress_command: invalid choice: 'guard' (choose from record)
+_ test_authentic_value_permits_continuation_and_support_never_sets_product_red _
+
+self = ArgumentParser(prog='pcl progress', usage=None, description=None, formatter_class=<class 'argparse.HelpFormatter'>, conflict_handler='error', add_help=True)
+args = ['guard', 'activate', '--goal', 'G-0001', '--exit-gate', 'release-ready']
+namespace = Namespace(progress_command=None), intermixed = False
+
+    def _parse_known_args2(self, args, namespace, intermixed):
+        if args is None:
+            # args default to the system args
+            args = _sys.argv[1:]
+        else:
+            # make sure that args are mutable
+            args = list(args)
+    
+        # default Namespace built from parser defaults
+        if namespace is None:
+            namespace = Namespace()
+    
+        # add any action defaults that aren't present
+        for action in self._actions:
+            if action.dest is not SUPPRESS:
+                if not hasattr(namespace, action.dest):
+                    if action.default is not SUPPRESS:
+                        setattr(namespace, action.dest, action.default)
+    
+        # add any parser defaults that aren't present
+        for dest in self._defaults:
+            if not hasattr(namespace, dest):
+                setattr(namespace, dest, self._defaults[dest])
+    
+        # parse the arguments and exit if there are any errors
+        if self.exit_on_error:
+            try:
+>               namespace, args = self._parse_known_args(args, namespace, intermixed)
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1965: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2197: in _parse_known_args
+    positionals_end_index = consume_positionals(start_index)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2172: in consume_positionals
+    take_action(action, args)
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2026: in take_action
+    argument_values = self._get_values(action, argument_strings)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2556: in _get_values
+    self._check_value(action, value[0])
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ArgumentParser(prog='pcl progress', usage=None, description=None, formatter_class=<class 'argparse.HelpFormatter'>, conflict_handler='error', add_help=True)
+action = _SubParsersAction(option_strings=[], dest='progress_command', nargs='A...', const=None, default=None, type=None, choic...e.HelpFormatter'>, conflict_handler='error', add_help=True)}, required=True, help=None, metavar=None, deprecated=False)
+value = 'guard'
+
+    def _check_value(self, action, value):
+        # converted value must be one of the choices (if specified)
+        choices = action.choices
+        if choices is not None:
+            if isinstance(choices, str):
+                choices = iter(choices)
+            if value not in choices:
+                args = {'value': str(value),
+                        'choices': ', '.join(map(str, action.choices))}
+                msg = _('invalid choice: %(value)r (choose from %(choices)s)')
+>               raise ArgumentError(action, msg % args)
+E               argparse.ArgumentError: argument progress_command: invalid choice: 'guard' (choose from record)
+
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2606: ArgumentError
+
+During handling of the above exception, another exception occurred:
+
+tmp_path = PosixPath('/private/tmp/pcl-v060-red-20260804T0038/test_authentic_value_permits_c0')
+capsys = <_pytest.capture.CaptureFixture object at 0x105503d90>
+
+    def test_authentic_value_permits_continuation_and_support_never_sets_product_red(
+        tmp_path: Path,
+        capsys,
+    ) -> None:
+        root = tmp_path / "success"
+        _init_goal(root, capsys)
+>       _activate(root, capsys)
+
+tests/test_progress_guard.py:381: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_progress_guard.py:31: in _activate
+    assert main([
+src/pcl/cli.py:140: in main
+    args = parser.parse_args(argv)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1926: in parse_args
+    args, argv = self.parse_known_args(args, namespace)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1936: in parse_known_args
+    return self._parse_known_args2(args, namespace, intermixed=False)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1965: in _parse_known_args2
+    namespace, args = self._parse_known_args(args, namespace, intermixed)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2197: in _parse_known_args
+    positionals_end_index = consume_positionals(start_index)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2172: in consume_positionals
+    take_action(action, args)
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2041: in take_action
+    action(self, namespace, argument_values, option_string)
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1286: in __call__
+    subnamespace, arg_strings = subparser.parse_known_args(arg_strings, None)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1936: in parse_known_args
+    return self._parse_known_args2(args, namespace, intermixed=False)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1967: in _parse_known_args2
+    self.error(str(err))
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2686: in error
+    self.exit(2, _('%(prog)s: error: %(message)s\n') % args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ArgumentParser(prog='pcl progress', usage=None, description=None, formatter_class=<class 'argparse.HelpFormatter'>, conflict_handler='error', add_help=True)
+status = 2
+message = "pcl progress: error: argument progress_command: invalid choice: 'guard' (choose from record)\n"
+
+    def exit(self, status=0, message=None):
+        if message:
+            self._print_message(message, _sys.stderr)
+>       _sys.exit(status)
+E       SystemExit: 2
+
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2673: SystemExit
+----------------------------- Captured stderr call -----------------------------
+usage: pcl progress [-h] {record} ...
+pcl progress: error: argument progress_command: invalid choice: 'guard' (choose from record)
+____ test_guard_mutations_are_event_outbox_atomic_and_rollback_effect_zero _____
+
+tmp_path = PosixPath('/private/tmp/pcl-v060-red-20260804T0038/test_guard_mutations_are_event0')
+capsys = <_pytest.capture.CaptureFixture object at 0x1054e7ce0>
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1054e7bb0>
+
+    def test_guard_mutations_are_event_outbox_atomic_and_rollback_effect_zero(
+        tmp_path: Path,
+        capsys,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        root = tmp_path / "atomic"
+        _init_goal(root, capsys)
+        before = _event_outbox_counts(root)
+    
+>       import pcl.progress_guard as progress_guard
+E       ModuleNotFoundError: No module named 'pcl.progress_guard'
+
+tests/test_progress_guard.py:420: ModuleNotFoundError
+_ test_guard_input_is_closed_json_is_deterministic_and_unprotected_is_compatible _
+
+self = ArgumentParser(prog='pcl progress', usage=None, description=None, formatter_class=<class 'argparse.HelpFormatter'>, conflict_handler='error', add_help=True)
+args = ['guard', 'activate', '--goal', 'G-0001', '--exit-gate', 'release-ready']
+namespace = Namespace(progress_command=None), intermixed = False
+
+    def _parse_known_args2(self, args, namespace, intermixed):
+        if args is None:
+            # args default to the system args
+            args = _sys.argv[1:]
+        else:
+            # make sure that args are mutable
+            args = list(args)
+    
+        # default Namespace built from parser defaults
+        if namespace is None:
+            namespace = Namespace()
+    
+        # add any action defaults that aren't present
+        for action in self._actions:
+            if action.dest is not SUPPRESS:
+                if not hasattr(namespace, action.dest):
+                    if action.default is not SUPPRESS:
+                        setattr(namespace, action.dest, action.default)
+    
+        # add any parser defaults that aren't present
+        for dest in self._defaults:
+            if not hasattr(namespace, dest):
+                setattr(namespace, dest, self._defaults[dest])
+    
+        # parse the arguments and exit if there are any errors
+        if self.exit_on_error:
+            try:
+>               namespace, args = self._parse_known_args(args, namespace, intermixed)
+                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1965: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2197: in _parse_known_args
+    positionals_end_index = consume_positionals(start_index)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2172: in consume_positionals
+    take_action(action, args)
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2026: in take_action
+    argument_values = self._get_values(action, argument_strings)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2556: in _get_values
+    self._check_value(action, value[0])
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ArgumentParser(prog='pcl progress', usage=None, description=None, formatter_class=<class 'argparse.HelpFormatter'>, conflict_handler='error', add_help=True)
+action = _SubParsersAction(option_strings=[], dest='progress_command', nargs='A...', const=None, default=None, type=None, choic...e.HelpFormatter'>, conflict_handler='error', add_help=True)}, required=True, help=None, metavar=None, deprecated=False)
+value = 'guard'
+
+    def _check_value(self, action, value):
+        # converted value must be one of the choices (if specified)
+        choices = action.choices
+        if choices is not None:
+            if isinstance(choices, str):
+                choices = iter(choices)
+            if value not in choices:
+                args = {'value': str(value),
+                        'choices': ', '.join(map(str, action.choices))}
+                msg = _('invalid choice: %(value)r (choose from %(choices)s)')
+>               raise ArgumentError(action, msg % args)
+E               argparse.ArgumentError: argument progress_command: invalid choice: 'guard' (choose from record)
+
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2606: ArgumentError
+
+During handling of the above exception, another exception occurred:
+
+tmp_path = PosixPath('/private/tmp/pcl-v060-red-20260804T0038/test_guard_input_is_closed_jso0')
+capsys = <_pytest.capture.CaptureFixture object at 0x1054e56e0>
+
+    def test_guard_input_is_closed_json_is_deterministic_and_unprotected_is_compatible(
+        tmp_path: Path,
+        capsys,
+    ) -> None:
+        root = tmp_path / "compat"
+        _init_goal(root, capsys)
+    
+        assert main([
+            "--root", str(root), "next", "--target", GOAL_ID, "--json",
+        ]) == 0
+        unprotected_first = _json(capsys)
+        assert main([
+            "--root", str(root), "next", "--target", GOAL_ID, "--json",
+        ]) == 0
+        assert _json(capsys) == unprotected_first
+    
+        assert main([
+            "--root", str(root), "loop", "run", "feature_coverage",
+            "--goal", GOAL_ID, "--json",
+        ]) == 0
+        unprotected_run = _json(capsys)
+        assert unprotected_run["workflow_run"]["id"] == "WR-0001"
+        assert len(unprotected_run["jobs"]) == 3
+    
+        second = tmp_path / "closed-input"
+        _init_goal(second, capsys)
+>       _activate(second, capsys)
+
+tests/test_progress_guard.py:464: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/test_progress_guard.py:31: in _activate
+    assert main([
+src/pcl/cli.py:140: in main
+    args = parser.parse_args(argv)
+           ^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1926: in parse_args
+    args, argv = self.parse_known_args(args, namespace)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1936: in parse_known_args
+    return self._parse_known_args2(args, namespace, intermixed=False)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1965: in _parse_known_args2
+    namespace, args = self._parse_known_args(args, namespace, intermixed)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2197: in _parse_known_args
+    positionals_end_index = consume_positionals(start_index)
+                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2172: in consume_positionals
+    take_action(action, args)
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2041: in take_action
+    action(self, namespace, argument_values, option_string)
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1286: in __call__
+    subnamespace, arg_strings = subparser.parse_known_args(arg_strings, None)
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1936: in parse_known_args
+    return self._parse_known_args2(args, namespace, intermixed=False)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:1967: in _parse_known_args2
+    self.error(str(err))
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2686: in error
+    self.exit(2, _('%(prog)s: error: %(message)s\n') % args)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = ArgumentParser(prog='pcl progress', usage=None, description=None, formatter_class=<class 'argparse.HelpFormatter'>, conflict_handler='error', add_help=True)
+status = 2
+message = "pcl progress: error: argument progress_command: invalid choice: 'guard' (choose from record)\n"
+
+    def exit(self, status=0, message=None):
+        if message:
+            self._print_message(message, _sys.stderr)
+>       _sys.exit(status)
+E       SystemExit: 2
+
+/opt/homebrew/Caskroom/miniforge/base/lib/python3.13/argparse.py:2673: SystemExit
+----------------------------- Captured stderr call -----------------------------
+usage: pcl progress [-h] {record} ...
+pcl progress: error: argument progress_command: invalid choice: 'guard' (choose from record)
+=========================== short test summary info ============================
+FAILED tests/test_progress_guard.py::test_plh_lineage_survives_aliases_restart_duplicate_replan_and_value
+FAILED tests/test_progress_guard.py::test_video_os_stop_blocks_next_successor_and_workflow_pre_effect
+FAILED tests/test_progress_guard.py::test_authentic_value_permits_continuation_and_support_never_sets_product_red
+FAILED tests/test_progress_guard.py::test_guard_mutations_are_event_outbox_atomic_and_rollback_effect_zero
+FAILED tests/test_progress_guard.py::test_guard_input_is_closed_json_is_deterministic_and_unprotected_is_compatible
+============================== 5 failed in 0.94s ===============================

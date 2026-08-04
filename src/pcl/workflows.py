@@ -13,6 +13,7 @@ from .events import append_event
 from .guards import require_initialized
 from .ids import next_prefixed_id
 from .paths import ProjectPaths
+from .progress_guard import require_goal_progress_continuation
 from .stories import TEST_CASE_TYPES
 from .timeutil import utc_now_iso
 from .workflow_yaml import parse_workflow_yaml
@@ -121,6 +122,7 @@ def run_workflow(
     conn = connect_mutation(paths)
     try:
         _validate_target(conn, goal_id=goal_id, defect_id=defect_id)
+        require_goal_progress_continuation(conn, goal_id=goal_id)
         _validate_retry_metadata(
             iteration=iteration,
             retry_of_workflow_run_id=retry_of_workflow_run_id,
