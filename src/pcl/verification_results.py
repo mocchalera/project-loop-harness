@@ -328,7 +328,7 @@ def _classify_command_result(
     signal_value = _signal_value(exit_code)
     observability = command.get("observability")
     observability_failure = (
-        observability.get("failure_kind")
+        str(observability.get("failure_kind") or "observer_unavailable")
         if isinstance(observability, Mapping)
         and observability.get("eligible") is not True
         else None

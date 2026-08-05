@@ -335,13 +335,17 @@ def _drain_stream(stream: Any, capture: _BoundedStream) -> None:
 
 
 def _terminate_process_group(process: subprocess.Popen[bytes]) -> dict[str, Any]:
+    leader_alive = process.poll() is None
     result = {
         "requested": True,
         "method": "terminate_process_group",
         "escalated": False,
         "term_sent": False,
         "kill_sent": False,
-        "group_state_before": _process_group_state(process.pid),
+        "group_state_before": _process_group_state(
+            process.pid,
+            leader_alive=leader_alive,
+        ),
     }
     try:
         if os.name == "posix":
@@ -353,7 +357,10 @@ def _terminate_process_group(process: subprocess.Popen[bytes]) -> dict[str, Any]
         process.wait(timeout=1)
     except (ProcessLookupError, subprocess.TimeoutExpired):
         pass
-    if _process_group_state(process.pid) in {"alive", "surviving"}:
+    if _process_group_state(
+        process.pid,
+        leader_alive=process.poll() is None,
+    ) in {"alive", "surviving", "unknown"}:
         result["escalated"] = True
         try:
             if os.name == "posix":
@@ -368,9 +375,11 @@ def _terminate_process_group(process: subprocess.Popen[bytes]) -> dict[str, Any]
     return result
 
 
-def _process_group_state(pid: int) -> str:
+def _process_group_state(pid: int, *, leader_alive: bool | None = None) -> str:
     if os.name != "posix":
-        return "alive" if pid else "unknown"
+        if leader_alive is False:
+            return "not_applicable"
+        return "unknown"
     try:
         os.killpg(pid, 0)
     except ProcessLookupError:
@@ -383,7 +392,7 @@ def _process_group_state(pid: int) -> str:
 
 
 def _final_process_group_state(pid: int, *, leader_alive: bool) -> dict[str, Any]:
-    state = _process_group_state(pid)
+    state = _process_group_state(pid, leader_alive=leader_alive)
     return {
         "group_state": "surviving" if state == "alive" else state,
         "group_uncertain": state == "unknown",

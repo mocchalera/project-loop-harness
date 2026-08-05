@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 import hashlib
 import json
 from pathlib import Path
@@ -40,7 +40,11 @@ from .ids import next_prefixed_id
 from .paths import ProjectPaths
 from .project_config import finish_check_configuration
 from .route_overrides import recorded_route_context
-from .runner_observability import finalize_persisted_observability
+from .runner_observability import (
+    finalize_persisted_observability,
+    observability_for_result_json,
+    verify_runner_observability,
+)
 from .target_resolver import (
     TaskGoalTargetNotFoundError,
     resolve_routing_target,
@@ -350,6 +354,7 @@ def emit_finish_packet(
                             exit_code=None,
                         )
                     raise
+                _verify_command_observability(command, root=paths.root)
                 if progress_reporter is not None and heartbeat is not None:
                     progress_reporter.finish_check(
                         heartbeat,
@@ -1151,6 +1156,11 @@ def _store_check_evidence(
 ) -> list[dict[str, Any]]:
     check_rows: list[dict[str, Any]] = []
     for command in commands:
+        pre_verification = _verify_command_observability(command, root=paths.root)
+        pre_verification_ok = (
+            pre_verification is None or pre_verification.get("ok") is True
+        )
+        observability = command.get("observability")
         evidence_id = next_prefixed_id(conn, "evidence", "E")
         final_dir = paths.evidence_dir / "completion-checks" / evidence_id
         final_dir.mkdir(parents=True, exist_ok=False)
@@ -1188,31 +1198,64 @@ def _store_check_evidence(
                 root=paths.root,
                 result_path=result_path,
             )
-            if command["observability"].get("eligible") is not True:
-                command["status"] = "failed"
-        check_payload = _check_result(command, evidence_id=evidence_id)
-        result_bytes = (
-            json.dumps(
-                check_payload,
-                ensure_ascii=False,
-                sort_keys=True,
-                indent=2,
+            if pre_verification is not None and not pre_verification_ok:
+                _apply_observability_verification(command, pre_verification)
+
+        def write_check_result() -> tuple[dict[str, Any], str]:
+            payload = _check_result(command, evidence_id=evidence_id)
+            payload["observability"] = observability_for_result_json(
+                payload.get("observability", {})
             )
-            + "\n"
-        ).encode("utf-8")
-        result_path.write_bytes(result_bytes)
-        check_payload["artifact_sha256"] = (
-            f"sha256:{hashlib.sha256(result_bytes).hexdigest()}"
-        )
+            result_bytes = (
+                json.dumps(
+                    payload,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    indent=2,
+                )
+                + "\n"
+            ).encode("utf-8")
+            result_path.write_bytes(result_bytes)
+            result_sha256 = f"sha256:{hashlib.sha256(result_bytes).hexdigest()}"
+            payload["artifact_sha256"] = result_sha256
+            return payload, result_sha256
+
+        check_payload, result_sha256 = write_check_result()
         if isinstance(command.get("observability"), dict):
-            result_sha256 = str(check_payload["artifact_sha256"])
             command["observability"] = finalize_persisted_observability(
                 command["observability"],
                 root=paths.root,
                 result_path=result_path,
                 result_sha256=result_sha256,
             )
-            check_payload["observability"] = command["observability"]
+            if pre_verification is not None and not pre_verification_ok:
+                _apply_observability_verification(command, pre_verification)
+            final_verification = _verify_command_observability(
+                command,
+                root=paths.root,
+            )
+            if final_verification is not None and final_verification.get("ok") is not True:
+                check_payload, result_sha256 = write_check_result()
+                command["observability"] = finalize_persisted_observability(
+                    command["observability"],
+                    root=paths.root,
+                    result_path=result_path,
+                    result_sha256=result_sha256,
+                )
+                if pre_verification is not None and not pre_verification_ok:
+                    _apply_observability_verification(command, pre_verification)
+                _apply_observability_verification(command, final_verification)
+                if pre_verification_ok:
+                    raise DataStoreError(
+                        "Persisted runner observability failed verification.",
+                        details={
+                            "failure_kind": final_verification.get("failure_kind"),
+                            "issues": final_verification.get("issues", []),
+                        },
+                    )
+            check_payload["observability"] = observability_for_result_json(
+                command["observability"]
+            )
         relative = str(result_path.relative_to(paths.root))
         conn.execute(
             """
@@ -1528,6 +1571,63 @@ def _check_result(command: dict[str, Any], *, evidence_id: str) -> dict[str, Any
         attempt_identity=command["attempt_identity"],
         stability_evaluation=command["stability_evaluation"],
     )
+
+
+def _apply_observability_verification(
+    command: dict[str, Any], verification: Mapping[str, Any]
+) -> None:
+    if verification.get("ok") is True:
+        return
+    failure_kind = str(
+        verification.get("failure_kind") or "artifact_integrity_failed"
+    )
+    observation = command.get("observability")
+    if not isinstance(observation, Mapping):
+        observation = {}
+    failed_observation = json.loads(json.dumps(dict(observation), ensure_ascii=False))
+    failed_observation.update(
+        {
+            "eligible": False,
+            "status": "unavailable",
+            "failure_kind": failure_kind,
+            "verification": {
+                "ok": False,
+                "failure_kind": failure_kind,
+                "issues": [
+                    str(issue)
+                    for issue in verification.get("issues", [])
+                    if isinstance(issue, (str, int, float, bool))
+                ],
+            },
+        }
+    )
+    command["observability"] = failed_observation
+    command["status"] = "failed"
+    command["observability_failure_kind"] = failure_kind
+    if not command.get("failure_kind"):
+        command["failure_kind"] = failure_kind
+
+
+def _verify_command_observability(
+    command: dict[str, Any], *, root: Path
+) -> dict[str, Any] | None:
+    observation = command.get("observability")
+    if not isinstance(observation, Mapping):
+        return None
+    summary_value = observation.get("summary_path")
+    if not isinstance(summary_value, str) or not summary_value:
+        verification = {
+            "ok": False,
+            "failure_kind": "artifact_integrity_failed",
+            "issues": ["summary_path_missing"],
+        }
+    else:
+        summary_path = Path(summary_value)
+        if not summary_path.is_absolute():
+            summary_path = root / summary_path
+        verification = verify_runner_observability(summary_path, root=root)
+    _apply_observability_verification(command, verification)
+    return verification
 
 
 def _check_result_anchors(

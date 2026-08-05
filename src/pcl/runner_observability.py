@@ -143,6 +143,20 @@ def normalize_observability_paths(
     return result
 
 
+def observability_for_result_json(
+    observation: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Return the result-side view without a recursive result self-hash."""
+
+    result = json.loads(json.dumps(dict(observation), ensure_ascii=False))
+    artifacts = result.get("artifacts")
+    if isinstance(artifacts, dict):
+        result_artifact = artifacts.get("result")
+        if isinstance(result_artifact, dict):
+            result_artifact["sha256"] = None
+    return result
+
+
 def verify_runner_observability(
     summary_path: Path,
     *,
@@ -215,10 +229,7 @@ def verify_runner_observability(
         if isinstance(summary_item, dict):
             expected_self = summary_item.get("sha256")
     if isinstance(expected_self, str):
-        without_self = json.loads(json.dumps(payload, ensure_ascii=False))
-        summary_item = without_self.get("artifacts", {}).get("summary")
-        if isinstance(summary_item, dict):
-            summary_item["sha256"] = None
+        without_self = _summary_digest_payload(payload)
         if sha256_bytes(_json_bytes(without_self)) != expected_self:
             issues.append("artifact_hash_mismatch:summary")
 
@@ -570,7 +581,7 @@ class RunnerObservabilityRecorder:
         summary_item = summary.get("artifacts", {}).get("summary")
         if isinstance(summary_item, dict):
             summary_item["sha256"] = None
-        summary_bytes = _json_bytes(summary)
+        summary_bytes = _json_bytes(_summary_digest_payload(summary))
         if isinstance(summary_item, dict):
             summary_item["sha256"] = sha256_bytes(summary_bytes)
         rendered = json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
@@ -868,11 +879,28 @@ def _json_bytes(value: Any) -> bytes:
     ).encode("utf-8")
 
 
+def _summary_digest_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Remove self-references before hashing the persisted summary."""
+
+    without_self = json.loads(json.dumps(dict(payload), ensure_ascii=False))
+    artifacts = without_self.get("artifacts")
+    if isinstance(artifacts, dict):
+        summary_item = artifacts.get("summary")
+        if isinstance(summary_item, dict):
+            summary_item["sha256"] = None
+        result_item = artifacts.get("result")
+        if isinstance(result_item, dict):
+            # The result hash is stored in the sidecar, while result.json
+            # carries a null self-reference to keep both artifacts finite.
+            result_item["sha256"] = None
+    return without_self
+
+
 def _write_summary_payload(path: Path, payload: dict[str, Any]) -> bytes:
     summary_item = payload.setdefault("artifacts", {}).setdefault("summary", {})
     if isinstance(summary_item, dict):
         summary_item["sha256"] = None
-    digest = sha256_bytes(_json_bytes(payload))
+    digest = sha256_bytes(_json_bytes(_summary_digest_payload(payload)))
     if isinstance(summary_item, dict):
         summary_item["sha256"] = digest
     rendered = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"

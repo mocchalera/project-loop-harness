@@ -16,6 +16,7 @@ from pcl.finish_recovery import completion_packet_timeout_action
 from pcl.outbox import ProjectionResult
 from pcl.paths import resolve_paths
 from pcl.route_overrides import override_route
+from pcl.runner_observability import hash_file, verify_runner_observability
 
 
 COUNT_TABLES = [
@@ -715,6 +716,107 @@ def test_finish_actual_summary_is_compact_and_preserves_durable_proof(
     assert packet["repository"]["diff_sha256"] == finish["repository"]["diff_sha256"]
     assert packet["checks"][0]["artifact_ref"] == f"evidence:{check['evidence_id']}"
     assert len(json.dumps(finish, ensure_ascii=False).encode("utf-8")) <= 16_384
+
+
+def test_finish_persists_final_runner_observability_references_and_hashes(
+    tmp_path: Path, capsys
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001", "--json",
+    ]) == 0
+    finish = _finish_payload(capsys)
+    check = finish["checks"][0]
+    result_path = (
+        tmp_path
+        / ".project-loop"
+        / "evidence"
+        / "completion-checks"
+        / check["evidence_id"]
+        / "result.json"
+    )
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    result_observability = result["observability"]
+    summary_path = tmp_path / result_observability["summary_path"]
+    events_path = tmp_path / result_observability["events_path"]
+    sidecar = json.loads(summary_path.read_text(encoding="utf-8"))
+
+    assert result_observability["summary_path"] == sidecar["summary_path"]
+    assert result_observability["events_path"] == sidecar["events_path"]
+    assert result_observability["artifacts"]["stdout"] == sidecar["artifacts"]["stdout"]
+    assert result_observability["artifacts"]["stderr"] == sidecar["artifacts"]["stderr"]
+    assert result_observability["artifacts"]["summary"] == sidecar["artifacts"]["summary"]
+    assert result_observability["artifacts"]["events"] == sidecar["artifacts"]["events"]
+    assert result_observability["artifacts"]["result"]["path"] == str(
+        result_path.relative_to(tmp_path)
+    )
+    assert sidecar["artifacts"]["result"]["path"] == result_observability["artifacts"]["result"]["path"]
+    assert result_observability["artifacts"]["result"]["sha256"] is None
+    assert sidecar["artifacts"]["result"]["sha256"] == check["artifact_sha256"]
+    assert hash_file(result_path) == check["artifact_sha256"]
+    assert sidecar["artifacts"]["events"]["sha256"] == hash_file(events_path)
+    assert verify_runner_observability(summary_path, root=tmp_path)["ok"] is True
+
+
+@pytest.mark.parametrize("tamper", ["malformed", "hash"])
+def test_finish_tampered_runner_sidecar_cannot_become_exit_zero_green(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    tamper: str,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    from pcl import finish_execution
+
+    execute = finish_execution.execute_planned_guarded_command
+
+    def execute_and_tamper(paths, command, **kwargs):
+        execute(paths, command, **kwargs)
+        summary_path = paths.root / str(command["observability"]["summary_path"])
+        if tamper == "malformed":
+            summary_path.write_text("{malformed\n", encoding="utf-8")
+        else:
+            payload = json.loads(summary_path.read_text(encoding="utf-8"))
+            payload["artifacts"]["stdout"]["sha256"] = "sha256:" + "0" * 64
+            summary_path.write_text(
+                json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+            )
+
+    monkeypatch.setattr(
+        finish_execution,
+        "execute_planned_guarded_command",
+        execute_and_tamper,
+    )
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001", "--json",
+    ]) == 1
+    finish = _finish_payload(capsys)
+    check = finish["checks"][0]
+
+    assert finish["packet"]["outcome"] == "INCOMPLETE_VALIDATION"
+    assert finish["terminal_readiness"]["terminal_allowed"] is False
+    assert check["status"] == "failed"
+    assert check["failure_kind"] == "artifact_integrity_failed"
+    packet = load_completion_packet(tmp_path / finish["packet"]["path"])
+    assert packet["claims"] == []
+    assert packet["checks"][0]["status"] == "failed"
+    result_path = (
+        tmp_path
+        / ".project-loop"
+        / "evidence"
+        / "completion-checks"
+        / check["evidence_id"]
+        / "result.json"
+    )
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result["assertion_result"]["status"] == "unknown"
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        assert conn.execute("SELECT status FROM tasks WHERE id = 'T-0001'").fetchone()[0] == "in_progress"
+    finally:
+        conn.close()
 
 
 def test_finish_actual_projection_is_presentation_only(
