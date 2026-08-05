@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop.local/contracts/runner-execution-receipt-v1.schema.json",
+  "title": "runner-execution-receipt/v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract_version",
+    "receipt_sha256",
+    "attempt_id",
+    "attempt_index",
+    "previous_attempt_id",
+    "previous_receipt_sha256",
+    "cross_attempt_binding_sha256",
+    "requested_argv_sha256",
+    "spawned_argv_sha256",
+    "cwd",
+    "cwd_identity_sha256",
+    "env_identity_sha256",
+    "pid",
+    "pgid",
+    "started_at",
+    "ended_at",
+    "event_sequence",
+    "event_frame_root_sha256",
+    "dropped_count",
+    "eof",
+    "exit_code",
+    "timed_out",
+    "timeout_seconds",
+    "spawn",
+    "termination",
+    "stdout_sha256",
+    "stderr_sha256",
+    "child_observation",
+    "platform_capability"
+  ],
+  "properties": {
+    "contract_version": {"const": "runner-execution-receipt/v1"},
+    "receipt_sha256": {"$ref": "#/$defs/sha256"},
+    "attempt_id": {"$ref": "#/$defs/attemptId"},
+    "attempt_index": {"type": "integer", "minimum": 0},
+    "previous_attempt_id": {"oneOf": [{"$ref": "#/$defs/attemptId"}, {"type": "null"}]},
+    "previous_receipt_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "cross_attempt_binding_sha256": {"$ref": "#/$defs/sha256"},
+    "requested_argv_sha256": {"$ref": "#/$defs/sha256"},
+    "spawned_argv_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+    "cwd": {"type": "string", "minLength": 1},
+    "cwd_identity_sha256": {"$ref": "#/$defs/sha256"},
+    "env_identity_sha256": {"$ref": "#/$defs/sha256"},
+    "pid": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+    "pgid": {"oneOf": [{"type": "integer", "minimum": 0}, {"type": "null"}]},
+    "started_at": {"$ref": "#/$defs/utcTimestamp"},
+    "ended_at": {"$ref": "#/$defs/utcTimestamp"},
+    "event_sequence": {"type": "integer", "minimum": 0},
+    "event_frame_root_sha256": {"$ref": "#/$defs/sha256"},
+    "dropped_count": {"type": "integer", "minimum": 0},
+    "eof": {"$ref": "#/$defs/eof"},
+    "exit_code": {"oneOf": [{"type": "integer"}, {"type": "null"}]},
+    "timed_out": {"type": "boolean"},
+    "timeout_seconds": {"type": "integer", "minimum": 1},
+    "spawn": {"$ref": "#/$defs/spawn"},
+    "termination": {"$ref": "#/$defs/termination"},
+    "stdout_sha256": {"$ref": "#/$defs/sha256"},
+    "stderr_sha256": {"$ref": "#/$defs/sha256"},
+    "child_observation": {"$ref": "#/$defs/childObservation"},
+    "platform_capability": {"$ref": "#/$defs/platformCapability"}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+    "attemptId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$"
+    },
+    "utcTimestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\\.[0-9]{1,6})?Z$"
+    },
+    "eof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stdout", "stderr", "frames"],
+      "properties": {
+        "stdout": {"type": "boolean"},
+        "stderr": {"type": "boolean"},
+        "frames": {"type": "boolean"}
+      }
+    },
+    "spawn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "error_kind"],
+      "properties": {
+        "status": {"enum": ["not_attempted", "spawned", "failed"]},
+        "error_kind": {"enum": ["not_found", "permission_denied", "os_error", null]}
+      }
+    },
+    "termination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested",
+        "method",
+        "escalated",
+        "term_sent",
+        "kill_sent",
+        "group_state",
+        "leader_alive",
+        "pipes_eof"
+      ],
+      "properties": {
+        "requested": {"type": "boolean"},
+        "method": {"type": "string"},
+        "escalated": {"type": "boolean"},
+        "term_sent": {"type": "boolean"},
+        "kill_sent": {"type": "boolean"},
+        "group_state": {"enum": ["not_started", "gone", "surviving", "unknown", "not_applicable"]},
+        "leader_alive": {"type": "boolean"},
+        "pipes_eof": {"type": "boolean"}
+      }
+    },
+    "childObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["authority", "status", "frames_received", "summary_sha256", "events_sha256"],
+      "properties": {
+        "authority": {"const": "non_authoritative"},
+        "status": {"enum": ["received", "missing", "partial", "not_applicable"]},
+        "frames_received": {"type": "integer", "minimum": 0},
+        "summary_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]},
+        "events_sha256": {"oneOf": [{"$ref": "#/$defs/sha256"}, {"type": "null"}]}
+      }
+    },
+    "platformCapability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "anonymous_pipe", "process_group", "status"],
+      "properties": {
+        "os": {"enum": ["posix", "windows", "other"]},
+        "anonymous_pipe": {"enum": ["available", "not_applicable", "uncertain"]},
+        "process_group": {"enum": ["available", "not_applicable", "uncertain"]},
+        "status": {"enum": ["available", "not_applicable", "uncertain"]}
+      }
+    }
+  }
+}

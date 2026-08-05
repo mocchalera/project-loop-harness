@@ -15,6 +15,8 @@ import threading
 import time
 from typing import Any
 
+from .runner_execution_receipt import write_child_frame
+
 
 RUNNER_OBSERVABILITY_CONTRACT_VERSION = "runner-observability/v1"
 RUNNER_OBSERVABILITY_OBSERVER_VERSION = "runner-observability/v1"
@@ -111,12 +113,38 @@ def collect_runner_provenance(
 
 
 def observability_environment(
-    summary_path: Path, events_path: Path
+    summary_path: Path,
+    events_path: Path,
+    *,
+    frame_fd: int | None = None,
 ) -> dict[str, str]:
-    return {
+    environment = {
         OBSERVABILITY_SUMMARY_ENV: str(summary_path),
         OBSERVABILITY_EVENTS_ENV: str(events_path),
     }
+    if frame_fd is not None:
+        environment["PCL_RUNNER_OBSERVABILITY_FRAME_FD"] = str(frame_fd)
+    return environment
+
+
+def emit_child_observation_frame(
+    event: str,
+    *,
+    phase: str = "observe",
+    source: str = "child",
+    **fields: Any,
+) -> bool:
+    """Emit derived child diagnostics without creating a receipt authority."""
+
+    return write_child_frame(
+        {
+            "event": str(event),
+            "phase": str(phase),
+            "source": str(source),
+            "at": _utc_now(),
+            **fields,
+        }
+    )
 
 
 def sha256_bytes(value: bytes) -> str:
@@ -947,6 +975,7 @@ class _PytestEventSink:
     def __init__(self, summary_path: Path, events_path: Path) -> None:
         self.summary_path = summary_path
         self.events_path = events_path
+        self.frame_fd = _frame_fd_from_environment()
         self.started_monotonic = time.monotonic()
         self.sequence = 0
         self.event_count = 0
@@ -957,23 +986,21 @@ class _PytestEventSink:
 
     def emit(self, event: str, *, phase: str, **fields: Any) -> None:
         self.sequence += 1
-        encoded = (
-            _json_bytes(
-                {
-                    "contract_version": RUNNER_OBSERVABILITY_CONTRACT_VERSION,
-                    "sequence": self.sequence,
-                    "event": event,
-                    "phase": phase,
-                    "source": "pytest_hook",
-                    "at": _utc_now(),
-                    "elapsed_seconds": round(
-                        time.monotonic() - self.started_monotonic, 6
-                    ),
-                    **fields,
-                }
-            )
-            + b"\n"
-        )
+        record = {
+            "contract_version": RUNNER_OBSERVABILITY_CONTRACT_VERSION,
+            "sequence": self.sequence,
+            "event": event,
+            "phase": phase,
+            "source": "pytest_hook",
+            "at": _utc_now(),
+            "elapsed_seconds": round(time.monotonic() - self.started_monotonic, 6),
+            **fields,
+        }
+        encoded = _json_bytes(record) + b"\n"
+        if self.frame_fd is not None:
+            # The parent assigns the authoritative sequence/root. This write
+            # only transports the child diagnostic frame.
+            write_child_frame(record, fd=self.frame_fd)
         if len(encoded) > MAX_EVENT_LINE_BYTES:
             self.dropped_count += 1
             return
@@ -990,6 +1017,15 @@ class _PytestEventSink:
             self.event_count += 1
         except OSError:
             self.dropped_count += 1
+
+    def close(self) -> None:
+        if self.frame_fd is None:
+            return
+        try:
+            os.close(self.frame_fd)
+        except OSError:
+            pass
+        self.frame_fd = None
 
 
 _PYTEST_SINK: _PytestEventSink | None = None
@@ -1075,6 +1111,7 @@ def pytest_sessionfinish(session: Any, exitstatus: int) -> None:
             started_count=_PYTEST_SINK.started_count,
             completed_count=_PYTEST_SINK.completed_count,
         )
+        _PYTEST_SINK.close()
 
 
 def _observability_failure_kind(
@@ -1299,3 +1336,19 @@ def _resolve_artifact_path(value: str, root: Path) -> Path:
     if path.is_absolute():
         return path
     return root / path
+
+
+def _frame_fd_from_environment() -> int | None:
+    value = os.environ.get("PCL_RUNNER_OBSERVABILITY_FRAME_FD")
+    if value is None:
+        return None
+    try:
+        fd = int(value)
+    except ValueError:
+        return None
+    if fd < 0:
+        return None
+    try:
+        return os.dup(fd)
+    except OSError:
+        return None

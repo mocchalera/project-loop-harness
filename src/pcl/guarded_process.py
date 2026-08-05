@@ -19,6 +19,7 @@ from .runner_observability import (
     inject_pytest_hook,
     observability_environment,
 )
+from .runner_execution_receipt import RunnerExecutionReceiptRecorder
 
 
 DEFAULT_MAX_OUTPUT_BYTES = 1_048_576
@@ -148,6 +149,12 @@ def execute_guarded_process(
     additional_allowed_env_names: Iterable[str] = (),
     observability_summary_path: Path | None = None,
     observability_events_path: Path | None = None,
+    runner_execution_receipt_path: Path | None = None,
+    execution_receipt_path: Path | None = None,
+    attempt_id: str | None = None,
+    attempt_index: int = 0,
+    previous_attempt_id: str | None = None,
+    previous_receipt_sha256: str | None = None,
 ) -> dict[str, Any]:
     if max_output_bytes < 1:
         raise ValueError("max_output_bytes must be at least 1")
@@ -159,10 +166,28 @@ def execute_guarded_process(
         raise ValueError(
             "observability_summary_path and observability_events_path must be provided together"
         )
+    if (
+        runner_execution_receipt_path is not None
+        and execution_receipt_path is not None
+        and Path(runner_execution_receipt_path) != Path(execution_receipt_path)
+    ):
+        raise ValueError(
+            "runner_execution_receipt_path and execution_receipt_path must match when both are provided"
+        )
+    receipt_path = runner_execution_receipt_path or execution_receipt_path
+    if receipt_path is None and observability_summary_path is not None:
+        receipt_path = Path(observability_summary_path).with_name(
+            "runner-execution-receipt.json"
+        )
     observed_argv = list(argv)
     observability: RunnerObservabilityRecorder | None = None
-    if observability_summary_path is not None and observability_events_path is not None:
+    receipt_observer: RunnerExecutionReceiptRecorder | None = None
+    if (
+        observability_summary_path is not None
+        and observability_events_path is not None
+    ) or receipt_path is not None:
         observed_argv, _ = inject_pytest_hook(observed_argv)
+    if observability_summary_path is not None and observability_events_path is not None:
         observability = RunnerObservabilityRecorder(
             summary_path=observability_summary_path,
             events_path=observability_events_path,
@@ -172,6 +197,23 @@ def execute_guarded_process(
         )
         observability.start()
         env.update(observability_environment(observability_summary_path, observability_events_path))
+    if receipt_path is not None:
+        receipt_observer = RunnerExecutionReceiptRecorder(
+            receipt_path=Path(receipt_path),
+            requested_argv=argv,
+            spawned_argv=observed_argv,
+            cwd=cwd,
+            env=env,
+            timeout_seconds=timeout_seconds,
+            attempt_id=attempt_id,
+            attempt_index=attempt_index,
+            previous_attempt_id=previous_attempt_id,
+            previous_receipt_sha256=previous_receipt_sha256,
+            summary_path=observability_summary_path,
+            events_path=observability_events_path,
+        )
+        env.update(receipt_observer.prepare_pipe())
+        receipt_observer.start_reader()
     stdout_capture = _BoundedStream(max_output_bytes)
     stderr_capture = _BoundedStream(max_output_bytes)
     started = time.monotonic()
@@ -183,18 +225,28 @@ def execute_guarded_process(
     heartbeat_stop: threading.Event | None = None
     heartbeat_worker: threading.Thread | None = None
     process: subprocess.Popen[bytes] | None = None
+    process_group_id: int | None = None
 
     try:
-        process = subprocess.Popen(
-            observed_argv,
-            cwd=cwd,
-            env=env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            shell=False,
-            text=False,
-            start_new_session=True,
-        )
+        popen_kwargs: dict[str, Any] = {
+            "cwd": cwd,
+            "env": env,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
+            "shell": False,
+            "text": False,
+            "start_new_session": True,
+        }
+        if receipt_observer is not None and receipt_observer.pipe_pass_fds:
+            popen_kwargs["pass_fds"] = receipt_observer.pipe_pass_fds
+        process = subprocess.Popen(observed_argv, **popen_kwargs)
+        if os.name == "posix":
+            try:
+                process_group_id = os.getpgid(process.pid)
+            except OSError:
+                process_group_id = None
+        if receipt_observer is not None:
+            receipt_observer.close_parent_write()
     except OSError as exc:
         spawn_error = f"{exc.__class__.__name__}: {exc}\n"
         spawn_error_kind = (
@@ -205,6 +257,8 @@ def execute_guarded_process(
             else "os_error"
         )
         stderr_capture.consume(spawn_error.encode("utf-8", errors="replace"))
+        if receipt_observer is not None:
+            receipt_observer.close_parent_write()
     else:
         assert process.stdout is not None
         assert process.stderr is not None
@@ -253,6 +307,8 @@ def execute_guarded_process(
     else:
         termination["group_state"] = "not_started"
         termination["pipes_eof"] = stdout_capture.eof and stderr_capture.eof
+    if receipt_observer is not None:
+        receipt_observer.finish_reader()
     result: dict[str, Any] = {
         "exit_code": exit_code,
         "timed_out": timed_out,
@@ -300,6 +356,22 @@ def execute_guarded_process(
             termination=termination,
             pipes_eof=bool(termination.get("pipes_eof")),
         )
+    if receipt_observer is not None:
+        receipt = receipt_observer.seal(
+            spawn_status="spawned" if process is not None else "failed",
+            spawn_error_kind=spawn_error_kind or None,
+            pid=process.pid if process is not None else None,
+            pgid=process_group_id,
+            exit_code=exit_code,
+            timed_out=timed_out,
+            termination=termination,
+            stdout_sha256=str(stdout_metadata["sha256"]),
+            stderr_sha256=str(stderr_metadata["sha256"]),
+            stdout_eof=bool(stdout_capture.eof),
+            stderr_eof=bool(stderr_capture.eof),
+        )
+        result["runner_execution_receipt"] = receipt
+        result["runner_execution_receipt_path"] = str(receipt_observer.receipt_path)
     return result
 
 
