@@ -442,15 +442,22 @@ def emit_finish_packet(
         )
         if progress_reporter is not None:
             progress_reporter.phase_finished("strict_validation")
+            progress_reporter.phase_started("evidence_commit")
+        check_rows, completion_target_readiness = (
+            _commit_check_evidence_and_runner_authority(
+                paths,
+                target=target,
+                commands=commands,
+                expected_target_readiness=plan.get("terminal_readiness"),
+            )
+        )
+        _verify_runner_authority_before_completion(paths, commands)
         if effect["classification"] in {"mutates_inputs", "unknown"}:
-            if progress_reporter is not None:
-                progress_reporter.phase_started("evidence_commit")
             committed_attempt = _commit_finish_attempt(
                 paths,
                 target=target,
                 repository=after,
-                commands=commands,
-                stage_dir=stage_dir,
+                check_rows=check_rows,
                 input_manifest=input_manifest,
                 workspace_before=workspace_before,
                 workspace_after=workspace_after,
@@ -458,9 +465,8 @@ def emit_finish_packet(
                 strict_errors=list(strict.errors),
                 strict_warnings=list(strict.warnings),
                 race_detected=race_detected,
-                expected_target_readiness=plan.get("terminal_readiness"),
+                expected_target_readiness=completion_target_readiness,
             )
-            _verify_runner_authority_after_publication(paths, commands)
             if progress_reporter is not None:
                 progress_reporter.phase_finished("evidence_commit")
             result = {
@@ -507,23 +513,19 @@ def emit_finish_packet(
             blockers=blockers,
             terminal_readiness=terminal_readiness,
         )
-        if progress_reporter is not None:
-            progress_reporter.phase_started("evidence_commit")
         committed = _commit_completion_packet(
             paths,
             target=target,
             repository=after,
-            commands=commands,
-            stage_dir=stage_dir,
+            check_rows=check_rows,
             strict_errors=list(strict.errors),
             strict_warnings=list(strict.warnings),
             race_detected=race_detected,
             blockers=blockers,
             outcome=outcome,
             timeout_seconds=timeout_seconds,
-            expected_target_readiness=plan.get("terminal_readiness"),
+            expected_target_readiness=completion_target_readiness,
         )
-        _verify_runner_authority_after_publication(paths, commands)
         if progress_reporter is not None:
             progress_reporter.phase_finished("evidence_commit")
     except Exception:
@@ -908,8 +910,7 @@ def _commit_finish_attempt(
     *,
     target: dict[str, Any],
     repository: dict[str, Any],
-    commands: list[dict[str, Any]],
-    stage_dir: Path,
+    check_rows: list[dict[str, Any]],
     input_manifest: dict[str, Any],
     workspace_before: dict[str, Any],
     workspace_after: dict[str, Any],
@@ -933,13 +934,6 @@ def _commit_finish_attempt(
                 target=target,
                 expected_target_readiness=expected_target_readiness,
             )
-        check_rows = _store_check_evidence(
-            paths,
-            conn,
-            target=target,
-            commands=commands,
-            now=now,
-        )
         attempt = {
             "contract_version": FINISH_ATTEMPT_CONTRACT_VERSION,
             "attempt_id": "",
@@ -1060,7 +1054,7 @@ def _commit_finish_attempt(
 
 def _commit_completion_packet(
     paths: ProjectPaths, *, target: dict[str, Any], repository: dict[str, Any],
-    commands: list[dict[str, Any]], stage_dir: Path, strict_errors: list[str],
+    check_rows: list[dict[str, Any]], strict_errors: list[str],
     strict_warnings: list[str], race_detected: bool, blockers: dict[str, Any], outcome: str,
     timeout_seconds: int,
     expected_target_readiness: dict[str, Any] | None,
@@ -1077,14 +1071,6 @@ def _commit_completion_packet(
                 target=target,
                 expected_target_readiness=expected_target_readiness,
             )
-
-        check_rows = _store_check_evidence(
-            paths,
-            conn,
-            target=target,
-            commands=commands,
-            now=now,
-        )
 
         adaptive_route = recorded_route_context(
             paths,
@@ -1157,6 +1143,61 @@ def _commit_completion_packet(
     except (OSError, sqlite3.Error) as exc:
         conn.rollback()
         raise DataStoreError(f"Could not commit completion packet: {exc}") from exc
+    finally:
+        conn.close()
+
+
+def _commit_check_evidence_and_runner_authority(
+    paths: ProjectPaths,
+    *,
+    target: dict[str, Any],
+    commands: list[dict[str, Any]],
+    expected_target_readiness: dict[str, Any] | None,
+) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+    conn = connect_mutation(paths)
+    now = utc_now_iso().replace("+00:00", "Z")
+    try:
+        if target["type"] == "task" and _requires_target_freshness(
+            expected_target_readiness
+        ):
+            _resolve_finish_task_snapshot(
+                paths,
+                conn,
+                target=target,
+                expected_target_readiness=expected_target_readiness,
+            )
+        check_rows = _store_check_evidence(
+            paths,
+            conn,
+            target=target,
+            commands=commands,
+            now=now,
+        )
+        completion_target_readiness = expected_target_readiness
+        if target["type"] == "task" and _requires_target_freshness(
+            expected_target_readiness
+        ):
+            routing_target = resolve_routing_target(
+                conn,
+                str(target["id"]),
+                expected_type="task",
+            )
+            completion_target_readiness = task_terminal_readiness_for_row(
+                paths,
+                conn,
+                routing_target.row,
+                source="finish_anchor_commit",
+            )
+        conn.commit()
+        return check_rows, completion_target_readiness
+    except DataStoreError:
+        conn.rollback()
+        raise
+    except (OSError, sqlite3.Error) as exc:
+        conn.rollback()
+        raise DataStoreError(
+            f"Could not commit runner authority evidence: {exc}"
+        ) from exc
     finally:
         conn.close()
 
@@ -1362,7 +1403,7 @@ def _commit_runner_authority_for_check(
     command["_runner_authority_verification"] = verification
 
 
-def _verify_runner_authority_after_publication(
+def _verify_runner_authority_before_completion(
     paths: ProjectPaths,
     commands: list[dict[str, Any]],
 ) -> None:
@@ -1371,7 +1412,7 @@ def _verify_runner_authority_after_publication(
         expected_inputs = command.get("_runner_authority_snapshot")
         if not isinstance(anchor_id, str) or not isinstance(expected_inputs, Mapping):
             raise DataStoreError(
-                "Finish publication has no committed runner authority anchor.",
+                "Finish completion has no committed runner authority anchor.",
                 details={"failure_kind": "runner_authority_anchor_missing"},
             )
         verification = verify_runner_authority_anchor(
@@ -1381,7 +1422,7 @@ def _verify_runner_authority_after_publication(
         )
         if verification.get("ok") is not True:
             raise DataStoreError(
-                "Runner authority anchor failed the final post-publication reread.",
+                "Runner authority anchor failed the final pre-completion reread.",
                 details={
                     "failure_kind": "runner_authority_final_verification_failed",
                     "anchor_id": anchor_id,

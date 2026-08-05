@@ -12,7 +12,6 @@ from pcl import finish_output
 from pcl.cli import main
 from pcl.contracts.completion_packet import load_completion_packet, validate_completion_packet
 from pcl.db import connect
-from pcl.finish_recovery import completion_packet_timeout_action
 from pcl.outbox import ProjectionResult
 from pcl.paths import resolve_paths
 from pcl.route_overrides import override_route
@@ -208,6 +207,33 @@ def _terminal_artifact_snapshot(root: Path) -> dict:
     }
 
 
+def _runner_authority_lifecycle_snapshot(root: Path) -> dict[str, object]:
+    conn = connect(root / ".project-loop" / "project.db")
+    try:
+        return {
+            "task_status": conn.execute(
+                "SELECT status FROM tasks WHERE id = 'T-0001'"
+            ).fetchone()[0],
+            "anchor_events": conn.execute(
+                """
+                SELECT COUNT(*) FROM events
+                WHERE event_type = 'runner_authority_anchor_committed'
+                """
+            ).fetchone()[0],
+            "completion_events": conn.execute(
+                """
+                SELECT COUNT(*) FROM events
+                WHERE event_type = 'completion_packet_created'
+                """
+            ).fetchone()[0],
+            "completion_evidence": conn.execute(
+                "SELECT COUNT(*) FROM evidence WHERE type = 'completion_packet'"
+            ).fetchone()[0],
+        }
+    finally:
+        conn.close()
+
+
 def _finish_payload(capsys) -> dict:
     payload = _json_output(capsys)
     assert payload["ok"] is True
@@ -340,6 +366,26 @@ def _record_fake_timeout(root: Path, command: dict, run_dir: Path) -> None:
             "permission_contract": {"backend": "test"},
         }
     )
+
+
+def _assert_missing_runner_authority_error(payload: dict, root: Path) -> None:
+    assert payload == {
+        "ok": False,
+        "error": {
+            "code": "data_store_error",
+            "message": (
+                "Finish check did not produce a deferred parent runner authority seal."
+            ),
+            "details": {"failure_kind": "runner_authority_anchor_missing"},
+        },
+    }
+    assert _runner_authority_lifecycle_snapshot(root) == {
+        "task_status": "in_progress",
+        "anchor_events": 0,
+        "completion_events": 0,
+        "completion_evidence": 0,
+    }
+    assert _evidence_count(root, "completion_check") == 0
 
 
 def test_finish_plans_active_workflow_without_mutation(tmp_path: Path, capsys) -> None:
@@ -1264,6 +1310,222 @@ def test_finish_emit_packet_success_and_idempotent_rerun(tmp_path: Path, capsys)
     assert _state_counts(tmp_path) == before
 
 
+def test_finish_final_authority_reread_precedes_completion_green(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    from pcl import finish_execution
+
+    original_verify = finish_execution._verify_runner_authority_before_completion
+    original_commit = finish_execution._commit_completion_packet
+    ordering: list[str] = []
+
+    def verify_before_completion(paths, commands):
+        snapshot = _runner_authority_lifecycle_snapshot(paths.root)
+        assert snapshot == {
+            "task_status": "in_progress",
+            "anchor_events": 1,
+            "completion_events": 0,
+            "completion_evidence": 0,
+        }
+        original_verify(paths, commands)
+        ordering.append("final_authority_reread")
+
+    def commit_after_verification(*args, **kwargs):
+        assert ordering == ["final_authority_reread"]
+        ordering.append("completion_commit")
+        return original_commit(*args, **kwargs)
+
+    monkeypatch.setattr(
+        finish_execution,
+        "_verify_runner_authority_before_completion",
+        verify_before_completion,
+    )
+    monkeypatch.setattr(
+        finish_execution,
+        "_commit_completion_packet",
+        commit_after_verification,
+    )
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet",
+        "--task", "T-0001", "--json",
+    ]) == 0
+    _finish_payload(capsys)
+
+    assert ordering == ["final_authority_reread", "completion_commit"]
+    assert _runner_authority_lifecycle_snapshot(tmp_path) == {
+        "task_status": "done",
+        "anchor_events": 1,
+        "completion_events": 1,
+        "completion_evidence": 1,
+    }
+
+
+def test_finish_crash_after_anchor_commit_leaves_anchor_durable_and_non_green(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    from pcl import finish_execution
+
+    def crash_before_completion(*args, **kwargs):
+        raise RuntimeError("crash_between_anchor_and_completion")
+
+    monkeypatch.setattr(
+        finish_execution,
+        "_commit_completion_packet",
+        crash_before_completion,
+    )
+
+    with pytest.raises(RuntimeError, match="crash_between_anchor_and_completion"):
+        finish_execution.emit_finish_packet(
+            resolve_paths(tmp_path),
+            task_id="T-0001",
+        )
+
+    assert _runner_authority_lifecycle_snapshot(tmp_path) == {
+        "task_status": "in_progress",
+        "anchor_events": 1,
+        "completion_events": 0,
+        "completion_evidence": 0,
+    }
+    assert _evidence_count(tmp_path, "completion_check") == 1
+
+
+def test_finish_incomplete_attempt_rereads_authority_before_attempt_commit(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    protected = tmp_path / "protected.txt"
+    protected.write_text("canonical\n", encoding="utf-8")
+    _git(tmp_path, "add", "protected.txt")
+    _git(tmp_path, "commit", "-m", "protected fixture")
+    (tmp_path / "test_sample.py").write_text(
+        "from pathlib import Path\n\n"
+        "def test_sample():\n"
+        "    Path('protected.txt').write_text('mutated by check\\n', encoding='utf-8')\n"
+        "    assert True\n",
+        encoding="utf-8",
+    )
+    from pcl import finish_execution
+
+    original_verify = finish_execution._verify_runner_authority_before_completion
+    original_commit = finish_execution._commit_finish_attempt
+    ordering: list[str] = []
+
+    def verify_before_attempt(paths, commands):
+        conn = connect(paths.db_path)
+        try:
+            assert conn.execute(
+                """
+                SELECT COUNT(*) FROM events
+                WHERE event_type = 'finish_attempt_recorded'
+                """
+            ).fetchone()[0] == 0
+        finally:
+            conn.close()
+        original_verify(paths, commands)
+        ordering.append("final_authority_reread")
+
+    def commit_after_verification(*args, **kwargs):
+        assert ordering == ["final_authority_reread"]
+        ordering.append("attempt_commit")
+        return original_commit(*args, **kwargs)
+
+    monkeypatch.setattr(
+        finish_execution,
+        "_verify_runner_authority_before_completion",
+        verify_before_attempt,
+    )
+    monkeypatch.setattr(
+        finish_execution,
+        "_commit_finish_attempt",
+        commit_after_verification,
+    )
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet",
+        "--task", "T-0001", "--json",
+    ]) == 1
+    finish = _finish_payload(capsys)
+
+    assert ordering == ["final_authority_reread", "attempt_commit"]
+    assert finish["attempt"]["outcome"] == "INCOMPLETE_VALIDATION"
+    assert _runner_authority_lifecycle_snapshot(tmp_path) == {
+        "task_status": "in_progress",
+        "anchor_events": 1,
+        "completion_events": 0,
+        "completion_evidence": 0,
+    }
+
+
+@pytest.mark.parametrize("artifact", ["receipt", "summary", "events", "result"])
+def test_finish_pre_final_runner_artifact_rewrite_fails_closed_before_green(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    artifact: str,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    from pcl import finish_execution
+
+    original_verify = finish_execution._verify_runner_authority_before_completion
+
+    def rewrite_then_verify(paths, commands):
+        command = commands[0]
+        if artifact == "receipt":
+            relative = command["_runner_authority_receipt_path"]
+        elif artifact in {"summary", "events"}:
+            relative = command["observability"][f"{artifact}_path"]
+        else:
+            conn = connect(paths.db_path)
+            try:
+                payload = json.loads(
+                    conn.execute(
+                        """
+                        SELECT payload_json FROM events
+                        WHERE event_type = 'runner_authority_anchor_committed'
+                        ORDER BY sequence DESC LIMIT 1
+                        """
+                    ).fetchone()[0]
+                )
+            finally:
+                conn.close()
+            relative = payload["result_binding"]["path"]
+        target_path = paths.root / relative
+        target_path.write_bytes(target_path.read_bytes() + b" ")
+        original_verify(paths, commands)
+
+    monkeypatch.setattr(
+        finish_execution,
+        "_verify_runner_authority_before_completion",
+        rewrite_then_verify,
+    )
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet",
+        "--task", "T-0001", "--json",
+    ]) == 4
+    error = _json_output(capsys)["error"]
+
+    assert error["code"] == "data_store_error"
+    assert error["details"]["failure_kind"] == (
+        "runner_authority_final_verification_failed"
+    )
+    assert _runner_authority_lifecycle_snapshot(tmp_path) == {
+        "task_status": "in_progress",
+        "anchor_events": 1,
+        "completion_events": 0,
+        "completion_evidence": 0,
+    }
+
+
 def test_finish_equivalent_roles_execute_once_and_share_hash_anchored_result(
     tmp_path: Path,
     capsys,
@@ -1585,7 +1847,7 @@ def test_finish_blocks_linked_task_until_feature_readiness_is_complete(
     assert finish["target_transition"]["changed"] is False
 
 
-def test_finish_timeout_exposes_bounded_retry_and_next_preserves_it(
+def test_finish_fake_timeout_without_deferred_recorder_fails_closed(
     tmp_path: Path, capsys, monkeypatch
 ) -> None:
     _create_packet_project(tmp_path, capsys)
@@ -1601,54 +1863,22 @@ def test_finish_timeout_exposes_bounded_retry_and_next_preserves_it(
     assert main([
         "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001",
         "--progress", "jsonl", "--json",
-    ]) == 1
+    ]) == 4
     captured = capsys.readouterr()
-    finish = json.loads(captured.out)["finish"]
+    payload = json.loads(captured.out)
     progress = [json.loads(line) for line in captured.err.splitlines()]
-    expected = "pcl finish --emit-packet --task T-0001 --timeout 600 --json"
+
     assert [
         record["status"]
         for record in progress
         if record["event"] == "check_finished"
     ] == ["timed_out"]
     assert progress[-1]["event"] == "finish_finished"
-    assert progress[-1]["status"] == "timed_out"
-    assert finish["checks"][0]["status"] == "timed_out"
-    assert finish["checks"][0]["runner_result"]["status"] == "timed_out"
-    assert finish["checks"][0]["assertion_result"]["status"] == "not_evaluated"
-    assert finish["checks"][0]["failure_phase"] == "execute"
-    assert finish["checks"][0]["failure_kind"] == "timeout"
-    assert finish["checks"][0]["attempt_identity"]["contract_version"] == (
-        "verification-attempt-identity/v1"
-    )
-    assert finish["checks"][0]["stability_evaluation"]["reproducible"] is False
-    assert finish["timeout_recovery"] == {
-        "available": True,
-        "reason": "finish_check_timed_out",
-        "timed_out_evidence_id": finish["checks"][0]["evidence_id"],
-        "previous_timeout_seconds": 120,
-        "suggested_timeout_seconds": 600,
-        "retry_command": expected,
-        "diagnostic_command": (
-            f"pcl evidence show {finish['checks'][0]['evidence_id']} --json"
-        ),
-    }
-    packet = load_completion_packet(tmp_path / finish["packet"]["path"])
-    assert packet["checks"][0]["reproducible"] is False
-    assert packet["next_action"]["command"] == expected
-    packet["next_action"]["command"] = "pcl finish --emit-packet --task T-9999 --timeout 600 --json"
-    assert completion_packet_timeout_action(packet) is None
-
-    assert main(["--root", str(tmp_path), "next", "--json"]) == 0
-    action = _json_output(capsys)
-    assert action["type"] == "retry_finish_timeout"
-    assert action["command"] == expected
-    assert action["run_policy"] == "agent_safe"
-    assert action["requires_human"] is False
-    assert action["safe_to_run"] is True
+    assert progress[-1]["status"] == "failed"
+    _assert_missing_runner_authority_error(payload, tmp_path)
 
 
-def test_finish_timeout_at_legacy_limit_routes_to_bounded_final_retry(
+def test_finish_fake_timeout_at_legacy_limit_still_requires_deferred_recorder(
     tmp_path: Path, capsys, monkeypatch
 ) -> None:
     _create_packet_project(tmp_path, capsys)
@@ -1664,35 +1894,11 @@ def test_finish_timeout_at_legacy_limit_routes_to_bounded_final_retry(
     assert main([
         "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001",
         "--timeout", "600", "--json",
-    ]) == 1
-    finish = _finish_payload(capsys)
-    evidence_id = finish["checks"][0]["evidence_id"]
-    retry = "pcl finish --emit-packet --task T-0001 --timeout 1200 --json"
-    assert finish["timeout_recovery"] == {
-        "available": True,
-        "reason": "finish_check_timed_out",
-        "timed_out_evidence_id": evidence_id,
-        "previous_timeout_seconds": 600,
-        "suggested_timeout_seconds": 1200,
-        "retry_command": retry,
-        "diagnostic_command": f"pcl evidence show {evidence_id} --json",
-    }
-    packet = load_completion_packet(tmp_path / finish["packet"]["path"])
-    assert packet["next_action"]["command"] == retry
-
-    assert main([
-        "--root", str(tmp_path), "next", "--target", "T-0001", "--json",
-    ]) == 0
-    action = _json_output(capsys)
-    assert action["type"] == "retry_finish_timeout"
-    assert action["command"] == retry
-    assert action["blocking"] is False
-    assert action["requires_human"] is False
-    assert action["routing_scope"] == "target"
-    assert action["target_binding"]["target_id"] == "T-0001"
+    ]) == 4
+    _assert_missing_runner_authority_error(_json_output(capsys), tmp_path)
 
 
-def test_finish_timeout_at_finish_limit_routes_target_to_evidence_diagnosis(
+def test_finish_fake_timeout_at_finish_limit_still_requires_deferred_recorder(
     tmp_path: Path, capsys, monkeypatch
 ) -> None:
     _create_packet_project(tmp_path, capsys)
@@ -1708,33 +1914,8 @@ def test_finish_timeout_at_finish_limit_routes_target_to_evidence_diagnosis(
     assert main([
         "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001",
         "--timeout", "1200", "--json",
-    ]) == 1
-    finish = _finish_payload(capsys)
-    evidence_id = finish["checks"][0]["evidence_id"]
-    diagnostic = f"pcl evidence show {evidence_id} --json"
-    assert finish["timeout_recovery"] == {
-        "available": False,
-        "reason": "finish_timeout_limit_reached",
-        "timed_out_evidence_id": evidence_id,
-        "previous_timeout_seconds": 1200,
-        "suggested_timeout_seconds": None,
-        "retry_command": None,
-        "diagnostic_command": diagnostic,
-    }
-    packet = load_completion_packet(tmp_path / finish["packet"]["path"])
-    assert packet["next_action"]["command"] == diagnostic
-    assert "--timeout" not in packet["next_action"]["command"]
-
-    assert main([
-        "--root", str(tmp_path), "next", "--target", "T-0001", "--json",
-    ]) == 0
-    action = _json_output(capsys)
-    assert action["type"] == "diagnose_finish_timeout"
-    assert action["command"] == diagnostic
-    assert action["blocking"] is True
-    assert action["requires_human"] is False
-    assert action["routing_scope"] == "target"
-    assert action["target_binding"]["target_id"] == "T-0001"
+    ]) == 4
+    _assert_missing_runner_authority_error(_json_output(capsys), tmp_path)
 
 
 def test_finish_rejects_timeout_above_finish_limit_before_mutation(
@@ -1770,7 +1951,7 @@ def test_finish_rejects_timeout_above_finish_limit_before_mutation(
     assert _state_counts(tmp_path) == before
 
 
-def test_newer_non_timeout_packet_suppresses_stale_timeout_recovery(
+def test_missing_authority_fake_timeout_creates_no_stale_timeout_recovery(
     tmp_path: Path, capsys, monkeypatch
 ) -> None:
     _create_packet_project(tmp_path, capsys)
@@ -1785,18 +1966,8 @@ def test_newer_non_timeout_packet_suppresses_stale_timeout_recovery(
     finish_command = [
         "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001", "--json",
     ]
-    assert main(finish_command) == 1
-    _finish_payload(capsys)
-
-    monkeypatch.undo()
-    (tmp_path / "test_sample.py").write_text(
-        "def test_sample():\n    assert False\n\n# newer ordinary failure\n",
-        encoding="utf-8",
-    )
-    assert main(finish_command) == 1
-    newer = _finish_payload(capsys)
-    assert newer["checks"][0]["status"] == "failed"
-    assert "timeout_recovery" not in newer
+    assert main(finish_command) == 4
+    _assert_missing_runner_authority_error(_json_output(capsys), tmp_path)
 
     assert main(["--root", str(tmp_path), "next", "--json"]) == 0
     action = _json_output(capsys)
@@ -2478,7 +2649,14 @@ def test_finish_projector_failure_reports_committed_packet_without_duplicate(
     _create_packet_project(tmp_path, capsys)
     from pcl import outbox
 
+    original_project = outbox.project_pending_events
+    projection_calls = 0
+
     def pending_projection(*args, **kwargs):
+        nonlocal projection_calls
+        projection_calls += 1
+        if projection_calls == 1:
+            return original_project(*args, **kwargs)
         return ProjectionResult(
             committed=True,
             projection="pending",
@@ -2496,6 +2674,7 @@ def test_finish_projector_failure_reports_committed_packet_without_duplicate(
     assert main(command) == 6
     error = _json_output(capsys)
     assert error["error"]["code"] == "audit_projection_pending"
+    assert projection_calls == 2
     assert _evidence_count(tmp_path, "completion_packet") == 1
 
     monkeypatch.undo()
