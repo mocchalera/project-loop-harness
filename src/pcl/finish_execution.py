@@ -1173,23 +1173,7 @@ def _commit_check_evidence_and_runner_authority(
             commands=commands,
             now=now,
         )
-        completion_target_readiness = expected_target_readiness
-        if target["type"] == "task" and _requires_target_freshness(
-            expected_target_readiness
-        ):
-            routing_target = resolve_routing_target(
-                conn,
-                str(target["id"]),
-                expected_type="task",
-            )
-            completion_target_readiness = task_terminal_readiness_for_row(
-                paths,
-                conn,
-                routing_target.row,
-                source="finish_anchor_commit",
-            )
         conn.commit()
-        return check_rows, completion_target_readiness
     except DataStoreError:
         conn.rollback()
         raise
@@ -1200,6 +1184,75 @@ def _commit_check_evidence_and_runner_authority(
         ) from exc
     finally:
         conn.close()
+    if target["type"] != "task" or not _requires_target_freshness(
+        expected_target_readiness
+    ):
+        return check_rows, expected_target_readiness
+    return check_rows, _anchored_completion_target_readiness(
+        paths,
+        target=target,
+        expected_target_readiness=expected_target_readiness,
+    )
+
+
+def _anchored_completion_target_readiness(
+    paths: ProjectPaths,
+    *,
+    target: dict[str, Any],
+    expected_target_readiness: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Read the completion expectation back from committed, projected state.
+
+    The anchor commit's audit projection only runs once ``conn.commit()``
+    returns, so a readiness snapshot taken inside that write transaction is
+    always blocked on ``audit_projection_event_missing``. Handing such a
+    snapshot to the completion commit would disable its freshness comparison,
+    so this recompute happens after the commit and fails closed when the
+    committed snapshot is no longer terminal-allowed.
+    """
+    conn = connect_read_only(paths.db_path)
+    try:
+        try:
+            routing_target = resolve_routing_target(
+                conn,
+                str(target["id"]),
+                expected_type="task",
+            )
+        except TaskGoalTargetNotFoundError:
+            raise FinishTargetReadinessChangedError(
+                target_id=str(target["id"]),
+                expected=expected_target_readiness or {},
+                current=evaluate_terminal_readiness(
+                    target_type="task",
+                    target_id=str(target["id"]),
+                    requirements=[
+                        {
+                            "code": "finish_target_missing",
+                            "state": "blocked",
+                            "message": (
+                                f"Finish target Task {target['id']} no longer "
+                                "exists."
+                            ),
+                            "details": {"task_id": str(target["id"])},
+                        }
+                    ],
+                ),
+            ) from None
+        completion_target_readiness = task_terminal_readiness_for_row(
+            paths,
+            conn,
+            routing_target.row,
+            source="finish_anchor_commit",
+        )
+    finally:
+        conn.close()
+    if not _requires_target_freshness(completion_target_readiness):
+        raise FinishTargetReadinessChangedError(
+            target_id=str(target["id"]),
+            expected=expected_target_readiness or {},
+            current=completion_target_readiness,
+        )
+    return completion_target_readiness
 
 
 def _store_check_evidence(

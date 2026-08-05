@@ -1396,6 +1396,49 @@ def test_finish_crash_after_anchor_commit_leaves_anchor_durable_and_non_green(
     assert _evidence_count(tmp_path, "completion_check") == 1
 
 
+def test_finish_rejects_state_drift_between_anchor_and_completion_commit(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    from pcl import finish_execution
+    from pcl.tasks import create_task
+
+    original_commit = finish_execution._commit_completion_packet
+    injected: list[str] = []
+
+    def commit_after_unrelated_mutation(paths, **kwargs):
+        if not injected:
+            injected.append(
+                str(create_task(paths, title="Unrelated drift task")["id"])
+            )
+        return original_commit(paths, **kwargs)
+
+    monkeypatch.setattr(
+        finish_execution,
+        "_commit_completion_packet",
+        commit_after_unrelated_mutation,
+    )
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet",
+        "--task", "T-0001", "--json",
+    ]) == 1
+    payload = _json_output(capsys)
+
+    assert injected
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "finish_target_readiness_changed"
+    assert payload["error"]["details"]["mutation_committed"] is False
+    assert _runner_authority_lifecycle_snapshot(tmp_path) == {
+        "task_status": "in_progress",
+        "anchor_events": 1,
+        "completion_events": 0,
+        "completion_evidence": 0,
+    }
+
+
 def test_finish_incomplete_attempt_rereads_authority_before_attempt_commit(
     tmp_path: Path,
     capsys,

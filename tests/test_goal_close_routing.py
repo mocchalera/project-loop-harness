@@ -277,7 +277,7 @@ def test_next_does_not_fall_back_to_older_packet_when_latest_is_invalid(
     assert action["command"] == "pcl finish --emit-packet --goal G-0001 --json"
 
 
-def test_goal_timeout_recovery_precedes_older_completed_packet(
+def test_goal_fake_timeout_without_deferred_recorder_fails_closed(
     tmp_path: Path,
     capsys,
     monkeypatch,
@@ -306,16 +306,25 @@ def test_goal_timeout_recovery_precedes_older_completed_packet(
                 "--json",
             ]
         )
-        == 1
+        == 4
     )
-    timed_out = _json_output(capsys)["finish"]
-    assert completed["packet"]["evidence_id"] != timed_out["packet"]["evidence_id"]
+    assert _json_output(capsys) == {
+        "ok": False,
+        "error": {
+            "code": "data_store_error",
+            "message": (
+                "Finish check did not produce a deferred parent runner authority seal."
+            ),
+            "details": {"failure_kind": "runner_authority_anchor_missing"},
+        },
+    }
 
     action = _next_goal(tmp_path, capsys)
 
-    assert action["type"] == "retry_finish_timeout"
-    assert action["command"] == ("pcl finish --emit-packet --goal G-0001 --timeout 1200 --json")
-    assert action["target"]["completion_packet_evidence_id"] == (timed_out["packet"]["evidence_id"])
+    assert action["type"] == "close_goal"
+    assert action["target"]["completion_packet_evidence_id"] == (
+        completed["packet"]["evidence_id"]
+    )
     assert action["target_binding"]["target_id"] == "G-0001"
 
 
