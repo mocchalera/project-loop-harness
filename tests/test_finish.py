@@ -1439,6 +1439,49 @@ def test_finish_rejects_state_drift_between_anchor_and_completion_commit(
     }
 
 
+def test_finish_rejects_state_drift_between_anchor_commit_and_readback(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    from pcl import finish_execution
+    from pcl.tasks import create_task
+
+    original_readback = finish_execution._anchored_completion_target_readiness
+    injected: list[str] = []
+
+    def readback_after_unrelated_mutation(paths, **kwargs):
+        if not injected:
+            injected.append(
+                str(create_task(paths, title="Unrelated readback drift task")["id"])
+            )
+        return original_readback(paths, **kwargs)
+
+    monkeypatch.setattr(
+        finish_execution,
+        "_anchored_completion_target_readiness",
+        readback_after_unrelated_mutation,
+    )
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet",
+        "--task", "T-0001", "--json",
+    ]) == 1
+    payload = _json_output(capsys)
+
+    assert injected
+    assert payload["ok"] is False
+    assert payload["error"]["code"] == "finish_target_readiness_changed"
+    assert payload["error"]["details"]["mutation_committed"] is False
+    assert _runner_authority_lifecycle_snapshot(tmp_path) == {
+        "task_status": "in_progress",
+        "anchor_events": 1,
+        "completion_events": 0,
+        "completion_evidence": 0,
+    }
+
+
 def test_finish_incomplete_attempt_rereads_authority_before_attempt_commit(
     tmp_path: Path,
     capsys,
@@ -2025,6 +2068,42 @@ def test_missing_authority_fake_timeout_creates_no_stale_timeout_recovery(
         "diagnose_finish_timeout",
     }
     assert targeted["target_binding"]["target_id"] == "T-0001"
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_type"),
+    [
+        (
+            "pcl finish --emit-packet --task T-0001 --timeout 1200 --json",
+            "retry_finish_timeout",
+        ),
+        ("pcl evidence show E-0001 --json", "diagnose_finish_timeout"),
+    ],
+)
+def test_completion_packet_timeout_action_routes_timed_out_check(
+    command: str, expected_type: str
+) -> None:
+    from pcl.finish_recovery import completion_packet_timeout_action
+
+    action = completion_packet_timeout_action(
+        {
+            "outcome": "INCOMPLETE_VALIDATION",
+            "target": {"type": "task", "id": "T-0001"},
+            "checks": [
+                {"status": "timed_out", "artifact_ref": "evidence:E-0001"},
+            ],
+            "next_action": {
+                "command": command,
+                "text": "A finish check timed out.",
+            },
+        }
+    )
+
+    assert action == {
+        "type": expected_type,
+        "command": command,
+        "reason": "A finish check timed out.",
+    }
 
 
 def test_finish_rejects_fail_open_missing_path_check_before_execution(

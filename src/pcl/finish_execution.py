@@ -1173,6 +1173,7 @@ def _commit_check_evidence_and_runner_authority(
             commands=commands,
             now=now,
         )
+        anchor_hwm = _event_high_watermark(conn)
         conn.commit()
     except DataStoreError:
         conn.rollback()
@@ -1192,7 +1193,18 @@ def _commit_check_evidence_and_runner_authority(
         paths,
         target=target,
         expected_target_readiness=expected_target_readiness,
+        anchor_hwm=anchor_hwm,
     )
+
+
+def _event_high_watermark(conn: sqlite3.Connection) -> dict[str, Any]:
+    row = conn.execute(
+        "SELECT sequence, id FROM events ORDER BY sequence DESC LIMIT 1"
+    ).fetchone()
+    return {
+        "sequence": int(row["sequence"]) if row is not None else 0,
+        "event_id": str(row["id"]) if row is not None else None,
+    }
 
 
 def _anchored_completion_target_readiness(
@@ -1200,6 +1212,7 @@ def _anchored_completion_target_readiness(
     *,
     target: dict[str, Any],
     expected_target_readiness: dict[str, Any] | None,
+    anchor_hwm: dict[str, Any],
 ) -> dict[str, Any]:
     """Read the completion expectation back from committed, projected state.
 
@@ -1209,6 +1222,13 @@ def _anchored_completion_target_readiness(
     snapshot to the completion commit would disable its freshness comparison,
     so this recompute happens after the commit and fails closed when the
     committed snapshot is no longer terminal-allowed.
+
+    ``conn.commit()`` also releases the advisory project lock before this
+    read-only connection opens, so another process can commit events in that
+    gap. Such events would otherwise be absorbed into the expectation handed to
+    the completion commit, which would then compare an already drifted snapshot
+    against itself. The readiness is therefore pinned to the anchor commit's own
+    event high watermark and fails closed on any other advance.
     """
     conn = connect_read_only(paths.db_path)
     try:
@@ -1246,13 +1266,39 @@ def _anchored_completion_target_readiness(
         )
     finally:
         conn.close()
-    if not _requires_target_freshness(completion_target_readiness):
+    if not _anchored_to_event_high_watermark(
+        completion_target_readiness,
+        anchor_hwm,
+    ) or not _requires_target_freshness(completion_target_readiness):
         raise FinishTargetReadinessChangedError(
             target_id=str(target["id"]),
             expected=expected_target_readiness or {},
             current=completion_target_readiness,
         )
     return completion_target_readiness
+
+
+def _anchored_to_event_high_watermark(
+    readiness: dict[str, Any],
+    anchor_hwm: dict[str, Any],
+) -> bool:
+    """Return whether ``readiness`` was evaluated through exactly ``anchor_hwm``.
+
+    Only the anchor step's own watermark advance may be accounted for; any other
+    committed event between the anchor commit and this read-back must fail
+    closed rather than be absorbed into the completion expectation.
+    """
+    evaluation = readiness.get("evaluation")
+    if not isinstance(evaluation, dict):
+        return False
+    anchor_event_id = anchor_hwm.get("event_id")
+    if anchor_event_id is None:
+        return False
+    return (
+        evaluation.get("evaluated_through_event_sequence")
+        == anchor_hwm.get("sequence")
+        and evaluation.get("evaluated_through_event_id") == anchor_event_id
+    )
 
 
 def _store_check_evidence(
