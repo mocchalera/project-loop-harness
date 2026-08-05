@@ -87,6 +87,7 @@ def build_finish_check_result(
         "failure_kind": failure_kind,
         "runner_result": runner_result,
         "assertion_result": assertion_result,
+        "observability": dict(command.get("observability", {})),
         "attempt_identity": dict(attempt_identity),
         "stability_evaluation": dict(stability_evaluation),
         "reuse": dict(command.get("reuse", {})),
@@ -325,6 +326,13 @@ def _classify_command_result(
         }
     artifact_collection = dict(artifact_collection)
     signal_value = _signal_value(exit_code)
+    observability = command.get("observability")
+    observability_failure = (
+        observability.get("failure_kind")
+        if isinstance(observability, Mapping)
+        and observability.get("eligible") is not True
+        else None
+    )
 
     if artifact_collection.get("status") != "collected":
         runner_status = "collection_failed"
@@ -355,6 +363,11 @@ def _classify_command_result(
         assertion_status = "not_evaluated"
         failure_phase = "execute"
         failure_kind = "crash"
+    elif observability_failure and exit_code == 0:
+        runner_status = "completed"
+        assertion_status = "unknown"
+        failure_phase = "observe"
+        failure_kind = str(observability_failure)
     elif exit_code == 0:
         runner_status = "completed"
         assertion_status = "passed"
@@ -377,6 +390,14 @@ def _classify_command_result(
         "artifact_collection": artifact_collection,
         "termination": command.get("termination"),
         "legacy_failure_kind": legacy_failure_kind or None,
+        "observability_status": (
+            observability.get("status")
+            if isinstance(observability, Mapping)
+            else None
+        ),
+        "observability_failure_kind": (
+            str(observability_failure) if observability_failure else None
+        ),
     }
     assertion_result = {
         "contract_version": ASSERTION_RESULT_CONTRACT_VERSION,
@@ -405,6 +426,8 @@ def _assertion_reason(assertion_status: str, runner_status: str) -> str | None:
     if assertion_status == "failed":
         return "guarded_command_nonzero_exit"
     if assertion_status == "unknown":
+        if runner_status == "completed":
+            return "runner_observability_unknown"
         return "artifact_collection_failed"
     return f"runner_{runner_status}"
 
@@ -420,6 +443,8 @@ def _legacy_reason(*, runner_status: str, assertion_status: str) -> str | None:
         return "Guarded command artifacts could not be collected."
     if runner_status == "crashed":
         return "Guarded command did not produce an exit result."
+    if assertion_status == "unknown":
+        return "Runner observability did not establish a trustworthy result."
     if assertion_status == "failed":
         return "Guarded command returned a non-zero exit code."
     return None

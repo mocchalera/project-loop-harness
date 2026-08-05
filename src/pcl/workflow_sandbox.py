@@ -16,6 +16,7 @@ from .ids import next_prefixed_id
 from .paths import ProjectPaths
 from .project_config import FINISH_CHECK_COMMAND_KEYS, enabled_project_commands
 from .redaction import compile_redaction_patterns
+from .runner_observability import normalize_observability_paths
 from .timeutil import utc_now_iso
 from .workflow_proposal_validation import PROPOSAL_ID_RE, validate_workflow_proposal_text
 from .workflow_verifier import verify_workflow_text
@@ -281,6 +282,7 @@ def execute_planned_guarded_command(
     redaction_patterns: Iterable[str] = (),
     allowed_env_names: Iterable[str] = (),
     execution_root: Path | None = None,
+    record_observability: bool = False,
 ) -> None:
     if not command.get("safe_to_run"):
         raise InvalidInputError(
@@ -300,6 +302,7 @@ def execute_planned_guarded_command(
         redaction_patterns=redaction_patterns,
         allowed_env_names=allowed_env_names,
         execution_root=execution_root,
+        record_observability=record_observability,
     )
 
 
@@ -800,11 +803,22 @@ def _execute_command(
     redaction_patterns: Iterable[str],
     allowed_env_names: Iterable[str] = (),
     execution_root: Path | None = None,
+    record_observability: bool = False,
 ) -> None:
     working_root = execution_root or paths.root
     argv = _execution_argv(paths, command, execution_root=working_root)
     stdout_path = run_dir / f"{command['index']:02d}-{_safe_file_token(command['step_id'])}.stdout.txt"
     stderr_path = run_dir / f"{command['index']:02d}-{_safe_file_token(command['step_id'])}.stderr.txt"
+    observability_summary_path = (
+        run_dir / f"{command['index']:02d}-{_safe_file_token(command['step_id'])}.runner-observability.json"
+        if record_observability
+        else None
+    )
+    observability_events_path = (
+        run_dir / f"{command['index']:02d}-{_safe_file_token(command['step_id'])}.runner-observability.jsonl"
+        if record_observability
+        else None
+    )
     process_result = execute_guarded_process(
         argv,
         cwd=working_root,
@@ -814,8 +828,12 @@ def _execute_command(
         max_output_bytes=max_output_bytes,
         redaction_patterns=compile_redaction_patterns(redaction_patterns),
         additional_allowed_env_names=allowed_env_names,
+        observability_summary_path=observability_summary_path,
+        observability_events_path=observability_events_path,
     )
     command["executed_argv"] = argv
+    if process_result.get("executed_argv"):
+        command["executed_argv"] = process_result["executed_argv"]
     command["exit_code"] = process_result["exit_code"]
     command["status"] = "passed" if process_result["exit_code"] == 0 else "failed"
     command["timed_out"] = process_result["timed_out"]
@@ -831,6 +849,15 @@ def _execute_command(
     command["spawn_error_kind"] = process_result["spawn_error_kind"]
     command["artifact_collection"] = process_result["artifact_collection"]
     command["permission_contract"] = process_result["permission_contract"]
+    if isinstance(process_result.get("observability"), dict):
+        command["observability"] = normalize_observability_paths(
+            process_result["observability"], root=paths.root
+        )
+        if command["observability"].get("eligible") is not True:
+            command["status"] = "failed"
+            command["observability_failure_kind"] = str(
+                command["observability"].get("failure_kind") or "observer_unavailable"
+            )
 
 
 def _execution_argv(

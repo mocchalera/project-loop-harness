@@ -14,6 +14,11 @@ from typing import Any, Iterable, Pattern
 
 from .errors import InvalidInputError
 from .redaction import redact_bytes
+from .runner_observability import (
+    RunnerObservabilityRecorder,
+    inject_pytest_hook,
+    observability_environment,
+)
 
 
 DEFAULT_MAX_OUTPUT_BYTES = 1_048_576
@@ -57,6 +62,7 @@ class _BoundedStream:
         self.max_bytes = max_bytes
         self.captured_byte_count = 0
         self.original_byte_count = 0
+        self.eof = False
         self.file = tempfile.TemporaryFile(mode="w+b")
 
     def consume(self, chunk: bytes) -> None:
@@ -140,6 +146,8 @@ def execute_guarded_process(
     max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
     redaction_patterns: Iterable[Pattern[str]] = (),
     additional_allowed_env_names: Iterable[str] = (),
+    observability_summary_path: Path | None = None,
+    observability_events_path: Path | None = None,
 ) -> dict[str, Any]:
     if max_output_bytes < 1:
         raise ValueError("max_output_bytes must be at least 1")
@@ -147,6 +155,23 @@ def execute_guarded_process(
     env, environment_contract = build_subprocess_env(
         additional_allowed_names=additional_allowed_env_names
     )
+    if (observability_summary_path is None) != (observability_events_path is None):
+        raise ValueError(
+            "observability_summary_path and observability_events_path must be provided together"
+        )
+    observed_argv = list(argv)
+    observability: RunnerObservabilityRecorder | None = None
+    if observability_summary_path is not None and observability_events_path is not None:
+        observed_argv, _ = inject_pytest_hook(observed_argv)
+        observability = RunnerObservabilityRecorder(
+            summary_path=observability_summary_path,
+            events_path=observability_events_path,
+            argv=observed_argv,
+            timeout_seconds=timeout_seconds,
+            env=env,
+        )
+        observability.start()
+        env.update(observability_environment(observability_summary_path, observability_events_path))
     stdout_capture = _BoundedStream(max_output_bytes)
     stderr_capture = _BoundedStream(max_output_bytes)
     started = time.monotonic()
@@ -155,10 +180,13 @@ def execute_guarded_process(
     spawn_error = ""
     spawn_error_kind = ""
     termination = {"requested": False, "method": "", "escalated": False}
+    heartbeat_stop: threading.Event | None = None
+    heartbeat_worker: threading.Thread | None = None
+    process: subprocess.Popen[bytes] | None = None
 
     try:
         process = subprocess.Popen(
-            argv,
+            observed_argv,
             cwd=cwd,
             env=env,
             stdout=subprocess.PIPE,
@@ -180,6 +208,8 @@ def execute_guarded_process(
     else:
         assert process.stdout is not None
         assert process.stderr is not None
+        if observability is not None:
+            heartbeat_stop, heartbeat_worker = observability.start_heartbeat(process)
         threads = [
             threading.Thread(target=_drain_stream, args=(process.stdout, stdout_capture), daemon=True),
             threading.Thread(target=_drain_stream, args=(process.stderr, stderr_capture), daemon=True),
@@ -193,6 +223,10 @@ def execute_guarded_process(
             termination = _terminate_process_group(process)
             exit_code = None
         finally:
+            if heartbeat_stop is not None:
+                heartbeat_stop.set()
+            if heartbeat_worker is not None:
+                heartbeat_worker.join(timeout=1)
             for thread in threads:
                 thread.join(timeout=2)
             process.stdout.close()
@@ -210,7 +244,16 @@ def execute_guarded_process(
         stderr_path,
         redaction_patterns=patterns,
     )
-    return {
+    if process is not None:
+        termination = {
+            **termination,
+            **_final_process_group_state(process.pid, leader_alive=process.poll() is None),
+            "pipes_eof": stdout_capture.eof and stderr_capture.eof,
+        }
+    else:
+        termination["group_state"] = "not_started"
+        termination["pipes_eof"] = stdout_capture.eof and stderr_capture.eof
+    result: dict[str, Any] = {
         "exit_code": exit_code,
         "timed_out": timed_out,
         "duration_seconds": round(time.monotonic() - started, 6),
@@ -228,7 +271,7 @@ def execute_guarded_process(
         "termination": termination,
         "permission_contract": {
             "backend": "host_subprocess",
-            "argv": list(argv),
+            "argv": list(observed_argv),
             "shell": False,
             "working_directory": str(cwd),
             "environment": environment_contract,
@@ -238,7 +281,26 @@ def execute_guarded_process(
                 "filesystem": False,
             },
         },
+        "executed_argv": list(observed_argv),
     }
+    if observability is not None:
+        observability.emit(
+            "termination",
+            phase="terminate" if timed_out else "complete",
+            source="watchdog",
+            reason=("timeout_budget_exhausted" if timed_out else "process_exit"),
+            termination=termination,
+        )
+        result["observability"] = observability.finalize(
+            stdout=stdout_metadata,
+            stderr=stderr_metadata,
+            exit_code=exit_code,
+            timed_out=timed_out,
+            duration_seconds=result["duration_seconds"],
+            termination=termination,
+            pipes_eof=bool(termination.get("pipes_eof")),
+        )
+    return result
 
 
 def _environment_sha256(environment: dict[str, str]) -> str:
@@ -267,27 +329,66 @@ def _drain_stream(stream: Any, capture: _BoundedStream) -> None:
     while True:
         chunk = stream.read(READ_CHUNK_BYTES)
         if not chunk:
+            capture.eof = True
             return
         capture.consume(chunk)
 
 
 def _terminate_process_group(process: subprocess.Popen[bytes]) -> dict[str, Any]:
-    result = {"requested": True, "method": "terminate_process_group", "escalated": False}
+    result = {
+        "requested": True,
+        "method": "terminate_process_group",
+        "escalated": False,
+        "term_sent": False,
+        "kill_sent": False,
+        "group_state_before": _process_group_state(process.pid),
+    }
     try:
         if os.name == "posix":
             os.killpg(process.pid, signal.SIGTERM)
+            result["term_sent"] = True
         else:
             process.terminate()
+            result["term_sent"] = True
         process.wait(timeout=1)
     except (ProcessLookupError, subprocess.TimeoutExpired):
-        if process.poll() is None:
-            result["escalated"] = True
+        pass
+    if _process_group_state(process.pid) in {"alive", "surviving"}:
+        result["escalated"] = True
+        try:
             if os.name == "posix":
                 os.killpg(process.pid, signal.SIGKILL)
             else:
                 process.kill()
+            result["kill_sent"] = True
             process.wait(timeout=1)
+        except (ProcessLookupError, subprocess.TimeoutExpired):
+            pass
+    result.update(_final_process_group_state(process.pid, leader_alive=process.poll() is None))
     return result
+
+
+def _process_group_state(pid: int) -> str:
+    if os.name != "posix":
+        return "alive" if pid else "unknown"
+    try:
+        os.killpg(pid, 0)
+    except ProcessLookupError:
+        return "gone"
+    except PermissionError:
+        return "unknown"
+    except OSError:
+        return "unknown"
+    return "alive"
+
+
+def _final_process_group_state(pid: int, *, leader_alive: bool) -> dict[str, Any]:
+    state = _process_group_state(pid)
+    return {
+        "group_state": "surviving" if state == "alive" else state,
+        "group_uncertain": state == "unknown",
+        "leader_alive": leader_alive,
+    }
 
 
 def _write_capture(
@@ -326,4 +427,5 @@ def _write_capture(
         "raw_output_persisted": False,
         "encoding": encoding,
         "binary": binary,
+        "sha256": f"sha256:{hashlib.sha256(redacted).hexdigest()}",
     }

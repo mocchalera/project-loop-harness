@@ -40,6 +40,7 @@ from .ids import next_prefixed_id
 from .paths import ProjectPaths
 from .project_config import finish_check_configuration
 from .route_overrides import recorded_route_context
+from .runner_observability import finalize_persisted_observability
 from .target_resolver import (
     TaskGoalTargetNotFoundError,
     resolve_routing_target,
@@ -339,6 +340,7 @@ def emit_finish_packet(
                         timeout_seconds=timeout_seconds,
                         max_output_bytes=max_output_bytes,
                         execution_root=workspace["root"],
+                        record_observability=True,
                     )
                 except Exception:
                     if progress_reporter is not None and heartbeat is not None:
@@ -1160,6 +1162,34 @@ def _store_check_evidence(
             if isinstance(command.get(key.removesuffix("_path")), dict):
                 command[key.removesuffix("_path")]["path"] = command[key]
         result_path = final_dir / "result.json"
+        observability = command.get("observability")
+        if isinstance(observability, dict):
+            for key in ("summary_path", "events_path"):
+                source_value = observability.get(key)
+                if not isinstance(source_value, str):
+                    continue
+                source = paths.root / source_value
+                destination = final_dir / source.name
+                if source.exists():
+                    source.replace(destination)
+                observability[key] = str(destination.relative_to(paths.root))
+            artifacts = observability.get("artifacts")
+            if isinstance(artifacts, dict):
+                for name in ("stdout", "stderr"):
+                    item = artifacts.get(name)
+                    if isinstance(item, dict):
+                        item["path"] = command[name]["path"]
+                for name in ("summary", "events"):
+                    item = artifacts.get(name)
+                    if isinstance(item, dict):
+                        item["path"] = observability.get(f"{name}_path")
+            command["observability"] = finalize_persisted_observability(
+                observability,
+                root=paths.root,
+                result_path=result_path,
+            )
+            if command["observability"].get("eligible") is not True:
+                command["status"] = "failed"
         check_payload = _check_result(command, evidence_id=evidence_id)
         result_bytes = (
             json.dumps(
@@ -1174,6 +1204,15 @@ def _store_check_evidence(
         check_payload["artifact_sha256"] = (
             f"sha256:{hashlib.sha256(result_bytes).hexdigest()}"
         )
+        if isinstance(command.get("observability"), dict):
+            result_sha256 = str(check_payload["artifact_sha256"])
+            command["observability"] = finalize_persisted_observability(
+                command["observability"],
+                root=paths.root,
+                result_path=result_path,
+                result_sha256=result_sha256,
+            )
+            check_payload["observability"] = command["observability"]
         relative = str(result_path.relative_to(paths.root))
         conn.execute(
             """
