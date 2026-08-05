@@ -56,6 +56,16 @@ def _command(
                 "values_recorded": False,
             },
         },
+        "observability": {
+            "status": "complete",
+            "eligible": True,
+            "failure_kind": None,
+        },
+        "observability_verification": {
+            "ok": True,
+            "failure_kind": None,
+            "issues": [],
+        },
     }
 
 

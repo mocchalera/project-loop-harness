@@ -819,6 +819,96 @@ def test_finish_tampered_runner_sidecar_cannot_become_exit_zero_green(
         conn.close()
 
 
+def _recompute_runner_summary_digest(payload: dict) -> None:
+    payload["artifacts"]["summary"]["sha256"] = None
+    without_self = json.loads(json.dumps(payload, ensure_ascii=False))
+    without_self["artifacts"]["summary"]["sha256"] = None
+    without_self["artifacts"]["result"]["sha256"] = None
+    digest = hashlib.sha256(
+        json.dumps(
+            without_self,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    payload["artifacts"]["summary"]["sha256"] = f"sha256:{digest}"
+
+
+@pytest.mark.parametrize(
+    ("tamper", "hash_value"),
+    [
+        ("hash_null", None),
+        ("hash_type", 123),
+        ("self_digest_semantic", None),
+        ("eligible_status_contradiction", None),
+        ("observability_missing", None),
+    ],
+)
+def test_finish_runner_observability_negative_fixtures_never_false_green(
+    tmp_path: Path,
+    capsys,
+    monkeypatch: pytest.MonkeyPatch,
+    tamper: str,
+    hash_value: object,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    from pcl import finish_execution
+
+    execute = finish_execution.execute_planned_guarded_command
+
+    def execute_and_tamper(paths, command, **kwargs):
+        execute(paths, command, **kwargs)
+        if tamper == "observability_missing":
+            command.pop("observability", None)
+            return
+        summary_path = paths.root / str(command["observability"]["summary_path"])
+        payload = json.loads(summary_path.read_text(encoding="utf-8"))
+        if tamper in {"hash_null", "hash_type"}:
+            payload["artifacts"]["stdout"]["sha256"] = hash_value
+        elif tamper == "self_digest_semantic":
+            payload["failure_kind"] = "artifact_integrity_failed"
+        else:
+            payload["eligible"] = True
+            payload["status"] = "unavailable"
+            payload["failure_kind"] = "artifact_integrity_failed"
+        _recompute_runner_summary_digest(payload)
+        summary_path.write_text(
+            json.dumps(payload, ensure_ascii=False),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(
+        finish_execution,
+        "execute_planned_guarded_command",
+        execute_and_tamper,
+    )
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet", "--task", "T-0001", "--json",
+    ]) == 1
+    finish = _finish_payload(capsys)
+    check = finish["checks"][0]
+
+    assert finish["packet"]["outcome"] == "INCOMPLETE_VALIDATION"
+    assert finish["terminal_readiness"]["terminal_allowed"] is False
+    assert finish["target_transition"]["changed"] is False
+    assert check["status"] == "failed"
+    assert check["assertion_result"]["status"] == "unknown"
+    assert check["failure_kind"] in {
+        "artifact_integrity_failed",
+        "observer_unavailable",
+    }
+    packet = load_completion_packet(tmp_path / finish["packet"]["path"])
+    assert packet["claims"] == []
+    assert packet["checks"][0]["status"] == "failed"
+    conn = connect(tmp_path / ".project-loop" / "project.db")
+    try:
+        assert conn.execute("SELECT status FROM tasks WHERE id = 'T-0001'").fetchone()[0] == "in_progress"
+    finally:
+        conn.close()
+
+
 def test_finish_actual_projection_is_presentation_only(
     tmp_path: Path,
     capsys,

@@ -46,7 +46,9 @@ def test_success_persists_pytest_node_progress_hashes_and_provenance(tmp_path: P
     assert observation["provenance"]["status"] == "matched"
     assert observation["artifacts"]["stdout"]["sha256"] == hash_file(tmp_path / "stdout.txt")
     assert verify_runner_observability(
-        tmp_path / "runner-observability.json", root=tmp_path
+        tmp_path / "runner-observability.json",
+        root=tmp_path,
+        allow_pending_result=True,
     )["ok"] is True
 
 

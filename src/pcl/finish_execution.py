@@ -1157,9 +1157,7 @@ def _store_check_evidence(
     check_rows: list[dict[str, Any]] = []
     for command in commands:
         pre_verification = _verify_command_observability(command, root=paths.root)
-        pre_verification_ok = (
-            pre_verification is None or pre_verification.get("ok") is True
-        )
+        pre_verification_ok = pre_verification.get("ok") is True
         observability = command.get("observability")
         evidence_id = next_prefixed_id(conn, "evidence", "E")
         final_dir = paths.evidence_dir / "completion-checks" / evidence_id
@@ -1173,7 +1171,7 @@ def _store_check_evidence(
                 command[key.removesuffix("_path")]["path"] = command[key]
         result_path = final_dir / "result.json"
         observability = command.get("observability")
-        if isinstance(observability, dict):
+        if _has_persisted_observability_paths(observability):
             for key in ("summary_path", "events_path"):
                 source_value = observability.get(key)
                 if not isinstance(source_value, str):
@@ -1198,7 +1196,7 @@ def _store_check_evidence(
                 root=paths.root,
                 result_path=result_path,
             )
-            if pre_verification is not None and not pre_verification_ok:
+            if not pre_verification_ok:
                 _apply_observability_verification(command, pre_verification)
 
         def write_check_result() -> tuple[dict[str, Any], str]:
@@ -1221,20 +1219,20 @@ def _store_check_evidence(
             return payload, result_sha256
 
         check_payload, result_sha256 = write_check_result()
-        if isinstance(command.get("observability"), dict):
+        if _has_persisted_observability_paths(command.get("observability")):
             command["observability"] = finalize_persisted_observability(
                 command["observability"],
                 root=paths.root,
                 result_path=result_path,
                 result_sha256=result_sha256,
             )
-            if pre_verification is not None and not pre_verification_ok:
+            if not pre_verification_ok:
                 _apply_observability_verification(command, pre_verification)
             final_verification = _verify_command_observability(
                 command,
                 root=paths.root,
             )
-            if final_verification is not None and final_verification.get("ok") is not True:
+            if final_verification.get("ok") is not True:
                 check_payload, result_sha256 = write_check_result()
                 command["observability"] = finalize_persisted_observability(
                     command["observability"],
@@ -1242,7 +1240,7 @@ def _store_check_evidence(
                     result_path=result_path,
                     result_sha256=result_sha256,
                 )
-                if pre_verification is not None and not pre_verification_ok:
+                if not pre_verification_ok:
                     _apply_observability_verification(command, pre_verification)
                 _apply_observability_verification(command, final_verification)
                 if pre_verification_ok:
@@ -1610,24 +1608,49 @@ def _apply_observability_verification(
 
 def _verify_command_observability(
     command: dict[str, Any], *, root: Path
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     observation = command.get("observability")
     if not isinstance(observation, Mapping):
-        return None
-    summary_value = observation.get("summary_path")
-    if not isinstance(summary_value, str) or not summary_value:
         verification = {
             "ok": False,
-            "failure_kind": "artifact_integrity_failed",
-            "issues": ["summary_path_missing"],
+            "failure_kind": "observer_unavailable",
+            "issues": ["observability_missing"],
         }
     else:
-        summary_path = Path(summary_value)
-        if not summary_path.is_absolute():
-            summary_path = root / summary_path
-        verification = verify_runner_observability(summary_path, root=root)
+        summary_value = observation.get("summary_path")
+        if not isinstance(summary_value, str) or not summary_value:
+            verification = {
+                "ok": False,
+                "failure_kind": "artifact_integrity_failed",
+                "issues": ["summary_path_missing"],
+            }
+        else:
+            summary_path = Path(summary_value)
+            if not summary_path.is_absolute():
+                summary_path = root / summary_path
+            verification = verify_runner_observability(
+                summary_path,
+                root=root,
+                allow_pending_result=_has_pending_observability_result(observation),
+            )
+    command["observability_verification"] = verification
     _apply_observability_verification(command, verification)
     return verification
+
+
+def _has_persisted_observability_paths(observation: Any) -> bool:
+    return isinstance(observation, Mapping) and all(
+        isinstance(observation.get(key), str) and bool(observation.get(key))
+        for key in ("summary_path", "events_path")
+    )
+
+
+def _has_pending_observability_result(observation: Mapping[str, Any]) -> bool:
+    artifacts = observation.get("artifacts")
+    result = artifacts.get("result") if isinstance(artifacts, Mapping) else None
+    return isinstance(result, Mapping) and result.get("path") is None and result.get(
+        "sha256"
+    ) is None
 
 
 def _check_result_anchors(

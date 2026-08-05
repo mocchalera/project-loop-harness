@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import sys
 import threading
@@ -24,6 +25,19 @@ MAX_EVENT_COUNT = 16_384
 MAX_EVENT_LOG_BYTES = 2 * 1_024 * 1_024
 MAX_EVENT_LINE_BYTES = 16_384
 HEARTBEAT_INTERVAL_SECONDS = 1.0
+_OBSERVABILITY_STATUSES = frozenset({"complete", "partial", "unavailable"})
+_OBSERVABILITY_COMMAND_KINDS = frozenset({"pytest", "non_pytest"})
+_OBSERVABILITY_FAILURE_KINDS = frozenset(
+    {
+        "artifact_integrity_failed",
+        "collection_incomplete",
+        "observer_unavailable",
+        "process_group_uncertain",
+        "provenance_mismatch",
+        "timeout_budget_exhausted",
+    }
+)
+_SHA256_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 
 
 def is_pytest_argv(argv: list[str]) -> bool:
@@ -162,6 +176,7 @@ def verify_runner_observability(
     *,
     root: Path | None = None,
     expected_provenance: Mapping[str, Any] | None = None,
+    allow_pending_result: bool = False,
 ) -> dict[str, Any]:
     """Validate a persisted sidecar and its referenced artifacts fail-closed."""
 
@@ -188,55 +203,14 @@ def verify_runner_observability(
             "issues": ["summary_contract_mismatch"],
         }
 
-    issues: list[str] = []
-    artifacts = payload.get("artifacts")
-    if not isinstance(artifacts, dict):
-        issues.append("artifacts_missing")
-    else:
-        for name, item in artifacts.items():
-            if not isinstance(item, dict):
-                issues.append(f"artifact_not_object:{name}")
-                continue
-            if name == "summary":
-                # The summary digest is a canonical self-digest.  It cannot
-                # equal the hash of the rendered file that contains it.
-                continue
-            path_value = item.get("path")
-            recorded = item.get("sha256")
-            if not isinstance(path_value, str) or not path_value:
-                if name == "result" and recorded is None:
-                    continue
-                issues.append(f"artifact_path_missing:{name}")
-                continue
-            path = _resolve_artifact_path(path_value, root_path)
-            actual = hash_file(path)
-            if actual is None:
-                issues.append(f"artifact_missing:{name}")
-            elif isinstance(recorded, str) and actual != recorded:
-                issues.append(f"artifact_hash_mismatch:{name}")
-
-    events_item = artifacts.get("events") if isinstance(artifacts, dict) else None
-    events_path = _resolve_artifact_path(
-        str(events_item.get("path")) if isinstance(events_item, dict) else "",
-        root_path,
+    issues = _validate_summary_payload(
+        payload,
+        summary_path=summary_path,
+        root=root_path,
+        allow_pending_result=allow_pending_result,
     )
-    events = _read_event_log(events_path)
-    issues.extend(events["issues"])
-
-    expected_self = None
-    if isinstance(artifacts, dict):
-        summary_item = artifacts.get("summary")
-        if isinstance(summary_item, dict):
-            expected_self = summary_item.get("sha256")
-    if isinstance(expected_self, str):
-        without_self = _summary_digest_payload(payload)
-        if sha256_bytes(_json_bytes(without_self)) != expected_self:
-            issues.append("artifact_hash_mismatch:summary")
-
     provenance = payload.get("provenance")
-    if not isinstance(provenance, dict):
-        issues.append("provenance_missing")
-    else:
+    if isinstance(provenance, Mapping):
         if provenance.get("status") == "mismatch":
             issues.append("provenance_mismatch")
         if expected_provenance is not None and provenance.get("expected") != dict(
@@ -262,6 +236,382 @@ def verify_runner_observability(
         "issues": [] if eligible else [str(payload.get("failure_kind") or "observer_unavailable")],
         "payload": payload,
     }
+
+
+def _validate_summary_payload(
+    payload: Mapping[str, Any],
+    *,
+    summary_path: Path,
+    root: Path,
+    allow_pending_result: bool,
+) -> list[str]:
+    """Validate the v1 summary shape before trusting any result claims."""
+
+    issues: list[str] = []
+    required_summary_fields = (
+        "contract_version",
+        "status",
+        "eligible",
+        "failure_kind",
+        "source",
+        "command_kind",
+        "requires_nodeid",
+        "summary_path",
+        "events_path",
+        "last_started",
+        "last_completed",
+        "last_phase",
+        "collection",
+        "heartbeat",
+        "budget",
+        "process_group",
+        "termination",
+        "provenance",
+        "event_log",
+        "artifacts",
+    )
+    for field in required_summary_fields:
+        if field not in payload:
+            issues.append(f"summary_field_missing:{field}")
+
+    if payload.get("contract_version") != RUNNER_OBSERVABILITY_CONTRACT_VERSION:
+        issues.append("summary_contract_mismatch")
+
+    status = payload.get("status")
+    eligible = payload.get("eligible")
+    failure_kind = payload.get("failure_kind")
+    command_kind = payload.get("command_kind")
+    source = payload.get("source")
+    requires_nodeid = payload.get("requires_nodeid")
+    if not isinstance(status, str) or status not in _OBSERVABILITY_STATUSES:
+        issues.append("summary_field_invalid:status")
+    if not isinstance(eligible, bool):
+        issues.append("summary_field_invalid:eligible")
+    if failure_kind is not None and (
+        not isinstance(failure_kind, str) or not failure_kind
+    ):
+        issues.append("summary_field_invalid:failure_kind")
+    elif isinstance(failure_kind, str) and failure_kind not in _OBSERVABILITY_FAILURE_KINDS:
+        issues.append("summary_field_invalid:failure_kind")
+    if not isinstance(source, str) or not source:
+        issues.append("summary_field_invalid:source")
+    if not isinstance(command_kind, str) or command_kind not in _OBSERVABILITY_COMMAND_KINDS:
+        issues.append("summary_field_invalid:command_kind")
+    if not isinstance(requires_nodeid, bool):
+        issues.append("summary_field_invalid:requires_nodeid")
+
+    summary_value = payload.get("summary_path")
+    events_value = payload.get("events_path")
+    if not isinstance(summary_value, str) or not summary_value:
+        issues.append("summary_path_missing")
+        summary_reference = None
+    else:
+        summary_reference = _resolve_artifact_path(summary_value, root)
+        if summary_reference.resolve() != summary_path.resolve():
+            issues.append("summary_path_reference_mismatch")
+    if not isinstance(events_value, str) or not events_value:
+        issues.append("events_path_missing")
+        events_reference = None
+    else:
+        events_reference = _resolve_artifact_path(events_value, root)
+
+    _validate_node_event(payload.get("last_started"), "last_started", issues)
+    _validate_node_event(payload.get("last_completed"), "last_completed", issues)
+    _validate_node_event(payload.get("last_phase"), "last_phase", issues)
+    collection = payload.get("collection")
+    if isinstance(collection, Mapping):
+        _validate_integer_or_none(collection, "collected_count", "collection", issues)
+        _validate_nonnegative_integer(collection, "started_count", "collection", issues)
+        _validate_nonnegative_integer(collection, "completed_count", "collection", issues)
+        _validate_boolean(collection, "collection_finished", "collection", issues)
+    else:
+        issues.append("summary_field_invalid:collection")
+
+    heartbeat = payload.get("heartbeat")
+    if isinstance(heartbeat, Mapping):
+        _validate_nonnegative_integer(heartbeat, "count", "heartbeat", issues)
+        _validate_optional_string(heartbeat, "first_at", "heartbeat", issues)
+        _validate_optional_string(heartbeat, "last_at", "heartbeat", issues)
+        _validate_number_or_none(heartbeat, "interval_seconds", "heartbeat", issues)
+    else:
+        issues.append("summary_field_invalid:heartbeat")
+
+    budget = payload.get("budget")
+    if isinstance(budget, Mapping):
+        _validate_number(budget, "elapsed_seconds", "budget", issues)
+        _validate_positive_integer(budget, "timeout_seconds", "budget", issues)
+        _validate_boolean(budget, "exhausted", "budget", issues)
+        _validate_number(budget, "overshoot_seconds", "budget", issues)
+    else:
+        issues.append("summary_field_invalid:budget")
+
+    process_group = payload.get("process_group")
+    if isinstance(process_group, Mapping):
+        _validate_string(process_group, "state", "process_group", issues)
+        _validate_boolean(process_group, "pipes_eof", "process_group", issues)
+        _validate_boolean(process_group, "uncertain", "process_group", issues)
+        _validate_boolean(process_group, "term_sent", "process_group", issues)
+        _validate_boolean(process_group, "kill_sent", "process_group", issues)
+    else:
+        issues.append("summary_field_invalid:process_group")
+
+    termination = payload.get("termination")
+    if isinstance(termination, Mapping):
+        _validate_boolean(termination, "requested", "termination", issues)
+        _validate_string(termination, "method", "termination", issues)
+        _validate_boolean(termination, "escalated", "termination", issues)
+        _validate_string(termination, "group_state", "termination", issues)
+        _validate_boolean(termination, "pipes_eof", "termination", issues)
+    else:
+        issues.append("summary_field_invalid:termination")
+
+    provenance = payload.get("provenance")
+    if isinstance(provenance, Mapping):
+        provenance_status = provenance.get("status")
+        if provenance_status not in {"matched", "mismatch", "unavailable"}:
+            issues.append("summary_field_invalid:provenance.status")
+        if not isinstance(provenance.get("expected"), Mapping):
+            issues.append("summary_field_invalid:provenance.expected")
+        observed = provenance.get("observed")
+        if observed is not None and not isinstance(observed, Mapping):
+            issues.append("summary_field_invalid:provenance.observed")
+    else:
+        issues.append("summary_field_invalid:provenance")
+
+    event_log = payload.get("event_log")
+    event_log_issues: list[Any] = []
+    if isinstance(event_log, Mapping):
+        _validate_nonnegative_integer(event_log, "count", "event_log", issues)
+        _validate_nonnegative_integer(event_log, "dropped_count", "event_log", issues)
+        _validate_boolean(event_log, "bounded", "event_log", issues)
+        _validate_positive_integer(event_log, "max_events", "event_log", issues)
+        _validate_positive_integer(event_log, "max_bytes", "event_log", issues)
+        raw_event_log_issues = event_log.get("issues")
+        if not isinstance(raw_event_log_issues, list):
+            issues.append("summary_field_invalid:event_log.issues")
+        else:
+            event_log_issues = raw_event_log_issues
+    else:
+        issues.append("summary_field_invalid:event_log")
+
+    artifacts = payload.get("artifacts")
+    required_artifacts = ("stdout", "stderr", "result", "summary", "events")
+    if not isinstance(artifacts, Mapping):
+        issues.append("artifacts_missing")
+        artifacts = {}
+    else:
+        for name in sorted(set(artifacts) - set(required_artifacts)):
+            issues.append(f"artifact_unexpected:{name}")
+        for name in required_artifacts:
+            if name not in artifacts:
+                issues.append(f"artifact_missing_field:{name}")
+                continue
+            item = artifacts[name]
+            if not isinstance(item, Mapping):
+                issues.append(f"artifact_not_object:{name}")
+                continue
+            for field in ("path", "sha256"):
+                if field not in item:
+                    issues.append(f"artifact_field_missing:{name}.{field}")
+            path_value = item.get("path")
+            recorded = item.get("sha256")
+            if (
+                allow_pending_result
+                and name == "result"
+                and path_value is None
+                and recorded is None
+            ):
+                # execute_guarded_process writes the runner sidecar before
+                # finish creates result.json.  Finish must verify this
+                # reference again after finalization.
+                continue
+            if not isinstance(path_value, str) or not path_value:
+                issues.append(f"artifact_path_invalid:{name}")
+            if not _is_sha256(recorded):
+                issues.append(f"artifact_hash_invalid:{name}")
+            if isinstance(path_value, str) and path_value:
+                artifact_path = _resolve_artifact_path(path_value, root)
+                actual = hash_file(artifact_path)
+                if actual is None:
+                    issues.append(f"artifact_missing:{name}")
+                elif name != "summary" and _is_sha256(recorded) and actual != recorded:
+                    issues.append(f"artifact_hash_mismatch:{name}")
+
+    summary_item = artifacts.get("summary")
+    if isinstance(summary_item, Mapping):
+        summary_item_path = summary_item.get("path")
+        if summary_reference is not None and summary_item_path != summary_value:
+            issues.append("summary_artifact_reference_mismatch")
+        if "sha256" in summary_item and _is_sha256(summary_item.get("sha256")):
+            if sha256_bytes(_json_bytes(_summary_digest_payload(payload))) != summary_item[
+                "sha256"
+            ]:
+                issues.append("artifact_hash_mismatch:summary")
+    events_item = artifacts.get("events")
+    if isinstance(events_item, Mapping):
+        events_item_path = events_item.get("path")
+        if events_reference is not None and events_item_path != events_value:
+            issues.append("events_artifact_reference_mismatch")
+
+    if events_reference is not None:
+        events = _read_event_log(events_reference)
+        issues.extend(events["issues"])
+    else:
+        events = {"events": [], "issues": []}
+    if event_log_issues:
+        issues.extend(
+            f"event_log_issue_unrecorded:{issue}"
+            for issue in events["issues"]
+            if issue not in event_log_issues
+        )
+    if isinstance(event_log, Mapping) and isinstance(event_log.get("issues"), list):
+        if sorted(str(issue) for issue in event_log["issues"]) != sorted(
+            str(issue) for issue in events["issues"]
+        ):
+            issues.append("event_log_issues_mismatch")
+
+    if isinstance(eligible, bool) and isinstance(status, str):
+        if eligible and status != "complete":
+            issues.append("summary_semantic_inconsistent:eligible_status")
+        if not eligible and status == "complete":
+            issues.append("summary_semantic_inconsistent:eligible_status")
+        if eligible and failure_kind is not None:
+            issues.append("summary_semantic_inconsistent:eligible_failure_kind")
+        if not eligible and status == "unavailable" and not isinstance(failure_kind, str):
+            issues.append("summary_semantic_inconsistent:unavailable_failure_kind")
+
+    if isinstance(command_kind, str) and isinstance(source, str):
+        expected_source = "pytest_hook" if command_kind == "pytest" else "watchdog"
+        if source != expected_source:
+            issues.append("summary_semantic_inconsistent:source_command_kind")
+    if isinstance(process_group, Mapping) and isinstance(termination, Mapping):
+        if process_group.get("state") != termination.get("group_state"):
+            issues.append("summary_semantic_inconsistent:termination_state")
+        if process_group.get("pipes_eof") != termination.get("pipes_eof"):
+            issues.append("summary_semantic_inconsistent:termination_pipes_eof")
+        expected_uncertain = process_group.get("state") in {"unknown", "surviving"} or (
+            process_group.get("pipes_eof") is False
+        )
+        if process_group.get("uncertain") != expected_uncertain:
+            issues.append("summary_semantic_inconsistent:process_group_uncertain")
+
+    if eligible is True:
+        if isinstance(budget, Mapping) and budget.get("exhausted") is not False:
+            issues.append("summary_semantic_inconsistent:budget")
+        if isinstance(process_group, Mapping) and (
+            process_group.get("state") not in {"gone", "not_applicable"}
+            or process_group.get("pipes_eof") is not True
+            or process_group.get("uncertain") is not False
+        ):
+            issues.append("summary_semantic_inconsistent:process_group")
+        if isinstance(provenance, Mapping) and provenance.get("status") != "matched":
+            issues.append("summary_semantic_inconsistent:provenance")
+        if isinstance(event_log, Mapping) and event_log.get("issues") != []:
+            issues.append("summary_semantic_inconsistent:event_log")
+        if (
+            command_kind == "pytest"
+            and isinstance(collection, Mapping)
+            and collection.get("collection_finished") is not True
+        ):
+            issues.append("summary_semantic_inconsistent:collection")
+
+    return sorted(set(issues))
+
+
+def _validate_node_event(
+    value: Any, name: str, issues: list[str]
+) -> None:
+    if not isinstance(value, Mapping):
+        issues.append(f"summary_field_invalid:{name}")
+        return
+    nodeid = value.get("nodeid")
+    if nodeid is not None and not isinstance(nodeid, str):
+        issues.append(f"summary_field_invalid:{name}.nodeid")
+    if not isinstance(value.get("phase"), str):
+        issues.append(f"summary_field_invalid:{name}.phase")
+    at = value.get("at")
+    if at is not None and not isinstance(at, str):
+        issues.append(f"summary_field_invalid:{name}.at")
+
+
+def _validate_boolean(
+    value: Mapping[str, Any], field: str, prefix: str, issues: list[str]
+) -> None:
+    if not isinstance(value.get(field), bool):
+        issues.append(f"summary_field_invalid:{prefix}.{field}")
+
+
+def _validate_string(
+    value: Mapping[str, Any], field: str, prefix: str, issues: list[str]
+) -> None:
+    if not isinstance(value.get(field), str):
+        issues.append(f"summary_field_invalid:{prefix}.{field}")
+
+
+def _validate_optional_string(
+    value: Mapping[str, Any], field: str, prefix: str, issues: list[str]
+) -> None:
+    field_value = value.get(field)
+    if field_value is not None and not isinstance(field_value, str):
+        issues.append(f"summary_field_invalid:{prefix}.{field}")
+
+
+def _validate_number(
+    value: Mapping[str, Any], field: str, prefix: str, issues: list[str]
+) -> None:
+    field_value = value.get(field)
+    if not isinstance(field_value, (int, float)) or isinstance(field_value, bool):
+        issues.append(f"summary_field_invalid:{prefix}.{field}")
+
+
+def _validate_number_or_none(
+    value: Mapping[str, Any], field: str, prefix: str, issues: list[str]
+) -> None:
+    field_value = value.get(field)
+    if field_value is not None and (
+        not isinstance(field_value, (int, float)) or isinstance(field_value, bool)
+    ):
+        issues.append(f"summary_field_invalid:{prefix}.{field}")
+
+
+def _validate_nonnegative_integer(
+    value: Mapping[str, Any], field: str, prefix: str, issues: list[str]
+) -> None:
+    field_value = value.get(field)
+    if (
+        not isinstance(field_value, int)
+        or isinstance(field_value, bool)
+        or field_value < 0
+    ):
+        issues.append(f"summary_field_invalid:{prefix}.{field}")
+
+
+def _validate_positive_integer(
+    value: Mapping[str, Any], field: str, prefix: str, issues: list[str]
+) -> None:
+    field_value = value.get(field)
+    if (
+        not isinstance(field_value, int)
+        or isinstance(field_value, bool)
+        or field_value < 1
+    ):
+        issues.append(f"summary_field_invalid:{prefix}.{field}")
+
+
+def _validate_integer_or_none(
+    value: Mapping[str, Any], field: str, prefix: str, issues: list[str]
+) -> None:
+    field_value = value.get(field)
+    if field_value is not None and (
+        not isinstance(field_value, int)
+        or isinstance(field_value, bool)
+        or field_value < 0
+    ):
+        issues.append(f"summary_field_invalid:{prefix}.{field}")
+
+
+def _is_sha256(value: Any) -> bool:
+    return isinstance(value, str) and _SHA256_PATTERN.fullmatch(value) is not None
 
 
 def finalize_persisted_observability(
@@ -309,12 +659,15 @@ def finalize_persisted_observability(
 
     parsed = _read_event_log(events_path)
     issues = list(parsed["issues"])
+    normalized_artifacts = normalized.get("artifacts")
+    if not isinstance(normalized_artifacts, Mapping):
+        normalized_artifacts = {}
     artifacts = summary_payload.setdefault("artifacts", {})
     if not isinstance(artifacts, dict):
         artifacts = {}
         summary_payload["artifacts"] = artifacts
     for name in ("stdout", "stderr"):
-        item = normalized.get("artifacts", {}).get(name)
+        item = normalized_artifacts.get(name)
         if isinstance(item, Mapping):
             artifact_path = _resolve_artifact_path(str(item.get("path") or ""), root.resolve())
             actual = hash_file(artifact_path)

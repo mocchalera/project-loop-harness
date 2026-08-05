@@ -57,6 +57,7 @@ def build_finish_check_result(
     runner_result, assertion_result, failure_phase, failure_kind = (
         _classify_command_result(command)
     )
+    observation = command.get("observability")
     timed_out = runner_result["status"] == "timed_out"
     status = (
         "timed_out"
@@ -87,7 +88,7 @@ def build_finish_check_result(
         "failure_kind": failure_kind,
         "runner_result": runner_result,
         "assertion_result": assertion_result,
-        "observability": dict(command.get("observability", {})),
+        "observability": dict(observation) if isinstance(observation, Mapping) else {},
         "attempt_identity": dict(attempt_identity),
         "stability_evaluation": dict(stability_evaluation),
         "reuse": dict(command.get("reuse", {})),
@@ -327,11 +328,9 @@ def _classify_command_result(
     artifact_collection = dict(artifact_collection)
     signal_value = _signal_value(exit_code)
     observability = command.get("observability")
-    observability_failure = (
-        str(observability.get("failure_kind") or "observer_unavailable")
-        if isinstance(observability, Mapping)
-        and observability.get("eligible") is not True
-        else None
+    observability_failure = _observability_failure_kind(
+        observability,
+        verification=command.get("observability_verification"),
     )
 
     if artifact_collection.get("status") != "collected":
@@ -407,6 +406,32 @@ def _classify_command_result(
         "reason": _assertion_reason(assertion_status, runner_status),
     }
     return runner_result, assertion_result, failure_phase, failure_kind
+
+
+def _observability_failure_kind(
+    observability: Any,
+    *,
+    verification: Any,
+) -> str | None:
+    """Classify observability metadata without allowing an ambiguous green."""
+
+    if not isinstance(observability, Mapping):
+        return "observer_unavailable"
+    if isinstance(verification, Mapping) and verification.get("ok") is not True:
+        return str(verification.get("failure_kind") or "observer_unavailable")
+
+    eligible = observability.get("eligible")
+    status = observability.get("status")
+    failure_kind = observability.get("failure_kind")
+    if eligible is True:
+        if not isinstance(verification, Mapping):
+            return "observer_unavailable"
+        if status != "complete" or failure_kind is not None:
+            return "artifact_integrity_failed"
+        return None
+    if eligible is False:
+        return str(failure_kind) if isinstance(failure_kind, str) and failure_kind else "observer_unavailable"
+    return "artifact_integrity_failed"
 
 
 def _signal_value(exit_code: Any) -> dict[str, Any] | None:
