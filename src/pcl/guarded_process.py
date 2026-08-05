@@ -155,6 +155,9 @@ def execute_guarded_process(
     attempt_index: int = 0,
     previous_attempt_id: str | None = None,
     previous_receipt_sha256: str | None = None,
+    execution_instance_id: str | None = None,
+    runner_sidecar_policy: str | dict[str, Any] | None = None,
+    defer_runner_authority_seal: bool = False,
 ) -> dict[str, Any]:
     if max_output_bytes < 1:
         raise ValueError("max_output_bytes must be at least 1")
@@ -211,6 +214,8 @@ def execute_guarded_process(
             previous_receipt_sha256=previous_receipt_sha256,
             summary_path=observability_summary_path,
             events_path=observability_events_path,
+            execution_instance_id=execution_instance_id,
+            sidecar_policy=runner_sidecar_policy,
         )
         env.update(receipt_observer.prepare_pipe())
         receipt_observer.start_reader()
@@ -257,6 +262,8 @@ def execute_guarded_process(
             else "os_error"
         )
         stderr_capture.consume(spawn_error.encode("utf-8", errors="replace"))
+        stdout_capture.eof = True
+        stderr_capture.eof = True
         if receipt_observer is not None:
             receipt_observer.close_parent_write()
     else:
@@ -357,21 +364,32 @@ def execute_guarded_process(
             pipes_eof=bool(termination.get("pipes_eof")),
         )
     if receipt_observer is not None:
+        seal_inputs = {
+            "spawn_status": "spawned" if process is not None else "failed",
+            "spawn_error_kind": spawn_error_kind or None,
+            "pid": process.pid if process is not None else None,
+            "pgid": process_group_id,
+            "exit_code": exit_code,
+            "timed_out": timed_out,
+            "termination": termination,
+            "stdout_sha256": str(stdout_metadata["sha256"]),
+            "stderr_sha256": str(stderr_metadata["sha256"]),
+            "stdout_eof": bool(stdout_capture.eof),
+            "stderr_eof": bool(stderr_capture.eof),
+        }
+        if defer_runner_authority_seal:
+            result["_runner_execution_receipt_recorder"] = receipt_observer
+            result["_runner_execution_seal_inputs"] = seal_inputs
+            result["_runner_authority_snapshot"] = receipt_observer.authority_snapshot.to_dict()
+            return result
         receipt = receipt_observer.seal(
-            spawn_status="spawned" if process is not None else "failed",
-            spawn_error_kind=spawn_error_kind or None,
-            pid=process.pid if process is not None else None,
-            pgid=process_group_id,
-            exit_code=exit_code,
-            timed_out=timed_out,
-            termination=termination,
-            stdout_sha256=str(stdout_metadata["sha256"]),
-            stderr_sha256=str(stderr_metadata["sha256"]),
-            stdout_eof=bool(stdout_capture.eof),
-            stderr_eof=bool(stderr_capture.eof),
+            **seal_inputs,
         )
         result["runner_execution_receipt"] = receipt
         result["runner_execution_receipt_path"] = str(receipt_observer.receipt_path)
+        if receipt_observer.authority_seal_draft is not None:
+            result["runner_authority_snapshot"] = receipt_observer.authority_snapshot.to_dict()
+            result["runner_authority_draft"] = receipt_observer.authority_seal_draft.to_dict()
     return result
 
 

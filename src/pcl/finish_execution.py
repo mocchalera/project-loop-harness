@@ -21,7 +21,7 @@ from .contracts.completion_packet import (
     validate_completion_packet,
     with_computed_packet_id,
 )
-from .db import connect, connect_mutation
+from .db import connect, connect_mutation, connect_read_only
 from .errors import (
     DataStoreError,
     FinishChecksNotConfiguredError,
@@ -44,6 +44,11 @@ from .runner_observability import (
     finalize_persisted_observability,
     observability_for_result_json,
     verify_runner_observability,
+)
+from .runner_authority import (
+    persist_runner_authority_anchor,
+    verify_runner_authority_anchor,
+    verify_runner_authority_anchor_in_snapshot,
 )
 from .target_resolver import (
     TaskGoalTargetNotFoundError,
@@ -239,6 +244,7 @@ def emit_finish_packet(
         and existing["outcome"] in {"COMPLETED_VERIFIED", "COMPLETED_WITH_RISK"}
         and _target_is_terminal(paths, target)
     ):
+        _verify_existing_completion_runner_authority(paths, existing)
         existing_requirements = []
         if existing["outcome"] == "COMPLETED_WITH_RISK":
             existing_requirements.append(
@@ -345,6 +351,7 @@ def emit_finish_packet(
                         max_output_bytes=max_output_bytes,
                         execution_root=workspace["root"],
                         record_observability=True,
+                        defer_runner_authority_seal=True,
                     )
                 except Exception:
                     if progress_reporter is not None and heartbeat is not None:
@@ -453,6 +460,7 @@ def emit_finish_packet(
                 race_detected=race_detected,
                 expected_target_readiness=plan.get("terminal_readiness"),
             )
+            _verify_runner_authority_after_publication(paths, commands)
             if progress_reporter is not None:
                 progress_reporter.phase_finished("evidence_commit")
             result = {
@@ -515,6 +523,7 @@ def emit_finish_packet(
             timeout_seconds=timeout_seconds,
             expected_target_readiness=plan.get("terminal_readiness"),
         )
+        _verify_runner_authority_after_publication(paths, commands)
         if progress_reporter is not None:
             progress_reporter.phase_finished("evidence_commit")
     except Exception:
@@ -1039,6 +1048,9 @@ def _commit_finish_attempt(
     except FinishTargetReadinessChangedError:
         conn.rollback()
         raise
+    except DataStoreError:
+        conn.rollback()
+        raise
     except (OSError, sqlite3.Error) as exc:
         conn.rollback()
         raise DataStoreError(f"Could not commit finish attempt: {exc}") from exc
@@ -1139,6 +1151,9 @@ def _commit_completion_packet(
     except FinishTargetReadinessChangedError:
         conn.rollback()
         raise
+    except DataStoreError:
+        conn.rollback()
+        raise
     except (OSError, sqlite3.Error) as exc:
         conn.rollback()
         raise DataStoreError(f"Could not commit completion packet: {exc}") from exc
@@ -1165,22 +1180,13 @@ def _store_check_evidence(
         for key in ("stdout_path", "stderr_path"):
             source = paths.root / str(command[key])
             destination = final_dir / source.name
-            source.replace(destination)
+            shutil.copyfile(source, destination)
             command[key] = str(destination.relative_to(paths.root))
             if isinstance(command.get(key.removesuffix("_path")), dict):
                 command[key.removesuffix("_path")]["path"] = command[key]
         result_path = final_dir / "result.json"
         observability = command.get("observability")
         if _has_persisted_observability_paths(observability):
-            for key in ("summary_path", "events_path"):
-                source_value = observability.get(key)
-                if not isinstance(source_value, str):
-                    continue
-                source = paths.root / source_value
-                destination = final_dir / source.name
-                if source.exists():
-                    source.replace(destination)
-                observability[key] = str(destination.relative_to(paths.root))
             artifacts = observability.get("artifacts")
             if isinstance(artifacts, dict):
                 for name in ("stdout", "stderr"):
@@ -1277,8 +1283,185 @@ def _store_check_evidence(
             link_role=COMPLETION_CHECK_LINK_ROLE,
             created_at=now,
         )
+        _commit_runner_authority_for_check(
+            paths,
+            conn,
+            command=command,
+            target=target,
+            result_path=result_path,
+            result_sha256=result_sha256,
+        )
         check_rows.append(check_payload)
     return check_rows
+
+
+def _commit_runner_authority_for_check(
+    paths: ProjectPaths,
+    conn: sqlite3.Connection,
+    *,
+    command: dict[str, Any],
+    target: Mapping[str, Any],
+    result_path: Path,
+    result_sha256: str,
+) -> None:
+    recorder = command.get("_runner_authority_recorder")
+    expected_inputs = command.get("_runner_authority_snapshot")
+    seal_inputs = command.get("_runner_authority_seal_inputs")
+    if recorder is None or not isinstance(expected_inputs, Mapping) or not isinstance(seal_inputs, Mapping):
+        raise DataStoreError(
+            "Finish check did not produce a deferred parent runner authority seal.",
+            details={"failure_kind": "runner_authority_anchor_missing"},
+        )
+    try:
+        recorder.seal(**dict(seal_inputs))
+        draft = recorder.authority_seal_draft
+        if draft is None:
+            raise DataStoreError(
+                "Parent runner authority seal was not created.",
+                details={"failure_kind": "runner_authority_draft_missing"},
+            )
+        result_binding = {
+            "path": str(result_path.relative_to(paths.root)),
+            "sha256": result_sha256,
+            "kind": "finish_check_result",
+            "evidence_id": str(result_path.parent.name),
+        }
+        anchor = persist_runner_authority_anchor(
+            paths,
+            draft=draft,
+            expected_inputs=expected_inputs,
+            result_binding=result_binding,
+            target={"type": str(target["type"]), "id": str(target["id"])},
+            conn=conn,
+        )
+        verification = verify_runner_authority_anchor_in_snapshot(
+            paths,
+            conn,
+            anchor_id=str(anchor["anchor_id"]),
+            expected_inputs=expected_inputs,
+            result_path=result_path,
+        )
+    except DataStoreError:
+        raise
+    except Exception as exc:
+        raise DataStoreError(
+            f"Could not commit runner authority anchor: {exc}",
+            details={"failure_kind": "runner_authority_anchor_persist_failed"},
+        ) from exc
+    if verification.get("ok") is not True:
+        raise DataStoreError(
+            "Committed runner authority anchor failed its pre-publication verification.",
+            details={
+                "failure_kind": "runner_authority_verification_failed",
+                "issues": verification.get("issues", []),
+            },
+        )
+    command["_runner_authority_anchor"] = str(anchor["anchor_id"])
+    command["_runner_authority_anchor_sha256"] = str(anchor["anchor_sha256"])
+    command["_runner_authority_receipt_path"] = str(recorder.receipt_path.relative_to(paths.root))
+    command["_runner_authority_verification"] = verification
+
+
+def _verify_runner_authority_after_publication(
+    paths: ProjectPaths,
+    commands: list[dict[str, Any]],
+) -> None:
+    for command in commands:
+        anchor_id = command.get("_runner_authority_anchor")
+        expected_inputs = command.get("_runner_authority_snapshot")
+        if not isinstance(anchor_id, str) or not isinstance(expected_inputs, Mapping):
+            raise DataStoreError(
+                "Finish publication has no committed runner authority anchor.",
+                details={"failure_kind": "runner_authority_anchor_missing"},
+            )
+        verification = verify_runner_authority_anchor(
+            paths,
+            anchor_id=anchor_id,
+            expected_inputs=expected_inputs,
+        )
+        if verification.get("ok") is not True:
+            raise DataStoreError(
+                "Runner authority anchor failed the final post-publication reread.",
+                details={
+                    "failure_kind": "runner_authority_final_verification_failed",
+                    "anchor_id": anchor_id,
+                    "issues": verification.get("issues", []),
+                },
+            )
+
+
+def _verify_existing_completion_runner_authority(
+    paths: ProjectPaths,
+    existing: Mapping[str, Any],
+) -> None:
+    try:
+        packet = json.loads(
+            (paths.root / str(existing["path"])).read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise DataStoreError(
+            "Existing completion packet cannot be read for runner authority verification.",
+            details={"failure_kind": "runner_authority_packet_unreadable"},
+        ) from exc
+    checks = packet.get("checks") if isinstance(packet, Mapping) else None
+    if not isinstance(checks, list) or not checks:
+        raise DataStoreError(
+            "Existing completion packet has no runner authority-bound checks.",
+            details={"failure_kind": "runner_authority_anchor_missing"},
+        )
+    conn = connect_read_only(paths.db_path)
+    try:
+        rows = conn.execute(
+            "SELECT payload_json FROM events WHERE event_type = ?",
+            ("runner_authority_anchor_committed",),
+        ).fetchall()
+        anchors: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                payload = json.loads(str(row["payload_json"]))
+            except (TypeError, json.JSONDecodeError):
+                continue
+            if isinstance(payload, Mapping):
+                anchors.append(dict(payload))
+        for check in checks:
+            artifact_ref = check.get("artifact_ref") if isinstance(check, Mapping) else None
+            evidence_id = (
+                str(artifact_ref).removeprefix("evidence:")
+                if isinstance(artifact_ref, str)
+                else ""
+            )
+            matches = [
+                payload
+                for payload in anchors
+                if isinstance(payload.get("result_binding"), Mapping)
+                and payload["result_binding"].get("evidence_id") == evidence_id
+            ]
+            if len(matches) != 1:
+                raise DataStoreError(
+                    "Existing completion check has no unique runner authority anchor.",
+                    details={
+                        "failure_kind": "runner_authority_anchor_missing",
+                        "evidence_id": evidence_id,
+                    },
+                )
+            payload = matches[0]
+            verification = verify_runner_authority_anchor_in_snapshot(
+                paths,
+                conn,
+                anchor_id=str(payload["anchor_id"]),
+                expected_inputs=payload["draft"]["snapshot"],
+            )
+            if verification.get("ok") is not True:
+                raise DataStoreError(
+                    "Existing completion packet failed runner authority verification.",
+                    details={
+                        "failure_kind": "runner_authority_final_verification_failed",
+                        "anchor_id": payload.get("anchor_id"),
+                        "issues": verification.get("issues", []),
+                    },
+                )
+    finally:
+        conn.close()
 
 
 def _finish_attempt_id(attempt: dict[str, Any]) -> str:

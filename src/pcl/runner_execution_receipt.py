@@ -19,6 +19,13 @@ from .contracts.runner_execution_receipt import (
     serialized_runner_execution_receipt,
     validate_runner_execution_receipt,
 )
+from .runner_authority import (
+    AuthoritySealDraft,
+    RunnerAuthoritySnapshot,
+    build_authority_seal_draft,
+    create_runner_authority_snapshot,
+    normalize_sidecar_policy,
+)
 
 
 RUNNER_EXECUTION_FRAME_CONTRACT_VERSION = "runner-execution-frame/v1"
@@ -127,6 +134,7 @@ class _ParentFrameCollector:
         self.frames_eof = False
         self.partial_frame = False
         self.reader_error = False
+        self.limit_exceeded = False
         self._buffer = bytearray()
         self._lock = threading.Lock()
 
@@ -160,6 +168,10 @@ class _ParentFrameCollector:
             self.frames_eof = False
 
     def _accept_line(self, line: bytes) -> None:
+        if self.sequence >= MAX_RUNNER_FRAME_COUNT:
+            self.limit_exceeded = True
+            self.dropped_count += 1
+            return
         if not line:
             self.dropped_count += 1
             return
@@ -210,6 +222,8 @@ class RunnerExecutionReceiptRecorder:
         previous_receipt_sha256: str | None = None,
         summary_path: Path | None = None,
         events_path: Path | None = None,
+        execution_instance_id: str | None = None,
+        sidecar_policy: str | Mapping[str, Any] | None = None,
     ) -> None:
         if timeout_seconds < 1:
             raise ValueError("timeout_seconds must be at least 1")
@@ -225,6 +239,25 @@ class RunnerExecutionReceiptRecorder:
         self.previous_receipt_sha256 = previous_receipt_sha256
         self.summary_path = Path(summary_path) if summary_path is not None else None
         self.events_path = Path(events_path) if events_path is not None else None
+        self.execution_instance_id = execution_instance_id or f"execution-{uuid.uuid4().hex}"
+        self.sidecar_policy = normalize_sidecar_policy(
+            sidecar_policy,
+            summary_path=self.summary_path,
+            events_path=self.events_path,
+        )
+        self.authority_snapshot: RunnerAuthoritySnapshot = create_runner_authority_snapshot(
+            execution_instance_id=self.execution_instance_id,
+            attempt_id=self.attempt_id,
+            attempt_index=self.attempt_index,
+            previous_attempt_id=self.previous_attempt_id,
+            previous_receipt_sha256=self.previous_receipt_sha256,
+            requested_argv_sha256=self.requested_argv_sha256,
+            spawned_argv_sha256=self.spawned_argv_sha256,
+            cwd_identity_sha256=hash_cwd(self.cwd),
+            env_identity_sha256=hash_environment(self.env),
+            sidecar_policy=self.sidecar_policy,
+        )
+        self.authority_seal_draft: AuthoritySealDraft | None = None
         self.started_at = _utc_now()
         self._pipe_read_fd: int | None = None
         self._pipe_write_fd: int | None = None
@@ -412,6 +445,38 @@ class RunnerExecutionReceiptRecorder:
             raise RunnerExecutionReceiptError(
                 "Runner execution receipt path already exists; resealing is forbidden"
             ) from exc
+        self.authority_seal_draft = build_authority_seal_draft(
+            snapshot=self.authority_snapshot,
+            observations={
+                "spawn": {
+                    "status": normalized_spawn_status,
+                    "error_kind": receipt["spawn"]["error_kind"],
+                },
+                "exit_code": exit_code,
+                "timed_out": bool(timed_out),
+                "termination": normalized_termination,
+                "streams": {
+                    "stdout_eof": bool(stdout_eof),
+                    "stderr_eof": bool(stderr_eof),
+                },
+                "frames": {
+                    "sequence": self._collector.sequence,
+                    "root_sha256": self._collector.frame_root,
+                    "dropped_count": self._collector.dropped_count,
+                    "partial": self._collector.partial_frame,
+                    "reader_error": self._collector.reader_error,
+                    "eof": self._collector.frames_eof,
+                    "limit_exceeded": self._collector.limit_exceeded,
+                },
+                "platform_capability": platform_capability,
+            },
+            sidecar_paths={
+                "summary": self.summary_path,
+                "events": self.events_path,
+            },
+            receipt_path=self.receipt_path,
+            receipt=finalized,
+        )
         return finalized
 
     def _child_observation(self) -> dict[str, Any]:

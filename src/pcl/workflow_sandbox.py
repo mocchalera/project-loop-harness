@@ -5,6 +5,7 @@ import shutil
 import shlex
 import sys
 import tempfile
+import uuid
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -283,6 +284,7 @@ def execute_planned_guarded_command(
     allowed_env_names: Iterable[str] = (),
     execution_root: Path | None = None,
     record_observability: bool = False,
+    defer_runner_authority_seal: bool = False,
 ) -> None:
     if not command.get("safe_to_run"):
         raise InvalidInputError(
@@ -303,6 +305,7 @@ def execute_planned_guarded_command(
         allowed_env_names=allowed_env_names,
         execution_root=execution_root,
         record_observability=record_observability,
+        defer_runner_authority_seal=defer_runner_authority_seal,
     )
 
 
@@ -804,18 +807,28 @@ def _execute_command(
     allowed_env_names: Iterable[str] = (),
     execution_root: Path | None = None,
     record_observability: bool = False,
+    defer_runner_authority_seal: bool = False,
 ) -> None:
     working_root = execution_root or paths.root
     argv = _execution_argv(paths, command, execution_root=working_root)
+    execution_instance_id = f"execution-{uuid.uuid4().hex}"
+    authority_dir = paths.evidence_dir / "runner-authority" / execution_instance_id
+    if record_observability:
+        authority_dir.mkdir(parents=True, exist_ok=False)
     stdout_path = run_dir / f"{command['index']:02d}-{_safe_file_token(command['step_id'])}.stdout.txt"
     stderr_path = run_dir / f"{command['index']:02d}-{_safe_file_token(command['step_id'])}.stderr.txt"
     observability_summary_path = (
-        run_dir / f"{command['index']:02d}-{_safe_file_token(command['step_id'])}.runner-observability.json"
+        authority_dir / f"{command['index']:02d}-{_safe_file_token(command['step_id'])}.runner-observability.json"
         if record_observability
         else None
     )
     observability_events_path = (
-        run_dir / f"{command['index']:02d}-{_safe_file_token(command['step_id'])}.runner-observability.jsonl"
+        authority_dir / f"{command['index']:02d}-{_safe_file_token(command['step_id'])}.runner-observability.jsonl"
+        if record_observability
+        else None
+    )
+    receipt_path = (
+        authority_dir / "runner-execution-receipt.json"
         if record_observability
         else None
     )
@@ -830,6 +843,10 @@ def _execute_command(
         additional_allowed_env_names=allowed_env_names,
         observability_summary_path=observability_summary_path,
         observability_events_path=observability_events_path,
+        runner_execution_receipt_path=receipt_path,
+        execution_instance_id=execution_instance_id,
+        runner_sidecar_policy="required" if record_observability else None,
+        defer_runner_authority_seal=defer_runner_authority_seal,
     )
     command["executed_argv"] = argv
     if process_result.get("executed_argv"):
@@ -849,6 +866,18 @@ def _execute_command(
     command["spawn_error_kind"] = process_result["spawn_error_kind"]
     command["artifact_collection"] = process_result["artifact_collection"]
     command["permission_contract"] = process_result["permission_contract"]
+    if process_result.get("_runner_execution_receipt_recorder") is not None:
+        command["_runner_authority_recorder"] = process_result[
+            "_runner_execution_receipt_recorder"
+        ]
+        command["_runner_authority_seal_inputs"] = process_result[
+            "_runner_execution_seal_inputs"
+        ]
+        command["_runner_authority_snapshot"] = process_result[
+            "_runner_authority_snapshot"
+        ]
+    if isinstance(process_result.get("runner_authority_draft"), dict):
+        command["runner_authority_draft"] = process_result["runner_authority_draft"]
     if isinstance(process_result.get("observability"), dict):
         command["observability"] = normalize_observability_paths(
             process_result["observability"], root=paths.root
