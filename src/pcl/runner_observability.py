@@ -17,6 +17,12 @@ from typing import Any
 
 from .runner_execution_receipt import write_child_frame
 
+# Bind the real monotonic clock once. Finish injects this module as a live
+# pytest plugin, so suite tests that monkeypatch ``time.monotonic`` (for
+# example locks timeout fixtures) must not stop the observer with
+# StopIteration mid-session.
+_MONOTONIC = time.monotonic
+
 
 RUNNER_OBSERVABILITY_CONTRACT_VERSION = "runner-observability/v1"
 RUNNER_OBSERVABILITY_OBSERVER_VERSION = "runner-observability/v1"
@@ -754,7 +760,7 @@ class RunnerObservabilityRecorder:
         self.timeout_seconds = timeout_seconds
         self.command_kind = "pytest" if is_pytest_argv(argv) else "non_pytest"
         self.requires_nodeid = self.command_kind == "pytest" and "--collect-only" not in argv
-        self.started_monotonic = time.monotonic()
+        self.started_monotonic = _MONOTONIC()
         self.started_at = _utc_now()
         self.expected_provenance = collect_runner_provenance(argv, env=env)
         self._sequence = 0
@@ -783,7 +789,7 @@ class RunnerObservabilityRecorder:
             "phase": phase,
             "source": source,
             "at": _utc_now(),
-            "elapsed_seconds": round(time.monotonic() - self.started_monotonic, 6),
+            "elapsed_seconds": round(_MONOTONIC() - self.started_monotonic, 6),
             **fields,
         }
         encoded = _json_bytes(record) + b"\n"
@@ -976,7 +982,7 @@ class _PytestEventSink:
         self.summary_path = summary_path
         self.events_path = events_path
         self.frame_fd = _frame_fd_from_environment()
-        self.started_monotonic = time.monotonic()
+        self.started_monotonic = _MONOTONIC()
         self.sequence = 0
         self.event_count = 0
         self.dropped_count = 0
@@ -993,7 +999,7 @@ class _PytestEventSink:
             "phase": phase,
             "source": "pytest_hook",
             "at": _utc_now(),
-            "elapsed_seconds": round(time.monotonic() - self.started_monotonic, 6),
+            "elapsed_seconds": round(_MONOTONIC() - self.started_monotonic, 6),
             **fields,
         }
         encoded = _json_bytes(record) + b"\n"

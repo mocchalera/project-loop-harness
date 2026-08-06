@@ -85,6 +85,62 @@ def test_hook_not_loaded_stays_unavailable_even_when_pytest_exits_zero(
     assert observation["failure_kind"] == "observer_unavailable"
 
 
+def test_observer_survives_suite_monkeypatch_of_time_monotonic(tmp_path: Path) -> None:
+    """Finish injects this plugin into the live suite; tests may patch time.monotonic."""
+
+    result = _execute_pytest(
+        tmp_path,
+        test_source=(
+            "import time\n"
+            "\n"
+            "def test_sample(monkeypatch):\n"
+            "    # Exhaustible stand-in: live time.monotonic would StopIteration the plugin.\n"
+            "    values = iter([10.0, 10.0, 10.031])\n"
+            "    monkeypatch.setattr(time, 'monotonic', lambda: next(values))\n"
+            "    assert next(values) == 10.0\n"
+        ),
+    )
+
+    observation = result["observability"]
+    assert result["exit_code"] == 0, (result.get("stderr"), result.get("stdout"))
+    assert observation["eligible"] is True
+    assert observation["status"] == "complete"
+    assert observation["failure_kind"] is None
+    assert observation["last_completed"]["nodeid"] == "test_sample.py::test_sample"
+
+
+def test_parent_recorder_uses_bound_monotonic_under_time_monkeypatch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import time
+
+    monkeypatch.setattr(time, "monotonic", lambda: (_ for _ in ()).throw(StopIteration))
+    recorder = RunnerObservabilityRecorder(
+        summary_path=tmp_path / "runner-observability.json",
+        events_path=tmp_path / "runner-observability.jsonl",
+        argv=["ruff", "check", "."],
+        timeout_seconds=5,
+        env={"PYTHONPATH": "src"},
+    )
+    recorder.start()
+    recorder.emit("heartbeat", phase="spawn", source="watchdog", process_alive=True)
+    stdout_path = tmp_path / "stdout.txt"
+    stderr_path = tmp_path / "stderr.txt"
+    stdout_path.write_bytes(b"")
+    stderr_path.write_bytes(b"")
+    observation = recorder.finalize(
+        stdout={"path": str(stdout_path), "sha256": hash_file(stdout_path)},
+        stderr={"path": str(stderr_path), "sha256": hash_file(stderr_path)},
+        exit_code=0,
+        timed_out=False,
+        duration_seconds=0.01,
+        termination={"group_state": "gone", "pipes_eof": True},
+        pipes_eof=True,
+    )
+    assert observation["status"] == "complete"
+    assert observation["failure_kind"] is None
+
+
 def test_missing_nodeid_is_partial_and_not_eligible(tmp_path: Path) -> None:
     summary_path = tmp_path / "runner-observability.json"
     events_path = tmp_path / "runner-observability.jsonl"

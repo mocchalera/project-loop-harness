@@ -275,7 +275,7 @@ outside the task.
 | post-v0.5.3 | complete frozen CLI/commands refactor: 0204 → 0205 → 0206 → 0207 → 0208 → 0209 |
 | v0.5.4 | published and publicly verified; behavior-preserving CLI/commands maintainability release → 0210 local RC → 0211 publication closeout |
 | v0.5.5 | published and publicly verified; finish reliability and operability → P0 real-use friction remediation → P1 progress/compact output → 0212 exact Goal close routing → 0213 local RC → 0214 non-HEAD base correction → 0215 publication closeout |
-| v0.6.0 | practical opt-in Mainline Progress Guard → 0225 local implementation and independent-review handoff; no publication authorization |
+| v0.6.0 | practical opt-in Mainline Progress Guard → 0225 local implementation + runner-authority GO → current-proof E-0078 INCOMPLETE_VALIDATION → observability monotonic isolation fix; re-proof required before publication |
 
 Everything with an ID below 0102 is completed design history; see `TASKS.md`
 for the one-line summary of each.
