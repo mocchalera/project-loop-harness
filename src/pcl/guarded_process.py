@@ -216,8 +216,17 @@ def execute_guarded_process(
             events_path=observability_events_path,
             execution_instance_id=execution_instance_id,
             sidecar_policy=runner_sidecar_policy,
+            observation_callback=(
+                observability.observe_child_observation
+                if observability is not None
+                else None
+            ),
         )
         env.update(receipt_observer.prepare_pipe())
+        if observability is not None:
+            observability.set_parent_observation_channel(
+                receipt_observer.anonymous_pipe_available
+            )
         receipt_observer.start_reader()
     stdout_capture = _BoundedStream(max_output_bytes)
     stderr_capture = _BoundedStream(max_output_bytes)
@@ -362,6 +371,11 @@ def execute_guarded_process(
             duration_seconds=result["duration_seconds"],
             termination=termination,
             pipes_eof=bool(termination.get("pipes_eof")),
+            parent_observation_integrity=(
+                receipt_observer.observation_integrity()
+                if receipt_observer is not None
+                else None
+            ),
         )
     if receipt_observer is not None:
         seal_inputs = {

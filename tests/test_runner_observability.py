@@ -13,6 +13,7 @@ from pcl.guarded_process import (
 )
 from pcl.runner_observability import (
     RunnerObservabilityRecorder,
+    finalize_persisted_observability,
     hash_file,
     verify_runner_observability,
 )
@@ -369,3 +370,179 @@ def test_sidecar_corruption_hash_and_provenance_mismatch_fail_closed(tmp_path: P
     provenance = verify_runner_observability(summary_path, root=tmp_path)
     assert provenance["failure_kind"] == "provenance_mismatch"
     assert "provenance_mismatch" in provenance["issues"]
+
+
+def test_overflow_progress_checkpoint_continues_after_jsonl_cap_and_finalizes(
+    tmp_path: Path,
+) -> None:
+    summary_path = tmp_path / "runner-observability.json"
+    events_path = tmp_path / "runner-observability.jsonl"
+    stdout_path = tmp_path / "stdout.txt"
+    stderr_path = tmp_path / "stderr.txt"
+    result_path = tmp_path / "result.json"
+    stdout_path.write_bytes(b"")
+    stderr_path.write_bytes(b"")
+    result_path.write_text('{"status":"timed_out"}\n', encoding="utf-8")
+    recorder = RunnerObservabilityRecorder(
+        summary_path=summary_path,
+        events_path=events_path,
+        argv=["pytest", "test_sample.py"],
+        timeout_seconds=5,
+        env={"PYTHONPATH": "src"},
+    )
+    recorder.set_parent_observation_channel(True)
+    recorder.start()
+
+    recorder.observe_child_observation(
+        {
+            "contract_version": "runner-observability/v1",
+            "sequence": 1,
+            "event": "test_completed",
+            "phase": "call",
+            "source": "pytest_hook",
+            "at": "2026-08-10T12:00:01.000Z",
+            "elapsed_seconds": 1.0,
+            "nodeid": "test_sample.py::test_after_cap_1",
+            "completed_count": 41,
+            "event_log_persisted": False,
+            "event_log_dropped_count": 1,
+        },
+        parent_sequence=1,
+    )
+    first = json.loads(summary_path.read_text(encoding="utf-8"))["overflow_progress"]
+    assert first["active"] is True
+    assert first["dropped_event_count"] == 1
+    assert first["latest_progress"] == {
+        "at": "2026-08-10T12:00:01.000Z",
+        "completed_count": 41,
+        "elapsed_seconds": 1.0,
+        "nodeid": "test_sample.py::test_after_cap_1",
+        "phase": "call",
+    }
+
+    recorder.observe_child_observation(
+        {
+            "contract_version": "runner-observability/v1",
+            "sequence": 2,
+            "event": "test_started",
+            "phase": "execute",
+            "source": "pytest_hook",
+            "at": "2026-08-10T12:00:02.000Z",
+            "elapsed_seconds": 2.0,
+            "nodeid": "test_sample.py::test_after_cap_2",
+            "started_count": 43,
+            "event_log_persisted": False,
+            "event_log_dropped_count": 2,
+        },
+        parent_sequence=2,
+    )
+    recorder.emit(
+        "heartbeat",
+        phase="execute",
+        source="watchdog",
+        process_alive=True,
+    )
+    live = json.loads(summary_path.read_text(encoding="utf-8"))["overflow_progress"]
+    assert live["green_authority"] is False
+    assert live["integrity"] == "pending"
+    assert live["dropped_event_count"] == 2
+    assert live["latest_progress"]["nodeid"] == "test_sample.py::test_after_cap_2"
+    assert live["latest_progress"]["completed_count"] == 41
+    assert live["latest_heartbeat"]["process_alive"] is True
+    assert isinstance(live["latest_heartbeat"]["elapsed_seconds"], float)
+
+    observation = recorder.finalize(
+        stdout={"path": str(stdout_path), "sha256": hash_file(stdout_path)},
+        stderr={"path": str(stderr_path), "sha256": hash_file(stderr_path)},
+        exit_code=None,
+        timed_out=True,
+        duration_seconds=5.01,
+        termination={
+            "requested": True,
+            "method": "terminate_process_group",
+            "escalated": False,
+            "term_sent": True,
+            "kill_sent": False,
+            "group_state": "gone",
+            "pipes_eof": True,
+        },
+        pipes_eof=True,
+        parent_observation_integrity={
+            "frames_eof": True,
+            "dropped_count": 0,
+            "partial_frame": False,
+            "reader_error": False,
+            "limit_exceeded": False,
+        },
+    )
+    assert observation["overflow_progress"]["integrity"] == "verified"
+    assert observation["overflow_progress"]["dropped_event_count"] == 2
+    assert observation["event_log"]["dropped_count"] == 2
+    assert events_path.stat().st_size <= 2 * 1_024 * 1_024
+
+    finalized = finalize_persisted_observability(
+        observation,
+        root=tmp_path,
+        result_path=result_path,
+        result_sha256=hash_file(result_path),
+    )
+    verification = verify_runner_observability(summary_path, root=tmp_path)
+    assert verification["failure_kind"] == "timeout_budget_exhausted"
+    assert not any("artifact_" in issue for issue in verification["issues"])
+    assert verification["payload"]["overflow_progress"] == finalized["overflow_progress"]
+
+
+def test_real_child_overflow_frames_preserve_latest_progress_and_exact_drop_count(
+    tmp_path: Path,
+) -> None:
+    script = tmp_path / "emit_overflow.py"
+    script.write_text(
+        "from pathlib import Path\n"
+        "import os\n"
+        "import pcl.runner_observability as observer\n"
+        "observer.MAX_EVENT_LOG_BYTES = 3000\n"
+        "observer.MAX_EVENT_LINE_BYTES = 512\n"
+        "sink = observer._PytestEventSink(\n"
+        "    Path(os.environ[observer.OBSERVABILITY_SUMMARY_ENV]),\n"
+        "    Path(os.environ[observer.OBSERVABILITY_EVENTS_ENV]),\n"
+        ")\n"
+        "for index in range(1, 9):\n"
+        "    sink.completed_count = index\n"
+        "    sink.emit(\n"
+        "        'test_completed',\n"
+        "        phase='call',\n"
+        "        nodeid=f'test_generated.py::test_{index}',\n"
+        "        completed_count=index,\n"
+        "        outcome='passed',\n"
+        "    )\n"
+        "sink.close()\n",
+        encoding="utf-8",
+    )
+    result = execute_guarded_process(
+        [sys.executable, str(script)],
+        cwd=tmp_path,
+        stdout_path=tmp_path / "stdout.txt",
+        stderr_path=tmp_path / "stderr.txt",
+        timeout_seconds=5,
+        observability_summary_path=tmp_path / "runner-observability.json",
+        observability_events_path=tmp_path / "runner-observability.jsonl",
+        runner_execution_receipt_path=tmp_path / "runner-execution-receipt.json",
+    )
+
+    overflow = result["observability"]["overflow_progress"]
+    persisted_child_events = [
+        json.loads(line)
+        for line in (tmp_path / "runner-observability.jsonl").read_text(
+            encoding="utf-8"
+        ).splitlines()
+        if json.loads(line).get("source") == "pytest_hook"
+    ]
+    assert overflow["active"] is True
+    assert overflow["integrity"] == "verified"
+    assert overflow["green_authority"] is False
+    assert overflow["latest_progress"]["nodeid"] == "test_generated.py::test_8"
+    assert overflow["latest_progress"]["completed_count"] == 8
+    assert persisted_child_events
+    assert overflow["dropped_event_count"] > 0
+    assert overflow["dropped_event_count"] == 8 - len(persisted_child_events)
+    assert result["runner_execution_receipt"]["dropped_count"] == 0

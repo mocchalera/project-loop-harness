@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import hashlib
 import importlib.metadata
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -32,6 +33,7 @@ OBSERVABILITY_EVENTS_ENV = "PCL_RUNNER_OBSERVABILITY_EVENTS"
 MAX_EVENT_COUNT = 16_384
 MAX_EVENT_LOG_BYTES = 2 * 1_024 * 1_024
 MAX_EVENT_LINE_BYTES = 16_384
+MAX_OVERFLOW_SUMMARY_BYTES = 16_384
 HEARTBEAT_INTERVAL_SECONDS = 1.0
 _OBSERVABILITY_STATUSES = frozenset({"complete", "partial", "unavailable"})
 _OBSERVABILITY_COMMAND_KINDS = frozenset({"pytest", "non_pytest"})
@@ -217,8 +219,8 @@ def verify_runner_observability(
     root_path = (root or summary_path.parent).resolve()
     try:
         raw = summary_path.read_bytes()
-        payload = json.loads(raw)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        payload = _strict_json_loads(raw)
+    except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as exc:
         return {
             "ok": False,
             "failure_kind": "artifact_integrity_failed",
@@ -428,6 +430,10 @@ def _validate_summary_payload(
     else:
         issues.append("summary_field_invalid:event_log")
 
+    overflow_progress = payload.get("overflow_progress")
+    if overflow_progress is not None:
+        _validate_overflow_progress(overflow_progress, issues)
+
     artifacts = payload.get("artifacts")
     required_artifacts = ("stdout", "stderr", "result", "summary", "events")
     if not isinstance(artifacts, Mapping):
@@ -594,7 +600,11 @@ def _validate_number(
     value: Mapping[str, Any], field: str, prefix: str, issues: list[str]
 ) -> None:
     field_value = value.get(field)
-    if not isinstance(field_value, (int, float)) or isinstance(field_value, bool):
+    if (
+        not isinstance(field_value, (int, float))
+        or isinstance(field_value, bool)
+        or not math.isfinite(float(field_value))
+    ):
         issues.append(f"summary_field_invalid:{prefix}.{field}")
 
 
@@ -603,9 +613,56 @@ def _validate_number_or_none(
 ) -> None:
     field_value = value.get(field)
     if field_value is not None and (
-        not isinstance(field_value, (int, float)) or isinstance(field_value, bool)
+        not isinstance(field_value, (int, float))
+        or isinstance(field_value, bool)
+        or not math.isfinite(float(field_value))
     ):
         issues.append(f"summary_field_invalid:{prefix}.{field}")
+
+
+def _validate_overflow_progress(value: Any, issues: list[str]) -> None:
+    prefix = "overflow_progress"
+    if not isinstance(value, Mapping):
+        issues.append(f"summary_field_invalid:{prefix}")
+        return
+    if value.get("contract_version") != "runner-observability-overflow-progress/v1":
+        issues.append(f"summary_field_invalid:{prefix}.contract_version")
+    if value.get("active") is not True:
+        issues.append(f"summary_field_invalid:{prefix}.active")
+    if value.get("green_authority") is not False:
+        issues.append(f"summary_field_invalid:{prefix}.green_authority")
+    if value.get("authority") not in {
+        "parent_observed_child_diagnostic",
+        "child_diagnostic",
+    }:
+        issues.append(f"summary_field_invalid:{prefix}.authority")
+    if value.get("integrity") not in {"pending", "verified", "unavailable"}:
+        issues.append(f"summary_field_invalid:{prefix}.integrity")
+    _validate_integer_or_none(value, "dropped_event_count", prefix, issues)
+    progress = value.get("latest_progress")
+    if progress is not None and (
+        not isinstance(progress, Mapping)
+        or _validated_overflow_progress(progress) is None
+    ):
+        issues.append(f"summary_field_invalid:{prefix}.latest_progress")
+    heartbeat = value.get("latest_heartbeat")
+    if heartbeat is not None:
+        if not isinstance(heartbeat, Mapping):
+            issues.append(f"summary_field_invalid:{prefix}.latest_heartbeat")
+        else:
+            _validate_string(heartbeat, "at", f"{prefix}.latest_heartbeat", issues)
+            _validate_number(
+                heartbeat,
+                "elapsed_seconds",
+                f"{prefix}.latest_heartbeat",
+                issues,
+            )
+            _validate_boolean(
+                heartbeat,
+                "process_alive",
+                f"{prefix}.latest_heartbeat",
+                issues,
+            )
 
 
 def _validate_nonnegative_integer(
@@ -663,8 +720,8 @@ def finalize_persisted_observability(
     summary_path = _resolve_artifact_path(str(summary_value or ""), root.resolve())
     events_path = _resolve_artifact_path(str(events_value or ""), root.resolve())
     try:
-        summary_payload = json.loads(summary_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        summary_payload = _strict_json_loads(summary_path.read_bytes())
+    except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
         summary_payload = {
             "contract_version": RUNNER_OBSERVABILITY_CONTRACT_VERSION,
             "status": "unavailable",
@@ -742,6 +799,73 @@ def finalize_persisted_observability(
     return normalize_observability_paths(summary_payload, root=root)
 
 
+def _is_nonnegative_integer(value: Any) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _event_log_has_capacity(current_size: int, encoded_length: int) -> bool:
+    # Parent watchdog and child hook are the only writers. Reserving one
+    # maximum line means simultaneous append decisions still cannot cross the
+    # advertised byte cap, without introducing a new lock artifact.
+    return current_size + encoded_length <= MAX_EVENT_LOG_BYTES - MAX_EVENT_LINE_BYTES
+
+
+def _validated_overflow_progress(value: Mapping[str, Any]) -> dict[str, Any] | None:
+    nodeid = value.get("nodeid")
+    phase = value.get("phase")
+    at = value.get("at")
+    elapsed = value.get("elapsed_seconds")
+    completed = value.get("completed_count")
+    if not isinstance(nodeid, str) or not nodeid:
+        return None
+    if not isinstance(phase, str) or not phase:
+        return None
+    if not isinstance(at, str) or not at:
+        return None
+    if (
+        not isinstance(elapsed, (int, float))
+        or isinstance(elapsed, bool)
+        or not math.isfinite(float(elapsed))
+        or elapsed < 0
+    ):
+        return None
+    if completed is not None and not _is_nonnegative_integer(completed):
+        return None
+    return {
+        "at": at,
+        "completed_count": completed,
+        "elapsed_seconds": float(elapsed),
+        "nodeid": nodeid,
+        "phase": phase,
+    }
+
+
+def _overflow_progress_from_observation(
+    observation: Mapping[str, Any],
+) -> dict[str, Any] | None:
+    if observation.get("source") != "pytest_hook":
+        return None
+    nodeid = observation.get("nodeid")
+    if nodeid is None:
+        return None
+    phase = observation.get("phase")
+    at = observation.get("at")
+    elapsed = observation.get("elapsed_seconds")
+    completed = observation.get("completed_count")
+    validated = _validated_overflow_progress(
+        {
+            "nodeid": nodeid,
+            "phase": phase,
+            "at": at,
+            "elapsed_seconds": elapsed,
+            "completed_count": completed,
+        }
+    )
+    if validated is None:
+        raise ValueError("overflow progress fields are malformed or non-finite")
+    return validated
+
+
 class RunnerObservabilityRecorder:
     """Parent-side bounded event recorder for one guarded completion check."""
 
@@ -767,8 +891,59 @@ class RunnerObservabilityRecorder:
         self._event_count = 0
         self._dropped_count = 0
         self._lock = threading.Lock()
+        self._parent_observation_channel = False
+        self._last_parent_sequence = 0
+        self._last_child_sequence = 0
+        self._child_dropped_count = 0
+        self._overflow_active = False
+        self._overflow_latest_progress: dict[str, Any] | None = None
+        self._overflow_latest_heartbeat: dict[str, Any] | None = None
         self.summary_path.parent.mkdir(parents=True, exist_ok=True)
         self.events_path.write_bytes(b"")
+
+    def set_parent_observation_channel(self, available: bool) -> None:
+        """Record whether child diagnostics cross a parent-owned channel."""
+
+        with self._lock:
+            self._parent_observation_channel = bool(available)
+
+    def observe_child_observation(
+        self, observation: Mapping[str, Any], parent_sequence: int
+    ) -> None:
+        """Checkpoint post-cap child progress without granting green authority."""
+
+        progress = _overflow_progress_from_observation(observation)
+        persisted = observation.get("event_log_persisted")
+        dropped_count = observation.get("event_log_dropped_count")
+        child_sequence = observation.get("sequence")
+        if persisted is not True and persisted is not False:
+            return
+        if not _is_nonnegative_integer(dropped_count):
+            raise ValueError("event_log_dropped_count must be a nonnegative integer")
+        if not _is_nonnegative_integer(parent_sequence) or parent_sequence < 1:
+            raise ValueError("parent_sequence must be a positive integer")
+        if not _is_nonnegative_integer(child_sequence) or child_sequence < 1:
+            raise ValueError("child sequence must be a positive integer")
+        with self._lock:
+            if parent_sequence <= self._last_parent_sequence:
+                raise ValueError("parent observation sequence must be monotonic")
+            if child_sequence != self._last_child_sequence + 1:
+                raise ValueError("child observation sequence must be contiguous")
+            expected_dropped_count = self._child_dropped_count + (not persisted)
+            if dropped_count != expected_dropped_count:
+                raise ValueError("event_log_dropped_count is inconsistent")
+            self._last_parent_sequence = parent_sequence
+            self._last_child_sequence = child_sequence
+            self._child_dropped_count = expected_dropped_count
+            self._overflow_active = self._overflow_active or not persisted or dropped_count > 0
+            if progress is not None:
+                if self._overflow_latest_progress is not None:
+                    completed = self._overflow_latest_progress.get("completed_count")
+                    if progress.get("completed_count") is None:
+                        progress["completed_count"] = completed
+                self._overflow_latest_progress = progress
+            if self._overflow_active:
+                self._write_overflow_checkpoint_locked(integrity="pending")
 
     def start(self) -> None:
         self.emit(
@@ -793,17 +968,27 @@ class RunnerObservabilityRecorder:
             **fields,
         }
         encoded = _json_bytes(record) + b"\n"
-        if len(encoded) > MAX_EVENT_LINE_BYTES:
-            self._dropped_count += 1
-            return
         with self._lock:
+            if event == "heartbeat":
+                self._overflow_latest_heartbeat = {
+                    "at": record["at"],
+                    "elapsed_seconds": record["elapsed_seconds"],
+                    "process_alive": bool(fields.get("process_alive")),
+                }
+            if len(encoded) > MAX_EVENT_LINE_BYTES:
+                self._dropped_count += 1
+                self._overflow_active = True
+                self._write_overflow_checkpoint_locked(integrity="pending")
+                return
             try:
                 current_size = self.events_path.stat().st_size
                 if (
                     self._event_count >= MAX_EVENT_COUNT
-                    or current_size + len(encoded) > MAX_EVENT_LOG_BYTES
+                    or not _event_log_has_capacity(current_size, len(encoded))
                 ):
                     self._dropped_count += 1
+                    self._overflow_active = True
+                    self._write_overflow_checkpoint_locked(integrity="pending")
                     return
                 with self.events_path.open("ab") as stream:
                     stream.write(encoded)
@@ -811,6 +996,11 @@ class RunnerObservabilityRecorder:
                 self._event_count += 1
             except OSError:
                 self._dropped_count += 1
+                self._overflow_active = True
+                self._write_overflow_checkpoint_locked(integrity="pending")
+            else:
+                if self._overflow_active and event == "heartbeat":
+                    self._write_overflow_checkpoint_locked(integrity="pending")
 
     def start_heartbeat(self, process: Any) -> tuple[threading.Event, threading.Thread]:
         stop_event = threading.Event()
@@ -844,7 +1034,11 @@ class RunnerObservabilityRecorder:
         pipes_eof: bool,
         result_path: str | None = None,
         result_sha256: str | None = None,
+        parent_observation_integrity: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        if not self._parent_observation_channel:
+            with self._lock:
+                self._merge_child_checkpoint_locked()
         self.emit(
             "process_group_final",
             phase="terminate" if timed_out else "complete",
@@ -949,13 +1143,16 @@ class RunnerObservabilityRecorder:
             },
             "event_log": {
                 "count": len(events),
-                "dropped_count": self._dropped_count,
+                "dropped_count": self._dropped_count + self._child_dropped_count,
                 "bounded": True,
                 "max_events": MAX_EVENT_COUNT,
                 "max_bytes": MAX_EVENT_LOG_BYTES,
                 "issues": sorted(set(issues)),
             },
         }
+        overflow_progress = self._sealed_overflow_progress(parent_observation_integrity)
+        if overflow_progress is not None:
+            summary["overflow_progress"] = overflow_progress
         self._write_summary(summary)
         return normalize_observability_paths(summary, root=Path.cwd())
 
@@ -965,16 +1162,74 @@ class RunnerObservabilityRecorder:
             return self._sequence
 
     def _write_summary(self, summary: dict[str, Any]) -> None:
-        summary_item = summary.get("artifacts", {}).get("summary")
-        if isinstance(summary_item, dict):
-            summary_item["sha256"] = None
-        summary_bytes = _json_bytes(_summary_digest_payload(summary))
-        if isinstance(summary_item, dict):
-            summary_item["sha256"] = sha256_bytes(summary_bytes)
-        rendered = json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-        temporary = self.summary_path.with_name(f".{self.summary_path.name}.tmp")
-        temporary.write_text(rendered, encoding="utf-8")
-        os.replace(temporary, self.summary_path)
+        _write_summary_payload(self.summary_path, summary)
+
+    def _overflow_progress_payload(self, *, integrity: str) -> dict[str, Any]:
+        dropped_event_count: int | None = self._dropped_count + self._child_dropped_count
+        if integrity == "unavailable" and self._parent_observation_channel:
+            dropped_event_count = None
+        return {
+            "contract_version": "runner-observability-overflow-progress/v1",
+            "active": True,
+            "authority": (
+                "parent_observed_child_diagnostic"
+                if self._parent_observation_channel
+                else "child_diagnostic"
+            ),
+            "green_authority": False,
+            "integrity": integrity,
+            "dropped_event_count": dropped_event_count,
+            "latest_progress": self._overflow_latest_progress,
+            "latest_heartbeat": self._overflow_latest_heartbeat,
+        }
+
+    def _write_overflow_checkpoint_locked(self, *, integrity: str) -> None:
+        if not self._parent_observation_channel:
+            self._merge_child_checkpoint_locked()
+        payload = {
+            "contract_version": RUNNER_OBSERVABILITY_CONTRACT_VERSION,
+            "overflow_progress": self._overflow_progress_payload(integrity=integrity),
+        }
+        rendered = _json_bytes(payload) + b"\n"
+        if len(rendered) > MAX_OVERFLOW_SUMMARY_BYTES:
+            raise ValueError("overflow progress checkpoint exceeds its bound")
+        _atomic_replace_bytes(self.summary_path, rendered)
+
+    def _merge_child_checkpoint_locked(self) -> None:
+        checkpoint = _read_overflow_checkpoint(self.summary_path)
+        if checkpoint is None or checkpoint.get("authority") != "child_diagnostic":
+            return
+        dropped = checkpoint.get("dropped_event_count")
+        if _is_nonnegative_integer(dropped):
+            self._child_dropped_count = max(self._child_dropped_count, dropped)
+        progress = checkpoint.get("latest_progress")
+        if isinstance(progress, Mapping):
+            validated = _validated_overflow_progress(progress)
+            if validated is not None:
+                current_elapsed = (
+                    self._overflow_latest_progress or {}
+                ).get("elapsed_seconds", -1.0)
+                if validated["elapsed_seconds"] >= current_elapsed:
+                    self._overflow_latest_progress = validated
+        self._overflow_active = True
+
+    def _sealed_overflow_progress(
+        self, parent_observation_integrity: Mapping[str, Any] | None
+    ) -> dict[str, Any] | None:
+        if not self._overflow_active:
+            return None
+        transport_ok = (
+            self._parent_observation_channel
+            and isinstance(parent_observation_integrity, Mapping)
+            and parent_observation_integrity.get("frames_eof") is True
+            and parent_observation_integrity.get("dropped_count") == 0
+            and parent_observation_integrity.get("partial_frame") is False
+            and parent_observation_integrity.get("reader_error") is False
+            and parent_observation_integrity.get("limit_exceeded") is False
+        )
+        return self._overflow_progress_payload(
+            integrity="verified" if transport_ok else "unavailable"
+        )
 
 
 class _PytestEventSink:
@@ -989,40 +1244,79 @@ class _PytestEventSink:
         self.collection_count: int | None = None
         self.started_count = 0
         self.completed_count = 0
+        self._lock = threading.Lock()
+        self._overflow_latest_progress: dict[str, Any] | None = None
 
     def emit(self, event: str, *, phase: str, **fields: Any) -> None:
-        self.sequence += 1
-        record = {
-            "contract_version": RUNNER_OBSERVABILITY_CONTRACT_VERSION,
-            "sequence": self.sequence,
-            "event": event,
-            "phase": phase,
-            "source": "pytest_hook",
-            "at": _utc_now(),
-            "elapsed_seconds": round(_MONOTONIC() - self.started_monotonic, 6),
-            **fields,
-        }
-        encoded = _json_bytes(record) + b"\n"
-        if self.frame_fd is not None:
-            # The parent assigns the authoritative sequence/root. This write
-            # only transports the child diagnostic frame.
-            write_child_frame(record, fd=self.frame_fd)
-        if len(encoded) > MAX_EVENT_LINE_BYTES:
-            self.dropped_count += 1
-            return
-        try:
-            if (
-                self.event_count >= MAX_EVENT_COUNT
-                or self.events_path.stat().st_size + len(encoded) > MAX_EVENT_LOG_BYTES
-            ):
+        with self._lock:
+            self.sequence += 1
+            record = {
+                "contract_version": RUNNER_OBSERVABILITY_CONTRACT_VERSION,
+                "sequence": self.sequence,
+                "event": event,
+                "phase": phase,
+                "source": "pytest_hook",
+                "at": _utc_now(),
+                "elapsed_seconds": round(_MONOTONIC() - self.started_monotonic, 6),
+                **fields,
+            }
+            encoded = _json_bytes(record) + b"\n"
+            persisted = False
+            try:
+                if len(encoded) > MAX_EVENT_LINE_BYTES or (
+                    self.event_count >= MAX_EVENT_COUNT
+                    or not _event_log_has_capacity(
+                        self.events_path.stat().st_size, len(encoded)
+                    )
+                ):
+                    self.dropped_count += 1
+                else:
+                    with self.events_path.open("ab") as stream:
+                        stream.write(encoded)
+                        stream.flush()
+                    self.event_count += 1
+                    persisted = True
+            except OSError:
                 self.dropped_count += 1
-                return
-            with self.events_path.open("ab") as stream:
-                stream.write(encoded)
-                stream.flush()
-            self.event_count += 1
-        except OSError:
-            self.dropped_count += 1
+            transported = {
+                **record,
+                "event_log_persisted": persisted,
+                "event_log_dropped_count": self.dropped_count,
+            }
+            if self.frame_fd is not None:
+                # The parent assigns the authoritative sequence/root. This
+                # transports diagnostics only; it cannot produce green proof.
+                write_child_frame(transported, fd=self.frame_fd)
+            elif self.dropped_count:
+                self._write_child_overflow_checkpoint(transported)
+
+    def _write_child_overflow_checkpoint(self, observation: Mapping[str, Any]) -> None:
+        progress = _overflow_progress_from_observation(observation)
+        if progress is not None:
+            if (
+                self._overflow_latest_progress is not None
+                and progress.get("completed_count") is None
+            ):
+                progress["completed_count"] = self._overflow_latest_progress.get(
+                    "completed_count"
+                )
+            self._overflow_latest_progress = progress
+        payload = {
+            "contract_version": RUNNER_OBSERVABILITY_CONTRACT_VERSION,
+            "overflow_progress": {
+                "contract_version": "runner-observability-overflow-progress/v1",
+                "active": True,
+                "authority": "child_diagnostic",
+                "green_authority": False,
+                "integrity": "pending",
+                "dropped_event_count": self.dropped_count,
+                "latest_progress": self._overflow_latest_progress,
+                "latest_heartbeat": None,
+            },
+        }
+        rendered = _json_bytes(payload) + b"\n"
+        if len(rendered) <= MAX_OVERFLOW_SUMMARY_BYTES:
+            _atomic_replace_bytes(self.summary_path, rendered)
 
     def close(self) -> None:
         if self.frame_fd is None:
@@ -1255,8 +1549,8 @@ def _read_event_log(path: Path) -> dict[str, Any]:
             issues.append(f"event_line_exceeds_bound:{line_number}")
             continue
         try:
-            value = json.loads(line)
-        except (UnicodeDecodeError, json.JSONDecodeError):
+            value = _strict_json_loads(line)
+        except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
             issues.append(f"event_json_invalid:{line_number}")
             continue
         if not isinstance(value, dict):
@@ -1270,15 +1564,56 @@ def _json_bytes(value: Any) -> bytes:
     return json.dumps(
         value,
         ensure_ascii=False,
+        allow_nan=False,
         sort_keys=True,
         separators=(",", ":"),
     ).encode("utf-8")
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key: {key}")
+        result[key] = value
+    return result
+
+
+def _reject_non_finite_json_number(value: str) -> Any:
+    raise ValueError(f"non-finite JSON number: {value}")
+
+
+def _strict_json_loads(value: bytes | str) -> Any:
+    return json.loads(
+        value,
+        object_pairs_hook=_reject_duplicate_keys,
+        parse_constant=_reject_non_finite_json_number,
+    )
+
+
+def _read_overflow_checkpoint(path: Path) -> dict[str, Any] | None:
+    try:
+        raw = path.read_bytes()
+    except OSError:
+        return None
+    if len(raw) > MAX_OVERFLOW_SUMMARY_BYTES:
+        return None
+    try:
+        payload = _strict_json_loads(raw)
+    except (UnicodeDecodeError, ValueError, json.JSONDecodeError):
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    checkpoint = payload.get("overflow_progress")
+    if not isinstance(checkpoint, Mapping):
+        return None
+    return dict(checkpoint)
+
+
 def _summary_digest_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Remove self-references before hashing the persisted summary."""
 
-    without_self = json.loads(json.dumps(dict(payload), ensure_ascii=False))
+    without_self = _strict_json_loads(_json_bytes(dict(payload)))
     artifacts = without_self.get("artifacts")
     if isinstance(artifacts, dict):
         summary_item = artifacts.get("summary")
@@ -1299,11 +1634,38 @@ def _write_summary_payload(path: Path, payload: dict[str, Any]) -> bytes:
     digest = sha256_bytes(_json_bytes(_summary_digest_payload(payload)))
     if isinstance(summary_item, dict):
         summary_item["sha256"] = digest
-    rendered = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
-    temporary = path.with_name(f".{path.name}.tmp")
-    temporary.write_text(rendered, encoding="utf-8")
-    os.replace(temporary, path)
-    return rendered.encode("utf-8")
+    rendered = (
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n"
+    ).encode("utf-8")
+    _atomic_replace_bytes(path, rendered)
+    return rendered
+
+
+def _atomic_replace_bytes(path: Path, payload: bytes) -> None:
+    """Persist a complete replacement with closed handles before replace."""
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(
+        f".{path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+    )
+    try:
+        with temporary.open("wb") as stream:
+            stream.write(payload)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _utc_now() -> str:

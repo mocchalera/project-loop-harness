@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 import threading
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 import uuid
 
 from .contracts.runner_execution_receipt import (
@@ -127,7 +127,10 @@ def write_child_frame(
 
 
 class _ParentFrameCollector:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        observation_callback: Callable[[Mapping[str, Any], int], None] | None = None,
+    ) -> None:
         self.sequence = 0
         self.dropped_count = 0
         self.frame_root = sha256_bytes(b"")
@@ -137,6 +140,7 @@ class _ParentFrameCollector:
         self.limit_exceeded = False
         self._buffer = bytearray()
         self._lock = threading.Lock()
+        self._observation_callback = observation_callback
 
     def feed(self, chunk: bytes) -> None:
         with self._lock:
@@ -166,6 +170,16 @@ class _ParentFrameCollector:
             self.reader_error = True
             self.dropped_count += 1
             self.frames_eof = False
+
+    def integrity_snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "frames_eof": self.frames_eof,
+                "dropped_count": self.dropped_count,
+                "partial_frame": self.partial_frame,
+                "reader_error": self.reader_error,
+                "limit_exceeded": self.limit_exceeded,
+            }
 
     def _accept_line(self, line: bytes) -> None:
         if self.sequence >= MAX_RUNNER_FRAME_COUNT:
@@ -202,6 +216,17 @@ class _ParentFrameCollector:
             return
         self.sequence += 1
         self.frame_root = sha256_bytes(self.frame_root.encode("ascii") + canonical)
+        if self._observation_callback is not None:
+            try:
+                self._observation_callback(
+                    deepcopy(value["observation"]), self.sequence
+                )
+            except (OSError, TypeError, ValueError):
+                # A malformed diagnostic checkpoint must not compromise the
+                # parent-sealed receipt. Mark the child channel partial and
+                # continue collecting independently verifiable frames.
+                self.reader_error = True
+                self.dropped_count += 1
 
 
 class RunnerExecutionReceiptRecorder:
@@ -224,6 +249,7 @@ class RunnerExecutionReceiptRecorder:
         events_path: Path | None = None,
         execution_instance_id: str | None = None,
         sidecar_policy: str | Mapping[str, Any] | None = None,
+        observation_callback: Callable[[Mapping[str, Any], int], None] | None = None,
     ) -> None:
         if timeout_seconds < 1:
             raise ValueError("timeout_seconds must be at least 1")
@@ -264,7 +290,7 @@ class RunnerExecutionReceiptRecorder:
         self._reader: threading.Thread | None = None
         self._parent_write_closed = False
         self._sealed = False
-        self._collector = _ParentFrameCollector()
+        self._collector = _ParentFrameCollector(observation_callback)
 
     @property
     def requested_argv_sha256(self) -> str:
@@ -346,6 +372,11 @@ class RunnerExecutionReceiptRecorder:
         self._reader.join(timeout=timeout)
         if self._reader.is_alive():
             self._collector.fail()
+
+    def observation_integrity(self) -> dict[str, Any]:
+        """Return parent-observed transport integrity for diagnostic sealing."""
+
+        return self._collector.integrity_snapshot()
 
     def seal(
         self,
