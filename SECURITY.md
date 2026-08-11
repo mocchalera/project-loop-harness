@@ -5,13 +5,13 @@ in the target repository's local `.project-loop/` directory.
 
 ## Supported Versions
 
-The current public release line is `0.5.x`.
+The current public release line is `0.6.x`.
 
 | Version | Supported |
 | --- | --- |
+| `0.6.x` | Yes |
 | `0.5.x` | Yes |
-| `0.4.x` | Yes |
-| `<0.4` | No |
+| `<0.5` | No |
 
 ## Reporting A Vulnerability
 

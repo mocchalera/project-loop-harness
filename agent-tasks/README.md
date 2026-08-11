@@ -254,7 +254,10 @@ after two consecutive zero-value observations, and resumes only after an
 explicit operator replan event. Manual `pcl task create` and external Cockpit
 task creation are not blocked. It is cooperative policy enforcement, not a
 security-grade authorization or process-containment system. Publication stays
-outside the task.
+outside that implementation task. Task **0226** owns the proof-gated release
+candidate, exact-commit CI, authorized annotated tag/GitHub Release/Trusted
+Publishing chain, and public-install verification. Publication is allowed only
+after a green authoritative G-0005 packet and local release gates.
 
 ## Planned next (see growth plan for scope)
 
@@ -275,7 +278,7 @@ outside the task.
 | post-v0.5.3 | complete frozen CLI/commands refactor: 0204 → 0205 → 0206 → 0207 → 0208 → 0209 |
 | v0.5.4 | published and publicly verified; behavior-preserving CLI/commands maintainability release → 0210 local RC → 0211 publication closeout |
 | v0.5.5 | published and publicly verified; finish reliability and operability → P0 real-use friction remediation → P1 progress/compact output → 0212 exact Goal close routing → 0213 local RC → 0214 non-HEAD base correction → 0215 publication closeout |
-| v0.6.0 | practical opt-in Mainline Progress Guard → 0225 local implementation + runner-authority GO → current-proof E-0078 INCOMPLETE_VALIDATION → observability monotonic isolation fix; re-proof required before publication |
+| v0.6.0 | terminal-readiness/direct-setup/proof-authority hardening + practical opt-in Mainline Progress Guard → 0216–0225 implementation → 0226 proof-gated release/public verification |
 
 Everything with an ID below 0102 is completed design history; see `TASKS.md`
 for the one-line summary of each.
