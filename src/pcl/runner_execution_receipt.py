@@ -616,11 +616,17 @@ def _platform_capability(*, anonymous_pipe: bool, group_state: str) -> dict[str,
             "status": "not_applicable",
         }
     if os.name == "posix":
+        process_group = "available" if group_state == "gone" else "uncertain"
+        anonymous_pipe_status = "available" if anonymous_pipe else "uncertain"
         return {
             "os": "posix",
-            "anonymous_pipe": "available" if anonymous_pipe else "uncertain",
-            "process_group": "uncertain",
-            "status": "uncertain",
+            "anonymous_pipe": anonymous_pipe_status,
+            "process_group": process_group,
+            "status": (
+                "available"
+                if anonymous_pipe_status == process_group == "available"
+                else "uncertain"
+            ),
         }
     return {
         "os": "other",

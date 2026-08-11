@@ -591,6 +591,117 @@ def test_sha256_blob_parser_and_prohibited_c2_helpers_are_not_used(
     )
 
 
+def test_source_snapshot_batches_stable_repository_metadata_queries(
+    tmp_path: Path,
+) -> None:
+    from pcl.proof_admission import _source_snapshot
+
+    with _live_join(tmp_path) as live:
+        prepared = live["prepared"][0]
+        original = prepared._git
+        calls: list[tuple[str, ...]] = []
+
+        class RecordingGit:
+            environment = original.environment
+
+            def run(self, cwd, *args, input_bytes=None):
+                calls.append(tuple(args))
+                return original.run(cwd, *args, input_bytes=input_bytes)
+
+        prepared._git = RecordingGit()
+
+        snapshot = _source_snapshot(prepared)
+
+    assert snapshot[2] in {"sha1", "sha256"}
+    rev_parse_calls = [args for args in calls if args[0] == "rev-parse"]
+    assert rev_parse_calls == [
+        (
+            "rev-parse",
+            "--show-toplevel",
+            "--git-common-dir",
+            "--git-path",
+            "objects",
+            "--show-object-format",
+        ),
+        (
+            "rev-parse",
+            "--verify",
+            f"{prepared._candidate_commit}^{{commit}}",
+        ),
+        (
+            "rev-parse",
+            "--verify",
+            f"{prepared._candidate_commit}^{{tree}}",
+        ),
+    ]
+    reachability_calls = [
+        args
+        for args in calls
+        if args[0] in {"for-each-ref", "merge-base"}
+    ]
+    assert reachability_calls == [
+        (
+            "merge-base",
+            "--is-ancestor",
+            prepared._candidate_commit,
+            "HEAD",
+        )
+    ]
+
+
+def test_candidate_reachability_falls_back_to_refs_and_fails_closed() -> None:
+    from pcl.proof_admission import (
+        _GitObservationIndeterminate,
+        _candidate_reachable_direct,
+    )
+
+    commit = "a" * 40
+
+    class Git:
+        environment = {"GIT_OPTIONAL_LOCKS": "0"}
+
+        def __init__(self, *, head_status: int, ref_status: int = 0) -> None:
+            self.head_status = head_status
+            self.ref_status = ref_status
+            self.calls: list[tuple[str, ...]] = []
+
+        def run(self, _cwd, *args, input_bytes=None):
+            self.calls.append(tuple(args))
+            if args[0] == "for-each-ref":
+                return subprocess.CompletedProcess(
+                    ["git", *args],
+                    0,
+                    stdout=b"refs/heads/release\n",
+                    stderr=b"",
+                )
+            status = (
+                self.head_status
+                if args[-1] == "HEAD"
+                else self.ref_status
+            )
+            return subprocess.CompletedProcess(
+                ["git", *args],
+                status,
+                stdout=b"",
+                stderr=b"",
+            )
+
+    fallback = Git(head_status=1, ref_status=0)
+    prepared = SimpleNamespace(_git=fallback, _source_root=Path("/unused"))
+    assert _candidate_reachable_direct(prepared, commit) is True
+    assert fallback.calls[-1][-1] == "refs/heads/release"
+
+    absent = Git(head_status=1, ref_status=1)
+    prepared._git = absent
+    assert _candidate_reachable_direct(prepared, commit) is False
+
+    indeterminate = Git(head_status=2)
+    prepared._git = indeterminate
+    with pytest.raises(_GitObservationIndeterminate):
+        _candidate_reachable_direct(prepared, commit)
+    assert len(indeterminate.calls) == 1
+
+
 def test_live_identity_and_c3_document_tamper_are_hard_errors(tmp_path: Path) -> None:
     with _live_join(tmp_path) as live:
         participant = live["participants"][0]

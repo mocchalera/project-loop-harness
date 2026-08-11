@@ -266,6 +266,29 @@ def validate_runner_execution_receipt(
             errors.append("$.termination.pipes_eof: does not match stdout/stderr EOF")
         if eof.get("frames") is not True and value.get("event_sequence") == 0:
             errors.append("$.event_sequence: incomplete frame collection must be explicit")
+    capability = value.get("platform_capability")
+    if isinstance(capability, dict) and isinstance(termination, dict):
+        if capability.get("os") == "posix":
+            expected_group_capability = (
+                "available"
+                if termination.get("group_state") == "gone"
+                else "uncertain"
+            )
+            if capability.get("process_group") != expected_group_capability:
+                errors.append(
+                    "$.platform_capability.process_group: does not match the "
+                    "parent-observed POSIX group state"
+                )
+            expected_status = (
+                "available"
+                if capability.get("anonymous_pipe") == "available"
+                and expected_group_capability == "available"
+                else "uncertain"
+            )
+            if capability.get("status") != expected_status:
+                errors.append(
+                    "$.platform_capability.status: does not match POSIX capabilities"
+                )
     if value.get("timed_out") is True and value.get("exit_code") is not None:
         errors.append("$.exit_code: timed out executions must not claim an exit code")
     if value.get("attempt_index") == 0 and (
@@ -384,10 +407,6 @@ def _platform_capability(value: Any, errors: list[str]) -> None:
             errors.append(
                 f"{path}.process_group: Windows capability must be not_applicable"
             )
-    if value.get("os") == "posix" and value.get("process_group") != "uncertain":
-        errors.append(
-            f"{path}.process_group: POSIX process-group capability must be uncertain"
-        )
 
 
 def _exact_fields(

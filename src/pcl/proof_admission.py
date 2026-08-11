@@ -1102,10 +1102,16 @@ def _source_snapshot(prepared: PreparedProofWorkspace) -> tuple[str, str, str, s
             raise _error("coverage_live_identity_mismatch", "source") from None
         if current != expected or not stat.S_ISDIR(current.mode) or stat.S_ISLNK(current.mode):
             raise _error("coverage_live_identity_mismatch", "source")
-    root = _git_text(prepared, "rev-parse", "--show-toplevel")
-    common_raw = _git_text(prepared, "rev-parse", "--git-common-dir")
-    object_raw = _git_text(prepared, "rev-parse", "--git-path", "objects")
-    object_format = _git_text(prepared, "rev-parse", "--show-object-format")
+    root, common_raw, object_raw, object_format = _git_text_lines(
+        prepared,
+        "rev-parse",
+        "--show-toplevel",
+        "--git-common-dir",
+        "--git-path",
+        "objects",
+        "--show-object-format",
+        expected_count=4,
+    )
     commit = _git_text(
         prepared,
         "rev-parse",
@@ -1147,13 +1153,47 @@ def _git_text(prepared: PreparedProofWorkspace, *args: str) -> str:
     return value
 
 
+def _git_text_lines(
+    prepared: PreparedProofWorkspace,
+    *args: str,
+    expected_count: int,
+) -> tuple[str, ...]:
+    completed = prepared._git.run(prepared._source_root, *args)
+    if completed.returncode != 0 or len(completed.stdout) > 8192 * expected_count:
+        raise _GitObservationIndeterminate
+    try:
+        values = tuple(
+            line.strip()
+            for line in completed.stdout.decode("utf-8", errors="strict").splitlines()
+        )
+    except UnicodeDecodeError:
+        raise _GitObservationIndeterminate from None
+    if (
+        len(values) != expected_count
+        or any(not value or "\0" in value for value in values)
+    ):
+        raise _GitObservationIndeterminate
+    return values
+
+
 def _resolve_git_path(root: Path, raw: str) -> Path:
     path = Path(raw)
     return (path if path.is_absolute() else root / path).resolve()
 
 
 def _candidate_reachable_direct(prepared: PreparedProofWorkspace, commit: str) -> bool:
-    refs: list[str] = ["HEAD"]
+    head = prepared._git.run(
+        prepared._source_root,
+        "merge-base",
+        "--is-ancestor",
+        commit,
+        "HEAD",
+    )
+    if head.returncode == 0:
+        return True
+    if head.returncode != 1:
+        raise _GitObservationIndeterminate
+
     completed = prepared._git.run(
         prepared._source_root,
         "for-each-ref",
@@ -1164,11 +1204,11 @@ def _candidate_reachable_direct(prepared: PreparedProofWorkspace, commit: str) -
     if completed.returncode != 0 or len(completed.stdout) > 1_048_576:
         raise _GitObservationIndeterminate
     try:
-        refs.extend(
+        refs = [
             line
             for line in completed.stdout.decode("utf-8", errors="strict").splitlines()
             if line
-        )
+        ]
     except UnicodeDecodeError:
         raise _GitObservationIndeterminate from None
     for ref in refs:

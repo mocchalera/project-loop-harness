@@ -1530,7 +1530,17 @@ def _observed_provenance(events: list[dict[str, Any]]) -> dict[str, Any] | None:
 
 
 def _provenance_equal(expected: Mapping[str, Any], observed: Mapping[str, Any]) -> bool:
-    return dict(expected) == dict(observed)
+    expected_copy = json.loads(json.dumps(dict(expected), ensure_ascii=False))
+    observed_copy = json.loads(json.dumps(dict(observed), ensure_ascii=False))
+    for value in (expected_copy, observed_copy):
+        pcl_module = value.get("pcl_module")
+        if not isinstance(pcl_module, dict):
+            return False
+        path = pcl_module.get("path")
+        if not isinstance(path, str) or not path:
+            return False
+        pcl_module["path"] = "<relocatable-pcl-module>"
+    return expected_copy == observed_copy
 
 
 def _read_event_log(path: Path) -> dict[str, Any]:

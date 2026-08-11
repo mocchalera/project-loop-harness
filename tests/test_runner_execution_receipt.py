@@ -129,7 +129,12 @@ def test_normal_success_is_parent_bound_and_pipe_eof_is_recorded(tmp_path: Path)
     assert receipt["eof"] == {"stdout": True, "stderr": True, "frames": True}
     assert receipt["stdout_sha256"] == hash_file(tmp_path / "stdout.txt")
     assert receipt["stderr_sha256"] == hash_file(tmp_path / "stderr.txt")
-    assert receipt["platform_capability"]["process_group"] == "uncertain"
+    assert receipt["platform_capability"] == {
+        "os": "posix",
+        "anonymous_pipe": "available",
+        "process_group": "available",
+        "status": "available",
+    }
     assert verify_runner_execution_receipt(tmp_path / "receipt.json")["ok"] is True
 
 
@@ -183,14 +188,35 @@ def test_windows_capability_is_not_applicable(monkeypatch: pytest.MonkeyPatch) -
     }
 
 
-def test_posix_capability_is_uncertain(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_posix_capability_uses_confirmed_group_state(monkeypatch: pytest.MonkeyPatch) -> None:
     import pcl.runner_execution_receipt as receipt_runtime
 
     monkeypatch.setattr(receipt_runtime.os, "name", "posix")
     capability = platform_capability(anonymous_pipe=True, group_state="gone")
     assert capability["anonymous_pipe"] == "available"
-    assert capability["process_group"] == "uncertain"
-    assert capability["status"] == "uncertain"
+    assert capability["process_group"] == "available"
+    assert capability["status"] == "available"
+
+    uncertain = platform_capability(anonymous_pipe=True, group_state="unknown")
+    assert uncertain["process_group"] == "uncertain"
+    assert uncertain["status"] == "uncertain"
+
+
+def test_posix_available_capability_requires_parent_observed_group_gone(
+    tmp_path: Path,
+) -> None:
+    receipt = _run(tmp_path, _child_frame_script())["runner_execution_receipt"]
+    forged = json.loads(json.dumps(receipt))
+    forged["termination"]["group_state"] = "unknown"
+    forged = finalize_runner_execution_receipt(forged)
+
+    validation = validate_runner_execution_receipt(forged)
+
+    assert validation.ok is False
+    assert (
+        "$.platform_capability.process_group: does not match the "
+        "parent-observed POSIX group state"
+    ) in validation.errors
 
 
 def test_partial_frame_and_pipe_drop_are_not_green(tmp_path: Path) -> None:

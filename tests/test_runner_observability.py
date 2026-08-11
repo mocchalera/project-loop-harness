@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 from pathlib import Path
 import sys
@@ -13,6 +14,8 @@ from pcl.guarded_process import (
 )
 from pcl.runner_observability import (
     RunnerObservabilityRecorder,
+    _provenance_equal,
+    collect_runner_provenance,
     finalize_persisted_observability,
     hash_file,
     verify_runner_observability,
@@ -31,6 +34,20 @@ def _execute_pytest(tmp_path: Path, *, test_source: str, timeout_seconds: int = 
         observability_summary_path=tmp_path / "runner-observability.json",
         observability_events_path=tmp_path / "runner-observability.jsonl",
     )
+
+
+def test_provenance_accepts_relocated_identical_observer_but_not_hash_drift() -> None:
+    expected = collect_runner_provenance(
+        [sys.executable, "-m", "pytest"],
+        env={"PYTHONPATH": "src"},
+    )
+    relocated = deepcopy(expected)
+    relocated["pcl_module"]["path"] = "/proof-workspace/repository/src/pcl/runner_observability.py"
+
+    assert _provenance_equal(expected, relocated) is True
+
+    relocated["pcl_module"]["sha256"] = "sha256:" + "0" * 64
+    assert _provenance_equal(expected, relocated) is False
 
 
 def test_success_persists_pytest_node_progress_hashes_and_provenance(tmp_path: Path) -> None:

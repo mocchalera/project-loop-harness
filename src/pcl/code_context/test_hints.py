@@ -15,8 +15,17 @@ TEST_HINT_VERSION = "test-hint/v0"
 
 
 def _attach_test_hints(files: list[IndexedFile]) -> None:
+    imported_modules_by_test = {
+        item.path: _python_imported_modules(item.text)
+        for item in files
+        if _is_test_path(item.path)
+    }
     for item in files:
-        item.test_hint = _test_hint_for_file(item, files)
+        item.test_hint = _test_hint_for_file(
+            item,
+            files,
+            imported_modules_by_test=imported_modules_by_test,
+        )
 
 
 def _empty_test_hint(path: str) -> dict[str, Any]:
@@ -27,7 +36,12 @@ def _empty_test_hint(path: str) -> dict[str, Any]:
     }
 
 
-def _test_hint_for_file(item: IndexedFile, files: list[IndexedFile]) -> dict[str, Any]:
+def _test_hint_for_file(
+    item: IndexedFile,
+    files: list[IndexedFile],
+    *,
+    imported_modules_by_test: dict[str, set[str]] | None = None,
+) -> dict[str, Any]:
     hint = _empty_test_hint(item.path)
     if hint["is_test"]:
         return hint
@@ -42,7 +56,16 @@ def _test_hint_for_file(item: IndexedFile, files: list[IndexedFile]) -> dict[str
             reasons.append("filename_match")
             confidence = max(confidence, 0.72)
         if item.language == "python":
-            import_reasons = _python_test_import_reasons(possible_test.text, possible_test.path, item)
+            import_reasons = _python_test_import_reasons(
+                possible_test.text,
+                possible_test.path,
+                item,
+                imported_modules=(
+                    imported_modules_by_test.get(possible_test.path)
+                    if imported_modules_by_test is not None
+                    else None
+                ),
+            )
             if import_reasons:
                 reasons.extend(import_reasons)
                 confidence = max(confidence, 0.88 if "python_import" in import_reasons else 0.76)
@@ -56,11 +79,21 @@ def _test_hint_for_file(item: IndexedFile, files: list[IndexedFile]) -> dict[str
     return hint
 
 
-def _python_test_import_reasons(test_text: str, test_path: str, source: IndexedFile) -> list[str]:
+def _python_test_import_reasons(
+    test_text: str,
+    test_path: str,
+    source: IndexedFile,
+    *,
+    imported_modules: set[str] | None = None,
+) -> list[str]:
     module = _python_module_name(source.path)
     if not module:
         return []
-    imported = _python_imported_modules(test_text)
+    imported = (
+        _python_imported_modules(test_text)
+        if imported_modules is None
+        else imported_modules
+    )
     reasons: list[str] = []
     if any(imported_module == module or imported_module.startswith(module + ".") for imported_module in imported):
         reasons.append("python_import")

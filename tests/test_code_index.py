@@ -6,11 +6,14 @@ from pathlib import Path
 import shutil
 import subprocess
 
+import pytest
+
 from pcl.cli import main
 from pcl.code_context.receipts import _receipt_verification_suggestions
-from pcl.code_context.scan import LARGE_FILE_BYTES
+from pcl.code_context.scan import IndexedFile, LARGE_FILE_BYTES
 from pcl.code_context.summary import recommended_refresh_commands, summarize_code_context_receipt
 from pcl.code_context import store as code_context_store
+from pcl.code_context import test_hints
 from pcl.context import estimate_token_count
 from pcl.db import connect
 
@@ -22,6 +25,54 @@ SENSITIVE_FIXTURE_FILES = {
     "credentials.json": json.dumps({"token": FAKE_SECRET_TOKEN}, sort_keys=True) + "\n",
     ".npmrc": f"//registry.npmjs.org/:_authToken={FAKE_SECRET_TOKEN}\n",
 }
+
+
+def test_test_hint_attachment_parses_each_python_test_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def indexed(path: str, text: str) -> IndexedFile:
+        return IndexedFile(
+            path=path,
+            absolute_path=tmp_path / path,
+            language="python",
+            size_bytes=len(text.encode()),
+            mtime=0,
+            sha256=None,
+            line_count=text.count("\n") + 1,
+            symbol_summary={"contract_version": "symbol-summary/v0", "symbols": []},
+            test_hint={},
+            text=text,
+        )
+
+    files = [
+        indexed("src/pkg/one.py", "def one():\n    return 1\n"),
+        indexed("src/pkg/two.py", "def two():\n    return 2\n"),
+        indexed(
+            "tests/test_one.py",
+            "from pkg import one\n\ndef test_one():\n    assert one.one() == 1\n",
+        ),
+    ]
+    original = test_hints._python_imported_modules
+    parsed: list[str] = []
+
+    def counting_parser(text: str) -> set[str]:
+        parsed.append(text)
+        return original(text)
+
+    monkeypatch.setattr(test_hints, "_python_imported_modules", counting_parser)
+
+    test_hints._attach_test_hints(files)
+
+    assert parsed == [files[-1].text]
+    assert files[0].test_hint["candidate_tests"] == [
+        {
+            "path": "tests/test_one.py",
+            "reason": "filename_match+python_import",
+            "confidence": 0.88,
+        }
+    ]
+    assert files[1].test_hint["candidate_tests"] == []
 
 
 def _json_output(capsys) -> dict:
