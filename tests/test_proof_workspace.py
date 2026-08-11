@@ -39,7 +39,7 @@ from pcl.proof_workspace import (
     directory_bundle_manifest,
     prepare_proof_workspace,
 )
-from pcl.git_runtime import GitRunner
+from pcl.git_runtime import GitRunner, INHERITED_GIT_RUNNER
 
 
 BOOTSTRAP_FIXTURE = (
@@ -410,6 +410,65 @@ def test_pre_post_manifest_and_repository_tool_reseal_fail_closed(
         with pytest.raises(ProofWorkspaceError) as config_changed:
             prepared.assert_ready_to_spawn("full-regression")
         assert config_changed.value.code == "proof_git_configuration_unsafe"
+
+
+def test_repository_reseal_batches_one_checkpoint_without_losing_observations(
+    tmp_path: Path,
+) -> None:
+    root, base, candidate = _repository(tmp_path)
+    with _prepare(root, base, candidate, tmp_path) as prepared:
+        original = prepared._git
+        calls: list[tuple[str, ...]] = []
+
+        class RecordingGit:
+            environment = original.environment
+
+            def run(self, cwd, *args, input_bytes=None):
+                calls.append(tuple(args))
+                return original.run(cwd, *args, input_bytes=input_bytes)
+
+        prepared._git = RecordingGit()
+        prepared.assert_ready_to_spawn("full-regression")
+
+    assert calls == [
+        (
+            "rev-parse",
+            "--path-format=absolute",
+            "--git-common-dir",
+            "HEAD^{commit}",
+            "HEAD^{tree}",
+        ),
+        ("symbolic-ref", "-q", "HEAD"),
+        ("remote",),
+        ("config", "--local", "--null", "--list"),
+        ("ls-tree", "-rz", "--full-tree", candidate),
+    ]
+
+
+def test_canonical_git_diff_batches_exact_commit_resolution(tmp_path: Path) -> None:
+    root, base, candidate = _repository(tmp_path)
+    calls: list[tuple[str, ...]] = []
+
+    class RecordingGit:
+        def run(self, cwd, *args, input_bytes=None):
+            calls.append(tuple(args))
+            return INHERITED_GIT_RUNNER.run(cwd, *args, input_bytes=input_bytes)
+
+    canonical_git_diff(
+        root,
+        base_commit_oid=base,
+        candidate_commit_oid=candidate,
+        git_runner=RecordingGit(),
+    )
+
+    assert calls == [
+        ("rev-parse", f"{base}^{{commit}}", f"{candidate}^{{commit}}"),
+        ("merge-base", "--is-ancestor", base, candidate),
+        (
+            "diff", "--raw", "--no-abbrev", "--no-renames", "-z",
+            base, candidate, "--",
+        ),
+    ]
 
 
 def test_linked_worktree_resolves_common_store_and_produces_distinct_clone(

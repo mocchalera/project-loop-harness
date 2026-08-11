@@ -78,6 +78,26 @@ def test_manifest_is_deterministic_and_detects_tracked_content_and_mode_changes(
     ]
 
 
+def test_manifest_batches_repository_root_and_head_observation(tmp_path: Path) -> None:
+    root = _repository(tmp_path)
+    original = verification_manifest.INHERITED_GIT_RUNNER
+    calls: list[tuple[str, ...]] = []
+
+    class RecordingGit:
+        def run(self, cwd, *args, input_bytes=None):
+            calls.append(tuple(args))
+            return original.run(cwd, *args, input_bytes=input_bytes)
+
+    manifest = collect_verification_input_manifest(root, git_runner=RecordingGit())
+
+    assert manifest["ok"] is True
+    assert calls == [
+        ("rev-parse", "--show-toplevel", "HEAD"),
+        ("ls-files", "--cached", "-z"),
+        ("ls-files", "--others", "--exclude-standard", "-z"),
+    ]
+
+
 def test_manifest_detects_symlink_target_and_untracked_changes(tmp_path: Path) -> None:
     root = _repository(tmp_path)
     (root / "target-a.txt").write_text("a\n", encoding="utf-8")

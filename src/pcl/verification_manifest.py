@@ -34,14 +34,15 @@ def collect_verification_input_manifest(
 
     canonical_root = root.resolve()
     patterns = tuple(sorted(set(str(pattern) for pattern in declared_output_patterns)))
-    repository_root = Path(
-        _git(
-            canonical_root,
-            "rev-parse",
-            "--show-toplevel",
-            git_runner=git_runner,
-        ).strip()
-    ).resolve()
+    repository_raw, head = _git_lines(
+        canonical_root,
+        "rev-parse",
+        "--show-toplevel",
+        "HEAD",
+        expected_count=2,
+        git_runner=git_runner,
+    )
+    repository_root = Path(repository_raw).resolve()
     if repository_root != canonical_root:
         raise InvalidInputError(
             "Verification input root must be the Git repository root.",
@@ -50,7 +51,6 @@ def collect_verification_input_manifest(
                 "repository_root": str(repository_root),
             },
         )
-    head = _git(canonical_root, "rev-parse", "HEAD", git_runner=git_runner).strip()
     if git_runner is INHERITED_GIT_RUNNER:
         tracked = _git_paths(canonical_root, "ls-files", "--cached")
         untracked = _git_paths(
@@ -415,6 +415,35 @@ def _git(
         "utf-8",
         errors="surrogateescape",
     )
+
+
+def _git_lines(
+    root: Path,
+    *args: str,
+    expected_count: int,
+    git_runner: GitRunner = INHERITED_GIT_RUNNER,
+) -> tuple[str, ...]:
+    try:
+        values = tuple(
+            line.strip()
+            for line in _git_bytes(root, *args, git_runner=git_runner)
+            .decode("utf-8", errors="strict")
+            .splitlines()
+        )
+    except UnicodeDecodeError as exc:
+        raise InvalidInputError(
+            "Could not decode the Git-backed verification input manifest.",
+            details={"argv": ["git", *args]},
+        ) from exc
+    if (
+        len(values) != expected_count
+        or any(not value or "\0" in value for value in values)
+    ):
+        raise InvalidInputError(
+            "Git returned an incomplete verification input identity.",
+            details={"argv": ["git", *args], "expected_lines": expected_count},
+        )
+    return values
 
 
 def _git_bytes(

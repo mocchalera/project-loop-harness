@@ -1102,7 +1102,7 @@ def _source_snapshot(prepared: PreparedProofWorkspace) -> tuple[str, str, str, s
             raise _error("coverage_live_identity_mismatch", "source") from None
         if current != expected or not stat.S_ISDIR(current.mode) or stat.S_ISLNK(current.mode):
             raise _error("coverage_live_identity_mismatch", "source")
-    root, common_raw, object_raw, object_format = _git_text_lines(
+    root, common_raw, object_raw, object_format, commit, tree = _git_text_lines(
         prepared,
         "rev-parse",
         "--show-toplevel",
@@ -1110,19 +1110,9 @@ def _source_snapshot(prepared: PreparedProofWorkspace) -> tuple[str, str, str, s
         "--git-path",
         "objects",
         "--show-object-format",
-        expected_count=4,
-    )
-    commit = _git_text(
-        prepared,
-        "rev-parse",
-        "--verify",
         f"{prepared._candidate_commit}^{{commit}}",
-    )
-    tree = _git_text(
-        prepared,
-        "rev-parse",
-        "--verify",
         f"{prepared._candidate_commit}^{{tree}}",
+        expected_count=6,
     )
     reachable = _candidate_reachable_direct(prepared, commit)
     common = _resolve_git_path(prepared._source_root, common_raw)

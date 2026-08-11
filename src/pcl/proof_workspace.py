@@ -565,25 +565,24 @@ def _prepare_owned_workspace(
             "proof_candidate_identity_mismatch",
             "The candidate object format does not match the source repository.",
         )
-    source_commit = _resolve_exact_commit(
-        source["root"],
-        candidate["commit_oid"],
-        runner,
-        code="proof_candidate_identity_mismatch",
-    )
-    source_tree = _git_text(
+    source_commit, source_tree = _git_text_lines(
         source["root"],
         runner,
         "rev-parse",
-        "--verify",
-        f"{source_commit}^{{tree}}",
+        f"{candidate['commit_oid']}^{{commit}}",
+        f"{candidate['commit_oid']}^{{tree}}",
+        expected_count=2,
+        code="proof_candidate_identity_mismatch",
     )
-    if source_tree != candidate["tree_oid"]:
+    if source_commit != candidate["commit_oid"] or source_tree != candidate["tree_oid"]:
         raise _error(
             "proof_candidate_identity_mismatch",
-            "The candidate tree does not match the source commit.",
-            expected=candidate["tree_oid"],
-            actual=source_tree,
+            "The candidate commit or tree does not match the source repository.",
+            expected={
+                "commit_oid": candidate["commit_oid"],
+                "tree_oid": candidate["tree_oid"],
+            },
+            actual={"commit_oid": source_commit, "tree_oid": source_tree},
         )
     if not _candidate_reachable(source["root"], source_commit, runner):
         raise _error(
@@ -980,7 +979,17 @@ def _source_repository(root: Path, runner: GitRunner) -> dict[str, Any]:
         raise _error("proof_candidate_object_unavailable", "The canonical repository is unavailable.") from exc
     if not stat.S_ISDIR(root_stat.st_mode) or stat.S_ISLNK(root_stat.st_mode):
         raise _error("proof_candidate_object_unavailable", "The canonical repository root is unsafe.")
-    toplevel = Path(_git_text(canonical, runner, "rev-parse", "--show-toplevel")).resolve()
+    toplevel_raw, common_raw, object_format = _git_text_lines(
+        canonical,
+        runner,
+        "rev-parse",
+        "--show-toplevel",
+        "--path-format=absolute",
+        "--git-common-dir",
+        "--show-object-format",
+        expected_count=3,
+    )
+    toplevel = Path(toplevel_raw).resolve()
     if toplevel != canonical:
         raise _error(
             "proof_candidate_object_unavailable",
@@ -988,16 +997,7 @@ def _source_repository(root: Path, runner: GitRunner) -> dict[str, Any]:
             root=str(canonical),
             repository_root=str(toplevel),
         )
-    common = Path(
-        _git_text(
-            canonical,
-            runner,
-            "rev-parse",
-            "--path-format=absolute",
-            "--git-common-dir",
-        )
-    ).resolve()
-    object_format = _git_text(canonical, runner, "rev-parse", "--show-object-format")
+    common = Path(common_raw).resolve()
     if object_format not in {"sha1", "sha256"}:
         raise _error("proof_candidate_identity_mismatch", "Unsupported Git object format.")
     return {
@@ -1016,8 +1016,7 @@ def _resolve_exact_commit(root: Path, oid: str, runner: GitRunner, *, code: str)
 
 
 def _candidate_reachable(root: Path, candidate: str, runner: GitRunner) -> bool:
-    head = _git_text(root, runner, "rev-parse", "--verify", "HEAD^{commit}")
-    if _git_returncode(root, runner, "merge-base", "--is-ancestor", candidate, head) == 0:
+    if _git_returncode(root, runner, "merge-base", "--is-ancestor", candidate, "HEAD") == 0:
         return True
     refs = _git_bytes(
         root,
@@ -1099,8 +1098,14 @@ def _clone_exact_repository(
         cloned_commit,
         code="proof_clone_failed",
     )
-    head = _git_text(destination, runner, "rev-parse", "--verify", "HEAD^{commit}")
-    tree = _git_text(destination, runner, "rev-parse", "--verify", "HEAD^{tree}")
+    head, tree = _git_text_lines(
+        destination,
+        runner,
+        "rev-parse",
+        "HEAD^{commit}",
+        "HEAD^{tree}",
+        expected_count=2,
+    )
     symbolic_rc = _git_returncode(destination, runner, "symbolic-ref", "-q", "HEAD")
     if head != candidate_commit or tree != candidate_tree or symbolic_rc == 0:
         raise _error(
@@ -2185,8 +2190,16 @@ def _assert_repository_sealed(
     object_format: str,
     tracked_replacement_paths: frozenset[str],
 ) -> None:
-    head = _git_text(root, runner, "rev-parse", "--verify", "HEAD^{commit}")
-    tree = _git_text(root, runner, "rev-parse", "--verify", "HEAD^{tree}")
+    common_raw, head, tree = _git_text_lines(
+        root,
+        runner,
+        "rev-parse",
+        "--path-format=absolute",
+        "--git-common-dir",
+        "HEAD^{commit}",
+        "HEAD^{tree}",
+        expected_count=3,
+    )
     if head != candidate_commit or tree != candidate_tree:
         raise _error(
             "proof_checkout_tree_mismatch",
@@ -2195,8 +2208,14 @@ def _assert_repository_sealed(
     if _git_returncode(root, runner, "symbolic-ref", "-q", "HEAD") == 0:
         raise _error("proof_checkout_not_detached", "The prepared proof workspace is no longer detached.")
     _assert_no_remotes(root, runner)
-    _assert_no_alternates_or_promisor(root, runner)
-    if _repository_config_sha256(root, runner) != config_sha256:
+    config_raw = _git_bytes(root, runner, "config", "--local", "--null", "--list")
+    _assert_no_alternates_or_promisor(
+        root,
+        runner,
+        common_dir=Path(common_raw).resolve(),
+        config_raw=config_raw,
+    )
+    if _bytes_sha256(config_raw) != config_sha256:
         raise _error(
             "proof_git_configuration_unsafe",
             "The prepared proof workspace Git configuration changed.",
@@ -2235,18 +2254,34 @@ def _assert_no_remotes(root: Path, runner: GitRunner) -> None:
         raise _error("proof_git_remote_present", "The proof clone retains a Git remote.")
 
 
-def _assert_no_alternates_or_promisor(root: Path, runner: GitRunner) -> None:
-    common = Path(
+def _assert_no_alternates_or_promisor(
+    root: Path,
+    runner: GitRunner,
+    *,
+    common_dir: Path | None = None,
+    config_raw: bytes | None = None,
+) -> None:
+    common = common_dir or Path(
         _git_text(root, runner, "rev-parse", "--path-format=absolute", "--git-common-dir")
     ).resolve()
     alternates = common / "objects/info/alternates"
     if alternates.exists() and alternates.read_bytes().strip():
         raise _error("proof_git_alternates_present", "The proof clone uses alternate objects.")
-    names = _git_bytes(root, runner, "config", "--local", "--name-only", "--null", "--list")
-    for raw in names.split(b"\0"):
+    raw_config = config_raw
+    if raw_config is None:
+        raw_config = _git_bytes(
+            root,
+            runner,
+            "config",
+            "--local",
+            "--name-only",
+            "--null",
+            "--list",
+        )
+    for raw in raw_config.split(b"\0"):
         if not raw:
             continue
-        name = raw.decode("utf-8", errors="strict").casefold()
+        name = raw.split(b"\n", 1)[0].decode("utf-8", errors="strict").casefold()
         if name.endswith(".promisor") or name == "extensions.partialclone":
             raise _error(
                 "proof_git_alternates_present",
@@ -2549,6 +2584,35 @@ def _git_text(
         "utf-8",
         errors="surrogateescape",
     ).strip()
+
+
+def _git_text_lines(
+    root: Path,
+    runner: GitRunner,
+    *args: str,
+    expected_count: int,
+    code: str = "proof_git_configuration_unsafe",
+) -> tuple[str, ...]:
+    try:
+        values = tuple(
+            line.strip()
+            for line in _git_bytes(root, runner, *args, code=code)
+            .decode("utf-8", errors="strict")
+            .splitlines()
+        )
+    except UnicodeDecodeError as exc:
+        raise _error(code, "A sealed Git command returned invalid UTF-8.") from exc
+    if (
+        len(values) != expected_count
+        or any(not value or "\0" in value for value in values)
+    ):
+        raise _error(
+            code,
+            "A sealed Git command returned an incomplete identity.",
+            argv=["git", *args],
+            expected_lines=expected_count,
+        )
+    return values
 
 
 def _git_bytes(

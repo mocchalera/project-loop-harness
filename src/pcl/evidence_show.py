@@ -20,6 +20,7 @@ from .evidence import (
 
 EVIDENCE_ID_RE = re.compile(r"^E-[0-9]{4,}$")
 MANIFEST_EVIDENCE_TYPES = {"adhoc_artifact", "adhoc_bundle"}
+RUNNER_AUTHORITY_ANCHOR_EVIDENCE_TYPE = "runner_authority_anchor"
 
 
 class EvidenceShowError(PclError):
@@ -73,7 +74,7 @@ def show_evidence(paths: ProjectPaths, evidence_id: str) -> dict[str, Any]:
     evidence = {
         "id": str(row["id"]),
         "type": str(row["type"]),
-        "summary": row["summary"],
+        "summary": _public_summary(str(row["type"]), row["summary"]),
         "claimed_command": row["command"],
         "recorded_path": str(row["path"]),
         "created_at": str(row["created_at"]),
@@ -93,6 +94,12 @@ def show_evidence(paths: ProjectPaths, evidence_id: str) -> dict[str, Any]:
     ):
         evidence["provenance"] = assess_execution_provenance(paths, evidence_id=evidence_id)
     return {"ok": True, "evidence": evidence}
+
+
+def _public_summary(evidence_type: str, summary: Any) -> Any:
+    if evidence_type == RUNNER_AUTHORITY_ANCHOR_EVIDENCE_TYPE:
+        return "Parent-sealed runner authority anchor."
+    return summary
 
 
 def render_evidence_metadata(payload: dict[str, Any]) -> str:

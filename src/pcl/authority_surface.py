@@ -389,16 +389,10 @@ def canonical_git_diff(
     candidate_commit_oid: str,
     git_runner: GitRunner = INHERITED_GIT_RUNNER,
 ) -> dict[str, Any]:
-    base = _resolve_full_commit(
+    base, candidate = _resolve_full_commits(
         root,
-        base_commit_oid,
-        code="authority_base_invalid",
-        git_runner=git_runner,
-    )
-    candidate = _resolve_full_commit(
-        root,
-        candidate_commit_oid,
-        code="authority_candidate_invalid",
+        (base_commit_oid, candidate_commit_oid),
+        codes=("authority_base_invalid", "authority_candidate_invalid"),
         git_runner=git_runner,
     )
     if not _is_ancestor(root, base, candidate, git_runner=git_runner):
@@ -846,6 +840,59 @@ def _resolve_full_commit(
         raise _error(code, "Git commit identity could not be verified.", value=value) from exc
     if resolved != value:
         raise _error(code, "Git commit identity did not resolve exactly.", value=value, resolved=resolved)
+    return resolved
+
+
+def _resolve_full_commits(
+    root: Path,
+    values: Sequence[str],
+    *,
+    codes: Sequence[str],
+    git_runner: GitRunner = INHERITED_GIT_RUNNER,
+) -> tuple[str, ...]:
+    if not values or len(values) != len(codes):
+        raise ValueError("Commit values and error codes must be non-empty and aligned.")
+    for value, code in zip(values, codes, strict=True):
+        if _OID.fullmatch(value) is None:
+            raise _error(
+                code,
+                "Git commit identity must be a full hexadecimal OID.",
+                value=value,
+            )
+    completed = git_runner.run(
+        root,
+        "rev-parse",
+        *(f"{value}^{{commit}}" for value in values),
+    )
+    if completed.returncode != 0:
+        for value, code in zip(values, codes, strict=True):
+            _resolve_full_commit(root, value, code=code, git_runner=git_runner)
+        raise _error(codes[0], "Git commit identities could not be verified.")
+    try:
+        resolved = tuple(
+            line.strip()
+            for line in completed.stdout.decode("ascii", errors="strict").splitlines()
+        )
+    except UnicodeDecodeError:
+        raise _error(
+            codes[0],
+            "Git commit identities were not ASCII OIDs.",
+        ) from None
+    if len(resolved) != len(values) or resolved != tuple(values):
+        mismatch = next(
+            (
+                index
+                for index, value in enumerate(values)
+                if index >= len(resolved) or resolved[index] != value
+            ),
+            0,
+        )
+        raise _error(
+            codes[mismatch],
+            "Git commit identities did not resolve exactly.",
+            expected=list(values),
+            resolved=list(resolved),
+        )
     return resolved
 
 

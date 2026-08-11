@@ -622,15 +622,7 @@ def test_source_snapshot_batches_stable_repository_metadata_queries(
             "--git-path",
             "objects",
             "--show-object-format",
-        ),
-        (
-            "rev-parse",
-            "--verify",
             f"{prepared._candidate_commit}^{{commit}}",
-        ),
-        (
-            "rev-parse",
-            "--verify",
             f"{prepared._candidate_commit}^{{tree}}",
         ),
     ]
