@@ -20,7 +20,7 @@ from .events import append_event
 from .ids import next_prefixed_id
 from .paths import ProjectPaths
 from .prefixed_ids import decimal_sort_key, increment_decimal_text
-from .strict_evidence import strict_read_canonical_file
+from .strict_evidence import strict_read_project_file
 from .test_faults import crash_if_requested
 from .timeutil import utc_now_iso
 
@@ -1005,10 +1005,10 @@ def resolve_strict_copied_evidence_in_snapshot(
             findings=[{"code": "strict_event_anchor_mismatch", "evidence_kind": "adhoc"}],
         )
 
-    manifest_path = paths.root / expected_manifest_path
-    manifest_read = strict_read_canonical_file(
-        manifest_path,
-        expected_parent=paths.evidence_dir / "adhoc",
+    manifest_read = strict_read_project_file(
+        paths,
+        expected_manifest_path,
+        expected_parent=".project-loop/evidence/adhoc",
     )
     if not manifest_read.ok:
         return _strict_copied_result(
@@ -1051,7 +1051,6 @@ def resolve_strict_copied_evidence_in_snapshot(
     expected_copy_dir_value = (
         f".project-loop/evidence/adhoc-files/{evidence_id.lower()}"
     )
-    expected_copy_dir = paths.root / expected_copy_dir_value
     metadata_findings: list[dict[str, Any]] = []
     seen_stored_paths: set[str] = set()
     for index, member in enumerate(anchor_members, start=1):
@@ -1101,9 +1100,10 @@ def resolve_strict_copied_evidence_in_snapshot(
     resolved_members: list[dict[str, Any]] = []
     for index, member in enumerate(anchor_members, start=1):
         stored_path = str(member["stored_path"])
-        copy_read = strict_read_canonical_file(
-            paths.root / stored_path,
-            expected_parent=expected_copy_dir,
+        copy_read = strict_read_project_file(
+            paths,
+            stored_path,
+            expected_parent=expected_copy_dir_value,
             expected_size=int(member["size_bytes"]),
         )
         if not copy_read.ok:

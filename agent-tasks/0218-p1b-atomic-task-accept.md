@@ -68,6 +68,13 @@ or the Story/human boundary.
 `E-0054` immutably supersedes `E-0053`; it is writer Evidence rather than
 independent acceptance.
 
+The v0.6.0 clean-Linux repair follows the separately approved Direct Setup
+boundary: strict Evidence and final proof reads use the retained root
+descriptor, and Linux rejects a requested-root rename/replacement in the
+physical pre-commit guard as effect-zero `task_accept_root_changed`. This
+narrows availability at that race without permitting a replacement-root
+commit or weakening filesystem integrity checks.
+
 ## Verification
 
 Run focused Task Accept, prefixed-ID, MCP, P0-B, P1-A, Evidence, mutation-tail,

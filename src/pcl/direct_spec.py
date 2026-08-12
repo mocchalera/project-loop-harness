@@ -227,7 +227,10 @@ def _secure_read_project_file(
     descriptors: list[int] = []
     links: list[tuple[int, str, tuple[int, int, int]]] = []
     try:
-        root_fd = _open_verified_root(paths, directory_flags=directory_flags)
+        root_fd = open_verified_project_root(
+            paths,
+            directory_flags=directory_flags,
+        )
         descriptors.append(root_fd)
         root_stat = os.fstat(root_fd)
         if not stat.S_ISDIR(root_stat.st_mode):
@@ -354,7 +357,12 @@ def _secure_read_project_file(
                 pass
 
 
-def _open_verified_root(paths: ProjectPaths, *, directory_flags: int) -> int:
+def open_verified_project_root(
+    paths: ProjectPaths,
+    *,
+    directory_flags: int,
+) -> int:
+    """Open or duplicate the exact project root represented by ``paths``."""
     retained = paths.retained_root_descriptor
     if retained is None:
         return os.open(paths.root, directory_flags)

@@ -9,12 +9,18 @@ from pathlib import Path, PurePosixPath
 import re
 import sqlite3
 import stat
+import sys
 from typing import Any
 import zlib
 
 from .command_domain import _guard_feature_done
 from .db import connect, connect_mutation
-from .direct_spec import DirectSpecError, DirectSpecRootBinding, secure_read_project_artifact
+from .direct_spec import (
+    DirectSpecError,
+    DirectSpecRootBinding,
+    open_verified_project_root,
+    secure_read_project_artifact,
+)
 from .errors import (
     EXIT_DATA_ERROR,
     EXIT_NOT_INITIALIZED,
@@ -523,7 +529,11 @@ class _RetainedProofFile:
             )
         try:
             held_root = os.fstat(self.root_fd)
-            current_root = os.stat(self.paths.root, follow_symlinks=False)
+            current_root = (
+                os.fstat(self.root_fd)
+                if self.paths.retained_root_descriptor is not None
+                else os.stat(self.paths.root, follow_symlinks=False)
+            )
             held_leaf = os.fstat(self.leaf_fd)
             current_leaf = os.stat(
                 self.leaf_name,
@@ -576,8 +586,21 @@ class _RetainedProofSeal:
     """Proof snapshot whose successful final verify is acceptance point V."""
 
     files: tuple[_RetainedProofFile, ...]
+    root_binding: DirectSpecRootBinding
 
     def verify(self) -> None:
+        if (
+            _requires_original_path_binding_at_commit()
+            and not self.root_binding.current_matches(
+                ProjectPaths(root=self.root_binding.requested_root)
+            )
+        ):
+            raise _Abort(
+                "task_accept_root_changed",
+                "The project root changed before the physical SQLite commit.",
+                EXIT_DATA_ERROR,
+                "physical_commit",
+            )
         for retained in self.files:
             retained.verify()
 
@@ -1723,7 +1746,10 @@ def _accept_locked(
                 EXIT_DATA_ERROR,
                 "final_reseal",
             )
-        proof_seal = _RetainedProofSeal(tuple(retained_proof_files))
+        proof_seal = _RetainedProofSeal(
+            tuple(retained_proof_files),
+            artifact.root_binding,
+        )
         envelope.update(
             {
                 "authority": {
@@ -3919,7 +3945,10 @@ def _open_retained_proof_file(
     descriptors: list[int] = []
     directory_links: list[tuple[int, str, tuple[int, int, int]]] = []
     try:
-        root_fd = os.open(paths.root, directory_flags)
+        root_fd = open_verified_project_root(
+            paths,
+            directory_flags=directory_flags,
+        )
         descriptors.append(root_fd)
         root_stat = os.fstat(root_fd)
         if not stat.S_ISDIR(root_stat.st_mode):
@@ -3996,6 +4025,10 @@ def _read_retained_descriptor(descriptor: int) -> bytes:
 
 def _proof_directory_identity(value: os.stat_result) -> tuple[int, int, int]:
     return (int(value.st_dev), int(value.st_ino), stat.S_IFMT(value.st_mode))
+
+
+def _requires_original_path_binding_at_commit() -> bool:
+    return sys.platform.startswith("linux")
 
 
 def _proof_file_identity(

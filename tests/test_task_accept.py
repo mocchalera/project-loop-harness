@@ -5,6 +5,8 @@ from pathlib import Path
 
 from pcl.cli import main
 from pcl.db import connect
+from pcl.direct_spec import DirectSpecRootBinding
+from pcl.paths import ProjectPaths
 
 from task_accept_helpers import accept_args, prepare_acceptance, run_json, state_counts
 
@@ -37,6 +39,32 @@ ENVELOPE_KEYS = {
     "teardown",
     "validation",
 }
+
+
+def test_atomic_accept_uses_retained_root_proxy_without_weakening_path_checks(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    project = tmp_path / "project"
+    fixture = prepare_acceptance(project, capsys, test_count=2)
+    retained_proxy = tmp_path / "retained-root-proxy"
+    retained_proxy.symlink_to(project, target_is_directory=True)
+
+    def bound_paths(binding: DirectSpecRootBinding) -> ProjectPaths:
+        return ProjectPaths(
+            root=retained_proxy,
+            retained_root_descriptor=binding.descriptor,
+            retained_root_identity=binding.identity,
+        )
+
+    monkeypatch.setattr(DirectSpecRootBinding, "bound_paths", bound_paths)
+
+    result = run_json(project, capsys, *accept_args(fixture))
+
+    assert result["ok"] is True
+    assert result["mode"] == "fresh_success"
+    assert result["mutation_committed"] is True
 
 
 def test_atomic_accept_closes_tests_feature_and_task_with_one_base_evidence(

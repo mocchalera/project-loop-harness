@@ -44,6 +44,16 @@ SQLite commit. Commit failure or an unknown commit outcome retains the existing
 fail-closed outcome contract. Drift detected before V remains an effect-zero
 pre-commit failure.
 
+On Linux, SQLite resolves the descriptor-root proxy back to the requested
+pathname before journal management. Task Accept therefore rechecks that
+requested-root identity in the physical pre-commit guard. A rename or
+replacement in that interval is a typed, fully rolled-back
+`task_accept_root_changed`; neither the displaced project nor its replacement
+is accepted. Strict Evidence resolution and final resealing still open every
+artifact component relative to the retained descriptor, so this availability
+qualification does not relax symlink, hardlink, regular-file, containment, or
+byte-identity checks.
+
 ## Copied Evidence and durable retry authority
 
 The artifact is opened component by component without following symlinks,

@@ -153,6 +153,13 @@ change preserves the committed business state but isolates its tail with exit
 6; later validation and recovery classify current copied-Evidence corruption
 as an active integrity error and never overwrite or adopt the corrupt object.
 
+Linux applies the same fail-closed SQLite pathname qualification as Direct
+Setup: Task Accept's retained descriptor remains the authority for strict
+Evidence reads and reseals, while the physical pre-commit guard also requires
+the originally requested root pathname to retain the same directory identity.
+A root rename/replacement at that boundary rolls back with
+`task_accept_root_changed`; it is never redirected into the replacement root.
+
 Task completion adds a pre-update proof gate inside that same transaction.
 The exact `routing-target/v1` Task is re-read and evaluated through the shared
 `terminal-readiness/v1` collector before its row changes. The receipt binds the

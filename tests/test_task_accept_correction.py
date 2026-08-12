@@ -105,6 +105,46 @@ def test_final_reseal_blocks_external_member_tamper_before_commit(
         conn.close()
 
 
+def test_linux_root_rebind_is_typed_noncommit_before_physical_commit(
+    tmp_path: Path,
+    capsys,
+    monkeypatch,
+) -> None:
+    project = tmp_path / "project"
+    displaced = tmp_path / "displaced"
+    fixture = prepare_acceptance(project, capsys, test_count=2)
+    before = state_counts(project)
+    from pcl import task_accept
+
+    original = task_accept._verify_final_rows_and_events
+
+    def rebind_after_final_rows(*args, **kwargs):
+        original(*args, **kwargs)
+        project.rename(displaced)
+        project.mkdir()
+        (project / ".project-loop").mkdir()
+
+    monkeypatch.setattr(
+        task_accept,
+        "_verify_final_rows_and_events",
+        rebind_after_final_rows,
+    )
+    monkeypatch.setattr(
+        task_accept,
+        "_requires_original_path_binding_at_commit",
+        lambda: True,
+    )
+
+    result = _service(project, fixture)
+
+    assert result["ok"] is False
+    assert result["mutation_committed"] is False
+    assert result["error_code"] == "task_accept_root_changed"
+    assert result["safe_to_retry_original"] is False
+    assert state_counts(displaced) == before
+    assert not (project / ".project-loop" / "project.db").exists()
+
+
 def test_public_cli_replay_allows_preexisting_task_supporting_evidence(
     tmp_path: Path,
     capsys,

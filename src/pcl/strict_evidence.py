@@ -4,10 +4,13 @@ from dataclasses import dataclass
 import ctypes
 import errno
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import stat
 import sys
-from typing import Sequence
+from typing import TYPE_CHECKING, Sequence
+
+if TYPE_CHECKING:
+    from .paths import ProjectPaths
 
 
 @dataclass(frozen=True)
@@ -471,6 +474,58 @@ def strict_read_canonical_file(
     if expected_size is not None and len(content) != expected_size:
         return StrictFileRead("size_mismatch")
     return StrictFileRead("ok", content=content)
+
+
+def strict_read_project_file(
+    paths: ProjectPaths,
+    relative_path: str,
+    *,
+    expected_parent: str,
+    expected_size: int | None = None,
+    max_bytes: int = 10_000_000,
+) -> StrictFileRead:
+    """Read a canonical project file through an optional retained root."""
+    path = PurePosixPath(relative_path)
+    parent = PurePosixPath(expected_parent)
+    if (
+        path.is_absolute()
+        or parent.is_absolute()
+        or path.as_posix() != relative_path
+        or parent.as_posix() != expected_parent
+        or path.parent != parent
+        or any(part in {"", ".", ".."} for part in path.parts)
+        or any(part in {"", ".", ".."} for part in parent.parts)
+    ):
+        return StrictFileRead("path_invalid")
+    if paths.retained_root_descriptor is None:
+        return strict_read_canonical_file(
+            paths.root / relative_path,
+            expected_parent=paths.root / expected_parent,
+            expected_size=expected_size,
+        )
+    from .direct_spec import DirectSpecError, secure_read_project_artifact
+
+    try:
+        content, binding = secure_read_project_artifact(
+            paths,
+            relative_path,
+            max_bytes=max_bytes,
+        )
+    except DirectSpecError as exc:
+        reason = str(exc.details.get("reason") or "")
+        status = {
+            "component_missing": "missing",
+            "leaf_hardlink_not_allowed": "hardlink",
+            "leaf_not_regular": "not_regular",
+            "symlink_not_allowed": "symlink",
+        }.get(reason, "unreadable")
+        return StrictFileRead(status, detail=reason or exc.code)
+    try:
+        if expected_size is not None and len(content) != expected_size:
+            return StrictFileRead("size_mismatch")
+        return StrictFileRead("ok", content=content)
+    finally:
+        binding.close()
 
 
 def _open_canonical_directory(path: Path) -> int:

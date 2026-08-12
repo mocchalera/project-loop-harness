@@ -22,7 +22,7 @@ from .events import append_event
 from .guards import require_initialized
 from .ids import next_prefixed_id
 from .paths import ProjectPaths
-from .strict_evidence import strict_read_canonical_file
+from .strict_evidence import strict_read_project_file
 from .timeutil import utc_now_iso
 from .work_briefs import parse_target_ref
 
@@ -402,10 +402,10 @@ def resolve_strict_evidence_set_in_snapshot(
             findings=[{"code": "strict_evidence_set_path_invalid"}],
         )
 
-    artifact_path = paths.root / expected_path
-    artifact_read = strict_read_canonical_file(
-        artifact_path,
-        expected_parent=paths.evidence_dir / "evidence-sets",
+    artifact_read = strict_read_project_file(
+        paths,
+        expected_path,
+        expected_parent=".project-loop/evidence/evidence-sets",
     )
     if not artifact_read.ok:
         return _strict_evidence_set_result(
