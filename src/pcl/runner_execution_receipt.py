@@ -145,17 +145,13 @@ class _ParentFrameCollector:
     def feed(self, chunk: bytes) -> None:
         with self._lock:
             self._buffer.extend(chunk)
-            if len(self._buffer) > MAX_RUNNER_FRAME_BUFFER_BYTES:
-                newline = self._buffer.find(b"\n")
-                if newline < 0:
-                    self._buffer.clear()
-                else:
-                    del self._buffer[: newline + 1]
-                self.dropped_count += 1
             while b"\n" in self._buffer:
                 line, _, remainder = self._buffer.partition(b"\n")
                 self._buffer = bytearray(remainder)
                 self._accept_line(bytes(line))
+            if len(self._buffer) > MAX_RUNNER_FRAME_BUFFER_BYTES:
+                self._buffer.clear()
+                self.dropped_count += 1
 
     def finish(self) -> None:
         with self._lock:

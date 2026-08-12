@@ -323,6 +323,22 @@ def test_frame_collector_enforces_limit_and_partial_invalid_drop_eof_gates() -> 
     assert len(frame) <= MAX_RUNNER_FRAME_BYTES
 
 
+def test_frame_collector_parses_complete_frames_before_bounding_residual_buffer() -> None:
+    collector = _ParentFrameCollector()
+    frame = encode_child_frame({"kind": "parent-fixture", "padding": "x" * 96})
+    frame_count = 1 + (65_536 // len(frame))
+    chunk = frame * frame_count
+    assert 32_768 < len(chunk) <= 65_536 + len(frame)
+
+    collector.feed(chunk)
+    collector.finish()
+
+    assert collector.sequence == frame_count
+    assert collector.dropped_count == 0
+    assert collector.partial_frame is False
+    assert collector.frames_eof is True
+
+
 @pytest.mark.parametrize("fault_point", [
     "runner_authority_after_evidence",
     "runner_authority_before_event",
