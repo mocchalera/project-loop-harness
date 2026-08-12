@@ -212,6 +212,16 @@ def test_sdist_manifest_and_ci_include_doc_contract_smoke() -> None:
     assert "python scripts/verify_sdist_contracts.py --dist-dir release-dist" in publish_workflow
 
 
+def test_dev_extra_declares_contract_test_dependencies_without_runtime_dependencies() -> None:
+    pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    project_section = pyproject.split("[project]", 1)[1].split("[project.urls]", 1)[0]
+    dev_extra = pyproject.split("dev = [", 1)[1].split("]", 1)[0]
+
+    assert "dependencies = []" in project_section
+    assert '"jsonschema>=4.18"' in dev_extra
+    assert '"referencing>=0.28.4"' in dev_extra
+
+
 def test_sdist_contains_profile_contracts_and_builtin_manifest(tmp_path: Path) -> None:
     dist_dir = tmp_path / "dist"
     _run(
