@@ -38,6 +38,7 @@ from .guarded_process import DEFAULT_MAX_OUTPUT_BYTES
 from .guards import require_initialized
 from .ids import next_prefixed_id
 from .paths import ProjectPaths
+from .prefixed_ids import increment_decimal_text
 from .project_config import finish_check_configuration
 from .route_overrides import recorded_route_context
 from .runner_observability import (
@@ -1314,9 +1315,7 @@ def _store_check_evidence(
         pre_verification = _verify_command_observability(command, root=paths.root)
         pre_verification_ok = pre_verification.get("ok") is True
         observability = command.get("observability")
-        evidence_id = next_prefixed_id(conn, "evidence", "E")
-        final_dir = paths.evidence_dir / "completion-checks" / evidence_id
-        final_dir.mkdir(parents=True, exist_ok=False)
+        evidence_id, final_dir = _reserve_completion_check_directory(paths, conn)
         for key in ("stdout_path", "stderr_path"):
             source = paths.root / str(command[key])
             destination = final_dir / source.name
@@ -1433,6 +1432,30 @@ def _store_check_evidence(
         )
         check_rows.append(check_payload)
     return check_rows
+
+
+def _reserve_completion_check_directory(
+    paths: ProjectPaths,
+    conn: sqlite3.Connection,
+) -> tuple[str, Path]:
+    evidence_id = next_prefixed_id(conn, "evidence", "E")
+    parent = paths.evidence_dir / "completion-checks"
+    parent.mkdir(parents=True, exist_ok=True)
+    for _ in range(10_000):
+        final_dir = parent / evidence_id
+        try:
+            final_dir.mkdir(exist_ok=False)
+        except FileExistsError:
+            prefix, suffix = evidence_id.split("-", 1)
+            evidence_id = (
+                f"{prefix}-{increment_decimal_text(suffix).zfill(max(4, len(suffix)))}"
+            )
+            continue
+        return evidence_id, final_dir
+    raise DataStoreError(
+        "Could not reserve a collision-free completion check Evidence directory.",
+        details={"failure_kind": "completion_check_evidence_id_exhausted"},
+    )
 
 
 def _commit_runner_authority_for_check(

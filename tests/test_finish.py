@@ -764,6 +764,40 @@ def test_finish_actual_summary_is_compact_and_preserves_durable_proof(
     assert len(json.dumps(finish, ensure_ascii=False).encode("utf-8")) <= 16_384
 
 
+def test_finish_preserves_rolled_back_check_directory_and_allocates_next_id(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    _create_packet_project(tmp_path, capsys)
+    retained = (
+        tmp_path
+        / ".project-loop"
+        / "evidence"
+        / "completion-checks"
+        / "E-0001"
+    )
+    retained.mkdir(parents=True)
+    marker = retained / "retained.txt"
+    marker.write_text("prior rolled-back finish\n", encoding="utf-8")
+
+    assert main([
+        "--root", str(tmp_path), "finish", "--emit-packet",
+        "--task", "T-0001", "--json",
+    ]) == 0
+    finish = _finish_payload(capsys)
+
+    assert marker.read_text(encoding="utf-8") == "prior rolled-back finish\n"
+    assert finish["checks"][0]["evidence_id"] == "E-0002"
+    assert (
+        tmp_path
+        / ".project-loop"
+        / "evidence"
+        / "completion-checks"
+        / "E-0002"
+        / "result.json"
+    ).is_file()
+
+
 def test_finish_persists_final_runner_observability_references_and_hashes(
     tmp_path: Path, capsys
 ) -> None:
