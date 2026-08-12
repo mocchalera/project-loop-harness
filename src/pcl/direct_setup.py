@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import sys
 from typing import Any
 import uuid
 
@@ -47,6 +48,12 @@ def commit_direct_setup(
     _require_bound_root(spec, paths, phase="before_authoritative_connection")
     mutation_paths = spec.root_binding.bound_paths()
     conn = connect_mutation(mutation_paths, exclusive=True)
+    if _requires_original_path_binding_at_commit(mutation_paths):
+        conn._precommit_guard = lambda: _require_bound_root(
+            spec,
+            paths,
+            phase="physical_commit",
+        )
     try:
         _require_bound_root(spec, paths, phase="authoritative_admission")
         admission_now = utc_now_iso()
@@ -310,6 +317,13 @@ def _require_bound_root(
             "phase": phase,
             "root": str(paths.root),
         },
+    )
+
+
+def _requires_original_path_binding_at_commit(paths: ProjectPaths) -> bool:
+    return (
+        sys.platform.startswith("linux")
+        and paths.retained_root_descriptor is not None
     )
 
 

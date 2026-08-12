@@ -758,6 +758,41 @@ def test_direct_spec_detects_parent_swap_and_same_inode_overwrite(
     assert overwrite.value.details["reason"] == "leaf_identity_or_bytes_changed"
 
 
+def test_retained_root_reader_reopens_components_from_descriptor(
+    tmp_path: Path,
+) -> None:
+    from pcl.direct_spec import load_direct_spec, secure_read_project_artifact
+
+    target = tmp_path / "target"
+    displaced = tmp_path / "displaced"
+    artifact = target / "artifacts" / "acceptance.txt"
+    artifact.parent.mkdir(parents=True)
+    artifact.write_text("verified acceptance\n", encoding="utf-8")
+    _write_spec(target)
+    document = load_direct_spec(ProjectPaths(root=target), "direct-spec.json")
+    try:
+        bound_paths = document.root_binding.bound_paths()
+        assert (
+            bound_paths.retained_root_descriptor
+            == document.root_binding.descriptor
+        )
+        assert bound_paths.retained_root_identity == document.root_binding.identity
+        target.rename(displaced)
+
+        content, second_binding = secure_read_project_artifact(
+            bound_paths,
+            "artifacts/acceptance.txt",
+            max_bytes=65_536,
+        )
+        try:
+            assert content == b"verified acceptance\n"
+            assert second_binding.identity == document.root_binding.identity
+        finally:
+            second_binding.close()
+    finally:
+        document.close()
+
+
 def test_direct_spec_enforces_exact_depth_and_node_boundaries(
     tmp_path: Path,
     capsys,
@@ -920,6 +955,12 @@ def test_direct_setup_root_capability_spans_commit_projection_and_tail(
     elif barrier == "after_precommit_check":
         original_require = direct_setup_module._require_bound_root
 
+        monkeypatch.setattr(
+            direct_setup_module,
+            "_requires_original_path_binding_at_commit",
+            lambda paths: True,
+        )
+
         def require_then_swap(spec_document, paths, *, phase):
             original_require(spec_document, paths, phase=phase)
             if phase == "before_authoritative_commit":
@@ -959,9 +1000,11 @@ def test_direct_setup_root_capability_spans_commit_projection_and_tail(
 
     assert stderr == ""
     assert swapped is True
-    if barrier in {"before_db_connect", "after_db_connect"}:
+    if barrier in {"before_db_connect", "after_db_connect", "after_precommit_check"}:
         assert status == 1
         assert result["error"]["code"] == "direct_setup_root_changed"
+        if barrier == "after_precommit_check":
+            assert result["error"]["details"]["phase"] == "physical_commit"
         assert _counts(displaced) == target_before
         assert _counts(target) == replacement_before
         return

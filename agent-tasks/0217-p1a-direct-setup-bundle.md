@@ -61,6 +61,14 @@ root-file-identity-bound exact-target recovery plan. Renderer capabilities now
 bind project-root, loop-directory, and open lock-file identities plus issuing
 process/thread and live registry ownership.
 
+The v0.6.0 clean-Linux release repair additionally records that the
+standard-library SQLite VFS canonicalizes `/proc/self/fd` before rollback-journal
+management. Linux therefore repeats the requested-root identity check in the
+physical commit guard; a rebind after the service-level precommit check is a
+typed, fully rolled-back `direct_setup_root_changed`. This approved fail-closed
+boundary narrows availability without weakening retained-root or replacement-root
+isolation.
+
 ## Failure and recovery
 
 - Parse, admission, collision, or pre-commit helper failure rolls the complete

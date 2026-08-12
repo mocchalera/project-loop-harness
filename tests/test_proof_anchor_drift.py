@@ -812,7 +812,9 @@ def test_current_proof_snapshot_invariant_remains_a_sanitized_hard_error(
 
 
 @pytest.mark.skipif(os.name != "posix", reason="C6 is POSIX-only")
-def test_genuine_hot_rollback_journal_reports_numeric_776(tmp_path: Path) -> None:
+def test_genuine_hot_rollback_journal_is_classified_on_python310_and_newer(
+    tmp_path: Path,
+) -> None:
     db_path = tmp_path / "hot.db"
     conn = sqlite3.connect(db_path)
     try:
@@ -845,7 +847,9 @@ def test_genuine_hot_rollback_journal_reports_numeric_776(tmp_path: Path) -> Non
     assert db_path.with_name(db_path.name + "-journal").exists()
     with pytest.raises(sqlite3.OperationalError) as exc_info:
         _open_pinned_read_snapshot(db_path)
-    assert getattr(exc_info.value, "sqlite_errorcode", None) == 776
+    error_code = getattr(exc_info.value, "sqlite_errorcode", None)
+    if error_code is not None:
+        assert error_code == 776
     assert _classify_sqlite_error(exc_info.value) == "drift_database_recovery_required"
 
 

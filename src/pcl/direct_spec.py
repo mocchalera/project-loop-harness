@@ -81,7 +81,11 @@ class DirectSpecRootBinding:
                 code="direct_spec_path_changed",
                 details={"reason": "root_binding_identity_changed"},
             )
-        return ProjectPaths(root=root)
+        return ProjectPaths(
+            root=root,
+            retained_root_descriptor=self.descriptor,
+            retained_root_identity=self.identity,
+        )
 
     def repository_revision(self) -> str | None:
         if self._closed:
@@ -223,7 +227,7 @@ def _secure_read_project_file(
     descriptors: list[int] = []
     links: list[tuple[int, str, tuple[int, int, int]]] = []
     try:
-        root_fd = os.open(paths.root, directory_flags)
+        root_fd = _open_verified_root(paths, directory_flags=directory_flags)
         descriptors.append(root_fd)
         root_stat = os.fstat(root_fd)
         if not stat.S_ISDIR(root_stat.st_mode):
@@ -300,7 +304,11 @@ def _secure_read_project_file(
                     details={"reason": "directory_component_changed"},
                 )
         try:
-            current_root = os.stat(paths.root, follow_symlinks=False)
+            current_root = (
+                os.fstat(root_fd)
+                if paths.retained_root_descriptor is not None
+                else os.stat(paths.root, follow_symlinks=False)
+            )
         except OSError as exc:
             raise DirectSpecError(
                 "Project root changed while the Direct spec was read.",
@@ -344,6 +352,55 @@ def _secure_read_project_file(
                 os.close(descriptor)
             except OSError:
                 pass
+
+
+def _open_verified_root(paths: ProjectPaths, *, directory_flags: int) -> int:
+    retained = paths.retained_root_descriptor
+    if retained is None:
+        return os.open(paths.root, directory_flags)
+    expected = paths.retained_root_identity
+    if expected is None:
+        raise DirectSpecError(
+            "Retained project-root identity is unavailable.",
+            code="direct_spec_path_changed",
+            details={"reason": "root_binding_identity_missing"},
+        )
+    try:
+        held = os.fstat(retained)
+        current = os.stat(paths.root, follow_symlinks=True)
+    except OSError as exc:
+        raise DirectSpecError(
+            "Retained project-root binding cannot be verified.",
+            code="direct_spec_path_changed",
+            details={"reason": "root_binding_unresolved"},
+        ) from exc
+    if (
+        not stat.S_ISDIR(held.st_mode)
+        or _directory_identity(held) != expected
+        or _directory_identity(current) != expected
+    ):
+        raise DirectSpecError(
+            "Retained project-root binding changed.",
+            code="direct_spec_path_changed",
+            details={"reason": "root_binding_identity_changed"},
+        )
+    try:
+        root_fd = os.dup(retained)
+        duplicated = os.fstat(root_fd)
+    except OSError as exc:
+        raise DirectSpecError(
+            "Retained project-root binding could not be duplicated.",
+            code="direct_spec_path_changed",
+            details={"reason": "root_binding_dup_failed"},
+        ) from exc
+    if _directory_identity(duplicated) != expected:
+        os.close(root_fd)
+        raise DirectSpecError(
+            "Retained project-root binding changed.",
+            code="direct_spec_path_changed",
+            details={"reason": "root_binding_identity_changed"},
+        )
+    return root_fd
 
 
 def _validate_relative_path(relative_path: str) -> tuple[str, ...]:

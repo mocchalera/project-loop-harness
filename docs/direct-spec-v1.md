@@ -27,8 +27,12 @@ commit, projection, and the optional mutation tail. Linux uses a verified
 revision child; Darwin uses the descriptor's stable `/.vol/<device>/<inode>`
 file-ID path. The DB, projector, and tail never resolve the original requested
 path again. A rename or replacement before the final pre-commit identity check
-fails closed; after that check, the operation remains authoritative for the
-retained root and cannot commit a second bundle to a same-named replacement.
+fails closed. On Linux, the standard-library SQLite VFS canonicalizes the
+descriptor proxy before opening its rollback journal, so Direct Setup repeats
+the requested-root identity check in the physical commit guard. A rebind in
+that interval rolls the transaction back with `direct_setup_root_changed`;
+it never commits to a same-named replacement. After a successful physical
+commit, projection and tail remain authoritative for the retained root.
 Platforms without those capabilities fail closed.
 
 The raw and canonical JSON representations are each limited to 65,536 bytes.

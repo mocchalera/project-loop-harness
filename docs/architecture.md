@@ -110,7 +110,11 @@ performs schema-8/integrity/event/outbox/active-work admission in the same
 primary key is the idempotency anchor; the event and Evidence carry the same
 hash-bound receipt. The former 48-bit form is an exact-singleton, fully
 verified legacy-retry read path only. No new schema or uniqueness table is
-required.
+required. Because Linux SQLite canonicalizes `/proc/self/fd` before managing a
+rollback journal, its mutation connection also repeats the original-root
+identity check immediately inside the physical commit guard. A pathname rebind
+there is a typed, rolled-back `direct_setup_root_changed`, not a retained-root
+success claim or a write to the replacement root.
 
 After a successful Direct commit, validation and exact-target routing are
 read-only and checked against one event high-watermark. Canonical rendering is

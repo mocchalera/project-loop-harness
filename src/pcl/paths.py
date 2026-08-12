@@ -1,12 +1,18 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 
 @dataclass(frozen=True)
 class ProjectPaths:
     root: Path
+    retained_root_descriptor: int | None = field(default=None, compare=False, repr=False)
+    retained_root_identity: tuple[int, int, int] | None = field(
+        default=None,
+        compare=False,
+        repr=False,
+    )
 
     @property
     def loop_dir(self) -> Path:
