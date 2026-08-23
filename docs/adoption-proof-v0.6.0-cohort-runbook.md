@@ -13,10 +13,28 @@ wins.
 - Artifact: `project_loop_harness-0.6.0-py3-none-any.whl` from PyPI
 - SHA-256: `4857355d108f720feb93497dc17ae53bb9b7502f4549a0f26c1a97cfa655137d`
 - Freeze record: `docs/evidence/0248-v060-public-candidate-freeze.md`
+- Human authorization record: `docs/evidence/0249-issue2-v060-human-authorization.md`
 
 The operator hands every participant the same wheel file plus the README.
 Installing from a local wheel file (not an unpinned index install) keeps the
 observed artifact identical to the frozen hash.
+
+## Launch authorization (recorded)
+
+The human gate was received in Cockpit and is recorded in the linked
+authorization receipt:
+
+- Event: `cockpit.ask.resolved`
+- Ask ID: `ask_3c2f9f5cbe18`
+- Answered by: `user`
+- Frozen candidate: `v0.6.0 を承認` — the frozen candidate above is approved.
+- Recruitment/invites: `招待先を後で決める` — participant identities and invite
+  destinations remain intentionally undecided; recruitment has not started.
+- Live observation owner: `自分が観測` — the answering user owns observation.
+- Day-7 follow-up owner: `自分が追跡` — the answering user owns the follow-up.
+
+This authorizes the cohort launch state only. It is not participant, adoption,
+threshold, reuse, or roadmap evidence.
 
 ## Five slots
 
@@ -30,6 +48,8 @@ observed artifact identical to the frozen hash.
 
 At least three distinct families must be filled for the diversity gate; slots
 4–5 are intentionally flexible so recruitment does not stall on family quotas.
+The `AP-001`–`AP-005` labels are reserved protocol slots, not participant
+records; do not populate them with placeholder identities or contact data.
 
 ### Slot eligibility checklist (verify before accepting a participant)
 
@@ -134,15 +154,15 @@ final roadmap decision — continue, change the onboarding path, or stop /
 deprioritize the adoption claim — links to this evidence and is recorded by a
 human, not inferred by the evaluator.
 
-## Human decisions required before recruitment begins
+## Remaining gate (Issue #2 remains open)
 
-Only these; nothing broader:
+No participant records have been collected. No repository families, observed
+results, threshold outcomes, day-7 reuse outcomes, or roadmap decision may be
+claimed. The frozen evaluator thresholds and candidate identity remain
+unchanged.
 
-1. Approve this candidate freeze (`v0.6.0-pypi`, SHA-256 above) or name a
-   different artifact to freeze instead.
-2. Approve the invitation channel and the specific five invitees (the kit's
-   invitation draft text is ready; sending it is a human action).
-3. Name the observer for sessions where the maintainer is also the operator,
-   so intervention counting stays honest.
-4. Confirm who owns the day-7 follow-up messages and when the records
-   directory becomes reviewable.
+The exact next gate is to select five genuine first-time, non-maintainer
+participants spanning at least three repository families. After that selection,
+use the existing [participant kit](adoption-proof-v0.5.2-participant-kit.md)
+and this runbook, then collect only sanitized `adoption-observation/v1` records.
+Do not create participant records or contact data before that gate.
