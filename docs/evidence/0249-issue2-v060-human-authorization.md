@@ -24,8 +24,8 @@ not record an adoption outcome or close Issue #2. Zero participant records have
 been collected. No repository families, observed results, threshold outcomes,
 day-7 reuse outcomes, or roadmap decision may be claimed.
 
-The frozen candidate identity, evaluator thresholds, observation schema,
-participant kit, and runbook are unchanged. This receipt creates no participant
+The frozen thresholds, observation schema, candidate identity, privacy boundary,
+and fail-closed semantics remain unchanged. This receipt creates no participant
 record and contains no participant identity or contact data.
 
 ## Exact next gate
