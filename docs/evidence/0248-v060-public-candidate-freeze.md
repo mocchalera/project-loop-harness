@@ -63,7 +63,9 @@ the network once, up front, and its outputs are pinned here.
   digest, so this document is the first durable in-repo freeze of the public
   candidate identity.
 - The frozen protocol in `docs/adoption-proof-v0.5.2.md` and its participant
-  kit are unchanged. Thresholds, schema, and evaluator behavior are untouched.
+  kit are unchanged. Thresholds and schema remain unchanged; at `6655cb6`, the
+  evaluator now enforces gates for the frozen candidate, five participant
+  slots, day-7 responses, and terminal setup failures.
 
 ## Boundaries and residual risk
 
