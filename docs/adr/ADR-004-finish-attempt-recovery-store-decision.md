@@ -106,7 +106,8 @@ impossible for process loss to fabricate a `COMPLETED_*` outcome.
 - [ ] Authority boundary accepted (Evidence-only truth; advisory markers).
 - [ ] V1 scope accepted: advisory + read-only inspect only; enforcement,
       discard, audit integration explicitly deferred (§5).
-- [ ] Liveness truth table (design §5), including child-group rule R7 and
-      boot/clock/PID-reuse rows, judged sound.
+- [ ] Liveness truth table (design §5), including the child-group rule
+      (retry-safe requires reboot proof or a non-null recorded pgid probed
+      absent) and the gate/matrix precedence, judged sound.
 - [ ] Numeric retention bounds and operator-executed cleanup accepted.
 - [ ] Task breakdown (`agent-tasks/0227`) approved before implementation.

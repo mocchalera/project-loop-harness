@@ -121,61 +121,68 @@ guessed, never auto-deleted.
 |---|---|---|---|---|
 | F1 | Terminal disconnect (SIGHUP/closed pipe) | Stream truncates | Marker residue unless orderly exit | Liveness table (§5) |
 | F2 | Parent crash / `kill -9` / OOM mid-run | Nothing durable; possible dangling check Evidence | Marker preserved; **child group may still run** | `indeterminate` while pgid alive; `stale_interrupted` once provably gone |
-| F3 | Host restart | Same as F2; temp clones cleared by OS | Stored boot-id mismatch proves restart; children cannot survive it | `stale_interrupted` (§5 row R5) |
+| F3 | Host restart | Same as F2; temp clones cleared by OS | Stored boot-id mismatch proves restart; children cannot survive it | `stale_interrupted` (§5 gate G4) |
 | F4 | Child check exits nonzero / crashes | Guarded executor records failure; INCOMPLETE packet committed, exit 1 | Unchanged; marker unlinked after outcome commit | Historical packet lookup |
 | F5 | Child check timeout | `timeout_recovery` steps → INCOMPLETE_VALIDATION packet | Unchanged | Existing `pcl next` route |
 | F6 | Whole-run supervisor timeout (parent killed) | = F2 | = F2 | §5 |
 | F7 | Stale residue found later | Undetectable | Classified + retention-reported; operator cleans per §9 | `stale_interrupted`/`unreadable` |
-| F8 | Readiness drift between commits (non-crash) | Outcome tx rolls back; check Evidence dangles **invisibly, today** | Same rollback; inspect lists dangling rows | Target-wide listing (§6.3) |
+| F8 | Readiness drift between commits (non-crash) | Outcome tx rolls back; check Evidence dangles **invisibly, today** | Same rollback; inspect lists dangling rows | Target-wide listing (§6.2) |
 | F9 | Concurrent finishes, same target | Both execute checks wastefully; commit-time freshness checks preserve correctness | Unchanged; both markers listed independently, no election | Two marker entries |
 | F10 | Concurrent finishes, different targets | Works | Unchanged | Independent entries |
 | F11 | Disk full/EACCES on marker write | n/a | **Degraded, not fatal:** run continues with status-quo invisibility (§7.2) | No marker |
 
-## 5. Liveness classification — exhaustive truth table
+## 5. Liveness classification — deterministic truth table
 
-Signals: `H` = heartbeat freshness (`now − heartbeat_at` vs TTL 120 s);
-`B` = stored boot-id vs current boot-id; `P` = parent pid probe with
-process-start identity when the platform exposes it (Linux `/proc/<pid>/stat`
-starttime; elsewhere unavailable ⇒ `?`); `C` = recorded child-pgid probe
-(`killpg(pgid, 0)`; empty between checks). Classification is advisory and
-fail-closed: every ambiguity lands in `indeterminate`.
+Signals: `H` = heartbeat age (`now − heartbeat_at`, seconds); `B` = stored
+boot-id vs current boot-id; `P` = parent probe (`dead` = pid absent;
+`reused` = alive but process-start identity mismatches — Linux
+`/proc/<pid>/stat` starttime, else platform-unavailable; `alive` = alive with
+matching identity; `unknown` = probe error or identity unavailable);
+`C` = recorded child-group probe (`absent` = **non-null recorded pgid**
+positively probed absent via `killpg(pgid, 0)` → ESRCH; `alive` = probed
+present, including EPERM (exists but unsignalable); `error` = unexpected
+probe failure; `unrecorded` = null/no pgid in the last heartbeat).
 
 Constants (module-level, not flags):
 `FINISH_LEASE_HEARTBEAT_SECONDS = 30`,
 `FINISH_LEASE_STALE_AFTER_SECONDS = 120`,
 `FINISH_LEASE_CLOCK_SKEW_SECONDS = 5`.
 
-| Row | Marker readable | H (vs TTL) | B | P | C | State | Rationale |
-|---|---|---|---|---|---|---|---|
-| R0 | no | — | — | — | — | *(no marker)* | Nothing to classify; target-wide sections still apply (§6.2) |
-| R1 | invalid JSON / bad schema / unknown version | — | — | — | — | `unreadable` | Never guessed; human review |
-| R2 | yes | fresh (0 ≤ age ≤ TTL) | * | * | * | `running_live` | Writer demonstrably wrote ≤ TTL ago; overrides all other signals |
-| R3 | yes | **future** (`age < −skew`) | * | * | * | `indeterminate` | Clock regression; refuse to trust |
-| R4 | yes | stale | match | alive, identity matches | * | `indeterminate` | Owner alive but stopped beating (SIGSTOP/hang) |
-| R5 | yes | stale | **mismatch** (restart proven) | n/a | n/a | `stale_interrupted` | Host restarted: parent and children both gone regardless of probes |
-| R6 | yes | stale | match | dead | gone/none | `stale_interrupted` | Owner gone, no child work outstanding |
-| R7 | yes | stale | match | dead | **alive** | `indeterminate` | Critical case: children may still be executing; never retry-safe |
-| R8 | yes | stale | match | alive, **identity mismatch** (pid reused) | gone/none | `stale_interrupted` | Reuse proves original owner dead; children checked separately |
-| R9 | yes | stale | match | alive, identity mismatch | alive | `indeterminate` | Original owner dead, child group outstanding |
-| R10 | yes | stale | match | alive, identity `?` (platform) | * | `indeterminate` | Cannot exclude pid reuse |
-| R11 | yes | stale | match | dead | none recorded (between checks) | `stale_interrupted` | Sequential checks: no child was running at last heartbeat |
-| R12 | yes | stale | unknown on either side (stored null/corrupt **or** current unreadable/error) | gone (dead or reused) + C gone/none | — | `stale_interrupted` | Under either boot hypothesis (same boot: probes dead; prior boot: restart killed all) nothing runs |
-| R13 | yes | stale | unknown on either side (stored null/corrupt **or** current unreadable/error) | alive or C alive | * | `indeterminate` | Something is running and identity is uncertain |
+**Precedence (frozen, top-down, first match wins):**
 
-Rules behind the table (normative):
+| Gate | Condition | State |
+|---|---|---|
+| G1 | Marker invalid JSON / schema-invalid / unknown version | `unreadable` |
+| G2 | `-skew ≤ H ≤ FINISH_LEASE_STALE_AFTER_SECONDS` (fresh window includes small negative jitter) | `running_live` |
+| G3 | `H < -skew` (future beyond skew) | `indeterminate` |
+| G4 | B readable both sides and **mismatched** (host restart proven; parent and children cannot survive) | `stale_interrupted` |
+| G5 | otherwise (stale heartbeat, boot same or unknown-on-either-side) → matrix below | per cell |
 
-- Fresh heartbeat wins (R2) because only a live writer produces it.
-- Restart proven (R5) short-circuits everything: processes cannot survive a
-  reboot.
-- Parent-death alone never yields `stale_interrupted` (R7/R9): the child
-  group must be probed. Only the **last heartbeat’s** pgid is considered,
-  and only within the same boot.
-- Boot-id unknown (stored null/corrupt or current read error) collapses to
-  the hypothesis union: if every plausibly-running thing is provably absent,
-  `stale_interrupted`; otherwise `indeterminate` (R12/R13).
-- `stale_interrupted` is the **only** state whose guidance may say
-  “retrying finish is safe”; even then the guidance notes that a fresh run
-  neither resumes nor cleans the old attempt (§7).
+**Stale-phase matrix** — states by `P` × `C`; boot-unknown evaluates the same
+matrix (under either boot hypothesis the conclusions hold):
+
+| P \ C | `absent` | `alive` | `error` | `unrecorded` |
+|---|---|---|---|---|
+| `dead` | `stale_interrupted` | `indeterminate` | `indeterminate` | `indeterminate` |
+| `reused` | `stale_interrupted` | `indeterminate` | `indeterminate` | `indeterminate` |
+| `alive` | `indeterminate` | `indeterminate` | `indeterminate` | `indeterminate` |
+| `unknown` | `indeterminate` | `indeterminate` | `indeterminate` | `indeterminate` |
+
+Normative rules:
+
+- **Retry-safe (`stale_interrupted`) requires reboot proof (G4) OR a
+  non-null recorded pgid positively probed absent (matrix cells
+  `dead/reused × absent`).** Every null, unrecorded, errored, or EPERM-blind
+  child-group observation is `indeterminate`.
+- Parent-death alone never yields `stale_interrupted`; sequential-check gaps
+  (`unrecorded`) are uncertainty, not absence.
+- Fresh heartbeats win because only a live writer produces them;
+  future-beyond-skew heartbeats are untrustworthy.
+- Only `stale_interrupted` guidance may say “retrying finish is safe”, and it
+  must still note that a new run neither resumes nor cleans the old attempt
+  (§7).
+- Inspect echoes the winning gate/cell id as `truth_table_row`
+  (e.g. `G2`, `G4`, `M(dead,alive)`).
 
 ## 6. Frozen public contract: `pcl attempts inspect`
 
@@ -208,7 +215,7 @@ usage only. Contract: `finish-attempt-inspect/v1`; schema
       "token": "FL-0f1e2d3c4b5a6978",
       "marker_path": ".project-loop/finish-attempts/task-T-0151-FL-0f1e2d3c4b5a6978.json",
       "state": "indeterminate",
-      "truth_table_row": "R7",
+      "truth_table_row": "M(dead,alive)",
       "target": {"type": "task", "id": "T-0151"},
       "started_at": "2026-08-23T09:00:00Z",
       "last_heartbeat_at": "2026-08-23T09:04:30Z",
@@ -273,27 +280,31 @@ clock otherwise).
 
 | ID | Setup | Expected |
 |---|---|---|
-| PF-1 | Live marker (fresh heartbeat, own pid) | `running_live` (R2) |
-| PF-2 | Stale marker; pid dead; pgid gone | `stale_interrupted` (R6); retry-safe guidance |
-| PF-3 | Stale marker; pid dead; **recorded pgid alive** (probe faked via holder process) | `indeterminate` (R7); child-group guidance; no retry-safe claim |
-| PF-4 | Stale marker; pid alive but start-identity mismatches | R8/R9 split by pgid |
-| PF-5 | Stale marker; `heartbeat_at` 60 s in the future | `indeterminate` (R3) |
-| PF-6 | Stale marker; stored boot-id ≠ current | `stale_interrupted` (R5) |
+| PF-1 | Live marker (fresh heartbeat, own pid) | `running_live` (G2) |
+| PF-2 | Stale marker; pid dead; recorded pgid probed absent | `stale_interrupted` (`M(dead,absent)`); retry-safe guidance |
+| PF-3 | Stale marker; pid dead; **recorded pgid alive** (probe faked via holder process) | `indeterminate` (`M(dead,alive)`); child-group guidance; no retry-safe claim |
+| PF-4a | Stale marker; pid alive but start-identity mismatches; recorded pgid probed absent | `stale_interrupted` (`M(reused,absent)`) |
+| PF-4b | Same, recorded pgid alive | `indeterminate` (`M(reused,alive)`) |
+| PF-5 | Stale marker; `heartbeat_at` 60 s in the future | `indeterminate` (G3); `-5 ≤ age < 0` variant stays G2-live |
+| PF-6 | Stale marker; stored boot-id ≠ current | `stale_interrupted` (G4) |
 | PF-7 | Two markers, same target, one live one stale | Both listed; counts correct; no election |
-| PF-8 | Marker aged > 14 d + orphan-looking stage dir refs | `retention.over_horizon_markers` populated; cleanup is doc pointer |
+| PF-8 | Marker aged > 14 d + orphan-looking stage dir refs | `retention.over_horizon_markers` populated; referenced dirs of protected markers excluded; cleanup is doc pointer |
 | PF-9 | Committed packet + unrelated stale marker | Packet appears under `committed_outcomes`; marker classified on its own; **no linkage claimed** |
+| PF-10 | Post-spawn marker rewrite fails (FP-7), parent then dies abruptly, check child survives | Last heartbeat has null pgid ⇒ `M(dead,unrecorded)` = `indeterminate`; **never retry-safe despite nothing recorded** |
+| PF-11 | Binding-source mapping: four runs with `--task`, goal-driven `--goal`, goal-backed `--run`, implicit selection | Marker/inspect `target_source` = `explicit`, `explicit`, `resolved`, `resolved` respectively |
 | NF-1 | Corrupt JSON marker | `unreadable`; exit 0 |
 | NF-2 | Unknown `contract_version` | `unreadable` with version class |
 | NF-3 | Uninitialized project | exit 2 usage |
 | NF-4 | Marker create fails (injected ENOSPC) during finish | Run proceeds normally; result JSON unchanged; no marker left |
-| NF-5 | Unexpected exception after first check spawn | Marker preserved (see fault point FP-6) |
+| NF-5 | Unexpected exception after first check spawn | Marker preserved (FP-6) |
 | NF-6 | `inspect --target T-9999` (unknown) | Empty sections, exit 0 |
 
-**Identical-corpus packaging gate:** the same corpus executes through the
-CLI three ways — (a) source checkout (`PYTHONPATH=src`), (b) built wheel
-installed into an ephemeral venv, (c) built sdist both installed and
-extracted-and-run — and the three payload sets are byte-identical after the
-two declared normalizations. Schemas ship via the existing
+**Identical-corpus packaging gate:** the same PF/NF corpus executes through
+the CLI on **four surfaces** — (a) source checkout (`PYTHONPATH=src`),
+(b) installed wheel (ephemeral venv), (c) installed sdist (pip-installed from
+the built tar.gz), (d) extracted-and-run sdist (unpack the tar.gz, run
+against the extracted tree) — and all four payload sets are byte-identical
+after the two declared normalizations. Schemas ship via the existing
 `contracts/schemas/*.json` package-data glob (`pyproject.toml`), asserted
 present in wheel and sdist following the `completion-packet-v1.schema.json`
 test pattern.
@@ -318,14 +329,25 @@ degrade (caught, counted, gaps visible later as stale classification).
 Fail-closed direction is preserved: degradation can only reduce visibility,
 never fabricate proof or alter outcomes.
 
-### 7.3 Heartbeat mechanics
+### 7.3 Heartbeat mechanics and the post-spawn pgid callback
 
 A finish-local ticker mirrors `FinishProgressReporter` mechanics: injectable
 clock/sink, bounded join (≤2 s) on every exit path, swallowed-and-counted
 exceptions, no subprocess ownership. Updates land at check boundaries, phase
-transitions, and the 30 s cadence; each check-start update records that
-child’s `child_pgid` (available from the guarded executor) and clears it at
-check-finish. Runs regardless of `--progress`.
+transitions, and the 30 s cadence; each update carries the current child’s
+pgid when one is running.
+
+Smallest immediate post-spawn callback contract (frozen): add one optional
+parameter `on_spawn: Callable[[int], None] | None = None` to
+`execute_planned_guarded_command`, invoked **synchronously exactly once,
+immediately after successful `Popen` + `os.getpgid(process.pid)`**, before any
+output capture or waiting. The lease layer’s callback persists the pgid via
+one atomic marker rewrite and returns; callback exceptions and rewrite
+failures are swallowed-and-counted (the marker keeps its previous value — a
+null pgid classifies as uncertainty per §5, never as absence). If `getpgid`
+itself fails at spawn, the executor invokes nothing and the marker stays
+null. No other `guarded_process.py` behavior changes. The ticker runs
+regardless of `--progress`.
 
 ### 7.4 Unlink ordering (normative; rev-2 change)
 
@@ -370,34 +392,51 @@ token and never cleans predecessors.
   (`finish_repository.py@da59b06`); they surface only in the result’s
   `harness_local_state` presentation while in flight. Packet matching and
   race guards are unaffected.
-- **Target binding**: markers mirror resolved `--task/--goal/--run` bindings
-  using the current vocabulary `target_source: "explicit" | "resolved"`
-  (explicit flags vs routing-target fallback, `finish_execution.py@da59b06`);
-  implicit planner routing resolves identically before marker creation, so
-  every marker is target-bound.
+- **Target binding**: markers mirror resolved target selection using the
+  frozen vocabulary `target_source: "explicit" | "resolved"`
+  (`finish_execution.py@da59b06`). Exact mapping, fixture-frozen as PF-11:
+  `--task` ⇒ `explicit`; goal-driven `--goal` ⇒ `explicit`;
+  goal-backed `--run` ⇒ `resolved`; implicit newest-active-run /
+  open-goal / highest-priority-task selection ⇒ `resolved`
+  (only flag-driven task/goal binding emits `explicit`; everything else
+  falls through to the `resolved` default).
 - **Recovery playbook**: documentation-only routing addition shipped with
   implementation (operator flow: inspect → resolve children → optional
   verified cleanup → retry).
 
 ## 9. Retention, privacy, and operator cleanup (numeric bounds)
 
-All bounds are module constants (not flags); inspect reports them read-only.
-PLH ships **no destructive automation** in v1 — cleanup is operator-executed,
-with verification steps in the docs.
+All bounds are module constants (not flags); inspect reports candidates
+read-only. PLH ships **no destructive automation** in v1 — cleanup is
+operator-executed with a re-inspection verification loop.
 
-| Object | Location | Bound (default) | Verified cleanup |
-|---|---|---|---|
-| Lease markers | `.project-loop/finish-attempts/*.json` | age > **14 days** from `started_at`, or project total > **50** | `inspect` lists offenders (`retention`); operator confirms each is `stale_interrupted`/`unreadable` (never `running_live`/`indeterminate`), then deletes the listed paths (`rm .project-loop/finish-attempts/<file>`); `unreadable` requires human reading first |
-| Check stage dirs | `.project-loop/tmp/finish-checks-*` | age > **7 days** (dir mtime) | Marker files record their `stage_dir` basename; operator cross-checks the name against live markers’ references before `rm -rf` |
-| Isolated source clones | `$TMPDIR/pcl-finish-workspace-*` (system temp; outside the project) | age > **7 days** | Same reference check (clone root name recorded as `workspace_dir`); typically cleared by reboot; never auto-deleted |
+| Class | Constants | Candidate rule |
+|---|---|---|
+| Lease markers (`.project-loop/finish-attempts/*.json`) | `MARKER_RETENTION_DAYS = 14` (from `started_at`); `MARKER_COUNT_LIMIT = 50` project total | over-age, plus oldest-beyond-limit when over count |
+| Check stage dirs (`.project-loop/tmp/finish-checks-*`) | `STAGE_RETENTION_DAYS = 7` (dir mtime); `STAGE_COUNT_LIMIT = 20` | same |
+| Isolated source clones (`$TMPDIR/pcl-finish-workspace-*`, system temp) | `CLONE_RETENTION_DAYS = 7`; `CLONE_COUNT_LIMIT = 20` | same |
+
+Candidate lists are **deterministic**: sorted by (age descending, path
+ascending), reported in the inspect payload’s `retention` section.
+**Protection:** any stage dir or workspace clone whose name is referenced by
+a marker classified `indeterminate` or `unreadable` is excluded from
+candidate lists entirely — uncertain attempts never produce cleanup
+suggestions. Marker candidates themselves must additionally classify
+`stale_interrupted` (or be listed as `unreadable` flagged for human reading
+first); live/indeterminate markers are never candidates.
+
+Operator loop (documented, manual): run `pcl attempts inspect --json` →
+resolve every `indeterminate` marker first → delete exactly the listed
+candidate paths (`rm .project-loop/finish-attempts/<file>`,
+`rm -rf <stage-dir>` etc.) → rerun inspect and verify the retention lists are
+empty. Typically OS reboot clears system-temp clones.
 
 Privacy/redaction: enumerated fields only; no argv, env values, output, or
 secret-shaped strings (same rules as `finish-progress/v1`); hostname/PIDs/
 pgids are local-machine advisory data inside gitignored `.project-loop/`.
 Markers are ≤ 4 KiB (schema-bounded). Future export surfaces must exclude
 `.project-loop/finish-attempts/` by default (constraint noted in the schema
-header). Size bound justification: one live-class marker per running finish,
-residue bounded by the table above plus operator cleanup.
+header).
 
 ## 10. Why process loss cannot fabricate success
 
@@ -427,9 +466,9 @@ hides intent); mid-flight check resumption (ephemeral clone makes it
 dishonest); automatic retry/reap (issue non-goal); tokens inside packets
 (forces v2); scan-then-refuse leasing (TOCTOU-unsound election).
 
-Residual risks: wall-clock dependence (mitigated by R3/R5 and
+Residual risks: wall-clock dependence (mitigated by gates G3/G4 and
 fail-closed rows); pgid reuse within a boot (bounded by last-heartbeat
-recency; noted in guidance); platform-absent start identity forces R10
+recency; noted in guidance); platform-absent start identity forces the `unknown` parent row
 conservatism; B1-class power-loss between create and fsync loses one run’s
 visibility (correctness unaffected).
 
@@ -448,6 +487,7 @@ Existing machinery (`PCL_ENABLE_TEST_FAULTS=1` + exact
 | FP-4 `finish_lease_after_check_evidence_commit` | dangling rows listed target-wide; marker preserved |
 | FP-5 `finish_lease_after_outcome_commit_before_unlink` | outcome + marker coexist; no per-token attribution in payload |
 | FP-6 `finish_lease_post_start_unexpected_exception` | marker preserved (NF-5) |
+| FP-7 `finish_lease_post_spawn_rewrite_failure_parent_death` | rewrite fails at first post-spawn update, parent exits abruptly, child survives ⇒ marker pgid stays null; inspect = `M(dead,unrecorded)`, never retry-safe (PF-10) |
 
 Concurrency: barrier-synchronized same-target starts ⇒ both succeed, two
 distinct markers, both listed; different-target pairs independent;
