@@ -23,6 +23,7 @@ stable identifiers and accepted anchors only — never mutable status:
 | Field | Meaning |
 |---|---|
 | `issue` | GitHub issue number (mapping metadata, not an authority) |
+| `title_hint` | Optional non-empty display title hint used as mapping metadata; not lifecycle authority |
 | `anchors.agent_task_ids` | `agent-tasks/<id>-*` spec files that own the acceptance criteria |
 | `anchors.repo_paths` | Committed docs/source/evidence paths that anchor the work |
 | `acceptance_criteria_refs` | Accepted repo-local anchors for the issue's acceptance criteria |
