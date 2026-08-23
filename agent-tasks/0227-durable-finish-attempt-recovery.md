@@ -1,138 +1,126 @@
 # 0227 — Durable and resumable finish attempts after process loss
 
-Status: **blocked on design-gate acceptance** (ADR-004 +
-`docs/design-finish-attempt-recovery-v1.md`). Do not start any sub-task
-before the human gate records acceptance.
+Status: **blocked on design-gate acceptance** (ADR-004 rev 2 +
+`docs/design-finish-attempt-recovery-v1.md` rev 2). Do not start any
+sub-task before the human gate records acceptance.
 
 Priority: P1 · Milestone: post-v0.6.0 · Origin: GitHub Issue #3
 
 ## Problem
 
 `pcl finish --emit-packet` runs for minutes with no durable state until every
-check completes. Parent loss leaves operators unable to see, classify, or
-safely recover an attempt; readiness drift can already strand committed check
-Evidence invisibly today. The accepted design adds an advisory lease-marker
-layer plus read-only inspection and event-audited retirement, without a
-migration and without changing completion semantics.
+check completes; parent loss leaves nothing to inspect, and parent death does
+not stop the check process group. Readiness drift can already strand
+committed check Evidence invisibly. The accepted design adds advisory lease
+markers plus one read-only inspection command — no enforcement, no DB
+surface, no new exit codes.
 
 ## Scope
 
-Implement exactly the frozen contracts in
-`docs/design-finish-attempt-recovery-v1.md`: `finish-lease-marker/v1`,
-`finish-attempt-inspect/v1`, `finish-attempt-discard/v1`,
-`finish_attempt_discarded` event, soft-lease refusal
-(`finish_attempt_lease_live`, `finish_attempt_indeterminate`),
-fail-closed marker creation (`finish_lease_unavailable`), and the fault-point
-set listed in design §12.1.
+Implement exactly the frozen contracts in design rev 2:
+`finish-lease-marker/v1` (incl. `child_pgid`, `parent_start_identity`,
+`stage_dir`, `workspace_dir`, `target_source: explicit|resolved`),
+`finish-attempt-inspect/v1`, the §5 liveness truth table, §7.4 unlink
+ordering, §9 retention reporting, §6.3 fixture corpus with the identical
+source/wheel/sdist packaging gate.
 
 ## Invariants — what to protect
 
-- Completion decisions never read lease state: outcomes/transitions remain
-  exclusively inside the existing validated `BEGIN IMMEDIATE` commits with
-  freshness re-checks (design §10 T1–T4).
-- Outcome commits precede marker unlink; marker creation precedes check
-  execution; marker-create failure aborts before execution.
-- No-flag finish stdout JSON gains zero new fields from leasing; exit codes
-  unchanged except the two new pre-start refusals and the B0′ typed abort.
-- `--dry-run` and planner-mode finish create no markers; different-target
-  concurrency is never blocked.
-- No migration, no new dependency, no daemon, no packet/attempt contract
-  change; sanitization rules identical to `finish-progress/v1`.
-- No silent deletes: residue is classified and retired only via audited
-  discard.
+- Outcomes/transitions remain exclusively inside existing validated
+  `BEGIN IMMEDIATE` commits with freshness re-checks; no completion-decision
+  module imports lease state.
+- V1 adds zero DB writes/events, zero CLI behavior change to finish itself,
+  no refusal paths, no migration/dependency.
+- Marker unlink happens only at U1 (after outcome commit) or U2 (typed abort
+  before first check spawn); never a `finally` blanket; post-start exceptions
+  preserve the marker.
+- Parent dead + child group alive ⇒ `indeterminate`; only positive proof that
+  nothing runs yields retry-safe guidance.
+- No per-token attribution of Evidence/outcomes; target-wide sections only.
+- Degraded marker writes never abort a started run; sanitization identical to
+  `finish-progress/v1`.
 
-## Non-scope
+## Non-scope (deferred, each behind its own gate)
 
-Mid-flight check resumption; automatic retry/reap; MCP tools; `pcl next`
-routing hints beyond cut-line task T-H2; consolidating the two finish commit
-transactions; Windows support (runtime already requires `fcntl`).
+Per-target claim/election and refusal; marker-failure abort policy;
+discard/cancel mutation + audit event; audit anomalies; authoritative token
+anchors / per-token attribution; `pcl next` hints; MCP tools; consolidating
+the two finish commit transactions.
 
-## Sub-tasks (independently reviewable; each lands with its own tests)
+## Sub-tasks and dependency graph
 
-### T-A Contracts, schemas, fixtures — runtime-free
+```text
+T-A ──► T-B ──► T-C ──► T-F
+  │             T-C ──► T-D ──► T-E
+  └───────────────────────────▲  (E also needs A)
+```
+
+Each sub-task lands alone, green under the standard gate (`PYTHONPATH=src
+pytest`, `ruff check .`, `validate --strict --json`, `render --json`).
+
+### T-A Contracts, schemas, fixture corpus — runtime-free
 
 Files: `src/pcl/contracts/schemas/finish-lease-marker-v1.schema.json`,
-`finish-attempt-inspect-v1.schema.json`, `finish-attempt-discard/v1`
-validator module(s) under `src/pcl/contracts/`, fixture seeds under
-`tests/fixtures/`.
-
-Deliver: schemas (`additionalProperties: false`), Python validators in the
-existing fail-closed style, PF-1…PF-8 / NF-1…NF-9 fixture data, packaged-
-contract wheel/sdist assertions following the
-`completion-packet-v1.schema.json` pattern. Acceptance: schema validation
-tests green; full suite unaffected.
+`finish-attempt-inspect-v1.schema.json`, validator modules under
+`src/pcl/contracts/`, corpus seeds under
+`tests/fixtures/finish-attempts-corpus/` (PF-1…PF-9, NF-1…NF-6 inputs +
+expected payloads). Depends on: none. Acceptance: validators fail closed
+with path-addressed errors; schemas packaged via the existing
+`contracts/schemas/*.json` glob.
 
 ### T-B Lease-marker module
 
 New `src/pcl/finish_lease.py`: create (O_EXCL + fsync file/dir, collision
-retry-once), atomic heartbeat rewrite (tmp + `os.replace`), unlink,
-boot-id/PID probes, classification inputs, injected clock/filesystem for
-tests. Fault points `finish_lease_before_marker_write`,
-`finish_lease_after_marker_create`, `finish_lease_mid_heartbeat_replace`.
-Acceptance: unit tests cover every boundary table row B0–B2 and both
-refusal-relevant probes; constants not exposed as CLI flags.
+retry-once), atomic heartbeat rewrite (tmp + `os.replace`) carrying
+`child_pgid`, unlink helpers for U1/U2 call sites, boot-id/pid/start-identity/
+pgid probes, truth-table classifier, injected clock/filesystem. Fault points
+FP-1…FP-3. Depends on: T-A. Acceptance: unit tests enumerate every §5 row;
+degraded-create path proven non-fatal.
 
-### T-C Wire leasing into `emit_finish_packet`
+### T-C Wire markers into `emit_finish_packet`
 
-Files: `src/pcl/finish_execution.py`. Create strictly after the idempotent
-short-circuit/blocked-check gates and strictly before stage-dir/workspace
-preparation; ticker thread mirroring `FinishProgressReporter` mechanics
-(30 s cadence, bounded join, swallowed-and-counted failures); unlink after
-outcome commits in the existing finally scope; B0′ typed abort
-`finish_lease_unavailable`; soft-lease same-target refusal
-(NF-3/NF-6 fixtures). Fault point `finish_lease_after_check_evidence_commit`.
-Acceptance: no-progress baseline shape byte-identical; dry-run/planner create
-no markers; F9/F10 concurrency cases pass.
+Create at the §7.1 point; heartbeat ticker mirroring `FinishProgressReporter`
+mechanics (30 s cadence, bounded join, swallowed failures, records/clears
+child pgid); explicit U1 unlink after successful outcome commit and U2 unlink
+in the typed pre-spawn abort branch; degraded create failure (FP-1);
+post-start exceptions preserve the marker (FP-6/NF-5). Depends on: T-B.
+Acceptance: no-progress baseline byte-shape unchanged; dry-run/planner create
+no markers; concurrency case yields two independent same-target markers.
 
 ### T-D `pcl attempts inspect`
 
-Parser noun group (pattern of `audit`), read-only handler, classifier per
-design §5/§6.4 (identity → temporal → ambiguous correlation; dangling
-check-Evidence query bounded to 100). Exact-JSON tests against PF-1…PF-8;
-corrupt/unknown-version markers classify `unreadable` (NF-1/NF-2); exit
-semantics per §6.2. Acceptance: command opens read-only connections only
-(assertable via test double); no projector flush.
+Parser noun group (pattern of `audit`), read-only handler: truth-table
+classification with `truth_table_row` echoed, target-wide
+`uncommitted_check_evidence` + `committed_outcomes` sections, retention
+report, bounds/truncation/filter rules. Depends on: T-C (real residue to
+inspect). Acceptance: PF/NF corpus green from source; read-only connection
+assertable; no projector flush.
 
-### T-E `pcl attempts discard`
+### T-E Identical-corpus packaging gate
 
-Event-first ordering through the service layer + outbox
-(`finish_attempt_discarded` additive payload per design §6.3), then unlink;
-idempotent residue cleanup via target-bounded prior-event scan; live/
-indeterminate refusals; bulk `--stale` form; redaction + 500-char reason cap
-(NF-8). Fault point `finish_attempt_discard_after_event_commit`. Acceptance:
-discard-twice returns `changed:false` with no duplicate event; validate/render
-green with the new event type present.
+Build wheel + sdist, run the same corpus through source, installed wheel,
+and installed + extracted sdist; byte-compare after the two declared
+normalizations (`generated_at`, `heartbeat_age_seconds`); assert schema files
+present in wheel and sdist. Depends on: T-A, T-D. Acceptance: three-way
+byte-identical results in CI-runnable form.
 
-### T-F Failure-injection and concurrency suite
+### T-F Failure-injection suite
 
-Extend `tests/test_crash_concurrency.py` with the six design-§12.1 fault
-points (abrupt subprocess exits, barrier-synchronized races, no sleeps):
-durable-state assertions at B0–B6; N-writer same-target O_EXCL race;
-different-target pairing. Required on Linux per existing suite policy.
-Acceptance: suite timing-independent; audit check clean-or-classified after
-every injected death.
-
-### T-G Audit anomaly + documentation
-
-`stale_finish_attempt_marker` / unreadable-marker anomalies under
-`human_review` in `pcl audit check` (report-only, no delete), scoped-check
-compatible; docs: `docs/finish.md` leasing section, recovery-playbook routing
-row, data-model note, release-notes fragment. Acceptance: audit tests cover
-residue/unreadable classification; docs cross-link ADR-004 and the design.
-
-### T-H Cut-line items (drop without blocking acceptance)
-
-- T-H2: `pcl next` hint when a routed target has a live/indeterminate marker.
-- T-H3: MCP `attempts_inspect` tool over the frozen JSON contract.
+Extend `tests/test_crash_concurrency.py` with FP-4/FP-5 subprocess abrupt
+exits plus FP-1/FP-3 injections and the barrier-synchronized same-target /
+different-target concurrency cases. Depends on: T-C, T-D. Acceptance:
+timing-independent; audit check clean after every injected death; L-boundary
+durable states match §7.5.
 
 ## Acceptance criteria (whole task)
 
-- [ ] All frozen contracts from the design doc implemented with positive and
-      negative fixtures passing.
-- [ ] Design §10 proof assertions (T1–T4) exist as executable tests.
-- [ ] Full gate green on every sub-task commit: `PYTHONPATH=src pytest`,
-      `ruff check .`, `pcl validate --strict --json`, `pcl render --json`.
+- [ ] All frozen contracts implemented with PF/NF fixtures passing and the
+      three-way packaging gate green.
+- [ ] Design §10 proof assertions exist as executable tests.
+- [ ] Full gate green on every sub-task commit; no-progress finish result
+      byte-shape unchanged.
 - [ ] No migration added; `pcl migrate status` unchanged for existing
-      projects; old-binary compatibility notes updated if needed.
-- [ ] Backward-compat statement verified by tests: no-progress finish result
-      byte-shape unchanged except documented refusals.
+      projects.
+- [ ] Docs shipped: `docs/finish.md` marker note, recovery-playbook operator
+      flow (inspect → resolve children → verified cleanup → retry),
+      release-notes fragment.
