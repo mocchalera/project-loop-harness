@@ -4,7 +4,7 @@
 Read-only, offline, deterministic. PCL state stays authoritative; this script
 only projects repo-verifiable anchors plus optional local PCL state into
 issue-ready Markdown/JSON. It never writes to GitHub, never mutates PCL
-state, and refuses to write an artifact while error findings exist.
+state, and emits stdout only.
 
 Usage:
 
