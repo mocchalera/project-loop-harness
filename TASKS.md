@@ -232,7 +232,22 @@ Give these tasks to coding agents in this order:
 228. `agent-tasks/0223-p1c-proof-anchor.md` (P1-C C5 durable proof admission anchor and anchor-scoped authorization)
 229. `agent-tasks/0224-p1c-proof-anchor-drift.md` (P1-C C6 internal read-only local proof-anchor drift eligibility with all downstream rights false)
 230. `agent-tasks/0225-mainline-progress-guard.md` (v0.6.0 opt-in Mainline Progress Guard with schema-8 Event-derived lineage and cooperative stop/replan enforcement)
-231. `agent-tasks/0226-v060-release-preparation.md` (v0.6.0 proof-gated release preparation, exact-commit CI/publication chain, and public-install verification)
+231. `agent-tasks/0226-v060-release-preparation.md` (v0.6.0 published and publicly verified; exact-commit CI, Trusted Publishing, PyPI provenance/hashes, and public-install closeout)
+232. `agent-tasks/0227-durable-finish-attempt-recovery.md` (Issue #3 durable/resumable finish attempts: advisory lease markers with child-process-group liveness plus read-only `pcl attempts inspect`; no enforcement, no DB surface, no migration, no completion-semantics change; blocked on ADR-004 design-gate acceptance)
+
+### Current external adoption gate — GitHub Issue #2
+
+Issue #2 remains open. The frozen public `project-loop-harness==0.6.0` wheel
+(`4857355d108f720feb93497dc17ae53bb9b7502f4549a0f26c1a97cfa655137d`) was
+human-approved in Cockpit; the answering user owns live observation and day-7
+follow-up. Recruitment has not started because participant identities and invite
+destinations remain undecided. See the
+[cohort runbook](docs/adoption-proof-v0.6.0-cohort-runbook.md) and
+[authorization receipt](docs/evidence/0249-issue2-v060-human-authorization.md).
+The exact next gate is to select five genuine first-time non-maintainer
+participants across at least three repository families, then use the existing
+kit/runbook and sanitized records. Zero participant records have been collected;
+no adoption, repository-family, threshold, reuse, or roadmap outcome is claimed.
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and

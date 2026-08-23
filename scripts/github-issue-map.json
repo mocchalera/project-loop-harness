@@ -1,0 +1,52 @@
+{
+  "schema": "github-issue-map/v0",
+  "repository": "mocchalera/project-loop-harness",
+  "issues": [
+    {
+      "issue": 1,
+      "title_hint": "Reconcile v0.6.0 release records with the published artifacts",
+      "anchors": {
+        "agent_task_ids": ["0226"],
+        "repo_paths": [
+          "docs/release-notes/v0.6.0.md",
+          "docs/evidence/0248-v060-public-release-reconciliation.md"
+        ]
+      },
+      "acceptance_criteria_refs": [
+        "agent-tasks/0226-v060-release-preparation.md",
+        "docs/release-notes/v0.6.0.md"
+      ]
+    },
+    {
+      "issue": 2,
+      "title_hint": "Complete the five-participant external adoption proof",
+      "anchors": {
+        "agent_task_ids": ["0189", "0190"],
+        "repo_paths": [
+          "docs/adoption-proof-v0.5.2.md",
+          "docs/adoption-proof-v0.5.2-participant-kit.md",
+          "scripts/evaluate_adoption_proof.py"
+        ]
+      },
+      "acceptance_criteria_refs": [
+        "agent-tasks/0189-v052-adoption-proof.md",
+        "agent-tasks/0190-v052-adoption-proof-evaluator.md"
+      ]
+    },
+    {
+      "issue": 3,
+      "title_hint": "Design durable and resumable finish attempts after process loss",
+      "anchors": {
+        "agent_task_ids": [],
+        "repo_paths": [
+          "docs/plan-p1-finish-progress-compact-output.md",
+          "src/pcl/finish_progress.py",
+          "src/pcl/finish_execution.py"
+        ]
+      },
+      "acceptance_criteria_refs": [
+        "docs/plan-p1-finish-progress-compact-output.md"
+      ]
+    }
+  ]
+}

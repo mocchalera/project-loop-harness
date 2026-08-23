@@ -5,10 +5,15 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 
 ROOT = Path(__file__).parents[1]
 SCRIPT = ROOT / "scripts" / "evaluate_adoption_proof.py"
-CANDIDATE_SHA256 = "a" * 64
+FROZEN_CANDIDATE_ID = "v0.6.0-pypi"
+FROZEN_CANDIDATE_SHA256 = (
+    "4857355d108f720feb93497dc17ae53bb9b7502f4549a0f26c1a97cfa655137d"
+)
 
 
 def _record(
@@ -22,13 +27,16 @@ def _record(
     interventions: int = 0,
     safety_violations: int = 0,
     reuse: bool | None = False,
+    candidate_id: str = FROZEN_CANDIDATE_ID,
+    candidate_sha256: str = FROZEN_CANDIDATE_SHA256,
+    stop_reason: str | None = None,
 ) -> dict[str, object]:
     return {
         "contract_version": "adoption-observation/v1",
         "participant_id": participant_id,
         "observed_on": "2026-07-20",
-        "candidate_id": "v0.5.2-candidate-1",
-        "candidate_sha256": CANDIDATE_SHA256,
+        "candidate_id": candidate_id,
+        "candidate_sha256": candidate_sha256,
         "repository_family": repository_family,
         "install_method": "pipx",
         "first_time_user": True,
@@ -39,7 +47,7 @@ def _record(
         "maintainer_interventions": interventions,
         "safety_violations": safety_violations,
         "voluntary_reuse_day_7": reuse,
-        "stop_reason": "none" if completed else "timeout",
+        "stop_reason": stop_reason or ("none" if completed else "timeout"),
         "confusion_codes": [],
     }
 
@@ -94,8 +102,8 @@ def test_adoption_proof_evaluator_passes_only_the_frozen_complete_cohort(
     assert payload["status"] == "passed"
     assert payload["ready_to_claim"] is True
     assert payload["candidate"] == {
-        "id": "v0.5.2-candidate-1",
-        "sha256": CANDIDATE_SHA256,
+        "id": FROZEN_CANDIDATE_ID,
+        "sha256": FROZEN_CANDIDATE_SHA256,
     }
     assert payload["cohort"]["record_count"] == 5
     assert payload["cohort"]["repository_family_count"] == 5
@@ -103,6 +111,137 @@ def test_adoption_proof_evaluator_passes_only_the_frozen_complete_cohort(
     assert payload["metrics"]["verified_completion_within_30m_count"] == 4
     assert payload["metrics"]["voluntary_reuse_count"] == 2
     assert all(gate["passed"] for gate in payload["gates"].values())
+
+
+@pytest.mark.parametrize(
+    ("candidate_id", "candidate_sha256"),
+    [
+        ("other-candidate", "b" * 64),
+        ("other-candidate", FROZEN_CANDIDATE_SHA256),
+        (FROZEN_CANDIDATE_ID, "b" * 64),
+    ],
+)
+def test_adoption_proof_evaluator_rejects_consistent_nonfrozen_candidate(
+    tmp_path: Path,
+    candidate_id: str,
+    candidate_sha256: str,
+) -> None:
+    records = [
+        _record(
+            f"AP-{index:03d}",
+            family,
+            reuse=index <= 2,
+            candidate_id=candidate_id,
+            candidate_sha256=candidate_sha256,
+        )
+        for index, family in enumerate(
+            ("python", "node", "mixed", "go", "rust"),
+            start=1,
+        )
+    ]
+    records_dir = tmp_path / "records"
+    _write_records(records_dir, records)
+
+    result = _run(records_dir)
+
+    assert result.returncode == 2
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "invalid"
+    assert payload["ready_to_claim"] is False
+    assert payload["errors"] == [
+        "candidate_id and candidate_sha256 must match the frozen "
+        f"{FROZEN_CANDIDATE_ID} candidate"
+    ]
+
+
+def test_adoption_proof_evaluator_rejects_participants_outside_five_slots(
+    tmp_path: Path,
+) -> None:
+    records = [
+        _record(f"AP-{index:03d}", family, reuse=index <= 7)
+        for index, family in enumerate(
+            ("python", "node", "mixed", "go", "rust"),
+            start=6,
+        )
+    ]
+    records_dir = tmp_path / "records"
+    _write_records(records_dir, records)
+
+    result = _run(records_dir)
+
+    assert result.returncode == 2
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "invalid"
+    assert payload["ready_to_claim"] is False
+    assert len(payload["errors"]) == 5
+    assert all(
+        "participant_id must be one of: AP-001, AP-002, AP-003, AP-004, AP-005"
+        in error
+        for error in payload["errors"]
+    )
+
+
+def test_adoption_proof_evaluator_keeps_unknown_day_7_results_incomplete(
+    tmp_path: Path,
+) -> None:
+    records = [
+        _record(
+            f"AP-{index:03d}",
+            family,
+            reuse=True if index <= 2 else None,
+        )
+        for index, family in enumerate(
+            ("python", "node", "mixed", "go", "rust"),
+            start=1,
+        )
+    ]
+    records_dir = tmp_path / "records"
+    _write_records(records_dir, records)
+
+    result = _run(records_dir)
+
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "incomplete"
+    assert payload["ready_to_claim"] is False
+    assert payload["gates"]["voluntary_reuse"] == {
+        "observed": 2,
+        "observed_responses": 2,
+        "passed": False,
+        "required_min": 2,
+        "required_responses": 5,
+    }
+
+
+def test_adoption_proof_evaluator_counts_terminal_setup_failure_as_observed_miss(
+    tmp_path: Path,
+) -> None:
+    records = [
+        _record(
+            "AP-001",
+            "python",
+            healthy_seconds=None,
+            completed=False,
+            completion_seconds=None,
+            outcome="setup_failed",
+            stop_reason="setup_failure",
+            reuse=False,
+        ),
+        _record("AP-002", "node", reuse=True),
+        _record("AP-003", "mixed", reuse=True),
+        _record("AP-004", "go"),
+        _record("AP-005", "rust"),
+    ]
+    records_dir = tmp_path / "records"
+    _write_records(records_dir, records)
+
+    result = _run(records_dir)
+
+    assert result.returncode == 1
+    payload = json.loads(result.stdout)
+    assert payload["status"] == "failed"
+    assert payload["ready_to_claim"] is False
+    assert payload["gates"]["healthy_setup_median"]["passed"] is False
 
 
 def test_adoption_proof_evaluator_keeps_incomplete_cohort_nonclaimable(

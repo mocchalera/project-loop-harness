@@ -252,6 +252,7 @@ def test_sdist_contains_profile_contracts_and_builtin_manifest(tmp_path: Path) -
     assert any(name.endswith("/src/pcl/profile_bundle_store.py") for name in names)
     assert any(name.endswith("/src/pcl/profile_authorization.py") for name in names)
     assert any(name.endswith("/src/pcl/profile_decisions.py") for name in names)
+    assert any(name.endswith("/scripts/github-issue-map.json") for name in names)
     assert any(name.endswith("/tests/test_profile_ingest_dry_run.py") for name in names)
     assert any(
         name.endswith("/src/pcl/profiles/fixtures/council.discovery/scenarios.json")
@@ -292,3 +293,16 @@ def test_sdist_contains_profile_contracts_and_builtin_manifest(tmp_path: Path) -
     )
     assert extracted_e2e["bundle_status"] == "completed"
     assert extracted_e2e["deterministic"] is True
+    backlog_projection = _run(
+        [
+            sys.executable,
+            extracted_root / "scripts" / "render_github_backlog.py",
+            "--root",
+            ".",
+            "--format",
+            "markdown",
+        ],
+        env=extracted_env,
+        cwd=extracted_root,
+    )
+    assert "# Backlog projection from PCL state" in backlog_projection.stdout
