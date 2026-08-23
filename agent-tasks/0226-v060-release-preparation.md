@@ -1,6 +1,6 @@
 # 0226: v0.6.0 proof-gated release preparation and publication
 
-- **Status:** In progress; local gates only, not published
+- **Status:** Done; published and publicly verified
 - **Milestone:** v0.6.0 Terminal Authority and Mainline Progress Guard
 - **Priority:** P0
 - **Size:** M
@@ -58,6 +58,27 @@ verify the immutable public chain only while every gate remains green.
    before tag creation.
 5. Tag, GitHub Release, Trusted Publishing, PyPI artifacts/provenance, and
    public-only fresh install all resolve to the same version and release commit.
+
+## Completion evidence
+
+- Release commit: `da59b068f27becdc6a8bc857709f899787326638`
+- Annotated tag: `v0.6.0`; tag object `d662754965aab78221d094a87a17dd2d0d4a4ad7`
+- Green release-commit CI: `31568483574` (7/7 jobs)
+- Release-triggered Trusted Publishing: `31569789948` (PyPI publish succeeded;
+  TestPyPI was skipped by workflow condition)
+- GitHub Release: `v0.6.0`, published 2026-08-12, neither draft nor prerelease
+- Public wheel/sdist digests, PyPI provenance, and independent fresh-install
+  smoke: [0248 public release reconciliation](../docs/evidence/0248-v060-public-release-reconciliation.md)
+- The prior authorized current-proof run reported Goal `G-0005` packet `E-0128`
+  with `COMPLETED_VERIFIED`; public closeout Evidence was `E-0129`. This fresh
+  reconciliation worktree had no inherited `.project-loop/project.db`, so it
+  inspected `G-0005` through `pcl next --target G-0005` after public-CLI
+  initialization, received `target does not exist`, and created no replacement
+  Goal or closure mutation.
+
+The incomplete `0247` record and earlier packet records remain historical
+evidence of their recorded failed or incomplete gates; they are not promoted
+to release success.
 
 ## Stop conditions
 

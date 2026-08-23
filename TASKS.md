@@ -232,7 +232,7 @@ Give these tasks to coding agents in this order:
 228. `agent-tasks/0223-p1c-proof-anchor.md` (P1-C C5 durable proof admission anchor and anchor-scoped authorization)
 229. `agent-tasks/0224-p1c-proof-anchor-drift.md` (P1-C C6 internal read-only local proof-anchor drift eligibility with all downstream rights false)
 230. `agent-tasks/0225-mainline-progress-guard.md` (v0.6.0 opt-in Mainline Progress Guard with schema-8 Event-derived lineage and cooperative stop/replan enforcement)
-231. `agent-tasks/0226-v060-release-preparation.md` (v0.6.0 proof-gated release preparation, exact-commit CI/publication chain, and public-install verification)
+231. `agent-tasks/0226-v060-release-preparation.md` (v0.6.0 published and publicly verified; exact-commit CI, Trusted Publishing, PyPI provenance/hashes, and public-install closeout)
 
 Integrated roadmap (2026-07-09 bundle) adopted 2026-07-10 as Accept with
 modifications: `docs/roadmap/integrated/` holds the planning proposal, and

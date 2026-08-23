@@ -27,7 +27,7 @@ It is for people coordinating coding agents, not another chat wrapper.
 
 ## Get first value in five minutes
 
-Install the runtime with either tool:
+Install the runtime with either tool; the current public release is `0.6.0` ([GitHub Release](https://github.com/mocchalera/project-loop-harness/releases/tag/v0.6.0) / [PyPI release](https://pypi.org/project/project-loop-harness/0.6.0/)).
 
 ```bash
 pipx install project-loop-harness
