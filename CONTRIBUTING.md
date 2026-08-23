@@ -18,18 +18,20 @@
 ### Stable mapping fields (`scripts/github-issue-map.json`)
 
 Each entry maps one GitHub Issue to its authoritative counterparts using
-stable identifiers only — never mutable status:
+stable identifiers and accepted anchors only — never mutable status:
 
 | Field | Meaning |
 |---|---|
 | `issue` | GitHub issue number (mapping metadata, not an authority) |
-| `priority`, `lifecycle`, `depends_on` | Declared contributor-facing intent for the issue |
 | `anchors.agent_task_ids` | `agent-tasks/<id>-*` spec files that own the acceptance criteria |
 | `anchors.repo_paths` | Committed docs/source/evidence paths that anchor the work |
-| `pcl_entities.goals`, `pcl_entities.tasks` | Optional PCL IDs used for live enrichment when local state exists |
+| `acceptance_criteria_refs` | Accepted repo-local anchors for the issue's acceptance criteria |
+| `pcl_entities.goals`, `pcl_entities.features`, `pcl_entities.tasks` | Optional PCL goal, feature, and task IDs used for live enrichment when local state exists |
 
-Statuses, task dependencies, and last authoritative Evidence are read from
-PCL state at render time; they are never hand-maintained in this file.
+Priority, status/lifecycle, task dependencies, last authoritative Evidence, and
+relevant commits are derived from PCL state or accepted task/repository records
+at render time, or shown as unavailable; they are never hand-maintained in this
+file.
 
 ### Refreshing the GitHub-facing backlog view
 
