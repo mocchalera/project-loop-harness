@@ -17,7 +17,7 @@ surface, no new exit codes.
 
 ## Scope
 
-Implement exactly the frozen contracts in design rev 2:
+Implement exactly the frozen contracts in design rev 3 (final candidate):
 `finish-lease-marker/v1` (incl. `child_pgid`, `parent_start_identity`,
 `stage_dir`, `workspace_dir`, `target_source: explicit|resolved`),
 `finish-attempt-inspect/v1`, the §5 liveness truth table, §7.4 unlink
