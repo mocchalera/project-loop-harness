@@ -1,10 +1,11 @@
 # Design: Durable and Resumable Finish Attempts After Process Loss
 
-Status: **Proposed — design-gate candidate for Issue #3** (revision 2,
-addressing the Sol xhigh design review). Implementation must not start before
-the ADR and this design are accepted (`agent-tasks/0227-durable-finish-attempt-recovery.md`).
+Status: **Proposed — final design-gate candidate for Issue #3** (rev 3;
+incorporates both bounded Sol xhigh review rounds). Implementation must not
+start before the ADR and this design are accepted
+(`agent-tasks/0227-durable-finish-attempt-recovery.md`).
 
-Date: 2026-08-23 (rev 2) · Base: `origin/main` @ `da59b068f27becdc6a8bc857709f899787326638`
+Date: 2026-08-23 (rev 3) · Base: `origin/main` @ `da59b068f27becdc6a8bc857709f899787326638`
 
 Origin: GitHub Issue #3; residual risks in
 [`docs/plan-p1-finish-progress-compact-output.md`](plan-p1-finish-progress-compact-output.md)
@@ -121,7 +122,7 @@ guessed, never auto-deleted.
 |---|---|---|---|---|
 | F1 | Terminal disconnect (SIGHUP/closed pipe) | Stream truncates | Marker residue unless orderly exit | Liveness table (§5) |
 | F2 | Parent crash / `kill -9` / OOM mid-run | Nothing durable; possible dangling check Evidence | Marker preserved; **child group may still run** | `indeterminate` while pgid alive; `stale_interrupted` once provably gone |
-| F3 | Host restart | Same as F2; temp clones cleared by OS | Stored boot-id mismatch proves restart; children cannot survive it | `stale_interrupted` (§5 gate G4) |
+| F3 | Host restart | Same as F2; temp clones cleared by OS | Stored boot-id mismatch proves restart; children cannot survive it | `stale_interrupted` (§5 gate G2) |
 | F4 | Child check exits nonzero / crashes | Guarded executor records failure; INCOMPLETE packet committed, exit 1 | Unchanged; marker unlinked after outcome commit | Historical packet lookup |
 | F5 | Child check timeout | `timeout_recovery` steps → INCOMPLETE_VALIDATION packet | Unchanged | Existing `pcl next` route |
 | F6 | Whole-run supervisor timeout (parent killed) | = F2 | = F2 | §5 |
@@ -153,10 +154,14 @@ Constants (module-level, not flags):
 | Gate | Condition | State |
 |---|---|---|
 | G1 | Marker invalid JSON / schema-invalid / unknown version | `unreadable` |
-| G2 | `-skew ≤ H ≤ FINISH_LEASE_STALE_AFTER_SECONDS` (fresh window includes small negative jitter) | `running_live` |
-| G3 | `H < -skew` (future beyond skew) | `indeterminate` |
-| G4 | B readable both sides and **mismatched** (host restart proven; parent and children cannot survive) | `stale_interrupted` |
+| G2 | B readable both sides and **mismatched** (host restart proven; parent and children cannot survive) | `stale_interrupted` |
+| G3 | `-skew ≤ H ≤ FINISH_LEASE_STALE_AFTER_SECONDS` (fresh window includes small negative jitter) | `running_live` |
+| G4 | `H < -skew` (future beyond skew) | `indeterminate` |
 | G5 | otherwise (stale heartbeat, boot same or unknown-on-either-side) → matrix below | per cell |
+
+Boot proof deliberately outranks every heartbeat-age gate: a pre-reboot
+heartbeat can still be under 120 seconds old at inspection time, and trusting
+it would misreport a restarted host as live (frozen as PF-6).
 
 **Stale-phase matrix** — states by `P` × `C`; boot-unknown evaluates the same
 matrix (under either boot hypothesis the conclusions hold):
@@ -170,7 +175,7 @@ matrix (under either boot hypothesis the conclusions hold):
 
 Normative rules:
 
-- **Retry-safe (`stale_interrupted`) requires reboot proof (G4) OR a
+- **Retry-safe (`stale_interrupted`) requires reboot proof (G2) OR a
   non-null recorded pgid positively probed absent (matrix cells
   `dead/reused × absent`).** Every null, unrecorded, errored, or EPERM-blind
   child-group observation is `indeterminate`.
@@ -182,7 +187,7 @@ Normative rules:
   must still note that a new run neither resumes nor cleans the old attempt
   (§7).
 - Inspect echoes the winning gate/cell id as `truth_table_row`
-  (e.g. `G2`, `G4`, `M(dead,alive)`).
+  (e.g. `G2`, `G3`, `M(dead,alive)`).
 
 ## 6. Frozen public contract: `pcl attempts inspect`
 
@@ -242,10 +247,33 @@ usage only. Contract: `finish-attempt-inspect/v1`; schema
      "created_at": "2026-08-22T17:44:03Z"}
   ],
   "retention": {
-    "over_horizon_markers": ["FL-77ab01fe44cc9012"],
-    "marker_count_total": 2,
-    "stage_dirs_over_horizon": [],
-    "cleanup": "Operator-only; see docs/design-finish-attempt-recovery-v1.md §9."
+    "bounds": {"marker_retention_days": 14, "marker_count_limit": 50,
+               "stage_retention_days": 7, "stage_count_limit": 20,
+               "clone_retention_days": 7, "clone_count_limit": 20},
+    "markers": {
+      "over_age": [
+        {"token": "FL-77ab01fe44cc9012", "path": ".project-loop/finish-attempts/task-T-0100-FL-77ab01fe44cc9012.json", "age_days": 19}
+      ],
+      "over_count_overflow": [],
+      "candidate_count": 1
+    },
+    "stage_dirs": {
+      "over_age": [{"path": ".project-loop/tmp/finish-checks-ab12cd34", "age_days": 9}],
+      "over_count_overflow": [],
+      "candidate_count": 1,
+      "suppressed_reason": null
+    },
+    "clones": {
+      "over_age": [],
+      "over_count_overflow": [],
+      "candidate_count": 0,
+      "suppressed_reason": null
+    },
+    "protected_references": [
+      {"marker_token": "FL-0f1e2d3c4b5a6978",
+       "referenced_path": ".project-loop/tmp/finish-checks-ff00aa11"}
+    ],
+    "cleanup": "Operator-only; delete listed candidates, then re-run pcl attempts inspect --json until candidate lists are empty (docs/design-finish-attempt-recovery-v1.md §9)."
   },
   "truncated": false
 }
@@ -268,8 +296,13 @@ usage only. Contract: `finish-attempt-inspect/v1`; schema
   newest packet/attempt from the existing evidence links. Neither names a
   token: no authoritative token↔artifact anchor exists in v1 (§3).
 - `unreadable` entries carry the parse/schema error class, never raw contents.
-- `retention` computes §9 bounds read-only; `cleanup` is a pointer to
-  documentation, not an executable plan.
+- `retention` computes §9 bounds read-only. Field names are frozen:
+  per-class `over_age`, `over_count_overflow`, `candidate_count`;
+  stage-dir and clone classes additionally carry `suppressed_reason`
+  (`null` or `"unreadable_marker_present"`); `protected_references` lists
+  dirs shielded because an uncertain/unreadable marker references them.
+  `cleanup` is a pointer to documentation plus the re-inspection loop, not
+  an executable plan.
 
 ### 6.3 Frozen fixture corpus (positive/negative)
 
@@ -280,15 +313,16 @@ clock otherwise).
 
 | ID | Setup | Expected |
 |---|---|---|
-| PF-1 | Live marker (fresh heartbeat, own pid) | `running_live` (G2) |
+| PF-1 | Live marker (fresh heartbeat, own pid) | `running_live` (G3) |
 | PF-2 | Stale marker; pid dead; recorded pgid probed absent | `stale_interrupted` (`M(dead,absent)`); retry-safe guidance |
 | PF-3 | Stale marker; pid dead; **recorded pgid alive** (probe faked via holder process) | `indeterminate` (`M(dead,alive)`); child-group guidance; no retry-safe claim |
 | PF-4a | Stale marker; pid alive but start-identity mismatches; recorded pgid probed absent | `stale_interrupted` (`M(reused,absent)`) |
 | PF-4b | Same, recorded pgid alive | `indeterminate` (`M(reused,alive)`) |
-| PF-5 | Stale marker; `heartbeat_at` 60 s in the future | `indeterminate` (G3); `-5 ≤ age < 0` variant stays G2-live |
-| PF-6 | Stale marker; stored boot-id ≠ current | `stale_interrupted` (G4) |
+| PF-5 | Stale marker; `heartbeat_at` 60 s in the future | `indeterminate` (G4); `-5 ≤ age < 0` variant stays G3-live |
+| PF-6 | **Rapid restart:** stored boot-id ≠ current while the pre-reboot heartbeat is still < 120 s old | `stale_interrupted` via boot proof (G2), never `running_live`; guidance names host restart |
 | PF-7 | Two markers, same target, one live one stale | Both listed; counts correct; no election |
-| PF-8 | Marker aged > 14 d + orphan-looking stage dir refs | `retention.over_horizon_markers` populated; referenced dirs of protected markers excluded; cleanup is doc pointer |
+| PF-8 | One marker > 14 d old; one stage dir > 7 d referenced by an `indeterminate` marker; one unreferenced stage dir > 7 d | `retention.markers.over_age` lists the marker; the protected dir appears under `protected_references` and in no candidate list; only the unreferenced dir is a stage-dir candidate |
+| PF-12 | 52 markers total (> count limit 50) and 23 stage dirs (> limit 20) | `markers.over_count_overflow` lists the 2 oldest-beyond-limit; `stage_dirs.over_count_overflow` lists the 3 oldest-beyond-limit; counts reported for all three classes |
 | PF-9 | Committed packet + unrelated stale marker | Packet appears under `committed_outcomes`; marker classified on its own; **no linkage claimed** |
 | PF-10 | Post-spawn marker rewrite fails (FP-7), parent then dies abruptly, check child survives | Last heartbeat has null pgid ⇒ `M(dead,unrecorded)` = `indeterminate`; **never retry-safe despite nothing recorded** |
 | PF-11 | Binding-source mapping: four runs with `--task`, goal-driven `--goal`, goal-backed `--run`, implicit selection | Marker/inspect `target_source` = `explicit`, `explicit`, `resolved`, `resolved` respectively |
@@ -298,6 +332,7 @@ clock otherwise).
 | NF-4 | Marker create fails (injected ENOSPC) during finish | Run proceeds normally; result JSON unchanged; no marker left |
 | NF-5 | Unexpected exception after first check spawn | Marker preserved (FP-6) |
 | NF-6 | `inspect --target T-9999` (unknown) | Empty sections, exit 0 |
+| NF-7 | Any unreadable marker present | `stage_dirs.*` and `clones.*` candidate lists are empty with `suppressed_reason: "unreadable_marker_present"`; marker candidates still reported |
 
 **Identical-corpus packaging gate:** the same PF/NF corpus executes through
 the CLI on **four surfaces** — (a) source checkout (`PYTHONPATH=src`),
@@ -417,11 +452,18 @@ operator-executed with a re-inspection verification loop.
 | Isolated source clones (`$TMPDIR/pcl-finish-workspace-*`, system temp) | `CLONE_RETENTION_DAYS = 7`; `CLONE_COUNT_LIMIT = 20` | same |
 
 Candidate lists are **deterministic**: sorted by (age descending, path
-ascending), reported in the inspect payload’s `retention` section.
+ascending), reported in the inspect payload’s `retention` section using the
+frozen fields of §6.1/§6.2 (`over_age`, `over_count_overflow`,
+`candidate_count`, `suppressed_reason`, `protected_references`).
 **Protection:** any stage dir or workspace clone whose name is referenced by
 a marker classified `indeterminate` or `unreadable` is excluded from
-candidate lists entirely — uncertain attempts never produce cleanup
-suggestions. Marker candidates themselves must additionally classify
+candidate lists entirely. **Fail-closed on unreadable markers:** an
+unreadable file cannot reveal its `stage_dir`/`workspace_dir` references, so
+while any unreadable marker exists, stage-dir and clone candidates are
+suppressed entirely (`suppressed_reason: "unreadable_marker_present"`) — only
+marker-class candidates are reported. Suppression lifts once the operator has
+read/resolved the unreadable file and re-inspection shows no unreadable
+markers. Marker candidates themselves must additionally classify
 `stale_interrupted` (or be listed as `unreadable` flagged for human reading
 first); live/indeterminate markers are never candidates.
 
@@ -466,7 +508,7 @@ hides intent); mid-flight check resumption (ephemeral clone makes it
 dishonest); automatic retry/reap (issue non-goal); tokens inside packets
 (forces v2); scan-then-refuse leasing (TOCTOU-unsound election).
 
-Residual risks: wall-clock dependence (mitigated by gates G3/G4 and
+Residual risks: wall-clock dependence (mitigated by gates G4/G2 and
 fail-closed rows); pgid reuse within a boot (bounded by last-heartbeat
 recency; noted in guidance); platform-absent start identity forces the `unknown` parent row
 conservatism; B1-class power-loss between create and fsync loses one run’s

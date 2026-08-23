@@ -1,7 +1,7 @@
 # 0227 — Durable and resumable finish attempts after process loss
 
-Status: **blocked on design-gate acceptance** (ADR-004 rev 2 +
-`docs/design-finish-attempt-recovery-v1.md` rev 2). Do not start any
+Status: **blocked on design-gate acceptance** (ADR-004 rev 3 +
+`docs/design-finish-attempt-recovery-v1.md` rev 3, final candidate). Do not start any
 sub-task before the human gate records acceptance.
 
 Priority: P1 · Milestone: post-v0.6.0 · Origin: GitHub Issue #3
@@ -21,7 +21,8 @@ Implement exactly the frozen contracts in design rev 2:
 `finish-lease-marker/v1` (incl. `child_pgid`, `parent_start_identity`,
 `stage_dir`, `workspace_dir`, `target_source: explicit|resolved`),
 `finish-attempt-inspect/v1`, the §5 liveness truth table, §7.4 unlink
-ordering, §9 retention reporting, §6.3 fixture corpus with the identical
+ordering, §9 retention reporting (frozen fields incl. unreadable-marker
+suppression), §6.3 fixture corpus with the identical
 four-surface source/wheel/sdist packaging gate.
 
 ## Invariants — what to protect
@@ -64,7 +65,7 @@ pytest`, `ruff check .`, `validate --strict --json`, `render --json`).
 Files: `src/pcl/contracts/schemas/finish-lease-marker-v1.schema.json`,
 `finish-attempt-inspect-v1.schema.json`, validator modules under
 `src/pcl/contracts/`, corpus seeds under
-`tests/fixtures/finish-attempts-corpus/` (PF-1…PF-11, NF-1…NF-6 inputs +
+`tests/fixtures/finish-attempts-corpus/` (PF-1…PF-12, NF-1…NF-7 inputs +
 expected payloads). Depends on: none. Acceptance: validators fail closed
 with path-addressed errors; schemas packaged via the existing
 `contracts/schemas/*.json` glob.

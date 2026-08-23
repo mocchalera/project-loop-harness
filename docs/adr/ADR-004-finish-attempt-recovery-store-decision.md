@@ -1,13 +1,13 @@
 # ADR-004: Finish-attempt recovery uses advisory lease markers plus existing Evidence authority — no normalized attempt store
 
 - Status: **Proposed** (awaiting human acceptance gate; the author does not
-  self-record Accepted, per the ADR-002 discipline). Revision 2: tightened by
-  the Sol xhigh design review — v1 is advisory-only with zero enforcement,
-  zero DB surface, and zero new exit codes.
+  self-record Accepted, per the ADR-002 discipline). Revision 3 (final
+candidate): incorporates both bounded Sol xhigh review rounds — v1 remains
+advisory-only with zero enforcement, zero DB surface, and zero new exit codes.
 - Date: 2026-08-23
 - Origin: GitHub Issue #3; residual risks in
   `docs/plan-p1-finish-progress-compact-output.md` §10
-- Companion design: `docs/design-finish-attempt-recovery-v1.md` (rev 2)
+- Companion design: `docs/design-finish-attempt-recovery-v1.md` (rev 3)
 - Owners: Reliability / CLI runtime
 - Decision gate: maintainer plus one independent reviewer (same gate shape as
   ADR-002)
