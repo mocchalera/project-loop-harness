@@ -19,6 +19,11 @@ MAX_COMPLETION_SECONDS = 1800
 MAX_SAFETY_VIOLATIONS = 0
 MAX_INTERVENTIONS_PER_PARTICIPANT = 1
 REQUIRED_VOLUNTARY_REUSE = 2
+FROZEN_CANDIDATE_ID = "v0.6.0-pypi"
+FROZEN_CANDIDATE_SHA256 = (
+    "4857355d108f720feb93497dc17ae53bb9b7502f4549a0f26c1a97cfa655137d"
+)
+ALLOWED_PARTICIPANT_IDS = {f"AP-{index:03d}" for index in range(1, 6)}
 
 REQUIRED_FIELDS = {
     "contract_version",
@@ -73,7 +78,7 @@ CONFUSION_CODES = {
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Evaluate sanitized v0.5.2 Adoption Proof observation records."
+        description="Evaluate sanitized v0.6.0 Adoption Proof observation records."
     )
     parser.add_argument("--records-dir", type=Path, required=True)
     args = parser.parse_args(argv)
@@ -117,7 +122,7 @@ def evaluate_records_directory(records_dir: Path) -> tuple[dict[str, Any], int]:
     evaluation = _evaluate_valid_records(records, [path.name for path in source_files])
     if evaluation["ready_to_claim"]:
         return evaluation, 0
-    if _is_incomplete(evaluation, records):
+    if _is_incomplete(records):
         return evaluation, 1
     return evaluation, 1
 
@@ -136,8 +141,14 @@ def _validate_record(record: dict[str, Any]) -> list[str]:
 
     if record["contract_version"] != OBSERVATION_CONTRACT:
         errors.append(f"contract_version must be {OBSERVATION_CONTRACT}")
-    if not _matches(record["participant_id"], r"AP-[0-9]{3}"):
-        errors.append("participant_id must match AP-000")
+    if (
+        not isinstance(record["participant_id"], str)
+        or record["participant_id"] not in ALLOWED_PARTICIPANT_IDS
+    ):
+        errors.append(
+            "participant_id must be one of: "
+            + ", ".join(sorted(ALLOWED_PARTICIPANT_IDS))
+        )
     if not _valid_date(record["observed_on"]):
         errors.append("observed_on must be an ISO date")
     if not _matches(record["candidate_id"], r"[A-Za-z0-9._-]{1,80}"):
@@ -210,6 +221,11 @@ def _cohort_identity_errors(records: list[dict[str, Any]]) -> list[str]:
     }
     if len(candidates) > 1:
         errors.append("all records must use the same candidate_id and candidate_sha256")
+    if candidates and candidates != {(FROZEN_CANDIDATE_ID, FROZEN_CANDIDATE_SHA256)}:
+        errors.append(
+            "candidate_id and candidate_sha256 must match the frozen "
+            f"{FROZEN_CANDIDATE_ID} candidate"
+        )
     return errors
 
 
@@ -237,6 +253,9 @@ def _evaluate_valid_records(
         default=0,
     )
     voluntary_reuse = sum(record["voluntary_reuse_day_7"] is True for record in records)
+    voluntary_reuse_responses = sum(
+        record["voluntary_reuse_day_7"] is not None for record in records
+    )
     first_time_users = sum(record["first_time_user"] is True for record in records)
     candidates = {
         (record["candidate_id"], record["candidate_sha256"]) for record in records
@@ -296,9 +315,11 @@ def _evaluate_valid_records(
         },
         "voluntary_reuse": {
             "observed": voluntary_reuse,
-            "passed": len(records) == REQUIRED_COHORT_SIZE
+            "observed_responses": voluntary_reuse_responses,
+            "passed": voluntary_reuse_responses == REQUIRED_COHORT_SIZE
             and voluntary_reuse >= REQUIRED_VOLUNTARY_REUSE,
             "required_min": REQUIRED_VOLUNTARY_REUSE,
+            "required_responses": REQUIRED_COHORT_SIZE,
         },
     }
     ready_to_claim = all(gate["passed"] for gate in gates.values())
@@ -325,22 +346,30 @@ def _evaluate_valid_records(
         "source_files": source_files,
         "status": status,
     }
-    if _is_incomplete(payload, records):
+    if _is_incomplete(records):
         payload["status"] = "incomplete"
     return payload
 
 
-def _is_incomplete(evaluation: dict[str, Any], records: list[dict[str, Any]]) -> bool:
+def _is_incomplete(records: list[dict[str, Any]]) -> bool:
     if len(records) != REQUIRED_COHORT_SIZE:
         return True
-    if any(record["install_to_healthy_seconds"] is None for record in records):
-        return True
-    if (
-        evaluation["metrics"]["voluntary_reuse_count"] < REQUIRED_VOLUNTARY_REUSE
-        and any(record["voluntary_reuse_day_7"] is None for record in records)
+    if any(
+        record["install_to_healthy_seconds"] is None
+        and not _is_terminal_setup_failure(record)
+        for record in records
     ):
         return True
+    if any(record["voluntary_reuse_day_7"] is None for record in records):
+        return True
     return False
+
+
+def _is_terminal_setup_failure(record: dict[str, Any]) -> bool:
+    return (
+        record["completion_outcome"] == "setup_failed"
+        and record["stop_reason"] == "setup_failure"
+    )
 
 
 def _matches(value: Any, pattern: str) -> bool:

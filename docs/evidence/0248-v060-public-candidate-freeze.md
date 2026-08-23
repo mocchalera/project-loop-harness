@@ -39,7 +39,8 @@ candidate must be refrozen under a new ID before recruitment restarts.
    latest version and lists the wheel digest above.
 2. **Artifact bytes:** the wheel was downloaded from the PyPI CDN URL above and
    hashed locally with `shasum -a 256`; the result equals the registry digest
-   byte-for-byte. Registry metadata and CDN bytes are independent sources.
+   byte-for-byte. These are two corroborating checks within the same PyPI
+   distribution system, not independent sources.
 3. **Installability smoke:** the downloaded wheel installed into a fresh
    Python 3.13 virtual environment; `pcl --version` printed `pcl 0.6.0`.
 4. **Participant-path smoke:** in an empty scratch directory, `pcl init
