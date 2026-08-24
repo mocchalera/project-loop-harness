@@ -47,6 +47,22 @@
       "acceptance_criteria_refs": [
         "docs/plan-p1-finish-progress-compact-output.md"
       ]
+    },
+    {
+      "issue": 6,
+      "title_hint": "Make zero-to-first-loop usable in an existing repository",
+      "anchors": {
+        "agent_task_ids": [],
+        "repo_paths": [
+          "AGENTS.md",
+          "docs/plan-zero-to-first-loop-onboarding.md",
+          "src/pcl/templates/project/AGENTS.block.md",
+          "src/pcl/templates/project/CLAUDE.block.md"
+        ]
+      },
+      "acceptance_criteria_refs": [
+        "docs/plan-zero-to-first-loop-onboarding.md"
+      ]
     }
   ]
 }
