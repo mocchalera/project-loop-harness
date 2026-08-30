@@ -61,6 +61,10 @@ is a regression, not an automatic regeneration result.
 
 ## Intended changes since v0.3.1 freeze
 
+- 2026-08-30 — `snapshots/pcl-help.json` regenerated for task 0228 to include
+  additive project-agnostic `exec`. It runs one explicitly supplied argv
+  command with bounded presentation and local-only diagnostics; it does not
+  create or mutate project-loop state.
 - 2026-07-30 — `snapshots/representative-next-json.json` regenerated for the
   P0-B Task terminal guard. The existing target/action keys are unchanged;
   linked Task readiness now adds the explicit Feature-`done` requirement,
