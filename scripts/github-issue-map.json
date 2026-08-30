@@ -47,6 +47,21 @@
       "acceptance_criteria_refs": [
         "docs/plan-p1-finish-progress-compact-output.md"
       ]
+    },
+    {
+      "issue": 8,
+      "title_hint": "Add project-agnostic pcl exec for bounded agent verification output",
+      "anchors": {
+        "agent_task_ids": ["0228"],
+        "repo_paths": [
+          "docs/plan-project-agnostic-agent-exec.md",
+          "src/pcl/guarded_process.py"
+        ]
+      },
+      "acceptance_criteria_refs": [
+        "agent-tasks/0228-project-agnostic-agent-exec.md",
+        "docs/plan-project-agnostic-agent-exec.md"
+      ]
     }
   ]
 }
