@@ -11,6 +11,11 @@ import secrets
 import tempfile
 from typing import Any, Iterable, Pattern
 
+from .agent_exec_error_window import (
+    BoundedErrorWindowCollector,
+    ErrorWindowResult,
+    combine_error_windows,
+)
 from .contracts.agent_exec_result import (
     AGENT_EXEC_RESULT_CONTRACT_VERSION,
     validate_agent_exec_result,
@@ -99,6 +104,24 @@ def run_agent_exec(
     redacted_command, command_redacted = _redact_argv(argv, patterns, cwd=cwd)
     head_bytes = max(1, max_output_bytes // 2)
     tail_bytes = max_output_bytes - head_bytes
+    error_window_lines = FAIL_MAX_LINES - 4
+    error_window_bytes = FAIL_MAX_BYTES - 1_024
+    stdout_error_window = BoundedErrorWindowCollector(
+        stream_name="STDOUT",
+        error_pattern=ERROR_LINE_PATTERN,
+        redaction_patterns=patterns,
+        max_lines=error_window_lines,
+        max_bytes=error_window_bytes,
+        max_line_bytes=MAX_DIAGNOSTIC_LINE_BYTES,
+    )
+    stderr_error_window = BoundedErrorWindowCollector(
+        stream_name="STDERR",
+        error_pattern=ERROR_LINE_PATTERN,
+        redaction_patterns=patterns,
+        max_lines=error_window_lines,
+        max_bytes=error_window_bytes,
+        max_line_bytes=MAX_DIAGNOSTIC_LINE_BYTES,
+    )
 
     with tempfile.TemporaryDirectory(prefix="pcl-agent-exec-") as temp_name:
         temp_dir = Path(temp_name)
@@ -109,6 +132,8 @@ def run_agent_exec(
             stderr_path=temp_dir / "stderr-head.redacted.bin",
             stdout_tail_path=temp_dir / "stdout-tail.redacted.bin",
             stderr_tail_path=temp_dir / "stderr-tail.redacted.bin",
+            stdout_chunk_observer=stdout_error_window.consume,
+            stderr_chunk_observer=stderr_error_window.consume,
             timeout_seconds=timeout_seconds,
             max_output_bytes=head_bytes,
             tail_output_bytes=tail_bytes,
@@ -116,11 +141,28 @@ def run_agent_exec(
             redaction_patterns=patterns,
             additional_allowed_env_names=allowed_env_names,
         )
+        observed_errors = combine_error_windows(
+            (stderr_error_window.finish(), stdout_error_window.finish()),
+            max_lines=error_window_lines,
+            max_bytes=error_window_bytes,
+        )
+        if execution["stdout"].get("chunk_observer_failed") or execution["stderr"].get(
+            "chunk_observer_failed"
+        ):
+            observed_errors = ErrorWindowResult(
+                observed_errors.lines,
+                True,
+                observed_errors.redacted,
+                observed_errors.binary_omitted,
+            )
         status, signal_number, process_exit_code = _classify_execution(execution)
         diagnostic = (
             DiagnosticSelection("", "none", False)
             if status == "PASS"
-            else _sanitize_diagnostic(_select_diagnostic(execution), cwd=cwd)
+            else _sanitize_diagnostic(
+                _select_diagnostic(execution, error_window=observed_errors),
+                cwd=cwd,
+            )
         )
 
     diagnostic_available = status != "PASS" and bool(diagnostic.text)
@@ -502,9 +544,21 @@ def _classify_execution(execution: dict[str, Any]) -> tuple[str, int | None, int
     return "INFRA_ERROR", None, 126
 
 
-def _select_diagnostic(execution: dict[str, Any]) -> DiagnosticSelection:
+def _select_diagnostic(
+    execution: dict[str, Any],
+    *,
+    error_window: ErrorWindowResult | None = None,
+) -> DiagnosticSelection:
+    if error_window is not None and error_window.lines:
+        return DiagnosticSelection(
+            error_window.text,
+            "error-block",
+            error_window.truncated,
+            error_window.redacted,
+        )
+
     streams: list[tuple[str, list[str]]] = []
-    binary_present = False
+    binary_present = bool(error_window and error_window.binary_omitted)
     for name in ("stderr", "stdout"):
         metadata = execution[name]
         lines, stream_binary = _stream_lines(metadata)
