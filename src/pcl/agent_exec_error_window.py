@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import re
 from typing import Iterable, Pattern
 
 from .redaction import redact_bytes
@@ -11,6 +12,9 @@ _SCAN_OVERLAP_BYTES = 128
 _LINE_BUFFER_BYTES = 4_096
 _LINE_TAIL_BYTES = 2_048
 _LINE_ELLIPSIS = b"...<bounded-line>..."
+_EXCEPTION_CLASS_PATTERN = re.compile(
+    r"\b[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception)\b"
+)
 
 
 @dataclass(frozen=True)
@@ -91,7 +95,8 @@ class BoundedErrorWindowCollector:
         if not part:
             return
         scan = self._scan_tail + part
-        if self.error_pattern.search(scan.decode("latin-1")):
+        scan_text = scan.decode("latin-1")
+        if self.error_pattern.search(scan_text) or _EXCEPTION_CLASS_PATTERN.search(scan_text):
             self._line_matched = True
         self._scan_tail = scan[-_SCAN_OVERLAP_BYTES:]
         self._line_length += len(part)
