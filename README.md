@@ -73,6 +73,7 @@ Want to see the result before adopting it? Run the isolated
 | Orient | `pcl next --json` or `pcl resume` | Continue or hand off safely |
 | Stop stagnation (opt-in) | `pcl progress guard activate ...` | Stop repeated zero-value automatic continuation at one Exit Gate |
 | Verify | `pcl finish --emit-packet --goal G-XXXX` | Rerun checks and pin evidence |
+| Bound noisy checks | `pcl exec -- <argv...>` | Preserve command truth while limiting agent-facing output |
 | Review | `pcl render` | Generate the human dashboard |
 
 Most other commands are an agent-facing and maintainer-facing reference surface.
@@ -147,6 +148,8 @@ historical study contract, not as current work or a successful outcome.
 - [3-minute demo](examples/v0.5.0-adoption-demo/README.md) — reproducible public
   package path to `COMPLETED_VERIFIED`.
 - [Golden Path](docs/golden-path.md) — complete direct and workflow examples.
+- [Bounded agent command execution](docs/agent-exec.md) — project-agnostic
+  tests/builds with compact results and local-only diagnostics.
 - [Architecture](docs/architecture.md) — state, events, evidence, and execution
   boundaries.
 - [Direct Setup Bundle v1](docs/direct-spec-v1.md) — strict one-call
