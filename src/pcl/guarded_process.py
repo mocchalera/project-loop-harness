@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import deque
 import hashlib
 import json
 import os
@@ -24,6 +25,12 @@ from .runner_execution_receipt import RunnerExecutionReceiptRecorder
 
 DEFAULT_MAX_OUTPUT_BYTES = 1_048_576
 READ_CHUNK_BYTES = 65_536
+CAPTURE_STRATEGIES = frozenset({"head", "head_tail"})
+OMISSION_MARKER = b"\n... PCL OUTPUT OMITTED ...\n"
+ERROR_BYTES_RE = re.compile(
+    rb"(?i)(failed|failure|error|assertionerror|traceback|exception|panic|"
+    rb"permission denied|not found|timed out|timeout)"
+)
 DEFAULT_ENV_ALLOWLIST = frozenset(
     {
         "CI",
@@ -59,6 +66,9 @@ DEFAULT_ENV_ALLOWLIST = frozenset(
 
 
 class _BoundedStream:
+    capture_strategy = "head"
+    capture_mode = "streaming_temporary_file"
+
     def __init__(self, max_bytes: int) -> None:
         self.max_bytes = max_bytes
         self.captured_byte_count = 0
@@ -74,6 +84,9 @@ class _BoundedStream:
             self.file.write(retained)
             self.captured_byte_count += len(retained)
 
+    def finish(self) -> None:
+        return
+
     def read(self) -> bytes:
         self.file.flush()
         self.file.seek(0)
@@ -81,6 +94,110 @@ class _BoundedStream:
 
     def close(self) -> None:
         self.file.close()
+
+
+class _HeadTailBoundedStream:
+    capture_strategy = "head_tail"
+    capture_mode = "streaming_memory_head_tail_error_windows"
+
+    def __init__(self, max_bytes: int) -> None:
+        self.max_bytes = max_bytes
+        self.original_byte_count = 0
+        self.eof = False
+        self._complete = bytearray()
+        self._head_limit = max(1, max_bytes // 4)
+        self._error_limit = max(1, max_bytes // 2)
+        self._tail_limit = max(1, max_bytes - self._head_limit - self._error_limit)
+        self._head = bytearray()
+        self._errors = bytearray()
+        self._tail = bytearray()
+        self._line_buffer = bytearray()
+        self._previous_lines: deque[bytes] = deque(maxlen=3)
+        self._after_lines = 0
+        self._error_window_count = 0
+
+    @property
+    def captured_byte_count(self) -> int:
+        if self.original_byte_count <= self.max_bytes:
+            return len(self._complete)
+        return len(self._head) + len(self._errors) + len(self._tail)
+
+    def consume(self, chunk: bytes) -> None:
+        self.original_byte_count += len(chunk)
+        if len(self._complete) < self.max_bytes:
+            remaining = self.max_bytes - len(self._complete)
+            self._complete.extend(chunk[:remaining])
+        if len(self._head) < self._head_limit:
+            remaining = self._head_limit - len(self._head)
+            self._head.extend(chunk[:remaining])
+        self._tail.extend(chunk)
+        if len(self._tail) > self._tail_limit:
+            del self._tail[: len(self._tail) - self._tail_limit]
+        self._consume_lines(chunk)
+
+    def _consume_lines(self, chunk: bytes) -> None:
+        self._line_buffer.extend(chunk)
+        while True:
+            newline = self._line_buffer.find(b"\n")
+            if newline < 0:
+                if len(self._line_buffer) > READ_CHUNK_BYTES * 2:
+                    line = bytes(self._line_buffer[: READ_CHUNK_BYTES])
+                    del self._line_buffer[: READ_CHUNK_BYTES]
+                    self._consume_line(line)
+                return
+            line = bytes(self._line_buffer[: newline + 1])
+            del self._line_buffer[: newline + 1]
+            self._consume_line(line)
+
+    def _consume_line(self, line: bytes) -> None:
+        if self._after_lines > 0:
+            self._append_error_bytes(line)
+            self._after_lines -= 1
+        if ERROR_BYTES_RE.search(line):
+            if self._error_window_count:
+                self._append_error_bytes(OMISSION_MARKER)
+            for previous in self._previous_lines:
+                self._append_error_bytes(previous)
+            self._append_error_bytes(line)
+            self._after_lines = 4
+            self._error_window_count += 1
+        self._previous_lines.append(line)
+
+    def _append_error_bytes(self, value: bytes) -> None:
+        remaining = self._error_limit - len(self._errors)
+        if remaining > 0:
+            self._errors.extend(value[:remaining])
+
+    def finish(self) -> None:
+        if self._line_buffer:
+            line = bytes(self._line_buffer)
+            self._line_buffer.clear()
+            self._consume_line(line)
+
+    def read(self) -> bytes:
+        if self.original_byte_count <= self.max_bytes:
+            return bytes(self._complete)
+        sections = [bytes(self._head)]
+        if self._errors:
+            sections.extend((OMISSION_MARKER, bytes(self._errors)))
+        sections.extend((OMISSION_MARKER, bytes(self._tail)))
+        return b"".join(sections)
+
+    def close(self) -> None:
+        self._complete.clear()
+        self._head.clear()
+        self._errors.clear()
+        self._tail.clear()
+        self._line_buffer.clear()
+        self._previous_lines.clear()
+
+
+def _make_capture(max_bytes: int, capture_strategy: str) -> _BoundedStream | _HeadTailBoundedStream:
+    if capture_strategy == "head":
+        return _BoundedStream(max_bytes)
+    if capture_strategy == "head_tail":
+        return _HeadTailBoundedStream(max_bytes)
+    raise ValueError(f"unknown capture strategy: {capture_strategy}")
 
 
 def build_subprocess_env(
@@ -158,9 +275,15 @@ def execute_guarded_process(
     execution_instance_id: str | None = None,
     runner_sidecar_policy: str | dict[str, Any] | None = None,
     defer_runner_authority_seal: bool = False,
+    capture_strategy: str = "head",
+    handle_interrupt: bool = False,
 ) -> dict[str, Any]:
     if max_output_bytes < 1:
         raise ValueError("max_output_bytes must be at least 1")
+    if capture_strategy not in CAPTURE_STRATEGIES:
+        raise ValueError(
+            f"capture_strategy must be one of: {', '.join(sorted(CAPTURE_STRATEGIES))}"
+        )
     patterns = tuple(redaction_patterns)
     env, environment_contract = build_subprocess_env(
         additional_allowed_names=additional_allowed_env_names
@@ -228,10 +351,11 @@ def execute_guarded_process(
                 receipt_observer.anonymous_pipe_available
             )
         receipt_observer.start_reader()
-    stdout_capture = _BoundedStream(max_output_bytes)
-    stderr_capture = _BoundedStream(max_output_bytes)
+    stdout_capture = _make_capture(max_output_bytes, capture_strategy)
+    stderr_capture = _make_capture(max_output_bytes, capture_strategy)
     started = time.monotonic()
     timed_out = False
+    interrupted = False
     exit_code: int | None = None
     spawn_error = ""
     spawn_error_kind = ""
@@ -292,6 +416,12 @@ def execute_guarded_process(
             timed_out = True
             termination = _terminate_process_group(process)
             exit_code = None
+        except KeyboardInterrupt:
+            if not handle_interrupt:
+                raise
+            interrupted = True
+            termination = _terminate_process_group(process)
+            exit_code = None
         finally:
             if heartbeat_stop is not None:
                 heartbeat_stop.set()
@@ -304,6 +434,8 @@ def execute_guarded_process(
 
     if timed_out and stderr_capture.original_byte_count == 0:
         stderr_capture.consume(f"Timed out after {timeout_seconds} seconds.\n".encode())
+    if interrupted and stderr_capture.original_byte_count == 0:
+        stderr_capture.consume(b"Interrupted by caller.\n")
     stdout_metadata = _write_capture(
         stdout_capture,
         stdout_path,
@@ -325,11 +457,20 @@ def execute_guarded_process(
         termination["pipes_eof"] = stdout_capture.eof and stderr_capture.eof
     if receipt_observer is not None:
         receipt_observer.finish_reader()
+    failure_kind = (
+        "spawn_error"
+        if spawn_error
+        else "timeout"
+        if timed_out
+        else "interrupted"
+        if interrupted
+        else ""
+    )
     result: dict[str, Any] = {
         "exit_code": exit_code,
         "timed_out": timed_out,
         "duration_seconds": round(time.monotonic() - started, 6),
-        "failure_kind": "spawn_error" if spawn_error else ("timeout" if timed_out else ""),
+        "failure_kind": failure_kind,
         "spawn_error_kind": spawn_error_kind,
         "stdout": stdout_metadata,
         "stderr": stderr_metadata,
@@ -355,12 +496,20 @@ def execute_guarded_process(
         },
         "executed_argv": list(observed_argv),
     }
+    if interrupted:
+        result["interrupted"] = True
     if observability is not None:
         observability.emit(
             "termination",
-            phase="terminate" if timed_out else "complete",
+            phase="terminate" if timed_out or interrupted else "complete",
             source="watchdog",
-            reason=("timeout_budget_exhausted" if timed_out else "process_exit"),
+            reason=(
+                "timeout_budget_exhausted"
+                if timed_out
+                else "caller_interrupted"
+                if interrupted
+                else "process_exit"
+            ),
             termination=termination,
         )
         result["observability"] = observability.finalize(
@@ -429,10 +578,11 @@ def _selected_environment_sha256(
     return _environment_sha256(dict(selected)) if selected else None
 
 
-def _drain_stream(stream: Any, capture: _BoundedStream) -> None:
+def _drain_stream(stream: Any, capture: _BoundedStream | _HeadTailBoundedStream) -> None:
     while True:
         chunk = stream.read(READ_CHUNK_BYTES)
         if not chunk:
+            capture.finish()
             capture.eof = True
             return
         capture.consume(chunk)
@@ -505,13 +655,14 @@ def _final_process_group_state(pid: int, *, leader_alive: bool) -> dict[str, Any
 
 
 def _write_capture(
-    capture: _BoundedStream,
+    capture: _BoundedStream | _HeadTailBoundedStream,
     path: Path,
     *,
     redaction_patterns: tuple[Pattern[str], ...],
 ) -> dict[str, Any]:
     try:
         captured = capture.read()
+        raw_retained_count = capture.captured_byte_count
         redacted, changed = redact_bytes(captured, additional_patterns=redaction_patterns)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(redacted)
@@ -525,17 +676,17 @@ def _write_capture(
     else:
         encoding = "utf-8"
         binary = False
-    truncated = capture.original_byte_count > len(captured)
+    truncated = capture.original_byte_count > raw_retained_count
     return {
         "path": str(path),
         "original_byte_count": capture.original_byte_count,
-        "captured_byte_count": len(captured),
+        "captured_byte_count": raw_retained_count,
         "artifact_byte_count": len(redacted),
         "max_bytes": capture.max_bytes,
         "truncated": truncated,
         "truncation_reason": "max_output_bytes_exceeded" if truncated else "",
-        "capture_strategy": "head",
-        "capture_mode": "streaming_temporary_file",
+        "capture_strategy": capture.capture_strategy,
+        "capture_mode": capture.capture_mode,
         "redacted": changed,
         "raw_output_persisted": False,
         "encoding": encoding,

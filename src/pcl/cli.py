@@ -5,6 +5,7 @@ from pathlib import Path
 import sqlite3
 import sys
 
+from .agent_exec_handlers import handle_agent_exec_command
 from .audit import (
     AuditCommandError,
     EXIT_AUDIT_INTERNAL,
@@ -107,7 +108,8 @@ def _extract_global_options(argv: list[str] | None) -> tuple[list[str] | None, s
     """Allow global options before or after subcommands for agent-friendliness.
 
     argparse normally requires global options before the subcommand. Coding agents
-    often place --root/--json at the end, so we normalize them here.
+    often place --root/--json at the end, so we normalize them here. Tokens after
+    an explicit ``--`` belong to the child argv and are never treated as PCL options.
     """
     if argv is None:
         argv = sys.argv[1:]
@@ -117,6 +119,9 @@ def _extract_global_options(argv: list[str] | None) -> tuple[list[str] | None, s
     i = 0
     while i < len(argv):
         token = argv[i]
+        if token == "--":
+            normalized.extend(argv[i:])
+            break
         if token == "--root" and i + 1 < len(argv):
             root_override = argv[i + 1]
             i += 2
@@ -145,6 +150,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "guide":
             return handle_guide(args.topic, json_output=json_output, output=sys.stdout)
+
+        agent_exec_status = handle_agent_exec_command(
+            args,
+            cwd=paths.root,
+            json_output=json_output,
+            output=sys.stdout,
+            error=sys.stderr,
+        )
+        if agent_exec_status is not None:
+            return agent_exec_status
 
         profile_status = handle_profile_command(args, paths, json_output=json_output)
         if profile_status is not None:

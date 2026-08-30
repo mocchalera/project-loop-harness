@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop-harness.local/contracts/agent-exec-result-v1.schema.json",
+  "title": "Project Loop Harness agent execution result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema", "ok", "run_id", "created_at", "status", "exit_code",
+    "shell_exit_code", "signal", "duration_ms", "command", "raw", "capture",
+    "diagnostics", "termination", "retry_count", "exposed"
+  ],
+  "properties": {
+    "schema": {"const": "agent-exec-result/v1"},
+    "ok": {"type": "boolean"},
+    "run_id": {"type": "string", "pattern": "^AX-[0-9]{8}-[a-f0-9]{24}$"},
+    "created_at": {"type": "string"},
+    "status": {
+      "enum": ["PASS", "FAIL", "TIMEOUT", "INFRA_ERROR", "INTERRUPTED", "FLAKY"]
+    },
+    "exit_code": {"type": ["integer", "null"]},
+    "shell_exit_code": {"type": "integer", "minimum": 0, "maximum": 255},
+    "signal": {"type": ["integer", "null"], "minimum": 1},
+    "duration_ms": {"type": "integer", "minimum": 0},
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["executable", "argument_count", "argv_sha256", "redacted", "argv_omitted"],
+      "properties": {
+        "executable": {"type": "string", "minLength": 1},
+        "argument_count": {"type": "integer", "minimum": 0},
+        "argv_sha256": {"type": "string", "pattern": "^sha256:[a-f0-9]{64}$"},
+        "redacted": {"type": "boolean"},
+        "argv_omitted": {"const": true}
+      }
+    },
+    "raw": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stdout_bytes", "stderr_bytes"],
+      "properties": {
+        "stdout_bytes": {"type": "integer", "minimum": 0},
+        "stderr_bytes": {"type": "integer", "minimum": 0}
+      }
+    },
+    "capture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["strategy", "max_bytes_per_stream", "stdout_truncated", "stderr_truncated", "redacted"],
+      "properties": {
+        "strategy": {"const": "head_tail"},
+        "max_bytes_per_stream": {"type": "integer", "minimum": 1024},
+        "stdout_truncated": {"type": "boolean"},
+        "stderr_truncated": {"type": "boolean"},
+        "redacted": {"type": "boolean"}
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "persisted", "truncated", "strategy", "line_count", "byte_count", "preview"],
+      "properties": {
+        "available": {"type": "boolean"},
+        "persisted": {"type": "boolean"},
+        "truncated": {"type": "boolean"},
+        "strategy": {"type": "string"},
+        "line_count": {"type": "integer", "minimum": 0, "maximum": 117},
+        "byte_count": {"type": "integer", "minimum": 0, "maximum": 16384},
+        "preview": {"type": "array", "maxItems": 117, "items": {"type": "string"}}
+      }
+    },
+    "termination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested", "escalated", "group_state", "group_uncertain", "pipes_eof"],
+      "properties": {
+        "requested": {"type": "boolean"},
+        "escalated": {"type": "boolean"},
+        "group_state": {"type": "string"},
+        "group_uncertain": {"type": "boolean"},
+        "pipes_eof": {"type": "boolean"}
+      }
+    },
+    "retry_count": {"type": "integer", "minimum": 0},
+    "exposed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lines", "bytes"],
+      "properties": {
+        "lines": {"type": "integer", "minimum": 0, "maximum": 120},
+        "bytes": {"type": "integer", "minimum": 0, "maximum": 24576}
+      }
+    }
+  }
+}

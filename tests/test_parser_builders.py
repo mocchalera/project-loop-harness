@@ -30,6 +30,7 @@ EXPECTED_COMMANDS = [
     "prompt",
     "agent",
     "ingest-agent-run",
+    "exec",
     "evidence",
     "profile",
     "contract",
@@ -89,3 +90,5 @@ def test_family_builders_preserve_representative_defaults_and_destinations() -> 
     assert parser.parse_args(["impact", "--diff"]).diff_source == "__git__"
     assert parser.parse_args(["verification", "list"]).verification_command == "list"
     assert parser.parse_args(["next"]).next_target is None
+    exec_args = parser.parse_args(["exec", "--", "python", "--json"]).exec_args
+    assert exec_args == ["--", "python", "--json"]
