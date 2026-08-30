@@ -1,7 +1,6 @@
 # Project Loop Harness
 
-> Turn a coding agent's “done” into reviewable evidence, residual risk, and a
-> resumable next step.
+> Turn a coding agent's “done” into reviewable evidence, residual risk, and a resumable next step.
 
 ![Project Loop Harness completion dashboard](docs/assets/v0.5.0-demo/dashboard-ja.png)
 
@@ -11,8 +10,7 @@ Coding agents can produce changes quickly. They are less reliable at preserving
 project state, proving completion, stopping at human decisions, and handing work
 to another session or model.
 
-Project Loop Harness (`pcl`) gives Codex, Claude Code, and similar agents one local,
-model-neutral loop:
+Project Loop Harness (`pcl`) gives Codex, Claude Code, and similar agents one local, model-neutral loop:
 
 ```text
 intent → bounded work → checks → copied evidence → completion packet → next step
@@ -61,8 +59,7 @@ genuine human decision or external blocker.
 The agent owns `pcl start → implementation → finish → close`. The operator uses
 the CLI for setup, review, and deliberate maintenance.
 
-Want to see the result before adopting it? Run the isolated
-[3-minute public-package demo](examples/v0.5.0-adoption-demo/README.md).
+Want to see the result before adopting it? Run the isolated [3-minute public-package demo](examples/v0.5.0-adoption-demo/README.md).
 
 ## What the operator needs to remember
 
@@ -76,9 +73,7 @@ Want to see the result before adopting it? Run the isolated
 | Bound noisy checks | `pcl exec -- <argv...>` | Preserve command truth while limiting agent-facing output |
 | Review | `pcl render` | Generate the human dashboard |
 
-Most other commands are an agent-facing and maintainer-facing reference surface.
-Start with the setup, start, orient, verify, and review path; use the other rows
-when their specific friction appears.
+Most other commands are an agent-facing and maintainer-facing reference surface. Start with the setup, start, orient, verify, and review path; use the other rows when their specific friction appears.
 
 ## What it is—and is not
 
@@ -126,8 +121,7 @@ pcl render --json
 pcl update check       # explicit, cached, advisory only
 ```
 
-Use `pcl update command` to print the appropriate manual upgrade command. Set
-`PCL_NO_VERSION_CHECK=1` to disable version checks.
+Use `pcl update command` to print the appropriate manual upgrade command. Set `PCL_NO_VERSION_CHECK=1` to disable version checks.
 
 ## The proof boundary
 
