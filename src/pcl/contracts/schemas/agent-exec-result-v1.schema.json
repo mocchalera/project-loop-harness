@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop-harness.local/contracts/agent-exec-result-v1.schema.json",
+  "title": "Project Loop Harness agent execution result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "run_id",
+    "status",
+    "exit_code",
+    "signal",
+    "duration_ms",
+    "command",
+    "command_redacted",
+    "raw",
+    "exposed",
+    "diagnostics",
+    "redacted",
+    "output_truncated",
+    "termination",
+    "retry_count"
+  ],
+  "properties": {
+    "schema": {"const": "agent-exec-result/v1"},
+    "run_id": {
+      "type": "string",
+      "pattern": "^AX-[0-9]{8}T[0-9]{6}Z-[a-f0-9]{12}$"
+    },
+    "status": {
+      "enum": ["PASS", "FAIL", "TIMEOUT", "INFRA_ERROR", "INTERRUPTED", "FLAKY"]
+    },
+    "exit_code": {"type": ["integer", "null"]},
+    "signal": {"type": ["integer", "null"], "minimum": 1},
+    "duration_ms": {"type": "integer", "minimum": 0},
+    "command": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 256,
+      "items": {"type": "string"}
+    },
+    "command_redacted": {"type": "boolean"},
+    "raw": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stdout_bytes", "stderr_bytes"],
+      "properties": {
+        "stdout_bytes": {"type": "integer", "minimum": 0},
+        "stderr_bytes": {"type": "integer", "minimum": 0}
+      }
+    },
+    "exposed": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lines", "bytes"],
+      "properties": {
+        "lines": {"type": "integer", "minimum": 0, "maximum": 120},
+        "bytes": {"type": "integer", "minimum": 0, "maximum": 24576}
+      }
+    },
+    "diagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "truncated", "strategy", "line_count", "byte_count"],
+      "properties": {
+        "available": {"type": "boolean"},
+        "truncated": {"type": "boolean"},
+        "strategy": {
+          "enum": ["none", "error-block", "stderr-tail", "combined-tail", "binary-omitted"]
+        },
+        "line_count": {"type": "integer", "minimum": 0, "maximum": 120},
+        "byte_count": {"type": "integer", "minimum": 0, "maximum": 24576}
+      }
+    },
+    "redacted": {"type": "boolean"},
+    "output_truncated": {"type": "boolean"},
+    "termination": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested",
+        "method",
+        "escalated",
+        "group_state",
+        "group_uncertain",
+        "pipes_eof"
+      ],
+      "properties": {
+        "requested": {"type": "boolean"},
+        "method": {"type": "string"},
+        "escalated": {"type": "boolean"},
+        "group_state": {"type": "string"},
+        "group_uncertain": {"type": "boolean"},
+        "pipes_eof": {"type": "boolean"}
+      }
+    },
+    "retry_count": {"type": "integer", "const": 0}
+  }
+}
