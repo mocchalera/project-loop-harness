@@ -1,7 +1,10 @@
 # 0228 — Project-agnostic `pcl exec` and bounded agent output
 
-Status: **proposed / not started**. Implement only after GitHub Issue #8 and
-`docs/plan-project-agnostic-agent-exec.md` are accepted on `main`.
+Status: **implementation under review**. The runtime, contract, packaging checks,
+and documentation are implemented on the Issue #8 feature branch. Keep Issue #8
+open until real Python and Node/TypeScript repository dogfood records the measured
+result and a human decides whether the global-policy/audit-hook rollout should
+begin.
 
 Priority: P1 · Milestone: post-v0.6.0 · Origin: GitHub Issue #8
 
