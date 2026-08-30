@@ -10,7 +10,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Any, Iterable, Pattern
+from typing import Any, Callable, Iterable, Pattern
 
 from .errors import InvalidInputError
 from .redaction import redact_bytes
@@ -59,9 +59,17 @@ DEFAULT_ENV_ALLOWLIST = frozenset(
 
 
 class _BoundedStream:
-    def __init__(self, max_bytes: int, *, tail_bytes: int = 0) -> None:
+    def __init__(
+        self,
+        max_bytes: int,
+        *,
+        tail_bytes: int = 0,
+        chunk_observer: Callable[[bytes], None] | None = None,
+    ) -> None:
         self.max_bytes = max_bytes
         self.tail_bytes = tail_bytes
+        self.chunk_observer = chunk_observer
+        self.observer_failed = False
         self.captured_byte_count = 0
         self.original_byte_count = 0
         self.eof = False
@@ -70,6 +78,15 @@ class _BoundedStream:
 
     def consume(self, chunk: bytes) -> None:
         self.original_byte_count += len(chunk)
+        if self.chunk_observer is not None:
+            try:
+                self.chunk_observer(chunk)
+            except Exception:
+                # Output drainage and the child result remain authoritative. An
+                # optional observer is diagnostic-only and must fail closed to
+                # the existing head/tail capture rather than deadlock the pipe.
+                self.observer_failed = True
+                self.chunk_observer = None
         remaining = self.max_bytes - self.captured_byte_count
         if remaining > 0:
             retained = chunk[:remaining]
@@ -161,6 +178,8 @@ def execute_guarded_process(
     tail_output_bytes: int = 0,
     stdout_tail_path: Path | None = None,
     stderr_tail_path: Path | None = None,
+    stdout_chunk_observer: Callable[[bytes], None] | None = None,
+    stderr_chunk_observer: Callable[[bytes], None] | None = None,
     capture_interrupt: bool = False,
     redaction_patterns: Iterable[Pattern[str]] = (),
     additional_allowed_env_names: Iterable[str] = (),
@@ -247,8 +266,16 @@ def execute_guarded_process(
                 receipt_observer.anonymous_pipe_available
             )
         receipt_observer.start_reader()
-    stdout_capture = _BoundedStream(max_output_bytes, tail_bytes=tail_output_bytes)
-    stderr_capture = _BoundedStream(max_output_bytes, tail_bytes=tail_output_bytes)
+    stdout_capture = _BoundedStream(
+        max_output_bytes,
+        tail_bytes=tail_output_bytes,
+        chunk_observer=stdout_chunk_observer,
+    )
+    stderr_capture = _BoundedStream(
+        max_output_bytes,
+        tail_bytes=tail_output_bytes,
+        chunk_observer=stderr_chunk_observer,
+    )
     started = time.monotonic()
     timed_out = False
     interrupted = False
@@ -593,6 +620,8 @@ def _write_capture(
         "binary": binary,
         "sha256": f"sha256:{hashlib.sha256(redacted).hexdigest()}",
     }
+    if capture.chunk_observer is not None or capture.observer_failed:
+        metadata["chunk_observer_failed"] = capture.observer_failed
     if capture.tail_bytes > 0:
         tail_encoding, tail_binary = _encoding_metadata(tail_redacted)
         metadata["tail"] = {
