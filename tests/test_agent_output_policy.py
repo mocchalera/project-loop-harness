@@ -234,6 +234,48 @@ def test_similar_non_mode_flags_do_not_trigger_broad_watch_or_debug_matching(
 @pytest.mark.parametrize(
     "argv",
     [
+        ["pytest", "-qh"],
+        ["python", "-m", "pytest", "-qh"],
+        ["pytest", "-xqh"],
+        ["pytest", "-rP"],
+        ["python", "-m", "pytest", "-ra"],
+        ["pytest", "-r", "P"],
+        ["python", "-m", "pytest", "-rEw"],
+    ],
+)
+def test_pytest_combined_help_and_report_short_options_are_negative(
+    argv: list[str],
+) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "negative"
+    assert result["reason_code"] == "complete_output"
+    assert result["may_rewrite"] is False
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["pytest", "-k", "-qh"],
+        ["python", "-m", "pytest", "-m", "-rP"],
+        ["pytest", "-k=-rP"],
+        ["python", "-m", "pytest", "-m=-qh"],
+        ["pytest", "-k-rP"],
+        ["python", "-m", "pytest", "-m-qh"],
+    ],
+)
+def test_pytest_selection_expressions_are_not_scanned_as_short_presentation_options(
+    argv: list[str],
+) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "eligible"
+    assert result["reason_code"] in {"pytest_direct", "python_module_pytest"}
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
         ["pytest", "--client-secret", "SENTINEL"],
         ["pytest", "--client-secret=SENTINEL"],
         ["pytest", "--AuthToken=SENTINEL"],
@@ -256,6 +298,44 @@ def test_compound_secret_keys_are_unknown_without_echoing_values(argv: list[str]
     assert result["classification"] == "unknown"
     assert result["reason_code"] == "secret_shaped_argv"
     _assert_no_sensitive_fixture_leak(json.dumps(result))
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["pytest", "token=VALUE"],
+        ["pytest", "password:SENTINEL"],
+        ["pytest", "client-secret=SENTINEL"],
+        ["pytest", "clientSecret:SENTINEL"],
+        ["pytest", "AuthToken=SENTINEL"],
+        ["pytest", "api_key:SENTINEL"],
+        ["pytest", "PASSWORD=SENTINEL"],
+    ],
+)
+def test_lowercase_and_mixed_explicit_secret_keys_are_unknown(argv: list[str]) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "unknown"
+    assert result["reason_code"] == "secret_shaped_argv"
+    _assert_no_sensitive_fixture_leak(json.dumps(result))
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["pytest", "ordinary=value"],
+        ["pytest", "name:value"],
+        ["pytest", "-k", "password=VALUE"],
+        ["pytest", "-m", "token:VALUE"],
+        ["pytest", "-k=password:VALUE"],
+        ["pytest", "-mtoken=VALUE"],
+    ],
+)
+def test_positional_and_selection_values_are_not_secret_keys(argv: list[str]) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "eligible"
+    assert result["reason_code"] == "pytest_direct"
 
 
 @pytest.mark.parametrize(
@@ -369,6 +449,85 @@ def test_path_bearing_argv_is_unknown_without_echoing_paths(argv: list[str]) -> 
     assert result["classification"] == "unknown"
     assert result["reason_code"] == "absolute_path_argv"
     _assert_no_path_fixture_leak(json.dumps(result))
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        pytest.param(
+            ["pytest", "--search-path=relative:/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="posix-equals",
+        ),
+        pytest.param(
+            ["pytest", "--search-path:relative:/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="posix-colon",
+        ),
+        pytest.param(
+            ["pytest", "--search-path", "relative:/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="posix-separated",
+        ),
+        pytest.param(
+            ["pytest", "--search-path=relative;C:\\REVIEWER_PATH_SENTINEL\\file.py"],
+            id="windows-drive-list",
+        ),
+        pytest.param(
+            ["pytest", "--search-path", r"relative;\\REVIEWER_PATH_SENTINEL\share\file.py"],
+            id="windows-unc-list",
+        ),
+        pytest.param(
+            ["pytest", "--search-path=relative,~/REVIEWER_PATH_SENTINEL/file.py"],
+            id="home-list",
+        ),
+        pytest.param(
+            ["pytest", "SEARCH_PATH=relative:/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="env-key-list",
+        ),
+    ],
+)
+def test_path_list_values_are_unknown_without_echoing_paths(argv: list[str]) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "unknown"
+    assert result["reason_code"] == "absolute_path_argv"
+    _assert_no_path_fixture_leak(json.dumps(result))
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["pytest", "--search-path", "https://example.test/resource"],
+        ["pytest", "--search-path=https://example.test/resource"],
+        ["pytest", "--search-path", "relative:other"],
+        ["pytest", "--url", "authorization://example.test/resource"],
+        ["pytest", "--url", "Proxy-Authorization://example.test/resource"],
+        ["pytest", "--url=authorization://example.test/resource"],
+    ],
+)
+def test_path_lists_and_authorization_uris_remain_eligible(argv: list[str]) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "eligible"
+    assert result["reason_code"] == "pytest_direct"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        pytest.param(["pytest", "--url", "Authorization:Basic SENTINEL"], id="authorization"),
+        pytest.param(
+            ["pytest", "--url", "pRoXy-AuThOrIzAtIoN:Basic SENTINEL"],
+            id="proxy-authorization",
+        ),
+    ],
+)
+def test_separated_sensitive_headers_remain_unknown_without_echoing_values(
+    argv: list[str],
+) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "unknown"
+    assert result["reason_code"] == "secret_shaped_argv"
+    _assert_no_sensitive_fixture_leak(json.dumps(result))
 
 
 @pytest.mark.parametrize(

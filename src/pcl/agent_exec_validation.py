@@ -54,3 +54,7 @@ def is_valid_agent_exec_redaction_pattern(value: object) -> bool:
 
 def is_valid_agent_exec_env_name(value: object) -> bool:
     return isinstance(value, str) and _AGENT_EXEC_ENV_NAME.fullmatch(value) is not None
+
+
+def are_valid_agent_exec_env_names(values: Iterable[object]) -> bool:
+    return all(is_valid_agent_exec_env_name(value) for value in values)

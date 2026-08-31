@@ -292,6 +292,44 @@ def test_compound_secret_keys_are_redacted_from_exec_metadata(
 @pytest.mark.parametrize(
     "secret_argv",
     [
+        pytest.param(["token=SENTINEL"], id="lowercase-equals"),
+        pytest.param(["password:SENTINEL"], id="lowercase-colon"),
+        pytest.param(["client-secret=SENTINEL"], id="kebab-equals"),
+        pytest.param(["clientSecret:SENTINEL"], id="camel-colon"),
+        pytest.param(["AuthToken=SENTINEL"], id="pascal-equals"),
+        pytest.param(["api_key:SENTINEL"], id="snake-colon"),
+    ],
+)
+def test_explicit_secret_keys_are_redacted_without_changing_child_argv(
+    secret_argv: list[str],
+    tmp_path: Path,
+) -> None:
+    child_argv_path = tmp_path / "child-argv.json"
+    script = (
+        "import json, pathlib, sys; "
+        "pathlib.Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]), encoding='utf-8')"
+    )
+    state_root = tmp_path / "state"
+
+    outcome = run_agent_exec(
+        [sys.executable, "-c", script, str(child_argv_path), *secret_argv],
+        cwd=tmp_path,
+        timeout_seconds=5,
+        max_output_bytes=1024,
+        state_root=state_root,
+    )
+
+    metadata_text = next(state_root.rglob("meta.json")).read_text(encoding="utf-8")
+    assert outcome.result["status"] == "PASS"
+    assert json.loads(child_argv_path.read_text(encoding="utf-8")) == secret_argv
+    _assert_no_sensitive_fixture_leak(json.dumps(outcome.result))
+    _assert_no_sensitive_fixture_leak(metadata_text)
+    assert REDACTED_ARGUMENT in metadata_text
+
+
+@pytest.mark.parametrize(
+    "secret_argv",
+    [
         pytest.param(
             ["--header=Authorization:Basic SENTINEL"],
             id="equals-authorization",
@@ -424,6 +462,113 @@ def test_path_bearing_argv_reaches_child_unchanged_but_metadata_is_redacted(
     _assert_no_path_fixture_leak(json.dumps(outcome.result))
     _assert_no_path_fixture_leak(metadata_text)
     assert "<absolute-path>" in metadata_text
+
+
+@pytest.mark.parametrize(
+    "path_argv",
+    [
+        pytest.param(
+            ["--search-path=relative:/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="posix-equals",
+        ),
+        pytest.param(
+            ["--search-path:relative:/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="posix-colon",
+        ),
+        pytest.param(
+            ["--search-path", "relative:/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="posix-separated",
+        ),
+        pytest.param(
+            ["--search-path=relative;C:\\REVIEWER_PATH_SENTINEL\\file.py"],
+            id="windows-drive-list",
+        ),
+        pytest.param(
+            ["--search-path", r"relative;\\REVIEWER_PATH_SENTINEL\share\file.py"],
+            id="windows-unc-list",
+        ),
+        pytest.param(
+            ["--search-path=relative,~/REVIEWER_PATH_SENTINEL/file.py"],
+            id="home-list",
+        ),
+    ],
+)
+def test_path_list_values_are_redacted_without_changing_child_argv(
+    path_argv: list[str],
+    tmp_path: Path,
+) -> None:
+    expected_digests = repr(
+        [hashlib.sha256(value.encode("utf-8")).hexdigest() for value in path_argv]
+    )
+    script = (
+        "import hashlib, sys; "
+        "actual = [hashlib.sha256(value.encode('utf-8')).hexdigest() "
+        "for value in sys.argv[1:]]; "
+        f"raise SystemExit(0 if actual == {expected_digests} else 17)"
+    )
+    state_root = tmp_path / "state"
+
+    outcome = run_agent_exec(
+        [sys.executable, "-c", script, *path_argv],
+        cwd=tmp_path,
+        timeout_seconds=5,
+        max_output_bytes=1024,
+        state_root=state_root,
+    )
+
+    metadata_text = next(state_root.rglob("meta.json")).read_text(encoding="utf-8")
+    assert outcome.result["status"] == "PASS"
+    _assert_no_path_fixture_leak(json.dumps(outcome.result))
+    _assert_no_path_fixture_leak(metadata_text)
+    assert "<absolute-path>" in metadata_text
+
+
+@pytest.mark.parametrize(
+    "url_argv",
+    [
+        pytest.param(
+            ["--url", "authorization://example.test/resource"],
+            id="separated-authorization-uri",
+        ),
+        pytest.param(
+            ["--url", "Proxy-Authorization://example.test/resource"],
+            id="separated-proxy-authorization-uri",
+        ),
+        pytest.param(
+            ["--url=authorization://example.test/resource"],
+            id="equals-authorization-uri",
+        ),
+    ],
+)
+def test_authorization_uri_values_remain_unredacted_without_changing_child_argv(
+    url_argv: list[str],
+    tmp_path: Path,
+) -> None:
+    child_argv_path = tmp_path / "child-argv.json"
+    script = (
+        "import json, pathlib, sys; "
+        "pathlib.Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]), encoding='utf-8')"
+    )
+    state_root = tmp_path / "state"
+
+    outcome = run_agent_exec(
+        [sys.executable, "-c", script, str(child_argv_path), *url_argv],
+        cwd=tmp_path,
+        timeout_seconds=5,
+        max_output_bytes=1024,
+        state_root=state_root,
+    )
+
+    metadata_text = next(state_root.rglob("meta.json")).read_text(encoding="utf-8")
+    result_text = json.dumps(outcome.result)
+    uri_values = (
+        "authorization://example.test/resource",
+        "Proxy-Authorization://example.test/resource",
+    )
+    assert outcome.result["status"] == "PASS"
+    assert json.loads(child_argv_path.read_text(encoding="utf-8")) == url_argv
+    assert any(value in result_text for value in uri_values)
+    assert any(value in metadata_text for value in uri_values)
 
 
 def test_windows_absolute_executable_is_redacted_without_echoing_path(tmp_path: Path) -> None:

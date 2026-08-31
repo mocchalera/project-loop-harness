@@ -13,7 +13,13 @@ from pcl.agent_exec import (
     gc_agent_exec,
     run_agent_exec,
 )
+from pcl.cli import main as cli_main
 from pcl.errors import InvalidInputError
+
+
+def _assert_no_sensitive_fixture_leak(value: str) -> None:
+    if "SENTINEL" in value:
+        raise AssertionError("sensitive fixture value was leaked")
 
 
 def test_large_simultaneous_stdout_stderr_is_drained_without_deadlock(tmp_path: Path) -> None:
@@ -108,6 +114,65 @@ def test_invalid_custom_redaction_pattern_fails_before_state_creation(tmp_path: 
         )
 
     assert not state_root.exists()
+
+
+@pytest.mark.parametrize(
+    "allow_env_arg",
+    [
+        pytest.param(["--allow-env", "TOKEN=SENTINEL"], id="separated"),
+        pytest.param(["--allow-env=TOKEN=SENTINEL"], id="equals"),
+    ],
+)
+def test_invalid_allow_env_fails_before_cli_state_or_child_creation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    allow_env_arg: list[str],
+) -> None:
+    state_root = tmp_path / "state"
+    marker = tmp_path / "child-started"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("PCL_AGENT_EXEC_STATE_DIR", str(state_root))
+    script = f"from pathlib import Path; Path({str(marker)!r}).touch()"
+
+    exit_code = cli_main(
+        [
+            "--json",
+            "exec",
+            *allow_env_arg,
+            "--",
+            sys.executable,
+            "-c",
+            script,
+        ]
+    )
+    captured = capsys.readouterr()
+
+    assert exit_code == 2
+    _assert_no_sensitive_fixture_leak(captured.out)
+    _assert_no_sensitive_fixture_leak(captured.err)
+    assert not state_root.exists()
+    assert not marker.exists()
+
+
+def test_invalid_allow_env_service_call_fails_before_state_or_child_creation(tmp_path: Path) -> None:
+    state_root = tmp_path / "state"
+    marker = tmp_path / "child-started"
+    script = f"from pathlib import Path; Path({str(marker)!r}).touch()"
+
+    with pytest.raises(InvalidInputError) as raised:
+        run_agent_exec(
+            [sys.executable, "-c", script],
+            cwd=tmp_path,
+            timeout_seconds=5,
+            max_output_bytes=1024,
+            allowed_env_names=("TOKEN=SENTINEL",),
+            state_root=state_root,
+        )
+
+    _assert_no_sensitive_fixture_leak(str(raised.value))
+    assert not state_root.exists()
+    assert not marker.exists()
 
 
 @pytest.mark.parametrize(

@@ -103,7 +103,7 @@ def split_nested_sensitive_header(value: str) -> tuple[str, str, str] | None:
     return outer
 
 
-def is_sensitive_key(key: str) -> bool:
+def is_sensitive_key(key: str, *, explicit_value: bool = False) -> bool:
     """Return whether an argv or mapping key is shaped like a secret name."""
 
     if not isinstance(key, str):
@@ -111,7 +111,7 @@ def is_sensitive_key(key: str) -> bool:
     candidate = key.strip()
     if is_option_shaped_key(candidate):
         candidate = candidate.lstrip("-")
-    elif not is_env_key_shaped(candidate):
+    elif not explicit_value and not is_env_key_shaped(candidate):
         return False
     if not candidate:
         return False
@@ -128,3 +128,17 @@ def is_sensitive_key(key: str) -> bool:
     if any(item in _SENSITIVE_KEY_WORDS for item in components):
         return True
     return "key" in components and bool(_KEY_CONTEXT_WORDS.intersection(components))
+
+
+def is_sensitive_key_value(value: str) -> bool:
+    """Return whether an explicit key/value token contains sensitive material."""
+
+    key_value = split_key_value(value)
+    if key_value is None:
+        return False
+    key, _separator, _remainder = key_value
+    if is_sensitive_header_value(value):
+        return True
+    if is_sensitive_header_key(key):
+        return False
+    return is_sensitive_key(key, explicit_value=True)

@@ -18,6 +18,7 @@ from .agent_exec_error_window import (
 )
 from .agent_exec_validation import (
     AGENT_EXEC_MAX_OUTPUT_BYTES,
+    are_valid_agent_exec_env_names,
     compile_agent_exec_redaction_patterns,
     is_valid_agent_exec_max_output_bytes,
     is_valid_agent_exec_timeout,
@@ -28,13 +29,18 @@ from .contracts.agent_exec_result import (
 )
 from .errors import InvalidInputError
 from .guarded_process import execute_guarded_process
-from .path_safety import is_path_like, split_path_value
+from .path_safety import (
+    is_path_like,
+    is_path_list_like,
+    split_path_list_value,
+    split_path_value,
+)
 from .redaction import redact_bytes
 from .sensitive import (
     is_option_shaped_key,
     is_sensitive_header_value,
-    is_sensitive_header_key,
     is_sensitive_key,
+    is_sensitive_key_value,
     split_nested_sensitive_header,
     split_key_value,
 )
@@ -107,6 +113,11 @@ def run_agent_exec(
         raise InvalidInputError("Agent execution argv is limited to 256 items.")
     if any("\x00" in item for item in argv):
         raise InvalidInputError("Agent execution argv cannot contain NUL bytes.")
+    allowed_env_names = tuple(allowed_env_names)
+    if not are_valid_agent_exec_env_names(allowed_env_names):
+        raise InvalidInputError(
+            "Agent execution allowlist contains an invalid environment variable name."
+        )
 
     patterns = _compile_redaction_patterns(redaction_patterns)
     root = _prepare_state_root(state_root or default_agent_exec_state_root())
@@ -487,6 +498,8 @@ def _redact_argv(
     changed = False
     redact_next = False
     redact_header_value_next = False
+    path_value_next = False
+    selection_value_next = False
     total_bytes = 0
     for index, item in enumerate(argv):
         if redact_next:
@@ -494,22 +507,42 @@ def _redact_argv(
             item_changed = True
             redact_next = False
             redact_header_value_next = False
+            path_value_next = False
+            selection_value_next = False
         elif redact_header_value_next and is_sensitive_header_value(item):
             value = REDACTED_ARGUMENT
             item_changed = True
             redact_header_value_next = False
+            path_value_next = False
+            selection_value_next = False
+        elif path_value_next and (is_path_like(item) or is_path_list_like(item)):
+            value = "<absolute-path>"
+            item_changed = True
+            redact_header_value_next = False
+            path_value_next = False
+            selection_value_next = False
         else:
             redact_header_value_next = False
-            value, item_changed = _redact_sensitive_argument(item)
+            path_value_next = False
+            is_selection_value = selection_value_next
+            selection_value_next = False
+            if is_selection_value:
+                value, item_changed = item, False
+            else:
+                value, item_changed = _redact_sensitive_argument(item)
             if not item_changed:
                 redacted_bytes, item_changed = redact_bytes(
                     item.encode("utf-8"), additional_patterns=patterns
                 )
                 value = redacted_bytes.decode("utf-8", errors="replace")
-            if is_option_shaped_key(item) and is_sensitive_key(item):
-                redact_next = True
-            elif is_option_shaped_key(item):
-                redact_header_value_next = True
+            if is_option_shaped_key(item):
+                if _is_selection_value_option(item):
+                    selection_value_next = item in {"-k", "--keyword", "-m", "--markexpr"}
+                elif is_sensitive_key(item):
+                    redact_next = True
+                else:
+                    redact_header_value_next = True
+                path_value_next = True
         value, path_changed = _sanitize_argument(value, cwd=cwd, executable=index == 0)
         value, clipped = _clip_argument(value)
         encoded_size = len(value.encode("utf-8")) + (1 if redacted else 0)
@@ -531,9 +564,17 @@ def _redact_sensitive_argument(item: str) -> tuple[str, bool]:
     key_value = split_key_value(item)
     if key_value is not None:
         key, separator, _value = key_value
-        if is_sensitive_key(key) or is_sensitive_header_key(key):
+        if is_sensitive_key_value(item):
             return f"{key}{separator}{REDACTED_ARGUMENT}", True
     return item, False
+
+
+def _is_selection_value_option(token: str) -> bool:
+    if token in {"-k", "--keyword", "-m", "--markexpr"}:
+        return True
+    if token.startswith(("-k", "-m")) and not token.startswith("--") and len(token) > 2:
+        return True
+    return "=" in token and token.split("=", 1)[0].lower() in {"--keyword", "--markexpr"}
 
 
 def _sanitize_argument(value: str, *, cwd: Path, executable: bool) -> tuple[str, bool]:
@@ -544,6 +585,10 @@ def _sanitize_argument(value: str, *, cwd: Path, executable: bool) -> tuple[str,
     path_value = split_path_value(value)
     if path_value is not None:
         key, separator, _candidate = path_value
+        return f"{key}{separator}<absolute-path>", True
+    path_list_value = split_path_list_value(value)
+    if path_list_value is not None:
+        key, separator, _candidate = path_list_value
         return f"{key}{separator}<absolute-path>", True
     sanitized, changed = _replace_known_paths(value, cwd=cwd)
     return sanitized, changed

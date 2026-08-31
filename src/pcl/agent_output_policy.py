@@ -20,12 +20,12 @@ from .agent_exec_validation import (
     parse_agent_exec_integer,
 )
 from .resources import read_text_resource
-from .path_safety import is_path_like, split_path_value
+from .path_safety import is_path_like, is_path_list_like, split_path_list_value, split_path_value
 from .sensitive import (
     is_option_shaped_key,
     is_sensitive_header_value,
-    is_sensitive_header_key,
     is_sensitive_key,
+    is_sensitive_key_value,
     split_nested_sensitive_header,
     split_key_value,
 )
@@ -113,6 +113,8 @@ _PYTEST_COMPLETE_OUTPUT_FLAGS = frozenset(
     }
 )
 _PYTEST_VALUE_OPTIONS = frozenset({"-k", "--keyword", "-m", "--markexpr"})
+_PYTEST_REPORT_CHARS = frozenset("fFEsxXpPaAwN")
+_PYTEST_SHORT_CLUSTER_FLAGS = frozenset({"q", "v", "s", "x", "f", "l"})
 _GO_LIST_FLAGS = frozenset({"-list", "--list"})
 _NON_INTERACTIVE_INSTALL_FLAG = "--no-input"
 _PIP_COMMANDS = frozenset({"pip", "pip3"})
@@ -258,21 +260,29 @@ def _bounded_argv(argv: object) -> list[str] | dict[str, str] | None:
 def _contains_secret_shape(tokens: Sequence[str]) -> bool:
     redact_next = False
     option_value_next = False
+    selection_value_next = False
     for token in tokens:
         if redact_next:
             return True
         if option_value_next and is_sensitive_header_value(token):
             return True
         option_value_next = False
+        if selection_value_next:
+            selection_value_next = False
+            if _SECRET_VALUE.search(token):
+                return True
+            continue
         if _SECRET_VALUE.search(token):
             return True
         if split_nested_sensitive_header(token) is not None:
             return True
         key_value = split_key_value(token)
         if key_value is not None:
-            key, _separator, value = key_value
-            if is_sensitive_key(key) or is_sensitive_header_key(key) or _SECRET_VALUE.search(value):
+            _key, _separator, value = key_value
+            if is_sensitive_key_value(token) or _SECRET_VALUE.search(value):
                 return True
+        elif _is_selection_value_option(token):
+            selection_value_next = token in _PYTEST_VALUE_OPTIONS
         elif is_option_shaped_key(token) and is_sensitive_key(token):
             redact_next = True
         elif is_option_shaped_key(token):
@@ -281,9 +291,26 @@ def _contains_secret_shape(tokens: Sequence[str]) -> bool:
 
 
 def _contains_absolute_path(tokens: Sequence[str]) -> bool:
+    path_value_next = False
+    selection_value_next = False
     for token in tokens:
-        if is_path_like(token) or split_path_value(token) is not None:
+        if selection_value_next:
+            selection_value_next = False
+            continue
+        if path_value_next:
+            path_value_next = False
+            if is_path_like(token) or is_path_list_like(token):
+                return True
+        if (
+            is_path_like(token)
+            or split_path_value(token) is not None
+            or split_path_list_value(token) is not None
+        ):
             return True
+        if _is_selection_value_option(token):
+            selection_value_next = token in _PYTEST_VALUE_OPTIONS
+        elif is_option_shaped_key(token):
+            path_value_next = True
     return False
 
 
@@ -518,20 +545,15 @@ def _contains_report_output_request(tokens: Sequence[str]) -> bool:
 
 def _contains_complete_output_request(tokens: Sequence[str]) -> bool:
     command = tokens[0].lower()
-    if command == "mypy" and (
-        _contains_exact_option(tokens[1:], _COMPLETE_OUTPUT_FLAGS)
-        or any(token == "-V" for token in tokens[1:])
+    if command == "mypy" and _contains_exact_option(
+        tokens[1:], _COMPLETE_OUTPUT_FLAGS | frozenset({"-V"})
     ):
         return True
     if command in {"pytest", "python", "python3"}:
         pytest_start = 1 if command == "pytest" else 3
         if command != "pytest" and list(tokens[1:3]) != ["-m", "pytest"]:
             pytest_start = -1
-        if pytest_start >= 0 and _contains_exact_option(
-            tokens[pytest_start:],
-            _PYTEST_COMPLETE_OUTPUT_FLAGS | _COMPLETE_OUTPUT_FLAGS,
-            value_options=_PYTEST_VALUE_OPTIONS,
-        ):
+        if pytest_start >= 0 and _contains_pytest_complete_output_request(tokens[pytest_start:]):
             return True
     if command not in {"pytest", "mypy"} and not (
         command in {"python", "python3"} and list(tokens[1:3]) == ["-m", "pytest"]
@@ -557,6 +579,50 @@ def _contains_complete_output_request(tokens: Sequence[str]) -> bool:
         and tokens[1].lower() == "test"
         and any(_option_key(token) == "--list" for token in tokens[2:])
     )
+
+
+def _contains_pytest_complete_output_request(tokens: Sequence[str]) -> bool:
+    skip_selection_value = False
+    flags = _PYTEST_COMPLETE_OUTPUT_FLAGS | _COMPLETE_OUTPUT_FLAGS
+    for token in tokens:
+        if skip_selection_value:
+            skip_selection_value = False
+            continue
+        if token in _PYTEST_VALUE_OPTIONS:
+            skip_selection_value = True
+            continue
+        if _is_selection_value_option(token):
+            continue
+        if _option_key(token) in flags or _is_pytest_short_presentation_option(token):
+            return True
+    return False
+
+
+def _is_selection_value_option(token: str) -> bool:
+    if token in _PYTEST_VALUE_OPTIONS:
+        return True
+    if token.startswith(("-k", "-m")) and not token.startswith("--") and len(token) > 2:
+        return True
+    return "=" in token and token.split("=", 1)[0].lower() in {"--keyword", "--markexpr"}
+
+
+def _is_pytest_short_presentation_option(token: str) -> bool:
+    if not token.startswith("-") or token.startswith("--") or len(token) < 2:
+        return False
+    body = token[1:]
+    index = 0
+    while index < len(body):
+        option = body[index]
+        if option == "h":
+            return True
+        if option == "r":
+            return index == len(body) - 1 or all(
+                character in _PYTEST_REPORT_CHARS for character in body[index + 1 :]
+            )
+        if option not in _PYTEST_SHORT_CLUSTER_FLAGS:
+            return False
+        index += 1
+    return False
 
 
 def _contains_exact_option(
