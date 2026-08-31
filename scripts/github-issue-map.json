@@ -55,12 +55,28 @@
         "agent_task_ids": ["0228"],
         "repo_paths": [
           "docs/plan-project-agnostic-agent-exec.md",
+          "docs/evidence/0250-agent-exec-dogfood.md",
           "src/pcl/guarded_process.py"
         ]
       },
       "acceptance_criteria_refs": [
         "agent-tasks/0228-project-agnostic-agent-exec.md",
-        "docs/plan-project-agnostic-agent-exec.md"
+        "docs/plan-project-agnostic-agent-exec.md",
+        "docs/evidence/0250-agent-exec-dogfood.md"
+      ]
+    },
+    {
+      "issue": 13,
+      "title_hint": "Roll out pcl exec as the default noisy-command path across agent hosts",
+      "anchors": {
+        "agent_task_ids": ["0229"],
+        "repo_paths": [
+          "docs/plan-cross-agent-output-budget-rollout.md"
+        ]
+      },
+      "acceptance_criteria_refs": [
+        "agent-tasks/0229-cross-agent-output-budget-rollout.md",
+        "docs/plan-cross-agent-output-budget-rollout.md"
       ]
     }
   ]
