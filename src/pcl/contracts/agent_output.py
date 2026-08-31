@@ -14,6 +14,21 @@ AGENT_OUTPUT_CLASSIFICATIONS = frozenset(
     {"eligible", "negative", "unknown", "already_wrapped"}
 )
 AGENT_OUTPUT_REASON_CODE_PATTERN = r"^[a-z0-9][a-z0-9_.-]*$"
+CANONICAL_UNSAFE_SHELL_MARKERS = (
+    "|",
+    ">",
+    ">>",
+    "<",
+    "$(",
+    "`",
+    "&&",
+    "||",
+    ";",
+    "\n",
+    "\r",
+    "heredoc",
+    "function",
+)
 
 
 @dataclass(frozen=True)
@@ -77,6 +92,7 @@ def canonical_agent_output_classification_json(value: Mapping[str, Any]) -> str:
 def validate_agent_output_policy(value: Any) -> AgentOutputPolicyValidationResult:
     errors = validate_schema(value, agent_output_policy_schema())
     if isinstance(value, dict):
+        _validate_required_unsafe_shell_markers(value, errors)
         _validate_rule_shapes(value, errors)
         _validate_unique_rule_reasons(value, errors)
     return AgentOutputPolicyValidationResult(
@@ -137,6 +153,18 @@ def _validate_unique_rule_reasons(value: Mapping[str, Any], errors: list[str]) -
                 )
             else:
                 seen[reason] = f"$.{section}[{index}]"
+
+
+def _validate_required_unsafe_shell_markers(
+    value: Mapping[str, Any], errors: list[str]
+) -> None:
+    markers = value.get("unsafe_shell_markers")
+    if not isinstance(markers, list):
+        errors.append("$.unsafe_shell_markers: must include the canonical marker set")
+        return
+    for marker in CANONICAL_UNSAFE_SHELL_MARKERS:
+        if marker not in markers:
+            errors.append(f"$.unsafe_shell_markers: missing required marker {marker!r}")
 
 
 def _validate_rule_shapes(value: Mapping[str, Any], errors: list[str]) -> None:

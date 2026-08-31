@@ -3,7 +3,9 @@ from __future__ import annotations
 import re
 
 
-_KEY_COMPONENT = re.compile(r"[A-Z]+(?=[A-Z][a-z]|[a-z]|$)|[A-Z]?[a-z]+|[0-9]+")
+_KEY_COMPONENT = re.compile(r"[A-Z]+(?=[A-Z][a-z]|[0-9]|$)|[A-Z]?[a-z]+|[0-9]+")
+_ENV_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+SUPPORTED_KEY_VALUE_SEPARATORS = ("=", ":")
 _SENSITIVE_KEY_WORDS = frozenset(
     {
         "auth",
@@ -38,12 +40,51 @@ _KEY_CONTEXT_WORDS = frozenset(
 )
 
 
+def is_option_shaped_key(value: str) -> bool:
+    """Return whether a token has the shape of an option key."""
+
+    if not isinstance(value, str):
+        return False
+    candidate = value.strip()
+    return bool(candidate and candidate.startswith("-") and candidate.strip("-") and not any(
+        separator in candidate for separator in SUPPORTED_KEY_VALUE_SEPARATORS
+    ))
+
+
+def is_env_key_shaped(value: str) -> bool:
+    """Return whether a token has a conventional environment-key shape."""
+
+    if not isinstance(value, str) or _ENV_KEY.fullmatch(value) is None:
+        return False
+    return "_" in value or any(char.isupper() for char in value)
+
+
+def split_key_value(value: str) -> tuple[str, str, str] | None:
+    """Split a supported key/value token at its first separator."""
+
+    if not isinstance(value, str):
+        return None
+    separators = [
+        (index, separator)
+        for separator in SUPPORTED_KEY_VALUE_SEPARATORS
+        if (index := value.find(separator)) > 0
+    ]
+    if not separators:
+        return None
+    index, separator = min(separators)
+    return value[:index], separator, value[index + 1 :]
+
+
 def is_sensitive_key(key: str) -> bool:
     """Return whether an argv or mapping key is shaped like a secret name."""
 
     if not isinstance(key, str):
         return False
-    candidate = key.strip().lstrip("-")
+    candidate = key.strip()
+    if is_option_shaped_key(candidate):
+        candidate = candidate.lstrip("-")
+    elif not is_env_key_shaped(candidate):
+        return False
     if not candidate:
         return False
     components = tuple(

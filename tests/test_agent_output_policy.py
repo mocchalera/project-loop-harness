@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import pcl.contracts.agent_output as agent_output_contract
 from pcl.agent_output_policy import (
     canonical_agent_output_policy,
     classify_agent_output_argv,
@@ -36,6 +37,9 @@ ELIGIBLE_CASES = [
     (["npm", "run", "build"], "npm_run_build_script"),
     (["npm", "run", "verify"], "npm_run_verify_command"),
     (["npm", "run", "verify:full"], "npm_run_verify_script"),
+    (["pytest", "-k", "pass"], "pytest_direct"),
+    (["pytest", "-k", "authorization"], "pytest_direct"),
+    (["pytest", "-k", "report"], "pytest_direct"),
     (["pnpm", "test"], "pnpm_test"),
     (["yarn", "test"], "yarn_test"),
     (["tsc", "--noEmit"], "tsc_no_emit"),
@@ -105,7 +109,10 @@ def test_eligible_verification_families_are_classified_without_rewrite(
         ["pytest", "--output-is-artifact=true"],
         ["pytest", "--help"],
         ["mypy", "--version"],
+        ["mypy", "-V"],
         ["go", "test", "-list", "."],
+        ["npm", "test", "--", "--listTests"],
+        ["cargo", "test", "--", "--list"],
         ["pytest", "--collect-only"],
         ["pytest", "--junit-xml", "results.xml"],
         ["pytest", "--junit-xml=results.xml"],
@@ -191,9 +198,15 @@ def test_similar_non_mode_flags_do_not_trigger_broad_watch_or_debug_matching(
     [
         ["pytest", "--client-secret", "SENTINEL"],
         ["pytest", "--client-secret=SENTINEL"],
+        ["pytest", "--AuthToken=SENTINEL"],
+        ["pytest", "--Client-Secret=SENTINEL"],
+        ["pytest", "--ClientSecret=SENTINEL"],
+        ["pytest", "--clientSecret=SENTINEL"],
+        ["pytest", "--client_secret=SENTINEL"],
+        ["pytest", "--client-secret:SENTINEL=tail"],
+        ["pytest", "--client-secret:SENTINEL"],
         ["pytest", "API_TOKEN=SENTINEL"],
         ["pytest", "--CLIENT_SECRET=SENTINEL"],
-        ["pytest", "--clientSecret=SENTINEL"],
         ["pytest", "AWS_SECRET_ACCESS_KEY=SENTINEL"],
     ],
 )
@@ -203,6 +216,33 @@ def test_compound_secret_keys_are_unknown_without_echoing_values(argv: list[str]
     assert result["classification"] == "unknown"
     assert result["reason_code"] == "secret_shaped_argv"
     _assert_no_sensitive_fixture_leak(json.dumps(result))
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["pytest", "-k", "pass"],
+        ["pytest", "-k", "authorization"],
+    ],
+)
+def test_pytest_select_expression_values_are_not_secret_keys(argv: list[str]) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "eligible"
+    assert result["reason_code"] == "pytest_direct"
+
+
+def test_policy_marker_semantics_survive_permissive_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    candidate = canonical_agent_output_policy()
+    candidate["unsafe_shell_markers"].remove("|")
+    monkeypatch.setattr(agent_output_contract, "validate_schema", lambda _value, _schema: [])
+
+    validation = agent_output_contract.validate_agent_output_policy(candidate)
+    result = classify_agent_output_argv(["pytest"], policy=candidate)
+
+    assert validation.ok is False
+    assert result["classification"] == "unknown"
+    assert result["reason_code"] == "invalid_policy"
 
 
 def test_policy_requires_the_full_canonical_unsafe_shell_marker_set() -> None:

@@ -23,7 +23,7 @@ from .contracts.agent_exec_result import (
 from .errors import InvalidInputError
 from .guarded_process import execute_guarded_process
 from .redaction import redact_bytes
-from .sensitive import is_sensitive_key
+from .sensitive import is_option_shaped_key, is_sensitive_key, split_key_value
 
 
 PASS_MAX_LINES = 5
@@ -489,7 +489,7 @@ def _redact_argv(
                     item.encode("utf-8"), additional_patterns=patterns
                 )
                 value = redacted_bytes.decode("utf-8", errors="replace")
-            if "=" not in item and ":" not in item and is_sensitive_key(item):
+            if is_option_shaped_key(item) and is_sensitive_key(item):
                 redact_next = True
         value, path_changed = _sanitize_argument(value, cwd=cwd, executable=index == 0)
         value, clipped = _clip_argument(value)
@@ -505,10 +505,9 @@ def _redact_argv(
 
 
 def _redact_sensitive_argument(item: str) -> tuple[str, bool]:
-    for separator in ("=", ":"):
-        if separator not in item:
-            continue
-        key, _value = item.split(separator, 1)
+    key_value = split_key_value(item)
+    if key_value is not None:
+        key, separator, _value = key_value
         if is_sensitive_key(key):
             return f"{key}{separator}{REDACTED_ARGUMENT}", True
     return item, False

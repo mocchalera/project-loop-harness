@@ -249,9 +249,15 @@ def test_secret_shaped_argv_and_output_are_redacted(
     [
         ["--client-secret", "SENTINEL"],
         ["--client-secret=SENTINEL"],
+        ["--AuthToken=SENTINEL"],
+        ["--Client-Secret=SENTINEL"],
+        ["--ClientSecret=SENTINEL"],
+        ["--clientSecret=SENTINEL"],
+        ["--client_secret=SENTINEL"],
+        ["--client-secret:SENTINEL=tail"],
+        ["--client-secret:SENTINEL"],
         ["API_TOKEN=SENTINEL"],
         ["--CLIENT_SECRET=SENTINEL"],
-        ["--clientSecret=SENTINEL"],
         ["AWS_SECRET_ACCESS_KEY=SENTINEL"],
     ],
 )

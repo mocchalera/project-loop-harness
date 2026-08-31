@@ -14,7 +14,7 @@ from .contracts.agent_output import (
     validate_agent_output_policy,
 )
 from .resources import read_text_resource
-from .sensitive import is_sensitive_key
+from .sensitive import is_option_shaped_key, is_sensitive_key, split_key_value
 
 
 CANONICAL_POLICY_RESOURCE = "templates/agent-output-budget/policy.json"
@@ -29,7 +29,7 @@ _SECRET_VALUE = re.compile(
     r"(?i)(?:sk-[a-z0-9]{12,}|gh[pousr]_[a-z0-9]{12,}|xox[baprs]-[a-z0-9-]{12,}|"
     r"bearer\s+[a-z0-9._-]{12,}|-----begin [a-z ]+ key-----)"
 )
-_REPORT_TOKEN = re.compile(r"(?i)(?:^|[-_.:/])report(?:[-_.:/]|$)")
+_REPORT_TOKEN = re.compile(r"(?i)(?:^|[-_.:/=])report(?:[-_.:/=]|$)")
 _ARTIFACT_MARKERS = frozenset(
     {
         "--output-is-artifact",
@@ -79,7 +79,7 @@ _INTERACTIVE_FLAGS = frozenset(
 )
 _STREAM_FLAGS = frozenset({"--follow", "--stream"})
 _INSTALLER_COMMANDS = frozenset({"init", "create", "new"})
-_COMPLETE_OUTPUT_FLAGS = frozenset({"-h", "--help", "-V", "--version"})
+_COMPLETE_OUTPUT_FLAGS = frozenset({"-h", "--help", "--version"})
 _PYTEST_COMPLETE_OUTPUT_FLAGS = frozenset({"--collect-only", "--collectonly"})
 _GO_LIST_FLAGS = frozenset({"-list", "--list"})
 _NON_INTERACTIVE_INSTALL_FLAG = "--no-input"
@@ -220,15 +220,15 @@ def _contains_secret_shape(tokens: Sequence[str]) -> bool:
     for token in tokens:
         if redact_next:
             return True
-        if is_sensitive_key(token):
-            redact_next = True
-            continue
         if _SECRET_VALUE.search(token):
             return True
-        if "=" in token:
-            key, value = token.split("=", 1)
+        key_value = split_key_value(token)
+        if key_value is not None:
+            key, _separator, value = key_value
             if is_sensitive_key(key) or _SECRET_VALUE.search(value):
                 return True
+        elif is_option_shaped_key(token) and is_sensitive_key(token):
+            redact_next = True
         if token.lower().startswith(("authorization:", "proxy-authorization:")):
             return True
     return redact_next
@@ -298,7 +298,7 @@ def _negative_reason(tokens: Sequence[str], policy: Mapping[str, Any]) -> str | 
             return str(rule["reason_code"])
     if _contains_complete_output_request(tokens):
         return "complete_output"
-    if any(_REPORT_TOKEN.search(token) for token in tokens):
+    if _contains_report_output_request(tokens):
         return "report_output_artifact"
     if any(_is_artifact_marker(token) for token in tokens):
         return "output_is_artifact"
@@ -343,10 +343,36 @@ def _script_has_mode_token(script_name: str) -> bool:
     )
 
 
+def _contains_report_output_request(tokens: Sequence[str]) -> bool:
+    command = tokens[0]
+    if _REPORT_TOKEN.search(command):
+        return True
+    if len(tokens) >= 3 and command.lower() in {"python", "python3"}:
+        if tokens[1].lower() == "-m" and _REPORT_TOKEN.search(tokens[2]):
+            return True
+    if len(tokens) >= 3 and list(tokens[:2]) in (
+        ["npm", "run"],
+        ["pnpm", "run"],
+        ["yarn", "run"],
+    ):
+        if _REPORT_TOKEN.search(tokens[2]):
+            return True
+    for token in tokens[1:]:
+        if not is_option_shaped_key(token):
+            continue
+        key_value = split_key_value(token)
+        key = key_value[0] if key_value is not None else token
+        if _REPORT_TOKEN.search(key):
+            return True
+    return False
+
+
 def _contains_complete_output_request(tokens: Sequence[str]) -> bool:
     if any(_option_key(token) in _COMPLETE_OUTPUT_FLAGS for token in tokens[1:]):
         return True
     command = tokens[0].lower()
+    if command == "mypy" and any(token == "-V" for token in tokens[1:]):
+        return True
     if command in {"pytest", "python", "python3"}:
         pytest_start = 1 if command == "pytest" else 3
         if command != "pytest" and list(tokens[1:3]) != ["-m", "pytest"]:
@@ -356,11 +382,25 @@ def _contains_complete_output_request(tokens: Sequence[str]) -> bool:
             for token in tokens[pytest_start:]
         ):
             return True
-    return (
+    if (
         len(tokens) >= 2
         and command == "go"
         and tokens[1].lower() == "test"
         and any(_option_key(token) in _GO_LIST_FLAGS for token in tokens[2:])
+    ):
+        return True
+    if (
+        len(tokens) >= 2
+        and command == "npm"
+        and tokens[1].lower() == "test"
+        and any(_option_key(token) in {"--listtests", "--list-tests"} for token in tokens[2:])
+    ):
+        return True
+    return (
+        len(tokens) >= 2
+        and command == "cargo"
+        and tokens[1].lower() == "test"
+        and any(_option_key(token) == "--list" for token in tokens[2:])
     )
 
 
