@@ -43,21 +43,22 @@ _KEY_CONTEXT_WORDS = frozenset(
 SECRET_SIGNATURE_PATTERNS: tuple[Pattern[str], ...] = (
     re.compile(
         r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
-        re.IGNORECASE | re.DOTALL,
+        re.DOTALL,
     ),
-    re.compile(r"sk-[A-Za-z0-9_-]{12,}\b", re.IGNORECASE),
-    re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{12,}\b", re.IGNORECASE),
-    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{12,}\b", re.IGNORECASE),
+    re.compile(r"sk-[A-Za-z0-9_-]{20,}\b"),
+    re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b"),
+    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b", re.IGNORECASE),
-    re.compile(r"\bbearer\s+[a-z0-9._-]{12,}\b", re.IGNORECASE),
+    re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b"),
 )
 
 
 def contains_secret_signature(value: str) -> bool:
     """Return whether text contains one of the shared secret signatures."""
 
-    return isinstance(value, str) and any(pattern.search(value) for pattern in SECRET_SIGNATURE_PATTERNS)
+    return isinstance(value, str) and any(
+        pattern.search(value) for pattern in SECRET_SIGNATURE_PATTERNS
+    )
 
 
 def is_option_shaped_key(value: str) -> bool:
