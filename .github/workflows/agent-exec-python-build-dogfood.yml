@@ -1,0 +1,79 @@
+name: PCL agent exec Python build dogfood
+
+on:
+  push:
+    branches:
+      - dogfood/issue-8-agent-exec-python-build
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  dogfood:
+    name: Python build dogfood
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out frozen PCL candidate
+        uses: actions/checkout@v4
+        with:
+          ref: df94bf9c5315f92cbc0847b72e074d89dd2d786b
+          fetch-depth: 1
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install build runtime and PCL
+        run: python -m pip install -e '.[dev]'
+      - name: Run the real Python build through pcl exec
+        env:
+          PCL_AGENT_EXEC_STATE_DIR: ${{ runner.temp }}/pcl-agent-exec-python-build
+        run: |
+          set +e
+          pcl --json exec \
+            --timeout-seconds 600 \
+            --max-output-bytes 8388608 \
+            -- python -m build --outdir "$RUNNER_TEMP/python-build-dist" > "$RUNNER_TEMP/python-build-result.json"
+          child_exit=$?
+          set -e
+          python - "$RUNNER_TEMP/python-build-result.json" "$child_exit" <<'PY'
+          import json
+          import pathlib
+          import subprocess
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          child_exit = int(sys.argv[2])
+          payload = json.loads(path.read_text(encoding="utf-8"))
+          raw_bytes = payload["raw"]["stdout_bytes"] + payload["raw"]["stderr_bytes"]
+          exposed_bytes = payload["exposed"]["bytes"]
+          reduction_ratio = 0.0 if raw_bytes == 0 else 1.0 - (exposed_bytes / raw_bytes)
+          report = {
+              "schema": "agent-exec-dogfood-observation/v1",
+              "repository": "mocchalera/project-loop-harness",
+              "family": "python",
+              "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+              "command": ["python", "-m", "build"],
+              "expected_status": "PASS",
+              "observed_status": payload["status"],
+              "child_exit": child_exit,
+              "raw_bytes": raw_bytes,
+              "exposed_bytes": exposed_bytes,
+              "exposed_lines": payload["exposed"]["lines"],
+              "reduction_ratio": round(reduction_ratio, 6),
+              "follow_up_diagnostic_reads": 0,
+              "false_classifications": 0 if ((payload["status"] == "PASS") == (child_exit == 0)) else 1,
+              "run_id": payload["run_id"],
+          }
+          print("DOGFOOD_METRICS=" + json.dumps(report, sort_keys=True))
+          print("DOGFOOD_RESULT=" + json.dumps(payload, sort_keys=True))
+          PY
+          test "$child_exit" -eq 0
+      - name: Upload Python build dogfood result
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-exec-dogfood-python-build
+          path: ${{ runner.temp }}/python-build-result.json
+          if-no-files-found: error
