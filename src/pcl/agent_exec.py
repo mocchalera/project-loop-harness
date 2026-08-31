@@ -16,6 +16,12 @@ from .agent_exec_error_window import (
     ErrorWindowResult,
     combine_error_windows,
 )
+from .agent_exec_validation import (
+    AGENT_EXEC_MAX_OUTPUT_BYTES,
+    compile_agent_exec_redaction_patterns,
+    is_valid_agent_exec_max_output_bytes,
+    is_valid_agent_exec_timeout,
+)
 from .contracts.agent_exec_result import (
     AGENT_EXEC_RESULT_CONTRACT_VERSION,
     validate_agent_exec_result,
@@ -36,7 +42,7 @@ PASS_MAX_LINES = 5
 PASS_MAX_BYTES = 2_048
 FAIL_MAX_LINES = 120
 FAIL_MAX_BYTES = 24_576
-MAX_OUTPUT_BYTES_PER_STREAM = 8 * 1024 * 1024
+MAX_OUTPUT_BYTES_PER_STREAM = AGENT_EXEC_MAX_OUTPUT_BYTES
 MAX_COMMAND_ITEM_BYTES = 256
 MAX_COMMAND_TOTAL_BYTES = 2_048
 MAX_DIAGNOSTIC_LINE_BYTES = 1_024
@@ -89,9 +95,9 @@ def run_agent_exec(
 ) -> AgentExecOutcome:
     if not argv:
         raise InvalidInputError("`pcl exec --` requires at least one argv item.")
-    if timeout_seconds < 1:
+    if not is_valid_agent_exec_timeout(timeout_seconds):
         raise InvalidInputError("--timeout-seconds must be at least 1.")
-    if not 1 <= max_output_bytes <= MAX_OUTPUT_BYTES_PER_STREAM:
+    if not is_valid_agent_exec_max_output_bytes(max_output_bytes):
         raise InvalidInputError(
             f"--max-output-bytes must be between 1 and {MAX_OUTPUT_BYTES_PER_STREAM}."
         )
@@ -385,16 +391,12 @@ def render_agent_exec_human(result: dict[str, Any], diagnostic_text: str = "") -
 
 
 def _compile_redaction_patterns(patterns: Iterable[str]) -> tuple[Pattern[str], ...]:
-    compiled: list[Pattern[str]] = []
-    for pattern in patterns:
-        try:
-            compiled.append(re.compile(pattern))
-        except re.error as exc:
-            raise InvalidInputError(
-                "Invalid --redact-pattern regular expression.",
-                details={"pattern": pattern},
-            ) from exc
-    return tuple(compiled)
+    try:
+        return compile_agent_exec_redaction_patterns(patterns)
+    except re.error as exc:
+        raise InvalidInputError(
+            "Invalid --redact-pattern regular expression.",
+        ) from exc
 
 
 def _new_run_id() -> str:

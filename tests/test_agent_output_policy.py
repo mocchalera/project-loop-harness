@@ -40,6 +40,9 @@ ELIGIBLE_CASES = [
     (["pytest", "-k", "pass"], "pytest_direct"),
     (["pytest", "-k", "authorization"], "pytest_direct"),
     (["pytest", "-k", "report"], "pytest_direct"),
+    (["pytest", "tests/test_functional.py"], "pytest_direct"),
+    (["pytest", "-k", "markers"], "pytest_direct"),
+    (["pytest", "-k", "functionality"], "pytest_direct"),
     (["pnpm", "test"], "pnpm_test"),
     (["yarn", "test"], "yarn_test"),
     (["tsc", "--noEmit"], "tsc_no_emit"),
@@ -118,6 +121,12 @@ def test_eligible_verification_families_are_classified_without_rewrite(
         ["go", "test", "-list", "."],
         ["npm", "test", "--", "--listTests"],
         ["cargo", "test", "--", "--list"],
+        ["pytest", "--co"],
+        ["python", "-m", "pytest", "--co"],
+        ["pytest", "--fixtures"],
+        ["python", "-m", "pytest", "--fixtures"],
+        ["pytest", "--markers"],
+        ["python", "-m", "pytest", "--markers"],
         ["pytest", "--collect-only"],
         ["pytest", "--junit-xml", "results.xml"],
         ["pytest", "--junit-xml=results.xml"],
@@ -354,7 +363,11 @@ def test_policy_requires_the_full_canonical_unsafe_shell_marker_set() -> None:
         ["pytest", ";", "ruff", "check"],
         ["pytest", "line\nnext"],
         ["pytest", "function", "run"],
+        ["pytest", "function foo"],
+        ["pytest", "function()"],
+        ["pytest", "heredoc"],
         ["pytest", "<<EOF"],
+        ["pytest", "cat <<heredoc"],
         ["sh", "-c", "pytest"],
         ["python", "-c", "pytest"],
         ["pytest", "'unterminated"],
@@ -371,6 +384,22 @@ def test_shell_expressions_and_malformed_quoting_are_unknown(argv: list[str]) ->
     }
     assert result["recommended_argv_prefix"] == []
     assert result["may_rewrite"] is False
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["pytest", "tests/test_functional.py"],
+        ["pytest", "-k", "markers"],
+        ["pytest", "-k", "functionality"],
+        ["pytest", "-k", "heredocs"],
+    ],
+)
+def test_word_shell_markers_do_not_match_normal_argv_words(argv: list[str]) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "eligible"
+    assert result["reason_code"] == "pytest_direct"
 
 
 @pytest.mark.parametrize(
@@ -403,6 +432,31 @@ def test_shell_expressions_and_malformed_quoting_are_unknown(argv: list[str]) ->
             "--redact-pattern=TOKEN",
             "--allow-env",
             "PATH",
+            "--",
+            "pytest",
+        ],
+        ["pcl", "exec", "--timeout-seconds", "1", "--max-output-bytes", "1", "--", "pytest"],
+        [
+            "pcl",
+            "exec",
+            "--timeout-seconds=1",
+            "--max-output-bytes=8388608",
+            "--redact-pattern=.",
+            "--allow-env=GOOD_NAME",
+            "--",
+            "pytest",
+        ],
+        [
+            "python",
+            "-m",
+            "pcl",
+            "exec",
+            "--timeout-seconds=1",
+            "--max-output-bytes=8388608",
+            "--redact-pattern",
+            ".",
+            "--allow-env",
+            "GOOD_NAME",
             "--",
             "pytest",
         ],
@@ -481,6 +535,91 @@ def test_already_wrapped_commands_are_not_nested(argv: list[str]) -> None:
     ],
 )
 def test_malformed_already_wrapped_commands_remain_unknown(argv: list[str]) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "unknown"
+    assert result["may_rewrite"] is False
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        pytest.param(
+            ["pcl", "exec", "--timeout-seconds", "0", "--", "pytest"],
+            id="pcl-timeout-zero-separated",
+        ),
+        pytest.param(
+            ["pcl", "exec", "--timeout-seconds=-1", "--", "pytest"],
+            id="pcl-timeout-negative-equals",
+        ),
+        pytest.param(
+            ["python", "-m", "pcl", "exec", "--timeout-seconds", "0", "--", "pytest"],
+            id="python-timeout-zero-separated",
+        ),
+        pytest.param(
+            ["python", "-m", "pcl", "exec", "--timeout-seconds=-1", "--", "pytest"],
+            id="python-timeout-negative-equals",
+        ),
+        pytest.param(
+            ["pcl", "exec", "--max-output-bytes", "0", "--", "pytest"],
+            id="pcl-max-zero-separated",
+        ),
+        pytest.param(
+            ["pcl", "exec", "--max-output-bytes=8388609", "--", "pytest"],
+            id="pcl-max-over-equals",
+        ),
+        pytest.param(
+            [
+                "python",
+                "-m",
+                "pcl",
+                "exec",
+                "--max-output-bytes",
+                "8388609",
+                "--",
+                "pytest",
+            ],
+            id="python-max-over-separated",
+        ),
+        pytest.param(
+            ["python", "-m", "pcl", "exec", "--max-output-bytes=0", "--", "pytest"],
+            id="python-max-zero-equals",
+        ),
+        pytest.param(
+            ["pcl", "exec", "--redact-pattern", "[", "--", "pytest"],
+            id="pcl-redact-invalid-separated",
+        ),
+        pytest.param(
+            ["pcl", "exec", "--redact-pattern=[", "--", "pytest"],
+            id="pcl-redact-invalid-equals",
+        ),
+        pytest.param(
+            ["python", "-m", "pcl", "exec", "--redact-pattern", "[", "--", "pytest"],
+            id="python-redact-invalid-separated",
+        ),
+        pytest.param(
+            ["python", "-m", "pcl", "exec", "--redact-pattern=[", "--", "pytest"],
+            id="python-redact-invalid-equals",
+        ),
+        pytest.param(
+            ["pcl", "exec", "--allow-env", "BAD-NAME", "--", "pytest"],
+            id="pcl-env-invalid-separated",
+        ),
+        pytest.param(
+            ["pcl", "exec", "--allow-env=BAD-NAME", "--", "pytest"],
+            id="pcl-env-invalid-equals",
+        ),
+        pytest.param(
+            ["python", "-m", "pcl", "exec", "--allow-env", "BAD-NAME", "--", "pytest"],
+            id="python-env-invalid-separated",
+        ),
+        pytest.param(
+            ["python", "-m", "pcl", "exec", "--allow-env=BAD-NAME", "--", "pytest"],
+            id="python-env-invalid-equals",
+        ),
+    ],
+)
+def test_invalid_already_wrapped_values_remain_unknown(argv: list[str]) -> None:
     result = classify_agent_output_argv(argv)
 
     assert result["classification"] == "unknown"

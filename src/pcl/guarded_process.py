@@ -3,7 +3,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 import signal
 import subprocess
 import tempfile
@@ -12,6 +11,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Iterable, Pattern
 
+from .agent_exec_validation import is_valid_agent_exec_env_name
 from .errors import InvalidInputError
 from .redaction import redact_bytes
 from .runner_observability import (
@@ -118,7 +118,7 @@ def build_subprocess_env(
     additional_allowed_names: Iterable[str] = (),
 ) -> tuple[dict[str, str], dict[str, Any]]:
     additional = frozenset(additional_allowed_names)
-    invalid = sorted(name for name in additional if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name))
+    invalid = sorted(name for name in additional if not is_valid_agent_exec_env_name(name))
     if invalid:
         raise InvalidInputError(
             "Executor environment allowlist contains an invalid variable name.",

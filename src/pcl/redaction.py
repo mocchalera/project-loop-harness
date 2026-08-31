@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable, Pattern
 
+from .agent_exec_validation import compile_agent_exec_redaction_patterns
 from .errors import InvalidInputError
 
 
@@ -24,16 +25,10 @@ KEY_VALUE_SECRET = re.compile(
 
 
 def compile_redaction_patterns(patterns: Iterable[str] = ()) -> tuple[Pattern[str], ...]:
-    compiled = []
-    for pattern in patterns:
-        try:
-            compiled.append(re.compile(pattern))
-        except re.error as exc:
-            raise InvalidInputError(
-                f"Invalid executor redaction pattern: {exc}",
-                details={"pattern": pattern},
-            ) from exc
-    return tuple(compiled)
+    try:
+        return compile_agent_exec_redaction_patterns(patterns)
+    except re.error as exc:
+        raise InvalidInputError(f"Invalid executor redaction pattern: {exc}") from exc
 
 
 def redact_text(

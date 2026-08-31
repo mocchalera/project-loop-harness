@@ -12,6 +12,13 @@ from .contracts.agent_output import (
     validate_agent_output_classification,
     validate_agent_output_policy,
 )
+from .agent_exec_validation import (
+    is_valid_agent_exec_env_name,
+    is_valid_agent_exec_max_output_bytes,
+    is_valid_agent_exec_redaction_pattern,
+    is_valid_agent_exec_timeout,
+    parse_agent_exec_integer,
+)
 from .resources import read_text_resource
 from .path_safety import is_path_like, split_path_value
 from .sensitive import (
@@ -84,18 +91,23 @@ _INTERACTIVE_FLAGS = frozenset(
 _STREAM_FLAGS = frozenset({"--follow", "--stream"})
 _INSTALLER_COMMANDS = frozenset({"init", "create", "new"})
 _COMPLETE_OUTPUT_FLAGS = frozenset({"-h", "--help", "--version"})
-_PYTEST_COMPLETE_OUTPUT_FLAGS = frozenset({"--collect-only", "--collectonly"})
+_PYTEST_COMPLETE_OUTPUT_FLAGS = frozenset(
+    {"--co", "--collect-only", "--collectonly", "--fixtures", "--markers"}
+)
+_PYTEST_VALUE_OPTIONS = frozenset({"-k", "--keyword", "-m", "--markexpr"})
 _GO_LIST_FLAGS = frozenset({"-list", "--list"})
 _NON_INTERACTIVE_INSTALL_FLAG = "--no-input"
 _PIP_COMMANDS = frozenset({"pip", "pip3"})
 _PYTHON_COMMANDS = frozenset({"python", "python3"})
 _MODE_SCRIPT_WORDS = frozenset({"watch", "server", "serve", "dev", "repl", "debug"})
 _WRAPPED_EXEC_VALUE_OPTIONS = {
-    "--timeout-seconds": "integer",
-    "--max-output-bytes": "integer",
-    "--redact-pattern": "value",
-    "--allow-env": "value",
+    "--timeout-seconds": "timeout_seconds",
+    "--max-output-bytes": "max_output_bytes",
+    "--redact-pattern": "redaction_pattern",
+    "--allow-env": "env_name",
 }
+_WORD_UNSAFE_SHELL_MARKERS = frozenset({"function", "heredoc"})
+_WORD_MARKER_BOUNDARY_CHARS = " \t\r\n;|&<>`"
 
 
 def _load_canonical_policy() -> dict[str, Any]:
@@ -275,7 +287,31 @@ def _contains_unsafe_shell_marker(
     markers = policy.get("unsafe_shell_markers")
     if not isinstance(markers, list):
         return True
-    return any(marker in token for token in tokens for marker in markers if isinstance(marker, str))
+    for token in tokens:
+        for marker in markers:
+            if not isinstance(marker, str):
+                continue
+            if marker in _WORD_UNSAFE_SHELL_MARKERS:
+                if _contains_word_shell_marker(token, marker):
+                    return True
+            elif marker in token:
+                return True
+    return False
+
+
+def _contains_word_shell_marker(token: str, marker: str) -> bool:
+    if token == marker:
+        return True
+    escaped_marker = re.escape(marker)
+    boundary_chars = re.escape(_WORD_MARKER_BOUNDARY_CHARS)
+    return (
+        re.search(
+            rf"(?:^|[{boundary_chars}]){escaped_marker}"
+            rf"(?:$|[{boundary_chars}(){{])",
+            token,
+        )
+        is not None
+    )
 
 
 def _contains_shell_invocation(tokens: Sequence[str]) -> bool:
@@ -348,12 +384,20 @@ def _valid_separated_option_value(value: str) -> bool:
     return bool(value) and not value.startswith("-")
 
 
-def _valid_integer_option_value(value: str) -> bool:
-    try:
-        int(value)
-    except (TypeError, ValueError):
+def _valid_wrapped_exec_value(value: str, value_kind: str) -> bool:
+    if value == "--":
         return False
-    return bool(value)
+    if value_kind == "timeout_seconds":
+        parsed = parse_agent_exec_integer(value)
+        return parsed is not None and is_valid_agent_exec_timeout(parsed)
+    if value_kind == "max_output_bytes":
+        parsed = parse_agent_exec_integer(value)
+        return parsed is not None and is_valid_agent_exec_max_output_bytes(parsed)
+    if value_kind == "redaction_pattern":
+        return is_valid_agent_exec_redaction_pattern(value)
+    if value_kind == "env_name":
+        return is_valid_agent_exec_env_name(value)
+    return False
 
 
 def _consume_wrapped_exec_option(tokens: Sequence[str], index: int) -> int | None:
@@ -363,15 +407,11 @@ def _consume_wrapped_exec_option(tokens: Sequence[str], index: int) -> int | Non
             if index + 1 >= len(tokens) or tokens[index + 1] == "--":
                 return None
             value = tokens[index + 1]
-            if value_kind == "integer":
-                return index + 2 if _valid_integer_option_value(value) else None
-            return index + 2 if _valid_separated_option_value(value) else None
+            return index + 2 if _valid_wrapped_exec_value(value, value_kind) else None
         prefix = f"{option}="
         if token.startswith(prefix):
             value = token[len(prefix) :]
-            if value_kind == "integer":
-                return index + 1 if _valid_integer_option_value(value) else None
-            return index + 1 if value else None
+            return index + 1 if _valid_wrapped_exec_value(value, value_kind) else None
     return None
 
 
@@ -449,20 +489,26 @@ def _contains_report_output_request(tokens: Sequence[str]) -> bool:
 
 
 def _contains_complete_output_request(tokens: Sequence[str]) -> bool:
-    if any(_option_key(token) in _COMPLETE_OUTPUT_FLAGS for token in tokens[1:]):
-        return True
     command = tokens[0].lower()
-    if command == "mypy" and any(token == "-V" for token in tokens[1:]):
+    if command == "mypy" and (
+        _contains_exact_option(tokens[1:], _COMPLETE_OUTPUT_FLAGS)
+        or any(token == "-V" for token in tokens[1:])
+    ):
         return True
     if command in {"pytest", "python", "python3"}:
         pytest_start = 1 if command == "pytest" else 3
         if command != "pytest" and list(tokens[1:3]) != ["-m", "pytest"]:
             pytest_start = -1
-        if pytest_start >= 0 and any(
-            _option_key(token) in _PYTEST_COMPLETE_OUTPUT_FLAGS
-            for token in tokens[pytest_start:]
+        if pytest_start >= 0 and _contains_exact_option(
+            tokens[pytest_start:],
+            _PYTEST_COMPLETE_OUTPUT_FLAGS | _COMPLETE_OUTPUT_FLAGS,
+            value_options=_PYTEST_VALUE_OPTIONS,
         ):
             return True
+    if command not in {"pytest", "mypy"} and not (
+        command in {"python", "python3"} and list(tokens[1:3]) == ["-m", "pytest"]
+    ) and _contains_exact_option(tokens[1:], _COMPLETE_OUTPUT_FLAGS):
+        return True
     if (
         len(tokens) >= 2
         and command == "go"
@@ -483,6 +529,25 @@ def _contains_complete_output_request(tokens: Sequence[str]) -> bool:
         and tokens[1].lower() == "test"
         and any(_option_key(token) == "--list" for token in tokens[2:])
     )
+
+
+def _contains_exact_option(
+    tokens: Sequence[str],
+    flags: frozenset[str],
+    *,
+    value_options: frozenset[str] = frozenset(),
+) -> bool:
+    skip_next = False
+    for token in tokens:
+        option = _option_key(token)
+        if skip_next:
+            skip_next = False
+            continue
+        if option in flags:
+            return True
+        if option in value_options and "=" not in token:
+            skip_next = True
+    return False
 
 
 def _option_key(token: str) -> str:

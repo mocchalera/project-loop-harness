@@ -6,7 +6,13 @@ import sys
 
 import pytest
 
-from pcl.agent_exec import FAIL_MAX_BYTES, FAIL_MAX_LINES, gc_agent_exec, run_agent_exec
+from pcl.agent_exec import (
+    FAIL_MAX_BYTES,
+    FAIL_MAX_LINES,
+    MAX_OUTPUT_BYTES_PER_STREAM,
+    gc_agent_exec,
+    run_agent_exec,
+)
 from pcl.errors import InvalidInputError
 
 
@@ -102,6 +108,32 @@ def test_invalid_custom_redaction_pattern_fails_before_state_creation(tmp_path: 
         )
 
     assert not state_root.exists()
+
+
+@pytest.mark.parametrize(
+    ("timeout_seconds", "max_output_bytes"),
+    [
+        (0, 1024),
+        (-1, 1024),
+        (5, 0),
+        (5, MAX_OUTPUT_BYTES_PER_STREAM + 1),
+    ],
+)
+def test_agent_exec_rejects_out_of_range_budgets(
+    tmp_path: Path,
+    timeout_seconds: int,
+    max_output_bytes: int,
+) -> None:
+    with pytest.raises(InvalidInputError):
+        run_agent_exec(
+            [sys.executable, "-c", "print('must-not-run')"],
+            cwd=tmp_path,
+            timeout_seconds=timeout_seconds,
+            max_output_bytes=max_output_bytes,
+            state_root=tmp_path / "state",
+        )
+
+    assert not (tmp_path / "state").exists()
 
 
 def test_total_byte_retention_removes_oldest_safe_runs_first(tmp_path: Path) -> None:

@@ -37,6 +37,7 @@ def test_agent_exec_contract_and_cli_ship_in_wheel_and_sdist(tmp_path: Path) -> 
     sdist = next(dist_dir.glob("*.tar.gz"))
     required_suffixes = {
         "pcl/agent_exec.py",
+        "pcl/agent_exec_validation.py",
         "pcl/path_safety.py",
         "pcl/sensitive.py",
         "pcl/agent_exec_handlers.py",

@@ -38,6 +38,7 @@ def test_source_wheel_and_sdist_expose_the_same_agent_output_surface(tmp_path: P
     sdist = next(dist_dir.glob("*.tar.gz"))
     required = {
         "pcl/agent_output_policy.py",
+        "pcl/agent_exec_validation.py",
         "pcl/agent_output_renderer.py",
         "pcl/path_safety.py",
         "pcl/sensitive.py",
