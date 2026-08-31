@@ -11,22 +11,22 @@ permissions:
 
 jobs:
   python-dogfood:
-    name: Python repository dogfood diagnostic
+    name: Python repository dogfood
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
-      - name: Check out merged PCL runtime
+      - name: Check out merged PCL runtime with frozen history fixtures
         uses: actions/checkout@v4
         with:
           ref: df94bf9c5315f92cbc0847b72e074d89dd2d786b
-          fetch-depth: 1
+          fetch-depth: 0
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
       - name: Install PCL and development dependencies
         run: python -m pip install -e '.[dev]'
-      - name: Reproduce the Python failure and read one bounded diagnostic
+      - name: Run the real Python test suite through pcl exec
         env:
           PCL_AGENT_EXEC_STATE_DIR: ${{ runner.temp }}/pcl-agent-exec-python
           PCL_RELIABILITY_ARTIFACT_DIR: ${{ runner.temp }}/pcl-reliability-python
@@ -36,7 +36,7 @@ jobs:
             --timeout-seconds 1800 \
             --max-output-bytes 8388608 \
             --allow-env PCL_RELIABILITY_ARTIFACT_DIR \
-            -- pytest -x > "$RUNNER_TEMP/python-result.json"
+            -- pytest > "$RUNNER_TEMP/python-result.json"
           child_exit=$?
           set -e
 
@@ -62,12 +62,14 @@ jobs:
           raw_bytes = payload["raw"]["stdout_bytes"] + payload["raw"]["stderr_bytes"]
           exposed_bytes = payload["exposed"]["bytes"]
           reduction_ratio = 0.0 if raw_bytes == 0 else 1.0 - (exposed_bytes / raw_bytes)
+          classified_success = payload["status"] == "PASS"
+          actual_success = child_exit == 0
           report = {
               "schema": "agent-exec-dogfood-observation/v1",
               "repository": "mocchalera/project-loop-harness",
               "family": "python",
               "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
-              "command": ["pytest", "-x"],
+              "command": ["pytest"],
               "expected_status": "PASS",
               "observed_status": payload["status"],
               "child_exit": child_exit,
@@ -76,7 +78,7 @@ jobs:
               "exposed_lines": payload["exposed"]["lines"],
               "reduction_ratio": round(reduction_ratio, 6),
               "follow_up_diagnostic_reads": follow_up_reads,
-              "false_classifications": 0,
+              "false_classifications": 0 if classified_success == actual_success else 1,
               "run_id": payload["run_id"],
           }
           print("DOGFOOD_METRICS=" + json.dumps(report, sort_keys=True))
@@ -87,7 +89,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: agent-exec-dogfood-python-diagnostic
+          name: agent-exec-dogfood-python
           path: |
             ${{ runner.temp }}/python-result.json
             ${{ runner.temp }}/python-diagnostic.txt
