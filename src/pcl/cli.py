@@ -5,6 +5,7 @@ from pathlib import Path
 import sqlite3
 import sys
 
+from .agent_exec_handlers import handle_agent_exec_command
 from .audit import (
     AuditCommandError,
     EXIT_AUDIT_INTERNAL,
@@ -19,6 +20,7 @@ from .entity_handlers import handle_entity_command
 from .execution_handlers import handle_execution_command
 from .paths import resolve_paths
 from .parser import build_parser
+from .parser_agent_exec import AGENT_EXEC_ARGV_SENTINEL
 from .planning_handlers import handle_planning_command
 from .profile_handlers import handle_profile_command
 from .read_handlers import (
@@ -107,15 +109,30 @@ def _extract_global_options(argv: list[str] | None) -> tuple[list[str] | None, s
     """Allow global options before or after subcommands for agent-friendliness.
 
     argparse normally requires global options before the subcommand. Coding agents
-    often place --root/--json at the end, so we normalize them here.
+    often place --root/--json at the end, so we normalize them here. For `pcl exec`,
+    argv after the explicit `--` separator belongs to the child and is never treated
+    as a PCL global option. The separator is replaced by an internal positional
+    sentinel because argparse otherwise consumes it before REMAINDER dispatch.
     """
     if argv is None:
         argv = sys.argv[1:]
     normalized: list[str] = []
     root_override: str | None = None
     json_output = False
+    separator_index: int | None = None
+    command_index = _top_level_command_index(argv)
+    if command_index is not None and argv[command_index] == "exec":
+        try:
+            separator_index = argv.index("--", command_index + 1)
+        except ValueError:
+            separator_index = None
+
     i = 0
     while i < len(argv):
+        if separator_index is not None and i == separator_index:
+            normalized.append(AGENT_EXEC_ARGV_SENTINEL)
+            normalized.extend(argv[i + 1 :])
+            break
         token = argv[i]
         if token == "--root" and i + 1 < len(argv):
             root_override = argv[i + 1]
@@ -134,6 +151,20 @@ def _extract_global_options(argv: list[str] | None) -> tuple[list[str] | None, s
     return normalized, root_override, json_output
 
 
+def _top_level_command_index(argv: list[str]) -> int | None:
+    index = 0
+    while index < len(argv):
+        token = argv[index]
+        if token == "--root":
+            index += 2
+            continue
+        if token.startswith("--root=") or token == "--json":
+            index += 1
+            continue
+        return index
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     argv, root_override, json_override = _extract_global_options(argv)
     parser = build_parser()
@@ -145,6 +176,16 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "guide":
             return handle_guide(args.topic, json_output=json_output, output=sys.stdout)
+
+        agent_exec_status = handle_agent_exec_command(
+            args,
+            paths,
+            json_output=json_output,
+            output=sys.stdout,
+            error=sys.stderr,
+        )
+        if agent_exec_status is not None:
+            return agent_exec_status
 
         profile_status = handle_profile_command(args, paths, json_output=json_output)
         if profile_status is not None:

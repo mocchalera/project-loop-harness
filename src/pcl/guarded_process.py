@@ -10,7 +10,7 @@ import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Any, Iterable, Pattern
+from typing import Any, Callable, Iterable, Pattern
 
 from .errors import InvalidInputError
 from .redaction import redact_bytes
@@ -59,25 +59,55 @@ DEFAULT_ENV_ALLOWLIST = frozenset(
 
 
 class _BoundedStream:
-    def __init__(self, max_bytes: int) -> None:
+    def __init__(
+        self,
+        max_bytes: int,
+        *,
+        tail_bytes: int = 0,
+        chunk_observer: Callable[[bytes], None] | None = None,
+    ) -> None:
         self.max_bytes = max_bytes
+        self.tail_bytes = tail_bytes
+        self.chunk_observer = chunk_observer
+        self.observer_failed = False
         self.captured_byte_count = 0
         self.original_byte_count = 0
         self.eof = False
         self.file = tempfile.TemporaryFile(mode="w+b")
+        self.tail_buffer = bytearray()
 
     def consume(self, chunk: bytes) -> None:
         self.original_byte_count += len(chunk)
+        if self.chunk_observer is not None:
+            try:
+                self.chunk_observer(chunk)
+            except Exception:
+                # Output drainage and the child result remain authoritative. An
+                # optional observer is diagnostic-only and must fail closed to
+                # the existing head/tail capture rather than deadlock the pipe.
+                self.observer_failed = True
+                self.chunk_observer = None
         remaining = self.max_bytes - self.captured_byte_count
         if remaining > 0:
             retained = chunk[:remaining]
             self.file.write(retained)
             self.captured_byte_count += len(retained)
+        if self.tail_bytes > 0:
+            if len(chunk) >= self.tail_bytes:
+                self.tail_buffer = bytearray(chunk[-self.tail_bytes :])
+            else:
+                self.tail_buffer.extend(chunk)
+                overflow = len(self.tail_buffer) - self.tail_bytes
+                if overflow > 0:
+                    del self.tail_buffer[:overflow]
 
     def read(self) -> bytes:
         self.file.flush()
         self.file.seek(0)
         return self.file.read()
+
+    def read_tail(self) -> bytes:
+        return bytes(self.tail_buffer)
 
     def close(self) -> None:
         self.file.close()
@@ -145,6 +175,12 @@ def execute_guarded_process(
     stderr_path: Path,
     timeout_seconds: int,
     max_output_bytes: int = DEFAULT_MAX_OUTPUT_BYTES,
+    tail_output_bytes: int = 0,
+    stdout_tail_path: Path | None = None,
+    stderr_tail_path: Path | None = None,
+    stdout_chunk_observer: Callable[[bytes], None] | None = None,
+    stderr_chunk_observer: Callable[[bytes], None] | None = None,
+    capture_interrupt: bool = False,
     redaction_patterns: Iterable[Pattern[str]] = (),
     additional_allowed_env_names: Iterable[str] = (),
     observability_summary_path: Path | None = None,
@@ -161,6 +197,8 @@ def execute_guarded_process(
 ) -> dict[str, Any]:
     if max_output_bytes < 1:
         raise ValueError("max_output_bytes must be at least 1")
+    if tail_output_bytes < 0:
+        raise ValueError("tail_output_bytes cannot be negative")
     patterns = tuple(redaction_patterns)
     env, environment_contract = build_subprocess_env(
         additional_allowed_names=additional_allowed_env_names
@@ -228,10 +266,19 @@ def execute_guarded_process(
                 receipt_observer.anonymous_pipe_available
             )
         receipt_observer.start_reader()
-    stdout_capture = _BoundedStream(max_output_bytes)
-    stderr_capture = _BoundedStream(max_output_bytes)
+    stdout_capture = _BoundedStream(
+        max_output_bytes,
+        tail_bytes=tail_output_bytes,
+        chunk_observer=stdout_chunk_observer,
+    )
+    stderr_capture = _BoundedStream(
+        max_output_bytes,
+        tail_bytes=tail_output_bytes,
+        chunk_observer=stderr_chunk_observer,
+    )
     started = time.monotonic()
     timed_out = False
+    interrupted = False
     exit_code: int | None = None
     spawn_error = ""
     spawn_error_kind = ""
@@ -292,6 +339,12 @@ def execute_guarded_process(
             timed_out = True
             termination = _terminate_process_group(process)
             exit_code = None
+        except KeyboardInterrupt:
+            if not capture_interrupt:
+                raise
+            interrupted = True
+            termination = _terminate_process_group(process)
+            exit_code = -signal.SIGINT
         finally:
             if heartbeat_stop is not None:
                 heartbeat_stop.set()
@@ -304,15 +357,19 @@ def execute_guarded_process(
 
     if timed_out and stderr_capture.original_byte_count == 0:
         stderr_capture.consume(f"Timed out after {timeout_seconds} seconds.\n".encode())
+    if interrupted and stderr_capture.original_byte_count == 0:
+        stderr_capture.consume(b"Interrupted by caller.\n")
     stdout_metadata = _write_capture(
         stdout_capture,
         stdout_path,
         redaction_patterns=patterns,
+        tail_path=stdout_tail_path,
     )
     stderr_metadata = _write_capture(
         stderr_capture,
         stderr_path,
         redaction_patterns=patterns,
+        tail_path=stderr_tail_path,
     )
     if process is not None:
         termination = {
@@ -325,11 +382,20 @@ def execute_guarded_process(
         termination["pipes_eof"] = stdout_capture.eof and stderr_capture.eof
     if receipt_observer is not None:
         receipt_observer.finish_reader()
+    failure_kind = (
+        "spawn_error"
+        if spawn_error
+        else "timeout"
+        if timed_out
+        else "interrupted"
+        if interrupted
+        else ""
+    )
     result: dict[str, Any] = {
         "exit_code": exit_code,
         "timed_out": timed_out,
         "duration_seconds": round(time.monotonic() - started, 6),
-        "failure_kind": "spawn_error" if spawn_error else ("timeout" if timed_out else ""),
+        "failure_kind": failure_kind,
         "spawn_error_kind": spawn_error_kind,
         "stdout": stdout_metadata,
         "stderr": stderr_metadata,
@@ -358,9 +424,15 @@ def execute_guarded_process(
     if observability is not None:
         observability.emit(
             "termination",
-            phase="terminate" if timed_out else "complete",
+            phase="terminate" if timed_out or interrupted else "complete",
             source="watchdog",
-            reason=("timeout_budget_exhausted" if timed_out else "process_exit"),
+            reason=(
+                "timeout_budget_exhausted"
+                if timed_out
+                else "caller_interrupt"
+                if interrupted
+                else "process_exit"
+            ),
             termination=termination,
         )
         result["observability"] = observability.finalize(
@@ -509,24 +581,30 @@ def _write_capture(
     path: Path,
     *,
     redaction_patterns: tuple[Pattern[str], ...],
+    tail_path: Path | None = None,
 ) -> dict[str, Any]:
     try:
         captured = capture.read()
         redacted, changed = redact_bytes(captured, additional_patterns=redaction_patterns)
+        if capture.tail_bytes > 0:
+            tail_captured = capture.read_tail()
+            tail_redacted, tail_changed = redact_bytes(
+                tail_captured, additional_patterns=redaction_patterns
+            )
+        else:
+            tail_captured = b""
+            tail_redacted = b""
+            tail_changed = False
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(redacted)
+        if tail_path is not None and capture.tail_bytes > 0:
+            tail_path.parent.mkdir(parents=True, exist_ok=True)
+            tail_path.write_bytes(tail_redacted)
     finally:
         capture.close()
-    try:
-        redacted.decode("utf-8")
-    except UnicodeDecodeError:
-        encoding: str | None = None
-        binary = True
-    else:
-        encoding = "utf-8"
-        binary = False
+    encoding, binary = _encoding_metadata(redacted)
     truncated = capture.original_byte_count > len(captured)
-    return {
+    metadata: dict[str, Any] = {
         "path": str(path),
         "original_byte_count": capture.original_byte_count,
         "captured_byte_count": len(captured),
@@ -536,9 +614,35 @@ def _write_capture(
         "truncation_reason": "max_output_bytes_exceeded" if truncated else "",
         "capture_strategy": "head",
         "capture_mode": "streaming_temporary_file",
-        "redacted": changed,
+        "redacted": changed or tail_changed,
         "raw_output_persisted": False,
         "encoding": encoding,
         "binary": binary,
         "sha256": f"sha256:{hashlib.sha256(redacted).hexdigest()}",
     }
+    if capture.chunk_observer is not None or capture.observer_failed:
+        metadata["chunk_observer_failed"] = capture.observer_failed
+    if capture.tail_bytes > 0:
+        tail_encoding, tail_binary = _encoding_metadata(tail_redacted)
+        metadata["tail"] = {
+            "path": str(tail_path) if tail_path is not None else None,
+            "captured_byte_count": len(tail_captured),
+            "artifact_byte_count": len(tail_redacted) if tail_path is not None else 0,
+            "max_bytes": capture.tail_bytes,
+            "capture_strategy": "tail",
+            "persisted": tail_path is not None,
+            "redacted": tail_changed,
+            "raw_output_persisted": False,
+            "encoding": tail_encoding,
+            "binary": tail_binary,
+            "sha256": f"sha256:{hashlib.sha256(tail_redacted).hexdigest()}",
+        }
+    return metadata
+
+
+def _encoding_metadata(data: bytes) -> tuple[str | None, bool]:
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None, True
+    return "utf-8", False
