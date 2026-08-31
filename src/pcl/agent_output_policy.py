@@ -407,6 +407,8 @@ def _consume_wrapped_exec_option(tokens: Sequence[str], index: int) -> int | Non
             if index + 1 >= len(tokens) or tokens[index + 1] == "--":
                 return None
             value = tokens[index + 1]
+            if value_kind == "redaction_pattern" and not _valid_separated_option_value(value):
+                return None
             return index + 2 if _valid_wrapped_exec_value(value, value_kind) else None
         prefix = f"{option}="
         if token.startswith(prefix):

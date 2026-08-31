@@ -446,6 +446,8 @@ def test_word_shell_markers_do_not_match_normal_argv_words(argv: list[str]) -> N
             "--",
             "pytest",
         ],
+        ["pcl", "exec", "--redact-pattern=-x", "--", "pytest"],
+        ["python", "-m", "pcl", "exec", "--redact-pattern=-x", "--", "pytest"],
         [
             "python",
             "-m",
@@ -617,12 +619,55 @@ def test_malformed_already_wrapped_commands_remain_unknown(argv: list[str]) -> N
             ["python", "-m", "pcl", "exec", "--allow-env=BAD-NAME", "--", "pytest"],
             id="python-env-invalid-equals",
         ),
+        pytest.param(
+            ["pcl", "exec", "--redact-pattern", "--json", "--", "pytest"],
+            id="pcl-redact-option-shaped-json",
+        ),
+        pytest.param(
+            ["pcl", "exec", "--redact-pattern", "--timeout-seconds=1", "--", "pytest"],
+            id="pcl-redact-option-shaped-timeout",
+        ),
+        pytest.param(
+            ["pcl", "exec", "--redact-pattern", "-x", "--", "pytest"],
+            id="pcl-redact-option-shaped-short",
+        ),
+        pytest.param(
+            [
+                "python",
+                "-m",
+                "pcl",
+                "exec",
+                "--redact-pattern",
+                "--json",
+                "--",
+                "pytest",
+            ],
+            id="python-redact-option-shaped-json",
+        ),
+        pytest.param(
+            [
+                "python",
+                "-m",
+                "pcl",
+                "exec",
+                "--redact-pattern",
+                "--timeout-seconds=1",
+                "--",
+                "pytest",
+            ],
+            id="python-redact-option-shaped-timeout",
+        ),
+        pytest.param(
+            ["python", "-m", "pcl", "exec", "--redact-pattern", "-x", "--", "pytest"],
+            id="python-redact-option-shaped-short",
+        ),
     ],
 )
 def test_invalid_already_wrapped_values_remain_unknown(argv: list[str]) -> None:
     result = classify_agent_output_argv(argv)
 
     assert result["classification"] == "unknown"
+    assert result["reason_code"] == "unsupported_argv"
     assert result["may_rewrite"] is False
 
 
