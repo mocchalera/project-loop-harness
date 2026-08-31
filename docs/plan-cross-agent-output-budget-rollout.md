@@ -1,6 +1,7 @@
 # Cross-agent output-budget rollout plan
 
-Status: proposed for GitHub Issue #13
+Status: Phase 1 implementation under review; remaining rollout slices deferred
+for GitHub Issue #13
 
 Date: 2026-08-31
 
@@ -9,6 +10,25 @@ Repository task: `agent-tasks/0229-cross-agent-output-budget-rollout.md`
 Dependency: Issue #8 / task 0228 project-agnostic `pcl exec` runtime
 
 Priority: P1 · Milestone: post-v0.6.0
+
+## Phase 1 implementation status
+
+The current implementation is a read-only vertical slice and does not complete
+the rollout plan. It provides the two frozen data contracts, a pure
+already-tokenized-argv classifier, one packaged `agent-output-budget` Skill, a
+compact global fragment, deterministic projections for all five named hosts,
+and the public `pcl agent-output policy|classify|render` commands.
+
+The next implementation slices remain explicitly open:
+
+1. inspect-first installers for supported host files;
+2. audit-only Claude and Gemini adapters;
+3. bounded audit storage, aggregate report, and retention GC;
+4. real cross-host dogfood and rollback/reinstall evidence;
+5. an explicit human rollout decision before any rewrite proposal.
+
+No installer, hook, audit storage/report/GC, cross-host adoption claim, or
+human rollout decision is included in Phase 1.
 
 ## 1. Decision
 

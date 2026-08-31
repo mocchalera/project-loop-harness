@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop-harness.local/contracts/agent-output-policy-v1.schema.json",
+  "title": "Project Loop Harness agent output policy v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "eligible_argv_rules",
+    "negative_argv_rules",
+    "unsafe_shell_markers",
+    "result_handling"
+  ],
+  "properties": {
+    "schema": {"const": "agent-output-policy/v1"},
+    "eligible_argv_rules": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reason_code", "argv_prefix"],
+        "properties": {
+          "reason_code": {
+            "type": "string",
+            "maxLength": 96,
+            "pattern": "^[a-z0-9][a-z0-9_.-]*$"
+          },
+          "argv_prefix": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {"type": "string", "minLength": 1, "maxLength": 64}
+          }
+        }
+      }
+    },
+    "negative_argv_rules": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 128,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["reason_code", "argv_prefix"],
+        "properties": {
+          "reason_code": {
+            "type": "string",
+            "maxLength": 96,
+            "pattern": "^[a-z0-9][a-z0-9_.-]*$"
+          },
+          "argv_prefix": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 8,
+            "items": {"type": "string", "minLength": 1, "maxLength": 64}
+          }
+        }
+      }
+    },
+    "unsafe_shell_markers": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 32,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 32}
+    },
+    "result_handling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pass_reads_diagnostics", "automatic_retry", "raw_log_upload"],
+      "properties": {
+        "pass_reads_diagnostics": {"const": false},
+        "automatic_retry": {"const": false},
+        "raw_log_upload": {"const": false}
+      }
+    }
+  }
+}

@@ -1,5 +1,20 @@
 """Stable, versioned artifact contracts exposed by Project Loop Harness."""
 
+from .agent_output import (
+    AGENT_OUTPUT_CLASSIFICATION_CONTRACT_VERSION,
+    AGENT_OUTPUT_CLASSIFICATIONS,
+    AGENT_OUTPUT_POLICY_CONTRACT_VERSION,
+    AgentOutputClassificationValidationResult,
+    AgentOutputPolicyValidationResult,
+    agent_output_classification_schema,
+    agent_output_policy_schema,
+    canonical_agent_output_classification_json,
+    canonical_agent_output_policy_json,
+    load_agent_output_classification,
+    load_agent_output_policy,
+    validate_agent_output_classification,
+    validate_agent_output_policy,
+)
 from .completion_packet import (
     COMPLETION_PACKET_CONTRACT_VERSION,
     CompletionPacketValidationResult,
@@ -240,6 +255,19 @@ from .proof_anchor_drift import (
 )
 
 __all__ = [
+    "AGENT_OUTPUT_CLASSIFICATION_CONTRACT_VERSION",
+    "AGENT_OUTPUT_CLASSIFICATIONS",
+    "AGENT_OUTPUT_POLICY_CONTRACT_VERSION",
+    "AgentOutputClassificationValidationResult",
+    "AgentOutputPolicyValidationResult",
+    "agent_output_classification_schema",
+    "agent_output_policy_schema",
+    "canonical_agent_output_classification_json",
+    "canonical_agent_output_policy_json",
+    "load_agent_output_classification",
+    "load_agent_output_policy",
+    "validate_agent_output_classification",
+    "validate_agent_output_policy",
     "COMPLETION_PACKET_CONTRACT_VERSION",
     "CompletionPacketValidationResult",
     "calculate_proof_level",

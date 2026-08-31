@@ -61,6 +61,11 @@ is a regression, not an automatic regeneration result.
 
 ## Intended changes since v0.3.1 freeze
 
+- 2026-08-31 — `snapshots/pcl-help.json` and new
+  `snapshots/agent-output-help.json` regenerated for the additive read-only
+  `agent-output` policy/classification/rendering command group from Issue #13
+  Phase 1. Existing commands and project-state snapshot semantics are
+  unchanged.
 - 2026-08-30 — `snapshots/pcl-help.json` regenerated for task 0228 to include
   additive project-agnostic `exec`. It runs one explicitly supplied argv
   command with bounded presentation and local-only diagnostics; it does not

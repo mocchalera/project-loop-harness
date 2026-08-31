@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-loop-harness.local/contracts/agent-output-classification-v1.schema.json",
+  "title": "Project Loop Harness agent output classification v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "classification",
+    "reason_code",
+    "recommended_argv_prefix",
+    "may_rewrite"
+  ],
+  "properties": {
+    "schema": {"const": "agent-output-classification/v1"},
+    "classification": {
+      "enum": ["eligible", "negative", "unknown", "already_wrapped"]
+    },
+    "reason_code": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_.-]*$",
+      "maxLength": 96
+    },
+    "recommended_argv_prefix": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {"type": "string", "maxLength": 32}
+    },
+    "may_rewrite": {"const": false}
+  }
+}

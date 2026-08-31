@@ -1,0 +1,320 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from pcl.agent_output_policy import (
+    canonical_agent_output_policy,
+    classify_agent_output_argv,
+    classify_agent_output_command,
+)
+from pcl.agent_output_renderer import AGENT_OUTPUT_HOSTS, render_agent_output_host
+from pcl.cli import main
+from pcl.contracts.agent_output import (
+    AGENT_OUTPUT_CLASSIFICATION_CONTRACT_VERSION,
+    AGENT_OUTPUT_POLICY_CONTRACT_VERSION,
+    validate_agent_output_classification,
+    validate_agent_output_policy,
+)
+
+
+ELIGIBLE_CASES = [
+    (["pytest"], "pytest_direct"),
+    (["python", "-m", "pytest"], "python_module_pytest"),
+    (["ruff", "check"], "ruff_check"),
+    (["mypy"], "mypy"),
+    (["pyright"], "pyright"),
+    (["python", "-m", "build"], "python_module_build"),
+    (["npm", "test"], "npm_test"),
+    (["npm", "run", "test"], "npm_run_test_script"),
+    (["npm", "run", "test:unit"], "npm_run_test_unit_script"),
+    (["npm", "run", "lint"], "npm_run_lint_script"),
+    (["npm", "run", "typecheck"], "npm_run_typecheck_script"),
+    (["npm", "run", "build"], "npm_run_build_script"),
+    (["npm", "run", "verify"], "npm_run_verify_command"),
+    (["npm", "run", "verify:full"], "npm_run_verify_script"),
+    (["pnpm", "test"], "pnpm_test"),
+    (["yarn", "test"], "yarn_test"),
+    (["tsc", "--noEmit"], "tsc_no_emit"),
+    (["eslint"], "eslint"),
+    (["cargo", "test"], "cargo_test"),
+    (["cargo", "build"], "cargo_build"),
+    (["cargo", "clippy"], "cargo_clippy"),
+    (["go", "test"], "go_test"),
+    (["go", "test", "./..."], "go_test_all_packages"),
+    (["go", "build"], "go_build"),
+]
+
+
+@pytest.mark.parametrize(("argv", "reason_code"), ELIGIBLE_CASES)
+def test_eligible_verification_families_are_classified_without_rewrite(
+    argv: list[str], reason_code: str
+) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result == {
+        "schema": AGENT_OUTPUT_CLASSIFICATION_CONTRACT_VERSION,
+        "classification": "eligible",
+        "reason_code": reason_code,
+        "recommended_argv_prefix": ["pcl", "exec", "--"],
+        "may_rewrite": False,
+    }
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["cat", "README.md"],
+        ["sed", "-n", "1,20p", "README.md"],
+        ["head", "README.md"],
+        ["tail", "README.md"],
+        ["rg", "needle"],
+        ["grep", "needle", "file"],
+        ["find", ".", "-type", "f"],
+        ["git", "diff"],
+        ["git", "show", "HEAD"],
+        ["git", "log", "-1"],
+        ["report", "--json"],
+        ["python", "-m", "report"],
+        ["npm", "run", "report"],
+        ["pytest", "--junitxml=results.xml"],
+        ["pytest", "--output-is-artifact=true"],
+    ],
+)
+def test_reads_searches_diffs_and_reports_remain_negative(argv: list[str]) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "negative"
+    assert result["recommended_argv_prefix"] == []
+    assert result["may_rewrite"] is False
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["interactive"],
+        ["watch", "pytest"],
+        ["server"],
+        ["python", "-m", "http.server"],
+        ["npm", "run", "watch"],
+        ["npm", "run", "dev"],
+        ["docker", "logs", "-f", "app"],
+        ["npm", "install"],
+        ["pnpm", "install"],
+        ["yarn", "install"],
+        ["pip", "install", "package"],
+        ["cargo", "install", "package"],
+        ["go", "install", "./..."],
+    ],
+)
+def test_interactive_watch_server_stream_and_installers_remain_negative(
+    argv: list[str],
+) -> None:
+    assert classify_agent_output_argv(argv)["classification"] == "negative"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["pytest", "|", "cat"],
+        ["pytest", ">", "result.txt"],
+        ["pytest", ">>", "result.txt"],
+        ["pytest", "<", "input.txt"],
+        ["pytest", "$(cat", "input.txt)"],
+        ["pytest", "`cat", "input.txt`"],
+        ["pytest", "&&", "ruff", "check"],
+        ["pytest", "||", "ruff", "check"],
+        ["pytest", ";", "ruff", "check"],
+        ["pytest", "line\nnext"],
+        ["pytest", "function", "run"],
+        ["pytest", "<<EOF"],
+        ["sh", "-c", "pytest"],
+        ["python", "-c", "pytest"],
+        ["pytest", "'unterminated"],
+    ],
+)
+def test_shell_expressions_and_malformed_quoting_are_unknown(argv: list[str]) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "unknown"
+    assert result["reason_code"] in {
+        "unsafe_shell_expression",
+        "shell_invocation",
+        "malformed_quoting",
+    }
+    assert result["recommended_argv_prefix"] == []
+    assert result["may_rewrite"] is False
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["pcl", "exec", "--", "pytest"],
+        ["pcl", "--json", "exec", "--", "npm", "test"],
+        ["python", "-m", "pcl", "exec", "--", "cargo", "test"],
+        ["pcl", "exec", "--", "pcl", "exec", "--", "pytest"],
+    ],
+)
+def test_already_wrapped_commands_are_not_nested(argv: list[str]) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "already_wrapped"
+    assert result["reason_code"] == "already_wrapped_pcl_exec"
+    assert result["recommended_argv_prefix"] == []
+    assert result["may_rewrite"] is False
+
+
+def test_policy_and_classification_contracts_reject_unknown_fields() -> None:
+    policy = canonical_agent_output_policy()
+    policy["unexpected"] = True
+    policy_result = validate_agent_output_policy(policy)
+    assert policy_result.ok is False
+    assert any("additional property is not allowed" in error for error in policy_result.errors)
+
+    classification = classify_agent_output_argv(["pytest"])
+    classification["unexpected"] = True
+    classification_result = validate_agent_output_classification(classification)
+    assert classification_result.ok is False
+    assert any("additional property is not allowed" in error for error in classification_result.errors)
+
+
+def test_policy_contract_freezes_result_handling_and_reason_codes() -> None:
+    policy = canonical_agent_output_policy()
+    assert policy["schema"] == AGENT_OUTPUT_POLICY_CONTRACT_VERSION
+    assert policy["result_handling"] == {
+        "pass_reads_diagnostics": False,
+        "automatic_retry": False,
+        "raw_log_upload": False,
+    }
+    reasons = [
+        rule["reason_code"]
+        for section in ("eligible_argv_rules", "negative_argv_rules")
+        for rule in policy[section]
+    ]
+    assert len(reasons) == len(set(reasons))
+    assert validate_agent_output_policy(policy).ok is True
+
+
+def test_classification_is_deterministic_and_observing_a_string_does_not_shell_parse() -> None:
+    argv = ["npm", "run", "verify:full"]
+    assert classify_agent_output_argv(argv) == classify_agent_output_argv(tuple(argv))
+    observed = classify_agent_output_command("npm run verify:full")
+    assert observed["classification"] == "unknown"
+    assert observed["reason_code"] == "host_command_string_not_tokenized"
+    assert "npm run verify:full" not in json.dumps(observed)
+
+
+def test_sensitive_oversized_and_absolute_argv_are_unknown_without_leaking_values() -> None:
+    secret = "sk-proj-abcdefghijklmnopqrstuvwxyz1234567890"
+    absolute = "/private/secret/project/file.py"
+    cases = [
+        ["pytest", "--token", secret],
+        ["pytest", "--token"],
+        ["pytest", f"--api-key={secret}"],
+        ["pytest", absolute],
+        ["pytest", "C:\\private\\secret\\file.py"],
+        ["pytest", "\ud800"],
+        ["pytest"] + ["x" * 1000] * 10,
+        ["pytest", "x" * 5000],
+    ]
+
+    for argv in cases:
+        result = classify_agent_output_argv(argv)
+        serialized = json.dumps(result, ensure_ascii=False)
+        assert result["classification"] == "unknown"
+        assert secret not in serialized
+        assert absolute not in serialized
+        assert "private" not in serialized
+
+
+def test_cli_classify_bounds_json_and_does_not_create_project_state(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    secret = "sk-proj-abcdefghijklmnopqrstuvwxyz1234567890"
+    oversized = json.dumps(["pytest", "x" * 70_000])
+
+    assert (
+        main(
+            [
+                "--root",
+                str(tmp_path),
+                "agent-output",
+                "classify",
+                "--argv-json",
+                json.dumps(["pytest", "--token", secret]),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    first = json.loads(capsys.readouterr().out)
+    assert first["classification"] == "unknown"
+    assert secret not in json.dumps(first)
+
+    assert main(["agent-output", "classify", "--argv-json", oversized, "--json"]) == 0
+    second = json.loads(capsys.readouterr().out)
+    assert second["reason_code"] == "argv_json_too_large"
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_cli_policy_and_contract_validate_are_read_only(tmp_path: Path, capsys) -> None:
+    assert main(["--root", str(tmp_path), "agent-output", "policy", "--json"]) == 0
+    policy = json.loads(capsys.readouterr().out)
+    policy_path = tmp_path / "policy.json"
+    policy_path.write_text(json.dumps(policy), encoding="utf-8")
+
+    assert (
+        main(
+            [
+                "--root",
+                str(tmp_path),
+                "contract",
+                "validate",
+                "--type",
+                AGENT_OUTPUT_POLICY_CONTRACT_VERSION,
+                str(policy_path),
+                "--json",
+            ]
+        )
+        == 0
+    )
+    validation = json.loads(capsys.readouterr().out)
+    assert validation["ok"] is True
+    assert not (tmp_path / ".project-loop").exists()
+
+
+def test_host_projections_have_semantic_parity_and_are_deterministic() -> None:
+    projections = {host: render_agent_output_host(host) for host in AGENT_OUTPUT_HOSTS}
+    assert projections == {host: render_agent_output_host(host) for host in AGENT_OUTPUT_HOSTS}
+
+    required_terms = (
+        "eligible",
+        "negative",
+        "unknown",
+        "already_wrapped",
+        "PASS",
+        "non-PASS",
+        "retry",
+        "rewrite",
+        "raw logs",
+        "audit-only",
+    )
+    for content in projections.values():
+        for term in required_terms:
+            assert term in content
+
+    assert "enforcement hook" in projections["codex"]
+    assert "enforcement hook" in projections["opencode"]
+    assert "typed summaries only" in projections["cockpit"]
+    assert "generic shell" not in projections["cockpit"]
+    assert "raw stdout/stderr" in projections["cockpit"]
+
+
+def test_classification_payloads_always_validate() -> None:
+    for argv, _reason in ELIGIBLE_CASES:
+        assert validate_agent_output_classification(classify_agent_output_argv(argv)).ok
+
+    for argv in (["rg", "x"], ["pytest", "|", "cat"], ["not-a-check"]):
+        assert validate_agent_output_classification(classify_agent_output_argv(argv)).ok

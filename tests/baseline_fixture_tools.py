@@ -13,6 +13,7 @@ from typing import Any
 SNAPSHOT_COMMANDS = {
     "pcl-version": ["--version"],
     "pcl-help": ["--help"],
+    "agent-output-help": ["agent-output", "--help"],
     "validate-help": ["validate", "--help"],
     "render-help": ["render", "--help"],
     "next-help": ["next", "--help"],

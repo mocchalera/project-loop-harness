@@ -1,0 +1,10 @@
+{
+  "argv": [
+    "pcl",
+    "agent-output",
+    "--help"
+  ],
+  "exit_code": 0,
+  "stderr": "",
+  "stdout": "usage: pcl agent-output [-h] {policy,classify,render} ... Classify already-tokenized argv and render deterministic host guidance. This surface never executes or rewrites the observed command. positional arguments: {policy,classify,render} policy Print the versioned canonical agent-output policy classify Classify one JSON array of already-tokenized argv items render Render one deterministic host projection from the shared Skill options: -h, --help show this help message and exit"
+}

@@ -4,6 +4,7 @@ import argparse
 
 from . import __version__
 from .parser_agent_exec import add_agent_exec_parser
+from .parser_agent_output import add_agent_output_parser
 from .parser_context import add_context_parsers
 from .parser_control import add_control_parsers
 from .parser_entities import add_entity_parsers
@@ -26,6 +27,7 @@ def build_parser() -> argparse.ArgumentParser:
     add_entity_parsers(sub)
     add_execution_parsers(sub)
     add_agent_exec_parser(sub)
+    add_agent_output_parser(sub)
     add_work_input_parsers(sub)
     add_context_parsers(sub)
     add_governance_parsers(sub)
