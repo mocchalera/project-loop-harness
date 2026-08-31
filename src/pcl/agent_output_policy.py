@@ -23,8 +23,10 @@ from .resources import read_text_resource
 from .path_safety import is_path_like, split_path_value
 from .sensitive import (
     is_option_shaped_key,
+    is_sensitive_header_value,
     is_sensitive_header_key,
     is_sensitive_key,
+    split_nested_sensitive_header,
     split_key_value,
 )
 
@@ -92,7 +94,23 @@ _STREAM_FLAGS = frozenset({"--follow", "--stream"})
 _INSTALLER_COMMANDS = frozenset({"init", "create", "new"})
 _COMPLETE_OUTPUT_FLAGS = frozenset({"-h", "--help", "--version"})
 _PYTEST_COMPLETE_OUTPUT_FLAGS = frozenset(
-    {"--co", "--collect-only", "--collectonly", "--fixtures", "--markers"}
+    {
+        "--co",
+        "--collect-only",
+        "--collectonly",
+        "--durations",
+        "--report-chars",
+        "--fixtures",
+        "--fixtures-per-test",
+        "--funcargs",
+        "--markers",
+        "--setup-only",
+        "--setup-plan",
+        "--setup-show",
+        "--trace-config",
+        "-V",
+        "-r",
+    }
 )
 _PYTEST_VALUE_OPTIONS = frozenset({"-k", "--keyword", "-m", "--markexpr"})
 _GO_LIST_FLAGS = frozenset({"-list", "--list"})
@@ -239,10 +257,16 @@ def _bounded_argv(argv: object) -> list[str] | dict[str, str] | None:
 
 def _contains_secret_shape(tokens: Sequence[str]) -> bool:
     redact_next = False
+    option_value_next = False
     for token in tokens:
         if redact_next:
             return True
+        if option_value_next and is_sensitive_header_value(token):
+            return True
+        option_value_next = False
         if _SECRET_VALUE.search(token):
+            return True
+        if split_nested_sensitive_header(token) is not None:
             return True
         key_value = split_key_value(token)
         if key_value is not None:
@@ -251,6 +275,8 @@ def _contains_secret_shape(tokens: Sequence[str]) -> bool:
                 return True
         elif is_option_shaped_key(token) and is_sensitive_key(token):
             redact_next = True
+        elif is_option_shaped_key(token):
+            option_value_next = True
     return redact_next
 
 
@@ -553,7 +579,8 @@ def _contains_exact_option(
 
 
 def _option_key(token: str) -> str:
-    return token.lower().split("=", 1)[0]
+    key = token.split("=", 1)[0]
+    return key if key.startswith("-") and not key.startswith("--") else key.lower()
 
 
 def _is_enabled_mode_flag(token: str) -> bool:

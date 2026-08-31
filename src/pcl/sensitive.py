@@ -82,6 +82,27 @@ def is_sensitive_header_key(value: str) -> bool:
     return isinstance(value, str) and value.strip().lower() in _SENSITIVE_HEADER_KEYS
 
 
+def is_sensitive_header_value(value: str) -> bool:
+    """Return whether a value starts with a sensitive authorization header."""
+
+    key_value = split_key_value(value)
+    if key_value is None or not is_sensitive_header_key(key_value[0]):
+        return False
+    _key, separator, remainder = key_value
+    return not (separator == ":" and remainder.startswith("//"))
+
+
+def split_nested_sensitive_header(value: str) -> tuple[str, str, str] | None:
+    """Split an option token whose value starts with a sensitive header."""
+
+    outer = split_key_value(value)
+    if outer is None or not is_option_shaped_key(outer[0]):
+        return None
+    if not is_sensitive_header_value(outer[2]):
+        return None
+    return outer
+
+
 def is_sensitive_key(key: str) -> bool:
     """Return whether an argv or mapping key is shaped like a secret name."""
 

@@ -289,6 +289,59 @@ def test_compound_secret_keys_are_redacted_from_exec_metadata(
     assert REDACTED_ARGUMENT in metadata_text
 
 
+@pytest.mark.parametrize(
+    "secret_argv",
+    [
+        pytest.param(
+            ["--header=Authorization:Basic SENTINEL"],
+            id="equals-authorization",
+        ),
+        pytest.param(
+            ["--header:Authorization:Basic SENTINEL"],
+            id="colon-authorization",
+        ),
+        pytest.param(
+            ["--header", "Authorization:Basic SENTINEL"],
+            id="separated-authorization",
+        ),
+        pytest.param(
+            ["--header=Proxy-Authorization:Basic SENTINEL"],
+            id="equals-proxy-authorization",
+        ),
+        pytest.param(
+            ["--header", "pRoXy-AuThOrIzAtIoN:Basic SENTINEL"],
+            id="separated-mixed-proxy-authorization",
+        ),
+    ],
+)
+def test_nested_sensitive_headers_are_redacted_without_changing_child_argv(
+    secret_argv: list[str],
+    tmp_path: Path,
+) -> None:
+    child_argv_path = tmp_path / "child-argv.json"
+    script = (
+        "import json, pathlib, sys; "
+        "pathlib.Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]), encoding='utf-8')"
+    )
+    state_root = tmp_path / "state"
+
+    outcome = run_agent_exec(
+        [sys.executable, "-c", script, str(child_argv_path), *secret_argv],
+        cwd=tmp_path,
+        timeout_seconds=5,
+        max_output_bytes=1024,
+        state_root=state_root,
+    )
+
+    metadata_path = next(state_root.rglob("meta.json"))
+    metadata_text = metadata_path.read_text(encoding="utf-8")
+    assert outcome.result["status"] == "PASS"
+    assert json.loads(child_argv_path.read_text(encoding="utf-8")) == secret_argv
+    _assert_no_sensitive_fixture_leak(json.dumps(outcome.result))
+    _assert_no_sensitive_fixture_leak(metadata_text)
+    assert REDACTED_ARGUMENT in metadata_text
+
+
 def test_local_absolute_paths_are_omitted_from_command_and_diagnostic(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

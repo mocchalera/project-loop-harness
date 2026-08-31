@@ -43,6 +43,11 @@ ELIGIBLE_CASES = [
     (["pytest", "tests/test_functional.py"], "pytest_direct"),
     (["pytest", "-k", "markers"], "pytest_direct"),
     (["pytest", "-k", "functionality"], "pytest_direct"),
+    (["pytest", "-k", "funcargs"], "pytest_direct"),
+    (["pytest", "-k", "fixtures"], "pytest_direct"),
+    (["pytest", "-k", "setup-plan"], "pytest_direct"),
+    (["pytest", "-k", "trace-config"], "pytest_direct"),
+    (["pytest", "tests/test_funcargs.py"], "pytest_direct"),
     (["pnpm", "test"], "pnpm_test"),
     (["yarn", "test"], "yarn_test"),
     (["tsc", "--noEmit"], "tsc_no_emit"),
@@ -127,6 +132,24 @@ def test_eligible_verification_families_are_classified_without_rewrite(
         ["python", "-m", "pytest", "--fixtures"],
         ["pytest", "--markers"],
         ["python", "-m", "pytest", "--markers"],
+        ["pytest", "--funcargs"],
+        ["python", "-m", "pytest", "--funcargs"],
+        ["pytest", "--fixtures-per-test"],
+        ["python", "-m", "pytest", "--fixtures-per-test"],
+        ["pytest", "--setup-plan"],
+        ["python", "-m", "pytest", "--setup-plan"],
+        ["pytest", "--trace-config"],
+        ["python", "-m", "pytest", "--trace-config"],
+        ["pytest", "--setup-only"],
+        ["python", "-m", "pytest", "--setup-only"],
+        ["pytest", "--setup-show"],
+        ["python", "-m", "pytest", "--setup-show"],
+        ["pytest", "--durations=10"],
+        ["python", "-m", "pytest", "--durations", "10"],
+        ["pytest", "--report-chars", "f"],
+        ["python", "-m", "pytest", "-r", "f"],
+        ["pytest", "-V"],
+        ["python", "-m", "pytest", "-V"],
         ["pytest", "--collect-only"],
         ["pytest", "--junit-xml", "results.xml"],
         ["pytest", "--junit-xml=results.xml"],
@@ -238,6 +261,56 @@ def test_compound_secret_keys_are_unknown_without_echoing_values(argv: list[str]
 @pytest.mark.parametrize(
     "argv",
     [
+        pytest.param(
+            ["pytest", "--header=Authorization:Basic SENTINEL"],
+            id="equals-authorization",
+        ),
+        pytest.param(
+            ["pytest", "--header:Authorization:Basic SENTINEL"],
+            id="colon-authorization",
+        ),
+        pytest.param(
+            ["pytest", "--header", "Authorization:Basic SENTINEL"],
+            id="separated-authorization",
+        ),
+        pytest.param(
+            ["pytest", "--header=Proxy-Authorization:Basic SENTINEL"],
+            id="equals-proxy-authorization",
+        ),
+        pytest.param(
+            ["pytest", "--header", "pRoXy-AuThOrIzAtIoN:Basic SENTINEL"],
+            id="separated-mixed-proxy-authorization",
+        ),
+    ],
+)
+def test_nested_sensitive_headers_are_unknown_without_echoing_values(argv: list[str]) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "unknown"
+    assert result["reason_code"] == "secret_shaped_argv"
+    _assert_no_sensitive_fixture_leak(json.dumps(result))
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["pytest", "-k", "funcargs"],
+        ["pytest", "-k", "fixtures"],
+        ["pytest", "-k", "setup-plan"],
+        ["pytest", "-k", "trace-config"],
+        ["pytest", "tests/test_funcargs.py"],
+    ],
+)
+def test_pytest_presentation_words_in_values_remain_eligible(argv: list[str]) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "eligible"
+    assert result["reason_code"] == "pytest_direct"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
         ["pytest", "-k", "pass"],
         ["pytest", "-k", "authorization"],
     ],
@@ -305,6 +378,10 @@ def test_path_bearing_argv_is_unknown_without_echoing_paths(argv: list[str]) -> 
         pytest.param(
             ["pytest", "--url:https://example.test/REVIEWER_PATH_SENTINEL"],
             id="option-url",
+        ),
+        pytest.param(
+            ["pytest", "--url=authorization://example.test/resource"],
+            id="authorization-url-scheme",
         ),
         pytest.param(["pytest", "name:REVIEWER_PATH_SENTINEL"], id="ordinary-colon"),
     ],

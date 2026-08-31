@@ -32,8 +32,10 @@ from .path_safety import is_path_like, split_path_value
 from .redaction import redact_bytes
 from .sensitive import (
     is_option_shaped_key,
+    is_sensitive_header_value,
     is_sensitive_header_key,
     is_sensitive_key,
+    split_nested_sensitive_header,
     split_key_value,
 )
 
@@ -484,13 +486,20 @@ def _redact_argv(
     redacted: list[str] = []
     changed = False
     redact_next = False
+    redact_header_value_next = False
     total_bytes = 0
     for index, item in enumerate(argv):
         if redact_next:
             value = REDACTED_ARGUMENT
             item_changed = True
             redact_next = False
+            redact_header_value_next = False
+        elif redact_header_value_next and is_sensitive_header_value(item):
+            value = REDACTED_ARGUMENT
+            item_changed = True
+            redact_header_value_next = False
         else:
+            redact_header_value_next = False
             value, item_changed = _redact_sensitive_argument(item)
             if not item_changed:
                 redacted_bytes, item_changed = redact_bytes(
@@ -499,6 +508,8 @@ def _redact_argv(
                 value = redacted_bytes.decode("utf-8", errors="replace")
             if is_option_shaped_key(item) and is_sensitive_key(item):
                 redact_next = True
+            elif is_option_shaped_key(item):
+                redact_header_value_next = True
         value, path_changed = _sanitize_argument(value, cwd=cwd, executable=index == 0)
         value, clipped = _clip_argument(value)
         encoded_size = len(value.encode("utf-8")) + (1 if redacted else 0)
@@ -513,6 +524,10 @@ def _redact_argv(
 
 
 def _redact_sensitive_argument(item: str) -> tuple[str, bool]:
+    nested_header = split_nested_sensitive_header(item)
+    if nested_header is not None:
+        key, separator, _value = nested_header
+        return f"{key}{separator}{REDACTED_ARGUMENT}", True
     key_value = split_key_value(item)
     if key_value is not None:
         key, separator, _value = key_value
