@@ -122,7 +122,7 @@ The following are deterministic negative cases:
 - watch mode, development servers, `tail -f`, and other long-lived streaming
   processes;
 - arbitrary pipelines, redirections, substitutions, here-documents, compound
-  expressions, or shell functions;
+  expressions, standalone background operators, or shell functions;
 - commands whose command line cannot be safely reduced to an argv shape;
 - any command explicitly marked `output_is_artifact` by repository policy.
 
@@ -152,7 +152,7 @@ The packaged policy is data, not executable shell text. It contains:
   "schema": "agent-output-policy/v1",
   "eligible_argv_rules": [],
   "negative_argv_rules": [],
-  "unsafe_shell_markers": ["|", ">", ">>", "<", "$(", "`", "&&", "||", ";", "\n", "\r", "heredoc", "function"],
+  "unsafe_shell_markers": ["|", ">", ">>", "<", "$(", "`", "&&", "||", ";", "&", "\n", "\r", "heredoc", "function"],
   "result_handling": {
     "pass_reads_diagnostics": false,
     "automatic_retry": false,

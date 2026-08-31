@@ -24,6 +24,7 @@ CANONICAL_UNSAFE_SHELL_MARKERS = (
     "&&",
     "||",
     ";",
+    "&",
     "\n",
     "\r",
     "heredoc",

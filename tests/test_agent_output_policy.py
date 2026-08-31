@@ -154,6 +154,14 @@ def test_eligible_verification_families_are_classified_without_rewrite(
         ["pytest", "--junit-xml", "results.xml"],
         ["pytest", "--junit-xml=results.xml"],
         ["pytest", "--report=results.xml"],
+        ["pytest", "-VV"],
+        ["python", "-m", "pytest", "-VV"],
+        ["pytest", "-qVV"],
+        ["python", "-m", "pytest", "-xVV"],
+        ["ruff", "check", "--output-format=json"],
+        ["ruff", "check", "--output-format", "json"],
+        ["ruff", "check", "--output-file=results.json"],
+        ["ruff", "check", "--output-file", "results.json"],
     ],
 )
 def test_reads_searches_diffs_and_reports_remain_negative(argv: list[str]) -> None:
@@ -441,6 +449,34 @@ def test_pytest_select_expression_values_are_not_secret_keys(argv: list[str]) ->
             ["pytest", "--rootdir:/private/REVIEWER_PATH_SENTINEL/file=tail.py"],
             id="colon-value-with-equals",
         ),
+        pytest.param(
+            ["pytest", "file:///private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-posix-raw",
+        ),
+        pytest.param(
+            ["pytest", "file://localhost/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-localhost-raw",
+        ),
+        pytest.param(
+            ["pytest", "file:///C:/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-windows-drive",
+        ),
+        pytest.param(
+            ["pytest", "--rootdir=file:///private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-equals",
+        ),
+        pytest.param(
+            ["pytest", "--rootdir:file://localhost/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-colon",
+        ),
+        pytest.param(
+            [
+                "pytest",
+                "--rootdir",
+                "file:///private/REVIEWER_PATH_SENTINEL/file.py",
+            ],
+            id="file-uri-separated",
+        ),
     ],
 )
 def test_path_bearing_argv_is_unknown_without_echoing_paths(argv: list[str]) -> None:
@@ -501,6 +537,8 @@ def test_path_list_values_are_unknown_without_echoing_paths(argv: list[str]) -> 
         ["pytest", "--url", "authorization://example.test/resource"],
         ["pytest", "--url", "Proxy-Authorization://example.test/resource"],
         ["pytest", "--url=authorization://example.test/resource"],
+        ["pytest", "file://remote.example/resource"],
+        ["pytest", "--url", "file://remote.example/resource"],
     ],
 )
 def test_path_lists_and_authorization_uris_remain_eligible(argv: list[str]) -> None:
@@ -597,6 +635,7 @@ def test_policy_requires_the_full_canonical_unsafe_shell_marker_set() -> None:
         ["pytest", "&&", "ruff", "check"],
         ["pytest", "||", "ruff", "check"],
         ["pytest", ";", "ruff", "check"],
+        ["pytest", "&", "ruff", "check"],
         ["pytest", "line\nnext"],
         ["pytest", "function", "run"],
         ["pytest", "function foo"],
@@ -636,6 +675,55 @@ def test_word_shell_markers_do_not_match_normal_argv_words(argv: list[str]) -> N
 
     assert result["classification"] == "eligible"
     assert result["reason_code"] == "pytest_direct"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["pytest", "tests/a&b.py"],
+        ["pytest", "--keyword=a&b"],
+        ["pytest", "-k", "a&b"],
+    ],
+)
+def test_embedded_ampersands_are_literal_argv_values(argv: list[str]) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "eligible"
+    assert result["reason_code"] == "pytest_direct"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["pytest", "github_pat_abcdefghijklmnopqrstSENTINEL"],
+        ["pytest", "AKIA1234567890ABCDEF"],
+    ],
+)
+def test_known_executor_secret_signatures_are_unknown_without_echoing_values(
+    argv: list[str],
+) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "unknown"
+    assert result["reason_code"] == "secret_shaped_argv"
+    _assert_no_sensitive_fixture_leak(json.dumps(result))
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["pip", "install", "--", "--no-input"],
+        ["python", "-m", "pip", "install", "--", "--no-input"],
+        ["pip3", "install", "package", "--", "--no-input"],
+        ["python3", "-m", "pip", "install", "package", "--", "--no-input"],
+    ],
+)
+def test_pip_noninteractive_flag_after_terminator_is_not_eligible(argv: list[str]) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "negative"
+    assert result["reason_code"] in {"pip_install", "python_pip_install"}
+    assert result["may_rewrite"] is False
 
 
 @pytest.mark.parametrize(

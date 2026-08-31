@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+from urllib.parse import unquote, urlsplit
 
 from .sensitive import is_env_key_shaped, is_option_shaped_key, split_key_value
 
@@ -9,6 +10,44 @@ from .sensitive import is_env_key_shaped, is_option_shaped_key, split_key_value
 _WINDOWS_ABSOLUTE_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
 _HOME_RELATIVE_PREFIXES = ("~/", "~\\")
 _PATH_LIST_SEPARATORS = frozenset({":", ";", ","})
+_LOCAL_FILE_URI_HOSTS = frozenset({"", "localhost", "127.0.0.1", "::1"})
+_FILE_URI = re.compile(r"(?i)(?<![A-Za-z0-9+.-])file:[^\s\"'<>]+")
+
+
+def is_local_file_uri(value: str) -> bool:
+    """Return whether a file URI names a local absolute filesystem path."""
+
+    if not isinstance(value, str) or not value.lower().startswith("file:"):
+        return False
+    try:
+        parsed = urlsplit(value)
+    except ValueError:
+        return False
+    if parsed.scheme.lower() != "file":
+        return False
+    try:
+        host = (parsed.hostname or "").lower()
+    except ValueError:
+        return False
+    if host not in _LOCAL_FILE_URI_HOSTS:
+        return False
+    path = unquote(parsed.path)
+    return bool(path) and (path.startswith("/") or _WINDOWS_ABSOLUTE_PATH.match(path) is not None)
+
+
+def redact_local_file_uris(
+    value: str, *, replacement: str = "<absolute-path>"
+) -> tuple[str, bool]:
+    """Replace local file URIs in text while preserving remote URI schemes."""
+
+    if not isinstance(value, str):
+        return value, False
+
+    def replace(match: re.Match[str]) -> str:
+        return replacement if is_local_file_uri(match.group(0)) else match.group(0)
+
+    redacted, count = _FILE_URI.subn(replace, value)
+    return redacted, count > 0 and redacted != value
 
 
 def is_path_like(value: str) -> bool:
@@ -18,6 +57,7 @@ def is_path_like(value: str) -> bool:
         value.startswith(_HOME_RELATIVE_PREFIXES)
         or os.path.isabs(value)
         or _WINDOWS_ABSOLUTE_PATH.match(value) is not None
+        or is_local_file_uri(value)
     )
 
 

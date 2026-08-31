@@ -19,6 +19,7 @@ from pcl.agent_exec import (
 )
 from pcl.cli import _extract_global_options, main as cli_main
 from pcl.parser_agent_exec import AGENT_EXEC_ARGV_SENTINEL
+from pcl.redaction import REDACTED_SECRET
 
 
 RUN_ID_RE = re.compile(r"AX-\d{8}T\d{6}Z-[a-f0-9]{12}")
@@ -32,6 +33,11 @@ def _assert_no_sensitive_fixture_leak(value: str) -> None:
 def _assert_no_path_fixture_leak(value: str) -> None:
     if "REVIEWER_PATH_SENTINEL" in value:
         raise AssertionError("path fixture value was leaked")
+
+
+def _assert_no_secret_signature_fixture_leak(value: str) -> None:
+    if "github_pat_" in value or "AKIA" in value:
+        raise AssertionError("secret signature fixture value was leaked")
 
 
 def _prepare(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
@@ -298,6 +304,11 @@ def test_compound_secret_keys_are_redacted_from_exec_metadata(
         pytest.param(["clientSecret:SENTINEL"], id="camel-colon"),
         pytest.param(["AuthToken=SENTINEL"], id="pascal-equals"),
         pytest.param(["api_key:SENTINEL"], id="snake-colon"),
+        pytest.param(
+            ["github_pat_abcdefghijklmnopqrstSENTINEL"],
+            id="github-pat-signature",
+        ),
+        pytest.param(["AKIA1234567890ABCDEF"], id="aws-access-key-signature"),
     ],
 )
 def test_explicit_secret_keys_are_redacted_without_changing_child_argv(
@@ -324,7 +335,9 @@ def test_explicit_secret_keys_are_redacted_without_changing_child_argv(
     assert json.loads(child_argv_path.read_text(encoding="utf-8")) == secret_argv
     _assert_no_sensitive_fixture_leak(json.dumps(outcome.result))
     _assert_no_sensitive_fixture_leak(metadata_text)
-    assert REDACTED_ARGUMENT in metadata_text
+    _assert_no_secret_signature_fixture_leak(json.dumps(outcome.result))
+    _assert_no_secret_signature_fixture_leak(metadata_text)
+    assert REDACTED_ARGUMENT in metadata_text or REDACTED_SECRET in metadata_text
 
 
 @pytest.mark.parametrize(
@@ -400,6 +413,38 @@ def test_local_absolute_paths_are_omitted_from_command_and_diagnostic(
     assert "<absolute-path>" in metadata_text
 
 
+def test_local_file_uris_are_redacted_from_public_failure_surfaces(
+    tmp_path: Path,
+) -> None:
+    file_uri = "file:///private/REVIEWER_PATH_SENTINEL/file.py"
+    script = "import sys; print('RuntimeError: ' + sys.argv[-1]); raise SystemExit(2)"
+    state_root = tmp_path / "state"
+
+    outcome = run_agent_exec(
+        [sys.executable, "-c", script, "--url", file_uri],
+        cwd=tmp_path,
+        timeout_seconds=5,
+        max_output_bytes=1024,
+        state_root=state_root,
+    )
+
+    metadata_path = next(state_root.rglob("meta.json"))
+    diagnostic_path = next(state_root.rglob("diagnostic.redacted.log"))
+    metadata_text = metadata_path.read_text(encoding="utf-8")
+    diagnostic_text = diagnostic_path.read_text(encoding="utf-8")
+    result_text = json.dumps(outcome.result)
+
+    assert outcome.result["status"] == "FAIL"
+    _assert_no_path_fixture_leak(result_text)
+    _assert_no_path_fixture_leak(metadata_text)
+    _assert_no_path_fixture_leak(outcome.presentation)
+    _assert_no_path_fixture_leak(diagnostic_text)
+    assert "<absolute-path>" in result_text
+    assert "<absolute-path>" in metadata_text
+    assert "<absolute-path>" in outcome.presentation
+    assert "<absolute-path>" in diagnostic_text
+
+
 @pytest.mark.parametrize(
     "path_argv",
     [
@@ -430,6 +475,30 @@ def test_local_absolute_paths_are_omitted_from_command_and_diagnostic(
         pytest.param(
             ["--rootdir:~/REVIEWER_PATH_SENTINEL/file.py"],
             id="home-colon",
+        ),
+        pytest.param(
+            ["file:///private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-posix-raw",
+        ),
+        pytest.param(
+            ["file://localhost/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-localhost-raw",
+        ),
+        pytest.param(
+            ["file:///C:/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-windows-drive",
+        ),
+        pytest.param(
+            ["--rootdir=file:///private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-equals",
+        ),
+        pytest.param(
+            ["--rootdir:file://localhost/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-colon",
+        ),
+        pytest.param(
+            ["--rootdir", "file:///private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-separated",
         ),
     ],
 )

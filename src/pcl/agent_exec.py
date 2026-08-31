@@ -32,6 +32,7 @@ from .guarded_process import execute_guarded_process
 from .path_safety import (
     is_path_like,
     is_path_list_like,
+    redact_local_file_uris,
     split_path_list_value,
     split_path_value,
 )
@@ -738,8 +739,7 @@ def _sanitize_diagnostic(selection: DiagnosticSelection, *, cwd: Path) -> Diagno
 
 
 def _replace_known_paths(value: str, *, cwd: Path) -> tuple[str, bool]:
-    changed = False
-    result = value
+    result, changed = redact_local_file_uris(value)
     replacements = [
         (str(cwd.resolve()), "<project-root>"),
         (str(Path.home().resolve()), "<home>"),

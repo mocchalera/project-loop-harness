@@ -22,6 +22,7 @@ from .agent_exec_validation import (
 from .resources import read_text_resource
 from .path_safety import is_path_like, is_path_list_like, split_path_list_value, split_path_value
 from .sensitive import (
+    contains_secret_signature,
     is_option_shaped_key,
     is_sensitive_header_value,
     is_sensitive_key,
@@ -38,10 +39,6 @@ MAX_ARGV_TOTAL_BYTES = 8_192
 MAX_ARGV_JSON_BYTES = 64 * 1024
 RECOMMENDED_ARGV_PREFIX = ["pcl", "exec", "--"]
 
-_SECRET_VALUE = re.compile(
-    r"(?i)(?:sk-[a-z0-9]{12,}|gh[pousr]_[a-z0-9]{12,}|xox[baprs]-[a-z0-9-]{12,}|"
-    r"bearer\s+[a-z0-9._-]{12,}|-----begin [a-z ]+ key-----)"
-)
 _REPORT_TOKEN = re.compile(r"(?i)(?:^|[-_.:/=])report(?:[-_.:/=]|$)")
 _ARTIFACT_MARKERS = frozenset(
     {
@@ -116,6 +113,7 @@ _PYTEST_VALUE_OPTIONS = frozenset({"-k", "--keyword", "-m", "--markexpr"})
 _PYTEST_REPORT_CHARS = frozenset("fFEsxXpPaAwN")
 _PYTEST_SHORT_CLUSTER_FLAGS = frozenset({"q", "v", "s", "x", "f", "l"})
 _GO_LIST_FLAGS = frozenset({"-list", "--list"})
+_RUFF_COMPLETE_OUTPUT_OPTIONS = frozenset({"--output-format", "--output-file"})
 _NON_INTERACTIVE_INSTALL_FLAG = "--no-input"
 _PIP_COMMANDS = frozenset({"pip", "pip3"})
 _PYTHON_COMMANDS = frozenset({"python", "python3"})
@@ -269,17 +267,17 @@ def _contains_secret_shape(tokens: Sequence[str]) -> bool:
         option_value_next = False
         if selection_value_next:
             selection_value_next = False
-            if _SECRET_VALUE.search(token):
+            if contains_secret_signature(token):
                 return True
             continue
-        if _SECRET_VALUE.search(token):
+        if contains_secret_signature(token):
             return True
         if split_nested_sensitive_header(token) is not None:
             return True
         key_value = split_key_value(token)
         if key_value is not None:
             _key, _separator, value = key_value
-            if is_sensitive_key_value(token) or _SECRET_VALUE.search(value):
+            if is_sensitive_key_value(token) or contains_secret_signature(value):
                 return True
         elif _is_selection_value_option(token):
             selection_value_next = token in _PYTEST_VALUE_OPTIONS
@@ -346,6 +344,9 @@ def _contains_unsafe_shell_marker(
                 continue
             if marker in _WORD_UNSAFE_SHELL_MARKERS:
                 if _contains_word_shell_marker(token, marker):
+                    return True
+            elif marker == "&":
+                if token == marker:
                     return True
             elif marker in token:
                 return True
@@ -549,6 +550,13 @@ def _contains_complete_output_request(tokens: Sequence[str]) -> bool:
         tokens[1:], _COMPLETE_OUTPUT_FLAGS | frozenset({"-V"})
     ):
         return True
+    if (
+        len(tokens) >= 2
+        and command == "ruff"
+        and tokens[1].lower() == "check"
+        and _contains_exact_option(tokens[2:], _RUFF_COMPLETE_OUTPUT_OPTIONS)
+    ):
+        return True
     if command in {"pytest", "python", "python3"}:
         pytest_start = 1 if command == "pytest" else 3
         if command != "pytest" and list(tokens[1:3]) != ["-m", "pytest"]:
@@ -615,6 +623,8 @@ def _is_pytest_short_presentation_option(token: str) -> bool:
         option = body[index]
         if option == "h":
             return True
+        if option == "V":
+            return True
         if option == "r":
             return index == len(body) - 1 or all(
                 character in _PYTEST_REPORT_CHARS for character in body[index + 1 :]
@@ -677,7 +687,8 @@ def _is_non_interactive_pip_install(tokens: Sequence[str]) -> bool:
 def _non_interactive_pip_install_reason(tokens: Sequence[str]) -> str | None:
     if not (_is_pip_install(tokens) or _is_python_pip_install(tokens)):
         return None
-    if not any(token.lower() == _NON_INTERACTIVE_INSTALL_FLAG for token in tokens[2:]):
+    option_start = 2 if _is_pip_install(tokens) else 4
+    if not _has_non_interactive_pip_option(tokens[option_start:]):
         return None
     if _is_pip_install(tokens):
         return (
@@ -690,6 +701,15 @@ def _non_interactive_pip_install_reason(tokens: Sequence[str]) -> str | None:
         if tokens[0].lower() == "python3"
         else "python_pip_install_non_interactive"
     )
+
+
+def _has_non_interactive_pip_option(tokens: Sequence[str]) -> bool:
+    for token in tokens:
+        if token == "--":
+            return False
+        if token.lower() == _NON_INTERACTIVE_INSTALL_FLAG:
+            return True
+    return False
 
 
 def _eligible_reason(tokens: Sequence[str], policy: Mapping[str, Any]) -> str | None:

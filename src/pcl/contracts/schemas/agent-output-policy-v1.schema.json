@@ -61,7 +61,7 @@
     },
     "unsafe_shell_markers": {
       "type": "array",
-      "minItems": 13,
+      "minItems": 14,
       "maxItems": 32,
       "uniqueItems": true,
       "allOf": [
@@ -74,6 +74,7 @@
         {"contains": {"const": "&&"}},
         {"contains": {"const": "||"}},
         {"contains": {"const": ";"}},
+        {"contains": {"const": "&"}},
         {"contains": {"const": "\n"}},
         {"contains": {"const": "\r"}},
         {"contains": {"const": "heredoc"}},
