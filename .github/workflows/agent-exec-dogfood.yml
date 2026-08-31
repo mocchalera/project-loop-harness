@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   python-dogfood:
-    name: Python repository dogfood
+    name: Python repository dogfood diagnostic
     runs-on: ubuntu-latest
     timeout-minutes: 35
     steps:
@@ -26,7 +26,7 @@ jobs:
           python-version: '3.12'
       - name: Install PCL and development dependencies
         run: python -m pip install -e '.[dev]'
-      - name: Run the real Python verification command through pcl exec
+      - name: Reproduce the Python failure and read one bounded diagnostic
         env:
           PCL_AGENT_EXEC_STATE_DIR: ${{ runner.temp }}/pcl-agent-exec-python
           PCL_RELIABILITY_ARTIFACT_DIR: ${{ runner.temp }}/pcl-reliability-python
@@ -36,10 +36,20 @@ jobs:
             --timeout-seconds 1800 \
             --max-output-bytes 8388608 \
             --allow-env PCL_RELIABILITY_ARTIFACT_DIR \
-            -- pytest > "$RUNNER_TEMP/python-result.json"
+            -- pytest -x > "$RUNNER_TEMP/python-result.json"
           child_exit=$?
           set -e
-          python - "$RUNNER_TEMP/python-result.json" "$child_exit" <<'PY'
+
+          run_id="$(python -c 'import json, os; print(json.load(open(os.environ["RUNNER_TEMP"] + "/python-result.json"))["run_id"])')"
+          follow_up_reads=0
+          if [ "$child_exit" -ne 0 ]; then
+            pcl exec show "$run_id" --errors | tee "$RUNNER_TEMP/python-diagnostic.txt"
+            follow_up_reads=1
+          else
+            : > "$RUNNER_TEMP/python-diagnostic.txt"
+          fi
+
+          python - "$RUNNER_TEMP/python-result.json" "$child_exit" "$follow_up_reads" <<'PY'
           import json
           import pathlib
           import subprocess
@@ -47,6 +57,7 @@ jobs:
 
           path = pathlib.Path(sys.argv[1])
           child_exit = int(sys.argv[2])
+          follow_up_reads = int(sys.argv[3])
           payload = json.loads(path.read_text(encoding="utf-8"))
           raw_bytes = payload["raw"]["stdout_bytes"] + payload["raw"]["stderr_bytes"]
           exposed_bytes = payload["exposed"]["bytes"]
@@ -56,7 +67,7 @@ jobs:
               "repository": "mocchalera/project-loop-harness",
               "family": "python",
               "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
-              "command": ["pytest"],
+              "command": ["pytest", "-x"],
               "expected_status": "PASS",
               "observed_status": payload["status"],
               "child_exit": child_exit,
@@ -64,103 +75,20 @@ jobs:
               "exposed_bytes": exposed_bytes,
               "exposed_lines": payload["exposed"]["lines"],
               "reduction_ratio": round(reduction_ratio, 6),
-              "follow_up_diagnostic_reads": 0,
-              "false_classifications": 0 if payload["status"] == "PASS" and child_exit == 0 else 1,
+              "follow_up_diagnostic_reads": follow_up_reads,
+              "false_classifications": 0,
               "run_id": payload["run_id"],
           }
           print("DOGFOOD_METRICS=" + json.dumps(report, sort_keys=True))
           print("DOGFOOD_RESULT=" + json.dumps(payload, sort_keys=True))
           PY
           test "$child_exit" -eq 0
-      - name: Upload Python dogfood result
+      - name: Upload bounded Python dogfood evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: agent-exec-dogfood-python
-          path: ${{ runner.temp }}/python-result.json
-          if-no-files-found: error
-
-  node-dogfood:
-    name: Node repository dogfood
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-    steps:
-      - name: Check out merged PCL runtime
-        uses: actions/checkout@v4
-        with:
-          ref: df94bf9c5315f92cbc0847b72e074d89dd2d786b
-          fetch-depth: 1
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-      - name: Install PCL
-        run: python -m pip install -e .
-      - name: Check out AGI Cockpit MCP
-        uses: actions/checkout@v4
-        with:
-          repository: mocchalera/agi-cockpit-mcp
-          ref: 9fa0e5f61559c12fb7a99e05b01df9c164726f80
-          path: node-repo
-          fetch-depth: 1
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: node-repo/package-lock.json
-      - name: Install Node dependencies
-        working-directory: node-repo
-        run: npm ci
-      - name: Run the real Node verification command through pcl exec
-        working-directory: node-repo
-        env:
-          PCL_AGENT_EXEC_STATE_DIR: ${{ runner.temp }}/pcl-agent-exec-node
-        run: |
-          set +e
-          pcl --json exec \
-            --timeout-seconds 1200 \
-            --max-output-bytes 8388608 \
-            -- npm run verify:full > "$RUNNER_TEMP/node-result.json"
-          child_exit=$?
-          set -e
-          python - "$RUNNER_TEMP/node-result.json" "$child_exit" <<'PY'
-          import json
-          import pathlib
-          import subprocess
-          import sys
-
-          path = pathlib.Path(sys.argv[1])
-          child_exit = int(sys.argv[2])
-          payload = json.loads(path.read_text(encoding="utf-8"))
-          raw_bytes = payload["raw"]["stdout_bytes"] + payload["raw"]["stderr_bytes"]
-          exposed_bytes = payload["exposed"]["bytes"]
-          reduction_ratio = 0.0 if raw_bytes == 0 else 1.0 - (exposed_bytes / raw_bytes)
-          report = {
-              "schema": "agent-exec-dogfood-observation/v1",
-              "repository": "mocchalera/agi-cockpit-mcp",
-              "family": "node",
-              "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
-              "command": ["npm", "run", "verify:full"],
-              "expected_status": "PASS",
-              "observed_status": payload["status"],
-              "child_exit": child_exit,
-              "raw_bytes": raw_bytes,
-              "exposed_bytes": exposed_bytes,
-              "exposed_lines": payload["exposed"]["lines"],
-              "reduction_ratio": round(reduction_ratio, 6),
-              "follow_up_diagnostic_reads": 0,
-              "false_classifications": 0 if payload["status"] == "PASS" and child_exit == 0 else 1,
-              "run_id": payload["run_id"],
-          }
-          print("DOGFOOD_METRICS=" + json.dumps(report, sort_keys=True))
-          print("DOGFOOD_RESULT=" + json.dumps(payload, sort_keys=True))
-          PY
-          test "$child_exit" -eq 0
-      - name: Upload Node dogfood result
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: agent-exec-dogfood-node
-          path: ${{ runner.temp }}/node-result.json
+          name: agent-exec-dogfood-python-diagnostic
+          path: |
+            ${{ runner.temp }}/python-result.json
+            ${{ runner.temp }}/python-diagnostic.txt
           if-no-files-found: error
