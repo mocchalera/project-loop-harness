@@ -20,6 +20,7 @@ from pcl.contracts.agent_output import (
     validate_agent_output_classification,
     validate_agent_output_policy,
 )
+from pcl.path_safety import redact_local_file_uris
 
 
 ELIGIBLE_CASES = [
@@ -220,6 +221,46 @@ def test_watch_and_debug_flags_are_negative_before_eligible_prefixes(argv: list[
     assert result["classification"] == "negative"
     assert result["recommended_argv_prefix"] == []
     assert result["may_rewrite"] is False
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["pytest", "-f"],
+        ["python", "-m", "pytest", "-f"],
+        ["pytest", "--looponfail"],
+        ["python", "-m", "pytest", "--looponfail"],
+        ["pytest", "-qf"],
+        ["python", "-m", "pytest", "-qf"],
+        ["python", "-m", "pytest", "-xvf"],
+    ],
+)
+def test_pytest_loop_on_fail_is_negative_before_eligible_prefixes(argv: list[str]) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "negative"
+    assert result["reason_code"] == "interactive_or_watch_mode"
+    assert result["may_rewrite"] is False
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["pytest", "-foo"],
+        ["pytest", "-fabulous"],
+        ["pytest", "-k", "-f"],
+        ["python", "-m", "pytest", "-m=-f"],
+        ["pytest", "-k-foo"],
+        ["pytest", "-k", "feature-f"],
+        ["ruff", "check", "-f"],
+    ],
+)
+def test_pytest_loop_on_fail_detection_avoids_literals_and_other_tools(
+    argv: list[str],
+) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "eligible"
 
 
 @pytest.mark.parametrize(
@@ -458,6 +499,21 @@ def test_pytest_select_expression_values_are_not_secret_keys(argv: list[str]) ->
             id="file-uri-localhost-raw",
         ),
         pytest.param(
+            ["pytest", "file://127.0.0.2/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-loopback-ipv4-raw",
+        ),
+        pytest.param(
+            ["pytest", "file://localhost./private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-localhost-trailing-dot-raw",
+        ),
+        pytest.param(
+            [
+                "pytest",
+                "file://[0:0:0:0:0:0:0:1]/private/REVIEWER_PATH_SENTINEL/file.py",
+            ],
+            id="file-uri-loopback-ipv6-raw",
+        ),
+        pytest.param(
             ["pytest", "file:///C:/REVIEWER_PATH_SENTINEL/file.py"],
             id="file-uri-windows-drive",
         ),
@@ -470,12 +526,28 @@ def test_pytest_select_expression_values_are_not_secret_keys(argv: list[str]) ->
             id="file-uri-colon",
         ),
         pytest.param(
+            ["pytest", "--rootdir=file://127.0.0.2/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-loopback-ipv4-equals",
+        ),
+        pytest.param(
+            ["pytest", "--rootdir:file://localhost./private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-localhost-trailing-dot-colon",
+        ),
+        pytest.param(
             [
                 "pytest",
                 "--rootdir",
                 "file:///private/REVIEWER_PATH_SENTINEL/file.py",
             ],
             id="file-uri-separated",
+        ),
+        pytest.param(
+            [
+                "pytest",
+                "--rootdir",
+                "file://[0:0:0:0:0:0:0:1]/private/REVIEWER_PATH_SENTINEL/file.py",
+            ],
+            id="file-uri-loopback-ipv6-separated",
         ),
     ],
 )
@@ -485,6 +557,48 @@ def test_path_bearing_argv_is_unknown_without_echoing_paths(argv: list[str]) -> 
     assert result["classification"] == "unknown"
     assert result["reason_code"] == "absolute_path_argv"
     _assert_no_path_fixture_leak(json.dumps(result))
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        pytest.param(
+            "file:///private/REVIEWER_PATH_SENTINEL/file.py",
+            id="posix",
+        ),
+        pytest.param(
+            "file://localhost/private/REVIEWER_PATH_SENTINEL/file.py",
+            id="localhost",
+        ),
+        pytest.param(
+            "file://127.0.0.2/private/REVIEWER_PATH_SENTINEL/file.py",
+            id="loopback-ipv4",
+        ),
+        pytest.param(
+            "file://localhost./private/REVIEWER_PATH_SENTINEL/file.py",
+            id="localhost-trailing-dot",
+        ),
+        pytest.param(
+            "file://[0:0:0:0:0:0:0:1]/private/REVIEWER_PATH_SENTINEL/file.py",
+            id="loopback-ipv6",
+        ),
+    ],
+)
+def test_all_loopback_file_uri_forms_are_redacted(value: str) -> None:
+    redacted, changed = redact_local_file_uris(value)
+
+    assert changed is True
+    assert redacted == "<absolute-path>"
+    _assert_no_path_fixture_leak(redacted)
+
+
+def test_remote_file_uri_is_not_redacted() -> None:
+    value = "file://remote.example/REVIEWER_PATH_SENTINEL/file.py"
+
+    redacted, changed = redact_local_file_uris(value)
+
+    assert changed is False
+    assert redacted == value
 
 
 @pytest.mark.parametrize(

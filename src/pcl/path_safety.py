@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 from urllib.parse import unquote, urlsplit
@@ -10,8 +11,17 @@ from .sensitive import is_env_key_shaped, is_option_shaped_key, split_key_value
 _WINDOWS_ABSOLUTE_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
 _HOME_RELATIVE_PREFIXES = ("~/", "~\\")
 _PATH_LIST_SEPARATORS = frozenset({":", ";", ","})
-_LOCAL_FILE_URI_HOSTS = frozenset({"", "localhost", "127.0.0.1", "::1"})
 _FILE_URI = re.compile(r"(?i)(?<![A-Za-z0-9+.-])file:[^\s\"'<>]+")
+
+
+def _is_local_file_uri_host(host: str) -> bool:
+    normalized = host.rstrip(".").lower()
+    if normalized in {"", "localhost"}:
+        return True
+    try:
+        return ipaddress.ip_address(normalized).is_loopback
+    except ValueError:
+        return False
 
 
 def is_local_file_uri(value: str) -> bool:
@@ -29,7 +39,7 @@ def is_local_file_uri(value: str) -> bool:
         host = (parsed.hostname or "").lower()
     except ValueError:
         return False
-    if host not in _LOCAL_FILE_URI_HOSTS:
+    if not _is_local_file_uri_host(host):
         return False
     path = unquote(parsed.path)
     return bool(path) and (path.startswith("/") or _WINDOWS_ABSOLUTE_PATH.match(path) is not None)

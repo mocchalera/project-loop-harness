@@ -481,6 +481,8 @@ def _negative_reason(tokens: Sequence[str], policy: Mapping[str, Any]) -> str | 
         return "report_output_artifact"
     if any(_is_artifact_marker(token) for token in tokens):
         return "output_is_artifact"
+    if _contains_pytest_loop_on_fail(tokens):
+        return "interactive_or_watch_mode"
     command = tokens[0].lower()
     if command in _INTERACTIVE_EXECUTABLES:
         return "interactive_command"
@@ -504,6 +506,41 @@ def _negative_reason(tokens: Sequence[str], policy: Mapping[str, Any]) -> str | 
     if command in {"npm", "pnpm", "yarn"} and len(tokens) >= 2 and tokens[1].lower() in _INSTALLER_COMMANDS:
         return "interactive_installer"
     return None
+
+
+def _contains_pytest_loop_on_fail(tokens: Sequence[str]) -> bool:
+    command = tokens[0].lower()
+    if command == "pytest":
+        pytest_start = 1
+    elif command in {"python", "python3"} and list(tokens[1:3]) == ["-m", "pytest"]:
+        pytest_start = 3
+    else:
+        return False
+
+    skip_selection_value = False
+    for token in tokens[pytest_start:]:
+        if token == "--":
+            break
+        if skip_selection_value:
+            skip_selection_value = False
+            continue
+        if token in _PYTEST_VALUE_OPTIONS:
+            skip_selection_value = True
+            continue
+        if _is_selection_value_option(token):
+            continue
+        if token == "--looponfail":
+            return True
+        if _is_pytest_loop_on_fail_short_option(token):
+            return True
+    return False
+
+
+def _is_pytest_loop_on_fail_short_option(token: str) -> bool:
+    if not token.startswith("-") or token.startswith("--") or len(token) < 2:
+        return False
+    body = token[1:]
+    return "f" in body and all(character in _PYTEST_SHORT_CLUSTER_FLAGS for character in body)
 
 
 def _is_artifact_marker(token: str) -> bool:

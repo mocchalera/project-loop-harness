@@ -413,10 +413,35 @@ def test_local_absolute_paths_are_omitted_from_command_and_diagnostic(
     assert "<absolute-path>" in metadata_text
 
 
+@pytest.mark.parametrize(
+    "file_uri",
+    [
+        pytest.param(
+            "file:///private/REVIEWER_PATH_SENTINEL/file.py",
+            id="posix",
+        ),
+        pytest.param(
+            "file://localhost/private/REVIEWER_PATH_SENTINEL/file.py",
+            id="localhost",
+        ),
+        pytest.param(
+            "file://127.0.0.2/private/REVIEWER_PATH_SENTINEL/file.py",
+            id="loopback-ipv4",
+        ),
+        pytest.param(
+            "file://localhost./private/REVIEWER_PATH_SENTINEL/file.py",
+            id="localhost-trailing-dot",
+        ),
+        pytest.param(
+            "file://[0:0:0:0:0:0:0:1]/private/REVIEWER_PATH_SENTINEL/file.py",
+            id="loopback-ipv6",
+        ),
+    ],
+)
 def test_local_file_uris_are_redacted_from_public_failure_surfaces(
+    file_uri: str,
     tmp_path: Path,
 ) -> None:
-    file_uri = "file:///private/REVIEWER_PATH_SENTINEL/file.py"
     script = "import sys; print('RuntimeError: ' + sys.argv[-1]); raise SystemExit(2)"
     state_root = tmp_path / "state"
 
@@ -485,6 +510,20 @@ def test_local_file_uris_are_redacted_from_public_failure_surfaces(
             id="file-uri-localhost-raw",
         ),
         pytest.param(
+            ["file://127.0.0.2/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-loopback-ipv4-raw",
+        ),
+        pytest.param(
+            ["file://localhost./private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-localhost-trailing-dot-raw",
+        ),
+        pytest.param(
+            [
+                "file://[0:0:0:0:0:0:0:1]/private/REVIEWER_PATH_SENTINEL/file.py",
+            ],
+            id="file-uri-loopback-ipv6-raw",
+        ),
+        pytest.param(
             ["file:///C:/REVIEWER_PATH_SENTINEL/file.py"],
             id="file-uri-windows-drive",
         ),
@@ -497,8 +536,23 @@ def test_local_file_uris_are_redacted_from_public_failure_surfaces(
             id="file-uri-colon",
         ),
         pytest.param(
+            ["--rootdir=file://127.0.0.2/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-loopback-ipv4-equals",
+        ),
+        pytest.param(
+            ["--rootdir:file://localhost./private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-localhost-trailing-dot-colon",
+        ),
+        pytest.param(
             ["--rootdir", "file:///private/REVIEWER_PATH_SENTINEL/file.py"],
             id="file-uri-separated",
+        ),
+        pytest.param(
+            [
+                "--rootdir",
+                "file://[0:0:0:0:0:0:0:1]/private/REVIEWER_PATH_SENTINEL/file.py",
+            ],
+            id="file-uri-loopback-ipv6-separated",
         ),
     ],
 )
@@ -607,6 +661,10 @@ def test_path_list_values_are_redacted_without_changing_child_argv(
             ["--url=authorization://example.test/resource"],
             id="equals-authorization-uri",
         ),
+        pytest.param(
+            ["--url", "file://remote.example/resource"],
+            id="separated-remote-file-uri",
+        ),
     ],
 )
 def test_authorization_uri_values_remain_unredacted_without_changing_child_argv(
@@ -633,6 +691,7 @@ def test_authorization_uri_values_remain_unredacted_without_changing_child_argv(
     uri_values = (
         "authorization://example.test/resource",
         "Proxy-Authorization://example.test/resource",
+        "file://remote.example/resource",
     )
     assert outcome.result["status"] == "PASS"
     assert json.loads(child_argv_path.read_text(encoding="utf-8")) == url_argv
