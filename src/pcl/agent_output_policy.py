@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 import json
-import os
 import re
 from typing import Any
 
@@ -14,7 +13,13 @@ from .contracts.agent_output import (
     validate_agent_output_policy,
 )
 from .resources import read_text_resource
-from .sensitive import is_option_shaped_key, is_sensitive_key, split_key_value
+from .path_safety import is_path_like, split_path_value
+from .sensitive import (
+    is_option_shaped_key,
+    is_sensitive_header_key,
+    is_sensitive_key,
+    split_key_value,
+)
 
 
 CANONICAL_POLICY_RESOURCE = "templates/agent-output-budget/policy.json"
@@ -24,7 +29,6 @@ MAX_ARGV_TOTAL_BYTES = 8_192
 MAX_ARGV_JSON_BYTES = 64 * 1024
 RECOMMENDED_ARGV_PREFIX = ["pcl", "exec", "--"]
 
-_ABSOLUTE_WINDOWS_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
 _SECRET_VALUE = re.compile(
     r"(?i)(?:sk-[a-z0-9]{12,}|gh[pousr]_[a-z0-9]{12,}|xox[baprs]-[a-z0-9-]{12,}|"
     r"bearer\s+[a-z0-9._-]{12,}|-----begin [a-z ]+ key-----)"
@@ -86,6 +90,12 @@ _NON_INTERACTIVE_INSTALL_FLAG = "--no-input"
 _PIP_COMMANDS = frozenset({"pip", "pip3"})
 _PYTHON_COMMANDS = frozenset({"python", "python3"})
 _MODE_SCRIPT_WORDS = frozenset({"watch", "server", "serve", "dev", "repl", "debug"})
+_WRAPPED_EXEC_VALUE_OPTIONS = {
+    "--timeout-seconds": "integer",
+    "--max-output-bytes": "integer",
+    "--redact-pattern": "value",
+    "--allow-env": "value",
+}
 
 
 def _load_canonical_policy() -> dict[str, Any]:
@@ -225,23 +235,17 @@ def _contains_secret_shape(tokens: Sequence[str]) -> bool:
         key_value = split_key_value(token)
         if key_value is not None:
             key, _separator, value = key_value
-            if is_sensitive_key(key) or _SECRET_VALUE.search(value):
+            if is_sensitive_key(key) or is_sensitive_header_key(key) or _SECRET_VALUE.search(value):
                 return True
         elif is_option_shaped_key(token) and is_sensitive_key(token):
             redact_next = True
-        if token.lower().startswith(("authorization:", "proxy-authorization:")):
-            return True
     return redact_next
 
 
 def _contains_absolute_path(tokens: Sequence[str]) -> bool:
     for token in tokens:
-        if token.startswith(("~/", "~\\")) or os.path.isabs(token) or _ABSOLUTE_WINDOWS_PATH.match(token):
+        if is_path_like(token) or split_path_value(token) is not None:
             return True
-        if "=" in token:
-            _key, value = token.split("=", 1)
-            if value.startswith(("~/", "~\\")) or os.path.isabs(value) or _ABSOLUTE_WINDOWS_PATH.match(value):
-                return True
     return False
 
 
@@ -284,12 +288,91 @@ def _contains_shell_invocation(tokens: Sequence[str]) -> bool:
 
 
 def _is_already_wrapped(tokens: Sequence[str]) -> bool:
-    prefixes = (
-        ("pcl", "exec", "--"),
-        ("pcl", "--json", "exec", "--"),
-        ("python", "-m", "pcl", "exec", "--"),
-    )
-    return any(len(tokens) > len(prefix) and tuple(tokens[: len(prefix)]) == prefix for prefix in prefixes)
+    index = _wrapped_program_start(tokens)
+    if index is None:
+        return False
+
+    while index < len(tokens) and tokens[index] != "exec":
+        token = tokens[index]
+        if token == "--json":
+            index += 1
+            continue
+        if token == "--root":
+            if index + 1 >= len(tokens) or not _valid_separated_option_value(tokens[index + 1]):
+                return False
+            index += 2
+            continue
+        if token.startswith("--root="):
+            if not token[7:]:
+                return False
+            index += 1
+            continue
+        return False
+    if index >= len(tokens):
+        return False
+    index += 1
+
+    while index < len(tokens):
+        token = tokens[index]
+        if token == "--":
+            return index + 1 < len(tokens) and bool(tokens[index + 1])
+        if token == "--json":
+            index += 1
+            continue
+        if token == "--root":
+            if index + 1 >= len(tokens) or not _valid_separated_option_value(tokens[index + 1]):
+                return False
+            index += 2
+            continue
+        if token.startswith("--root="):
+            if not token[7:]:
+                return False
+            index += 1
+            continue
+        next_index = _consume_wrapped_exec_option(tokens, index)
+        if next_index is None:
+            return False
+        index = next_index
+    return False
+
+
+def _wrapped_program_start(tokens: Sequence[str]) -> int | None:
+    if tokens and tokens[0] == "pcl":
+        return 1
+    if len(tokens) >= 3 and tuple(tokens[:2]) in (("python", "-m"), ("python3", "-m")):
+        return 3 if tokens[2] == "pcl" else None
+    return None
+
+
+def _valid_separated_option_value(value: str) -> bool:
+    return bool(value) and not value.startswith("-")
+
+
+def _valid_integer_option_value(value: str) -> bool:
+    try:
+        int(value)
+    except (TypeError, ValueError):
+        return False
+    return bool(value)
+
+
+def _consume_wrapped_exec_option(tokens: Sequence[str], index: int) -> int | None:
+    token = tokens[index]
+    for option, value_kind in _WRAPPED_EXEC_VALUE_OPTIONS.items():
+        if token == option:
+            if index + 1 >= len(tokens) or tokens[index + 1] == "--":
+                return None
+            value = tokens[index + 1]
+            if value_kind == "integer":
+                return index + 2 if _valid_integer_option_value(value) else None
+            return index + 2 if _valid_separated_option_value(value) else None
+        prefix = f"{option}="
+        if token.startswith(prefix):
+            value = token[len(prefix) :]
+            if value_kind == "integer":
+                return index + 1 if _valid_integer_option_value(value) else None
+            return index + 1 if value else None
+    return None
 
 
 def _negative_reason(tokens: Sequence[str], policy: Mapping[str, Any]) -> str | None:
@@ -358,11 +441,9 @@ def _contains_report_output_request(tokens: Sequence[str]) -> bool:
         if _REPORT_TOKEN.search(tokens[2]):
             return True
     for token in tokens[1:]:
-        if not is_option_shaped_key(token):
-            continue
         key_value = split_key_value(token)
         key = key_value[0] if key_value is not None else token
-        if _REPORT_TOKEN.search(key):
+        if is_option_shaped_key(key) and _REPORT_TOKEN.search(key):
             return True
     return False
 

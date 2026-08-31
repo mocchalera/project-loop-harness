@@ -22,8 +22,14 @@ from .contracts.agent_exec_result import (
 )
 from .errors import InvalidInputError
 from .guarded_process import execute_guarded_process
+from .path_safety import is_path_like, split_path_value
 from .redaction import redact_bytes
-from .sensitive import is_option_shaped_key, is_sensitive_key, split_key_value
+from .sensitive import (
+    is_option_shaped_key,
+    is_sensitive_header_key,
+    is_sensitive_key,
+    split_key_value,
+)
 
 
 PASS_MAX_LINES = 5
@@ -508,20 +514,20 @@ def _redact_sensitive_argument(item: str) -> tuple[str, bool]:
     key_value = split_key_value(item)
     if key_value is not None:
         key, separator, _value = key_value
-        if is_sensitive_key(key):
+        if is_sensitive_key(key) or is_sensitive_header_key(key):
             return f"{key}{separator}{REDACTED_ARGUMENT}", True
     return item, False
 
 
 def _sanitize_argument(value: str, *, cwd: Path, executable: bool) -> tuple[str, bool]:
-    if os.path.isabs(value):
+    if is_path_like(value):
         if executable:
-            return f"<executable:{Path(value).name}>", True
+            return "<executable:redacted>", True
         return "<absolute-path>", True
-    if "=" in value:
-        key, candidate = value.split("=", 1)
-        if os.path.isabs(candidate):
-            return f"{key}=<absolute-path>", True
+    path_value = split_path_value(value)
+    if path_value is not None:
+        key, separator, _candidate = path_value
+        return f"{key}{separator}<absolute-path>", True
     sanitized, changed = _replace_known_paths(value, cwd=cwd)
     return sanitized, changed
 

@@ -6,6 +6,7 @@ import re
 _KEY_COMPONENT = re.compile(r"[A-Z]+(?=[A-Z][a-z]|[0-9]|$)|[A-Z]?[a-z]+|[0-9]+")
 _ENV_KEY = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 SUPPORTED_KEY_VALUE_SEPARATORS = ("=", ":")
+_SENSITIVE_HEADER_KEYS = frozenset({"authorization", "proxy-authorization"})
 _SENSITIVE_KEY_WORDS = frozenset(
     {
         "auth",
@@ -73,6 +74,12 @@ def split_key_value(value: str) -> tuple[str, str, str] | None:
         return None
     index, separator = min(separators)
     return value[:index], separator, value[index + 1 :]
+
+
+def is_sensitive_header_key(value: str) -> bool:
+    """Return whether a token is a sensitive authorization header key."""
+
+    return isinstance(value, str) and value.strip().lower() in _SENSITIVE_HEADER_KEYS
 
 
 def is_sensitive_key(key: str) -> bool:

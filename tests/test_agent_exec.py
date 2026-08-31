@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -26,6 +27,11 @@ RUN_ID_RE = re.compile(r"AX-\d{8}T\d{6}Z-[a-f0-9]{12}")
 def _assert_no_sensitive_fixture_leak(value: str) -> None:
     if "SENTINEL" in value:
         raise AssertionError("sensitive fixture value was leaked")
+
+
+def _assert_no_path_fixture_leak(value: str) -> None:
+    if "REVIEWER_PATH_SENTINEL" in value:
+        raise AssertionError("path fixture value was leaked")
 
 
 def _prepare(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
@@ -256,6 +262,8 @@ def test_secret_shaped_argv_and_output_are_redacted(
         ["--client_secret=SENTINEL"],
         ["--client-secret:SENTINEL=tail"],
         ["--client-secret:SENTINEL"],
+        ["authorization:SENTINEL=tail"],
+        ["proxy-authorization:SENTINEL=tail"],
         ["API_TOKEN=SENTINEL"],
         ["--CLIENT_SECRET=SENTINEL"],
         ["AWS_SECRET_ACCESS_KEY=SENTINEL"],
@@ -299,6 +307,86 @@ def test_local_absolute_paths_are_omitted_from_command_and_diagnostic(
     metadata_text = next(state_root.rglob("meta.json")).read_text(encoding="utf-8")
     assert str(work_root) not in metadata_text
     assert "<absolute-path>" in metadata_text
+
+
+@pytest.mark.parametrize(
+    "path_argv",
+    [
+        pytest.param(["/private/REVIEWER_PATH_SENTINEL/file.py"], id="posix-raw"),
+        pytest.param([r"C:\REVIEWER_PATH_SENTINEL\file.py"], id="windows-drive-raw"),
+        pytest.param([r"\\REVIEWER_PATH_SENTINEL\share\file.py"], id="windows-unc-raw"),
+        pytest.param(["~/REVIEWER_PATH_SENTINEL/file.py"], id="home-raw"),
+        pytest.param(
+            ["--rootdir:/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="posix-colon",
+        ),
+        pytest.param(
+            ["--rootdir=/private/REVIEWER_PATH_SENTINEL/file=tail.py"],
+            id="posix-equals-with-equals",
+        ),
+        pytest.param(
+            ["--rootdir", "/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="posix-separated",
+        ),
+        pytest.param(
+            [r"--rootdir:C:\REVIEWER_PATH_SENTINEL\file.py"],
+            id="windows-drive-colon",
+        ),
+        pytest.param(
+            [r"--rootdir=\\REVIEWER_PATH_SENTINEL\share\file.py"],
+            id="windows-unc-equals",
+        ),
+        pytest.param(
+            ["--rootdir:~/REVIEWER_PATH_SENTINEL/file.py"],
+            id="home-colon",
+        ),
+    ],
+)
+def test_path_bearing_argv_reaches_child_unchanged_but_metadata_is_redacted(
+    path_argv: list[str],
+    tmp_path: Path,
+) -> None:
+    expected_digests = repr(
+        [hashlib.sha256(value.encode("utf-8")).hexdigest() for value in path_argv]
+    )
+    script = (
+        "import hashlib, sys; "
+        "actual = [hashlib.sha256(value.encode('utf-8')).hexdigest() "
+        "for value in sys.argv[1:]]; "
+        f"raise SystemExit(0 if actual == {expected_digests} else 17)"
+    )
+    state_root = tmp_path / "state"
+
+    outcome = run_agent_exec(
+        [sys.executable, "-c", script, *path_argv],
+        cwd=tmp_path,
+        timeout_seconds=5,
+        max_output_bytes=1024,
+        state_root=state_root,
+    )
+
+    metadata_text = next(state_root.rglob("meta.json")).read_text(encoding="utf-8")
+    assert outcome.result["status"] == "PASS"
+    assert outcome.result["command_redacted"] is True
+    _assert_no_path_fixture_leak(json.dumps(outcome.result))
+    _assert_no_path_fixture_leak(metadata_text)
+    assert "<absolute-path>" in metadata_text
+
+
+def test_windows_absolute_executable_is_redacted_without_echoing_path(tmp_path: Path) -> None:
+    state_root = tmp_path / "state"
+    outcome = run_agent_exec(
+        [r"C:\REVIEWER_PATH_SENTINEL\tool.exe"],
+        cwd=tmp_path,
+        timeout_seconds=5,
+        max_output_bytes=1024,
+        state_root=state_root,
+    )
+
+    metadata_text = next(state_root.rglob("meta.json")).read_text(encoding="utf-8")
+    assert outcome.result["status"] == "INFRA_ERROR"
+    _assert_no_path_fixture_leak(json.dumps(outcome.result))
+    _assert_no_path_fixture_leak(metadata_text)
 
 
 def test_long_argv_is_bounded_in_machine_result(

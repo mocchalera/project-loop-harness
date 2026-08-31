@@ -74,6 +74,11 @@ def _assert_no_sensitive_fixture_leak(value: str) -> None:
         raise AssertionError("sensitive fixture value was leaked")
 
 
+def _assert_no_path_fixture_leak(value: str) -> None:
+    if "REVIEWER_PATH_SENTINEL" in value:
+        raise AssertionError("path fixture value was leaked")
+
+
 @pytest.mark.parametrize(("argv", "reason_code"), ELIGIBLE_CASES)
 def test_eligible_verification_families_are_classified_without_rewrite(
     argv: list[str], reason_code: str
@@ -116,6 +121,7 @@ def test_eligible_verification_families_are_classified_without_rewrite(
         ["pytest", "--collect-only"],
         ["pytest", "--junit-xml", "results.xml"],
         ["pytest", "--junit-xml=results.xml"],
+        ["pytest", "--report=results.xml"],
     ],
 )
 def test_reads_searches_diffs_and_reports_remain_negative(argv: list[str]) -> None:
@@ -208,6 +214,8 @@ def test_similar_non_mode_flags_do_not_trigger_broad_watch_or_debug_matching(
         ["pytest", "API_TOKEN=SENTINEL"],
         ["pytest", "--CLIENT_SECRET=SENTINEL"],
         ["pytest", "AWS_SECRET_ACCESS_KEY=SENTINEL"],
+        ["pytest", "authorization:SENTINEL=tail"],
+        ["pytest", "proxy-authorization:SENTINEL=tail"],
     ],
 )
 def test_compound_secret_keys_are_unknown_without_echoing_values(argv: list[str]) -> None:
@@ -226,6 +234,73 @@ def test_compound_secret_keys_are_unknown_without_echoing_values(argv: list[str]
     ],
 )
 def test_pytest_select_expression_values_are_not_secret_keys(argv: list[str]) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "eligible"
+    assert result["reason_code"] == "pytest_direct"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        pytest.param(["pytest", "/private/REVIEWER_PATH_SENTINEL/file.py"], id="posix-raw"),
+        pytest.param(["pytest", r"C:\REVIEWER_PATH_SENTINEL\file.py"], id="windows-drive-raw"),
+        pytest.param(["pytest", r"\\REVIEWER_PATH_SENTINEL\share\file.py"], id="windows-unc-raw"),
+        pytest.param(["pytest", "~/REVIEWER_PATH_SENTINEL/file.py"], id="home-raw"),
+        pytest.param(
+            ["pytest", "--rootdir:/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="posix-colon",
+        ),
+        pytest.param(
+            ["pytest", "--rootdir=/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="posix-equals",
+        ),
+        pytest.param(
+            ["pytest", "--rootdir", "/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="posix-separated",
+        ),
+        pytest.param(
+            ["pytest", r"--rootdir:C:\REVIEWER_PATH_SENTINEL\file.py"],
+            id="windows-drive-colon",
+        ),
+        pytest.param(
+            ["pytest", r"--rootdir=\\REVIEWER_PATH_SENTINEL\share\file.py"],
+            id="windows-unc-equals",
+        ),
+        pytest.param(
+            ["pytest", "--rootdir:~/REVIEWER_PATH_SENTINEL/file.py"],
+            id="home-colon",
+        ),
+        pytest.param(
+            ["pytest", "--rootdir=~/REVIEWER_PATH_SENTINEL/file.py"],
+            id="home-equals",
+        ),
+        pytest.param(
+            ["pytest", "--rootdir:/private/REVIEWER_PATH_SENTINEL/file=tail.py"],
+            id="colon-value-with-equals",
+        ),
+    ],
+)
+def test_path_bearing_argv_is_unknown_without_echoing_paths(argv: list[str]) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "unknown"
+    assert result["reason_code"] == "absolute_path_argv"
+    _assert_no_path_fixture_leak(json.dumps(result))
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        pytest.param(["pytest", "https://example.test/REVIEWER_PATH_SENTINEL"], id="url"),
+        pytest.param(
+            ["pytest", "--url:https://example.test/REVIEWER_PATH_SENTINEL"],
+            id="option-url",
+        ),
+        pytest.param(["pytest", "name:REVIEWER_PATH_SENTINEL"], id="ordinary-colon"),
+    ],
+)
+def test_colon_values_that_are_not_paths_remain_eligible(argv: list[str]) -> None:
     result = classify_agent_output_argv(argv)
 
     assert result["classification"] == "eligible"
@@ -302,8 +377,49 @@ def test_shell_expressions_and_malformed_quoting_are_unknown(argv: list[str]) ->
     "argv",
     [
         ["pcl", "exec", "--", "pytest"],
+        ["pcl", "exec", "--json", "--", "pytest"],
+        ["pcl", "exec", "--root", "project", "--", "pytest"],
         ["pcl", "--json", "exec", "--", "npm", "test"],
+        ["pcl", "--json", "exec", "--timeout-seconds", "300", "--", "cargo", "test"],
+        [
+            "pcl",
+            "--root",
+            "project",
+            "--json",
+            "exec",
+            "--max-output-bytes=1024",
+            "--redact-pattern",
+            "TOKEN",
+            "--allow-env=PATH",
+            "--",
+            "pytest",
+        ],
+        [
+            "pcl",
+            "exec",
+            "--timeout-seconds=300",
+            "--max-output-bytes",
+            "1024",
+            "--redact-pattern=TOKEN",
+            "--allow-env",
+            "PATH",
+            "--",
+            "pytest",
+        ],
         ["python", "-m", "pcl", "exec", "--", "cargo", "test"],
+        [
+            "python",
+            "-m",
+            "pcl",
+            "--json",
+            "exec",
+            "--timeout-seconds",
+            "300",
+            "--",
+            "cargo",
+            "test",
+        ],
+        ["python3", "-m", "pcl", "--root=project", "exec", "--allow-env=PATH", "--", "pytest"],
         ["pcl", "exec", "--", "pcl", "exec", "--", "pytest"],
     ],
 )
@@ -313,6 +429,61 @@ def test_already_wrapped_commands_are_not_nested(argv: list[str]) -> None:
     assert result["classification"] == "already_wrapped"
     assert result["reason_code"] == "already_wrapped_pcl_exec"
     assert result["recommended_argv_prefix"] == []
+    assert result["may_rewrite"] is False
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        pytest.param(["pcl", "exec"], id="missing-separator-and-child"),
+        pytest.param(["pcl", "exec", "--"], id="missing-child"),
+        pytest.param(["pcl", "exec", "--timeout-seconds", "--", "pytest"], id="missing-timeout"),
+        pytest.param(
+            ["pcl", "exec", "--max-output-bytes", "--", "pytest"],
+            id="missing-max-output",
+        ),
+        pytest.param(
+            ["pcl", "exec", "--redact-pattern", "--", "pytest"],
+            id="missing-redact-pattern",
+        ),
+        pytest.param(
+            ["pcl", "exec", "--allow-env", "--", "pytest"],
+            id="missing-allow-env",
+        ),
+        pytest.param(
+            ["pcl", "exec", "--timeout-seconds", "not-an-integer", "--", "pytest"],
+            id="invalid-timeout",
+        ),
+        pytest.param(
+            ["pcl", "exec", "--unknown", "value", "--", "pytest"],
+            id="unknown-exec-option",
+        ),
+        pytest.param(
+            ["pcl", "exec", "--timeout-seconds", "300", "pytest"],
+            id="missing-separator",
+        ),
+        pytest.param(
+            ["pcl", "--root", "--json", "exec", "--", "pytest"],
+            id="missing-root-value",
+        ),
+        pytest.param(
+            ["pcl", "--json", "exec", "--timeout-seconds=300"],
+            id="missing-separator-and-child-after-option",
+        ),
+        pytest.param(
+            ["python", "-m", "pcl", "exec", "--max-output-bytes", "1024", "--"],
+            id="python-missing-child",
+        ),
+        pytest.param(
+            ["pcl", "--unknown", "exec", "--", "pytest"],
+            id="unknown-global-option",
+        ),
+    ],
+)
+def test_malformed_already_wrapped_commands_remain_unknown(argv: list[str]) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "unknown"
     assert result["may_rewrite"] is False
 
 
