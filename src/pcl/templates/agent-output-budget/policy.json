@@ -24,7 +24,12 @@
     {"reason_code": "cargo_clippy", "argv_prefix": ["cargo", "clippy"]},
     {"reason_code": "go_test_all_packages", "argv_prefix": ["go", "test", "./..."]},
     {"reason_code": "go_test", "argv_prefix": ["go", "test"]},
-    {"reason_code": "go_build", "argv_prefix": ["go", "build"]}
+    {"reason_code": "go_build", "argv_prefix": ["go", "build"]},
+    {"reason_code": "pip_install_non_interactive", "argv_prefix": ["pip", "install", "--no-input"]},
+    {"reason_code": "pip3_install_non_interactive", "argv_prefix": ["pip3", "install", "--no-input"]},
+    {"reason_code": "python_pip_install_non_interactive", "argv_prefix": ["python", "-m", "pip", "install", "--no-input"]},
+    {"reason_code": "python3_pip_install_non_interactive", "argv_prefix": ["python3", "-m", "pip", "install", "--no-input"]},
+    {"reason_code": "go_install", "argv_prefix": ["go", "install"]}
   ],
   "negative_argv_rules": [
     {"reason_code": "file_read_cat", "argv_prefix": ["cat"]},
@@ -50,10 +55,7 @@
     {"reason_code": "npm_install", "argv_prefix": ["npm", "install"]},
     {"reason_code": "pnpm_install", "argv_prefix": ["pnpm", "install"]},
     {"reason_code": "yarn_install", "argv_prefix": ["yarn", "install"]},
-    {"reason_code": "pip_install", "argv_prefix": ["pip", "install"]},
-    {"reason_code": "python_pip_install", "argv_prefix": ["python", "-m", "pip", "install"]},
-    {"reason_code": "cargo_install", "argv_prefix": ["cargo", "install"]},
-    {"reason_code": "go_install", "argv_prefix": ["go", "install"]}
+    {"reason_code": "cargo_install", "argv_prefix": ["cargo", "install"]}
   ],
   "unsafe_shell_markers": [
     "|",

@@ -23,6 +23,7 @@ from .contracts.agent_exec_result import (
 from .errors import InvalidInputError
 from .guarded_process import execute_guarded_process
 from .redaction import redact_bytes
+from .sensitive import is_sensitive_key
 
 
 PASS_MAX_LINES = 5
@@ -40,10 +41,6 @@ RUN_ID_PATTERN = re.compile(r"^AX-(\d{8})T\d{6}Z-([a-f0-9]{12})$")
 ERROR_LINE_PATTERN = re.compile(
     r"(?i)(?:\berror\b|\bfail(?:ed|ure)?\b|assert(?:ion)?|exception|traceback|"
     r"\bpanic\b|\bfatal\b|timed?\s*out|not found|permission denied|segmentation fault)"
-)
-SENSITIVE_OPTION_PATTERN = re.compile(
-    r"^--?(?:api[-_]?key|token|secret|password|private[-_]?key)$",
-    re.IGNORECASE,
 )
 UNIX_ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![:/\w])/(?:[^\s:]+/)*[^\s:]+")
 WINDOWS_ABSOLUTE_PATH_PATTERN = re.compile(r"\b[A-Za-z]:\\[^\r\n\t]+")
@@ -486,11 +483,13 @@ def _redact_argv(
             item_changed = True
             redact_next = False
         else:
-            redacted_bytes, item_changed = redact_bytes(
-                item.encode("utf-8"), additional_patterns=patterns
-            )
-            value = redacted_bytes.decode("utf-8", errors="replace")
-            if SENSITIVE_OPTION_PATTERN.fullmatch(item):
+            value, item_changed = _redact_sensitive_argument(item)
+            if not item_changed:
+                redacted_bytes, item_changed = redact_bytes(
+                    item.encode("utf-8"), additional_patterns=patterns
+                )
+                value = redacted_bytes.decode("utf-8", errors="replace")
+            if "=" not in item and ":" not in item and is_sensitive_key(item):
                 redact_next = True
         value, path_changed = _sanitize_argument(value, cwd=cwd, executable=index == 0)
         value, clipped = _clip_argument(value)
@@ -503,6 +502,16 @@ def _redact_argv(
         total_bytes += encoded_size
         changed = changed or item_changed or path_changed or clipped
     return redacted, changed
+
+
+def _redact_sensitive_argument(item: str) -> tuple[str, bool]:
+    for separator in ("=", ":"):
+        if separator not in item:
+            continue
+        key, _value = item.split(separator, 1)
+        if is_sensitive_key(key):
+            return f"{key}{separator}{REDACTED_ARGUMENT}", True
+    return item, False
 
 
 def _sanitize_argument(value: str, *, cwd: Path, executable: bool) -> tuple[str, bool]:

@@ -39,6 +39,7 @@ def test_source_wheel_and_sdist_expose_the_same_agent_output_surface(tmp_path: P
     required = {
         "pcl/agent_output_policy.py",
         "pcl/agent_output_renderer.py",
+        "pcl/sensitive.py",
         "pcl/agent_output_handlers.py",
         "pcl/parser_agent_output.py",
         "pcl/contracts/agent_output.py",

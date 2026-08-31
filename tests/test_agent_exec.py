@@ -9,12 +9,23 @@ import sys
 
 import pytest
 
-from pcl.agent_exec import FAIL_MAX_BYTES, FAIL_MAX_LINES, REDACTED_ARGUMENT, gc_agent_exec
+from pcl.agent_exec import (
+    FAIL_MAX_BYTES,
+    FAIL_MAX_LINES,
+    REDACTED_ARGUMENT,
+    gc_agent_exec,
+    run_agent_exec,
+)
 from pcl.cli import _extract_global_options, main as cli_main
 from pcl.parser_agent_exec import AGENT_EXEC_ARGV_SENTINEL
 
 
 RUN_ID_RE = re.compile(r"AX-\d{8}T\d{6}Z-[a-f0-9]{12}")
+
+
+def _assert_no_sensitive_fixture_leak(value: str) -> None:
+    if "SENTINEL" in value:
+        raise AssertionError("sensitive fixture value was leaked")
 
 
 def _prepare(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
@@ -231,6 +242,37 @@ def test_secret_shaped_argv_and_output_are_redacted(
     metadata = json.loads(next(state_root.rglob("meta.json")).read_text(encoding="utf-8"))
     assert metadata["command"][-1] == REDACTED_ARGUMENT
     assert metadata["command_redacted"] is True
+
+
+@pytest.mark.parametrize(
+    "secret_argv",
+    [
+        ["--client-secret", "SENTINEL"],
+        ["--client-secret=SENTINEL"],
+        ["API_TOKEN=SENTINEL"],
+        ["--CLIENT_SECRET=SENTINEL"],
+        ["--clientSecret=SENTINEL"],
+        ["AWS_SECRET_ACCESS_KEY=SENTINEL"],
+    ],
+)
+def test_compound_secret_keys_are_redacted_from_exec_metadata(
+    secret_argv: list[str],
+    tmp_path: Path,
+) -> None:
+    state_root = tmp_path / "state"
+    outcome = run_agent_exec(
+        [sys.executable, "-c", "raise SystemExit(0)", *secret_argv],
+        cwd=tmp_path,
+        timeout_seconds=5,
+        max_output_bytes=1024,
+        state_root=state_root,
+    )
+
+    metadata_path = next(state_root.rglob("meta.json"))
+    metadata_text = metadata_path.read_text(encoding="utf-8")
+    assert outcome.result["status"] == "PASS"
+    _assert_no_sensitive_fixture_leak(metadata_text)
+    assert REDACTED_ARGUMENT in metadata_text
 
 
 def test_local_absolute_paths_are_omitted_from_command_and_diagnostic(

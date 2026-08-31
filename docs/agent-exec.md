@@ -5,6 +5,10 @@ It is intended for tests, lint, type checks, builds, validation, package
 installation, and other commands whose primary result is success or failure but
 whose normal output can be large.
 
+The output-budget policy permits exact non-interactive install forms. Examples are
+`pip install --no-input`, `python -m pip install --no-input`, and `go install`.
+Installers that may prompt remain outside the bounded route.
+
 It is not a shell alias, workflow engine, project-completion proof, or sandbox.
 It grants no Goal, Task, Evidence, completion-packet, proof, publication, or
 external-write authority.

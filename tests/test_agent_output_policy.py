@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 from pathlib import Path
 
@@ -45,7 +46,28 @@ ELIGIBLE_CASES = [
     (["go", "test"], "go_test"),
     (["go", "test", "./..."], "go_test_all_packages"),
     (["go", "build"], "go_build"),
+    (["pip", "install", "--no-input", "package"], "pip_install_non_interactive"),
+    (["pip", "install", "package", "--no-input"], "pip_install_non_interactive"),
+    (
+        ["python", "-m", "pip", "install", "--no-input", "package"],
+        "python_pip_install_non_interactive",
+    ),
+    (
+        ["python", "-m", "pip", "install", "package", "--no-input"],
+        "python_pip_install_non_interactive",
+    ),
+    (["pip3", "install", "--no-input", "package"], "pip3_install_non_interactive"),
+    (
+        ["python3", "-m", "pip", "install", "--no-input", "package"],
+        "python3_pip_install_non_interactive",
+    ),
+    (["go", "install", "example.com/tool@v1.2.3"], "go_install"),
 ]
+
+
+def _assert_no_sensitive_fixture_leak(value: str) -> None:
+    if "SENTINEL" in value:
+        raise AssertionError("sensitive fixture value was leaked")
 
 
 @pytest.mark.parametrize(("argv", "reason_code"), ELIGIBLE_CASES)
@@ -81,6 +103,12 @@ def test_eligible_verification_families_are_classified_without_rewrite(
         ["npm", "run", "report"],
         ["pytest", "--junitxml=results.xml"],
         ["pytest", "--output-is-artifact=true"],
+        ["pytest", "--help"],
+        ["mypy", "--version"],
+        ["go", "test", "-list", "."],
+        ["pytest", "--collect-only"],
+        ["pytest", "--junit-xml", "results.xml"],
+        ["pytest", "--junit-xml=results.xml"],
     ],
 )
 def test_reads_searches_diffs_and_reports_remain_negative(argv: list[str]) -> None:
@@ -100,19 +128,101 @@ def test_reads_searches_diffs_and_reports_remain_negative(argv: list[str]) -> No
         ["python", "-m", "http.server"],
         ["npm", "run", "watch"],
         ["npm", "run", "dev"],
+        ["npm", "run", "test:watchAll"],
+        ["npm", "run", "test:debug"],
         ["docker", "logs", "-f", "app"],
         ["npm", "install"],
         ["pnpm", "install"],
         ["yarn", "install"],
         ["pip", "install", "package"],
+        ["python", "-m", "pip", "install", "package"],
         ["cargo", "install", "package"],
-        ["go", "install", "./..."],
     ],
 )
 def test_interactive_watch_server_stream_and_installers_remain_negative(
     argv: list[str],
 ) -> None:
     assert classify_agent_output_argv(argv)["classification"] == "negative"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["pytest", "--pdb"],
+        ["pytest", "--trace"],
+        ["python", "-m", "pytest", "--pdb"],
+        ["python", "-m", "pytest", "--trace"],
+        ["npm", "test", "--", "--watchAll"],
+        ["npm", "test", "--", "--watchAll=true"],
+        ["npm", "test", "--", "--watch"],
+        ["npm", "test", "--", "--watch=true"],
+        ["npm", "test", "--", "--debug"],
+        ["npm", "test", "--", "--inspect"],
+        ["npm", "test", "--", "--inspect-brk"],
+    ],
+)
+def test_watch_and_debug_flags_are_negative_before_eligible_prefixes(argv: list[str]) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "negative"
+    assert result["recommended_argv_prefix"] == []
+    assert result["may_rewrite"] is False
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["pytest", "--watcher"],
+        ["pytest", "--debugger"],
+        ["npm", "test", "--", "--watchdog"],
+        ["npm", "test", "--", "--debugger"],
+    ],
+)
+def test_similar_non_mode_flags_do_not_trigger_broad_watch_or_debug_matching(
+    argv: list[str],
+) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "eligible"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["pytest", "--client-secret", "SENTINEL"],
+        ["pytest", "--client-secret=SENTINEL"],
+        ["pytest", "API_TOKEN=SENTINEL"],
+        ["pytest", "--CLIENT_SECRET=SENTINEL"],
+        ["pytest", "--clientSecret=SENTINEL"],
+        ["pytest", "AWS_SECRET_ACCESS_KEY=SENTINEL"],
+    ],
+)
+def test_compound_secret_keys_are_unknown_without_echoing_values(argv: list[str]) -> None:
+    result = classify_agent_output_argv(argv)
+
+    assert result["classification"] == "unknown"
+    assert result["reason_code"] == "secret_shaped_argv"
+    _assert_no_sensitive_fixture_leak(json.dumps(result))
+
+
+def test_policy_requires_the_full_canonical_unsafe_shell_marker_set() -> None:
+    canonical = canonical_agent_output_policy()
+    assert validate_agent_output_policy(canonical).ok is True
+
+    for marker in canonical["unsafe_shell_markers"]:
+        candidate = deepcopy(canonical)
+        candidate["unsafe_shell_markers"].remove(marker)
+        validation = validate_agent_output_policy(candidate)
+
+        assert validation.ok is False
+        assert (
+            classify_agent_output_argv(["pytest"], policy=candidate)["reason_code"]
+            == "invalid_policy"
+        )
+
+    incomplete = deepcopy(canonical)
+    incomplete["unsafe_shell_markers"] = ["|"]
+    assert validate_agent_output_policy(incomplete).ok is False
 
 
 @pytest.mark.parametrize(

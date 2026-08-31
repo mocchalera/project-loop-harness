@@ -14,6 +14,7 @@ from .contracts.agent_output import (
     validate_agent_output_policy,
 )
 from .resources import read_text_resource
+from .sensitive import is_sensitive_key
 
 
 CANONICAL_POLICY_RESOURCE = "templates/agent-output-budget/policy.json"
@@ -24,30 +25,67 @@ MAX_ARGV_JSON_BYTES = 64 * 1024
 RECOMMENDED_ARGV_PREFIX = ["pcl", "exec", "--"]
 
 _ABSOLUTE_WINDOWS_PATH = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\)")
-_SENSITIVE_OPTION = re.compile(
-    r"^(?:--?(?:api[-_]?key|token|secret|password|private[-_]?key)|"
-    r"(?:authorization|proxy[-_]?authorization))$",
-    re.IGNORECASE,
-)
 _SECRET_VALUE = re.compile(
     r"(?i)(?:sk-[a-z0-9]{12,}|gh[pousr]_[a-z0-9]{12,}|xox[baprs]-[a-z0-9-]{12,}|"
     r"bearer\s+[a-z0-9._-]{12,}|-----begin [a-z ]+ key-----)"
 )
 _REPORT_TOKEN = re.compile(r"(?i)(?:^|[-_.:/])report(?:[-_.:/]|$)")
 _ARTIFACT_MARKERS = frozenset(
-    {"--output-is-artifact", "output_is_artifact=true", "--report-file", "--junitxml"}
+    {
+        "--output-is-artifact",
+        "output_is_artifact=true",
+        "--report-file",
+        "--junitxml",
+        "--junit-xml",
+    }
 )
 _ARTIFACT_MARKER_PREFIXES = (
     "--output-is-artifact=",
     "output_is_artifact=",
     "--report-file=",
     "--junitxml=",
+    "--junit-xml=",
 )
 _SHELL_EXECUTABLES = frozenset({"sh", "bash", "zsh", "fish", "pwsh", "cmd", "python", "python3", "node"})
 _INTERACTIVE_EXECUTABLES = frozenset({"bash", "zsh", "fish", "pwsh", "cmd", "repl", "interactive"})
-_INTERACTIVE_FLAGS = frozenset({"--interactive", "--watch", "--follow", "--stream"})
+_INTERACTIVE_FLAGS = frozenset(
+    {
+        "--interactive",
+        "--watch",
+        "--watchall",
+        "--watch-all",
+        "--watch_all",
+        "--watch-mode",
+        "--server",
+        "--serve",
+        "--dev",
+        "--repl",
+        "--follow",
+        "--stream",
+        "--reload",
+        "--live",
+        "--live-reload",
+        "--pdb",
+        "--pdbcls",
+        "--trace",
+        "--debug",
+        "--debug-brk",
+        "--debug-mode",
+        "--debug-port",
+        "--inspect",
+        "--inspect-brk",
+        "--inspect-port",
+    }
+)
 _STREAM_FLAGS = frozenset({"--follow", "--stream"})
 _INSTALLER_COMMANDS = frozenset({"init", "create", "new"})
+_COMPLETE_OUTPUT_FLAGS = frozenset({"-h", "--help", "-V", "--version"})
+_PYTEST_COMPLETE_OUTPUT_FLAGS = frozenset({"--collect-only", "--collectonly"})
+_GO_LIST_FLAGS = frozenset({"-list", "--list"})
+_NON_INTERACTIVE_INSTALL_FLAG = "--no-input"
+_PIP_COMMANDS = frozenset({"pip", "pip3"})
+_PYTHON_COMMANDS = frozenset({"python", "python3"})
+_MODE_SCRIPT_WORDS = frozenset({"watch", "server", "serve", "dev", "repl", "debug"})
 
 
 def _load_canonical_policy() -> dict[str, Any]:
@@ -182,14 +220,14 @@ def _contains_secret_shape(tokens: Sequence[str]) -> bool:
     for token in tokens:
         if redact_next:
             return True
-        if _SENSITIVE_OPTION.fullmatch(token):
+        if is_sensitive_key(token):
             redact_next = True
             continue
         if _SECRET_VALUE.search(token):
             return True
         if "=" in token:
             key, value = token.split("=", 1)
-            if _SENSITIVE_OPTION.fullmatch(key) or _SECRET_VALUE.search(value):
+            if is_sensitive_key(key) or _SECRET_VALUE.search(value):
                 return True
         if token.lower().startswith(("authorization:", "proxy-authorization:")):
             return True
@@ -258,6 +296,8 @@ def _negative_reason(tokens: Sequence[str], policy: Mapping[str, Any]) -> str | 
     for rule in policy.get("negative_argv_rules", []):
         if _rule_matches(tokens, rule):
             return str(rule["reason_code"])
+    if _contains_complete_output_request(tokens):
+        return "complete_output"
     if any(_REPORT_TOKEN.search(token) for token in tokens):
         return "report_output_artifact"
     if any(_is_artifact_marker(token) for token in tokens):
@@ -265,7 +305,7 @@ def _negative_reason(tokens: Sequence[str], policy: Mapping[str, Any]) -> str | 
     command = tokens[0].lower()
     if command in _INTERACTIVE_EXECUTABLES:
         return "interactive_command"
-    if any(token.lower() in _INTERACTIVE_FLAGS for token in tokens[1:]):
+    if any(_is_enabled_mode_flag(token) for token in tokens[1:]):
         return "interactive_or_watch_mode"
     if command in {"tail", "less", "more", "logs", "journalctl"} and any(
         token.lower() in _STREAM_FLAGS or token == "-f" for token in tokens[1:]
@@ -276,9 +316,12 @@ def _negative_reason(tokens: Sequence[str], policy: Mapping[str, Any]) -> str | 
     ):
         return "streaming_command"
     if len(tokens) >= 3 and tokens[:2] in (["npm", "run"], ["pnpm", "run"], ["yarn", "run"]):
-        script_name = tokens[2].lower()
-        if any(marker in script_name for marker in ("watch", "server", "serve", "dev", "repl")):
+        if _script_has_mode_token(tokens[2]):
             return "watch_or_server_script"
+    if _is_pip_install(tokens) and not _is_non_interactive_pip_install(tokens):
+        return "pip_install"
+    if _is_python_pip_install(tokens) and not _is_non_interactive_pip_install(tokens):
+        return "python_pip_install"
     if command in {"npm", "pnpm", "yarn"} and len(tokens) >= 2 and tokens[1].lower() in _INSTALLER_COMMANDS:
         return "interactive_installer"
     return None
@@ -291,10 +334,90 @@ def _is_artifact_marker(token: str) -> bool:
     )
 
 
+def _script_has_mode_token(script_name: str) -> bool:
+    separated = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "-", script_name)
+    return any(
+        part in _MODE_SCRIPT_WORDS
+        for part in re.split(r"[-_.:]+", separated.lower())
+        if part
+    )
+
+
+def _contains_complete_output_request(tokens: Sequence[str]) -> bool:
+    if any(_option_key(token) in _COMPLETE_OUTPUT_FLAGS for token in tokens[1:]):
+        return True
+    command = tokens[0].lower()
+    if command in {"pytest", "python", "python3"}:
+        pytest_start = 1 if command == "pytest" else 3
+        if command != "pytest" and list(tokens[1:3]) != ["-m", "pytest"]:
+            pytest_start = -1
+        if pytest_start >= 0 and any(
+            _option_key(token) in _PYTEST_COMPLETE_OUTPUT_FLAGS
+            for token in tokens[pytest_start:]
+        ):
+            return True
+    return (
+        len(tokens) >= 2
+        and command == "go"
+        and tokens[1].lower() == "test"
+        and any(_option_key(token) in _GO_LIST_FLAGS for token in tokens[2:])
+    )
+
+
+def _option_key(token: str) -> str:
+    return token.lower().split("=", 1)[0]
+
+
+def _is_enabled_mode_flag(token: str) -> bool:
+    key = _option_key(token)
+    if key not in _INTERACTIVE_FLAGS:
+        return False
+    if "=" not in token:
+        return True
+    return token.split("=", 1)[1].lower() not in {"0", "false", "no", "off"}
+
+
+def _is_pip_install(tokens: Sequence[str]) -> bool:
+    return len(tokens) >= 2 and tokens[0].lower() in _PIP_COMMANDS and tokens[1].lower() == "install"
+
+
+def _is_python_pip_install(tokens: Sequence[str]) -> bool:
+    return (
+        len(tokens) >= 4
+        and tokens[0].lower() in _PYTHON_COMMANDS
+        and list(tokens[1:4]) == ["-m", "pip", "install"]
+    )
+
+
+def _is_non_interactive_pip_install(tokens: Sequence[str]) -> bool:
+    return _non_interactive_pip_install_reason(tokens) is not None
+
+
+def _non_interactive_pip_install_reason(tokens: Sequence[str]) -> str | None:
+    if not (_is_pip_install(tokens) or _is_python_pip_install(tokens)):
+        return None
+    if not any(token.lower() == _NON_INTERACTIVE_INSTALL_FLAG for token in tokens[2:]):
+        return None
+    if _is_pip_install(tokens):
+        return (
+            "pip3_install_non_interactive"
+            if tokens[0].lower() == "pip3"
+            else "pip_install_non_interactive"
+        )
+    return (
+        "python3_pip_install_non_interactive"
+        if tokens[0].lower() == "python3"
+        else "python_pip_install_non_interactive"
+    )
+
+
 def _eligible_reason(tokens: Sequence[str], policy: Mapping[str, Any]) -> str | None:
     for rule in policy.get("eligible_argv_rules", []):
         if _rule_matches(tokens, rule):
             return str(rule["reason_code"])
+    non_interactive_reason = _non_interactive_pip_install_reason(tokens)
+    if non_interactive_reason:
+        return non_interactive_reason
     return None
 
 

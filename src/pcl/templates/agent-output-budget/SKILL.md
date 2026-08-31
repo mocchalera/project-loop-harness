@@ -17,9 +17,12 @@ pcl agent-output classify --argv-json '["npm","run","verify:full"]' --json
 ```
 
 - `eligible`: a direct, non-interactive verification command whose useful result is
-  bounded success/failure plus diagnostics. Use `pcl exec -- <argv...>`.
+  bounded success/failure plus diagnostics. This includes exact non-interactive
+  installs such as `pip install --no-input`, `python -m pip install --no-input`,
+  and `go install`. Use `pcl exec -- <argv...>`.
 - `negative`: searches, diffs, file reads, complete-output reports, interactive
-  tools, watch/server/REPL/installer commands, streams, or output-as-artifact work.
+  tools, watch/server/REPL/interactive-installer commands, streams, or
+  output-as-artifact work. Installs that may prompt remain unchanged.
   Leave the argv unchanged.
 - `unknown`: insufficient evidence, shell syntax, malformed quoting, paths, secrets,
   or an unsupported command shape. Leave the argv unchanged.

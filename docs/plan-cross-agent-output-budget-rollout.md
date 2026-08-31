@@ -101,8 +101,10 @@ Typical eligible families:
 - builds: `python -m build`, `npm run build`, `cargo build`, package builds;
 - project validation: scripts named `validate`, `verify`, `verify:*`, `check`,
   or local-CI equivalents;
-- package installation and verbose deterministic code generation when the
-  resulting output is not itself the requested artifact.
+- exact non-interactive package installation forms: `pip install --no-input`,
+  `python -m pip install --no-input`, and `go install`; plus verbose deterministic
+  code generation when the resulting output is not itself the requested artifact.
+  Installers that may prompt remain negative.
 
 The policy must support repository-declared exact argv additions without
 turning arbitrary shell text into executable policy.
@@ -150,7 +152,7 @@ The packaged policy is data, not executable shell text. It contains:
   "schema": "agent-output-policy/v1",
   "eligible_argv_rules": [],
   "negative_argv_rules": [],
-  "unsafe_shell_markers": [],
+  "unsafe_shell_markers": ["|", ">", ">>", "<", "$(", "`", "&&", "||", ";", "\n", "\r", "heredoc", "function"],
   "result_handling": {
     "pass_reads_diagnostics": false,
     "automatic_retry": false,
