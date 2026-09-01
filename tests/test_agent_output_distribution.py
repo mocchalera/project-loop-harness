@@ -38,6 +38,7 @@ def test_source_wheel_and_sdist_expose_the_same_agent_output_surface(tmp_path: P
     sdist = next(dist_dir.glob("*.tar.gz"))
     required = {
         "pcl/agent_output_policy.py",
+        "pcl/agent_output_audit.py",
         "pcl/agent_exec_validation.py",
         "pcl/agent_output_renderer.py",
         "pcl/path_safety.py",
@@ -92,11 +93,13 @@ def test_source_wheel_and_sdist_expose_the_same_agent_output_surface(tmp_path: P
 
     audit_script = (
         "import json; "
-        "from pcl.agent_output_policy import classify_agent_output_argv; "
-        "from pcl.contracts import build_agent_output_audit_record, validate_agent_output_audit; "
-        "record=build_agent_output_audit_record("
-        "observed_at='2026-09-01T00:00:00Z',host='gemini-cli',event='BeforeTool',"
-        "tool='run_shell_command',classification=classify_agent_output_argv(['pytest'])); "
+        "from pcl.agent_output_audit import normalize_agent_output_audit_event; "
+        "from pcl.contracts import validate_agent_output_audit; "
+        "record=normalize_agent_output_audit_event("
+        "observed_at='2026-09-01T00:00:00Z',host='gemini-cli',"
+        "event={'hook_event_name':'BeforeTool','tool_name':'run_shell_command',"
+        "'tool_input':{'command':'pytest --token=DISTRIBUTION_SENTINEL'},"
+        "'cwd':'/Users/fixture/DISTRIBUTION_SENTINEL'}); "
         "print(json.dumps({'ok':validate_agent_output_audit(record).ok,'record':record},sort_keys=True))"
     )
 
@@ -111,6 +114,8 @@ def test_source_wheel_and_sdist_expose_the_same_agent_output_surface(tmp_path: P
         )
         return json.loads(result.stdout)
 
-    assert run_audit_contract(source_path) == run_audit_contract(wheel_path) == run_audit_contract(
-        sdist_path
-    )
+    source_audit = run_audit_contract(source_path)
+    wheel_audit = run_audit_contract(wheel_path)
+    sdist_audit = run_audit_contract(sdist_path)
+    assert source_audit == wheel_audit == sdist_audit
+    assert "DISTRIBUTION_SENTINEL" not in json.dumps(source_audit, sort_keys=True)

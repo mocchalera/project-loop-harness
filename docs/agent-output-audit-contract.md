@@ -1,6 +1,7 @@
 # Agent output audit contract
 
-Status: Phase 2a contract candidate for GitHub Issue #13
+Status: Phase 2a contract merged through PR #17; Phase 2b local normalizer under
+review for GitHub Issue #13
 
 This document freezes the local observation record that future Claude Code and
 Gemini CLI audit-only adapters may emit. It does **not** install a hook, write an
@@ -89,12 +90,33 @@ The pure builder accepts a validated `agent-output-classification/v1` result;
 it has no parameter for raw command data. It always emits `observed_only` and
 `may_rewrite: false`.
 
+## Local audit-only normalizer
+
+`normalize_agent_output_audit_event` is the first local consumer of this
+contract. It accepts an explicit host, a trusted observation timestamp, and one
+already-decoded synthetic host event. The supported event/tool identities come
+directly from `AGENT_OUTPUT_AUDIT_HOST_PROTOCOLS`; the normalizer does not copy
+or extend that table.
+
+Both documented shell tools expose `tool_input.command` as a string. The
+normalizer validates that shape but never uses `shlex`, a shell, or another
+parser to reinterpret it. Every accepted command string is classified as
+`unknown` with reason `host_command_string_not_tokenized`, then discarded.
+Session IDs, transcript paths, cwd, descriptions, timeouts, background flags,
+and unknown host fields are also discarded. Fixed validation errors never echo
+input values.
+
+The normalizer returns only a validated `agent-output-audit/v1` mapping. It does
+not return a host response, choose allow/deny/ask, write stdout/stderr, open an
+audit file, execute a process, or mutate its input.
+
 ## Deferred implementation
 
 The following remain separate slices and human gates:
 
 1. inspect-first host installers and explicit apply/rollback;
-2. fixture-bound Claude and Gemini event adapters with unchanged continuation;
+2. executable fixture-bound Claude and Gemini hook adapters with unchanged
+   continuation;
 3. bounded local audit storage, aggregate report, and retention GC;
 4. real host synchronization and cross-host dogfood;
 5. any command-rewriting proposal or external rollout.

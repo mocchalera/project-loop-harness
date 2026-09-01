@@ -1,0 +1,15 @@
+{
+  "session_id": "CLAUDE_SESSION_SENTINEL",
+  "transcript_path": "/Users/fixture/CLAUDE_TRANSCRIPT_SENTINEL.jsonl",
+  "cwd": "/Users/fixture/CLAUDE_CWD_SENTINEL",
+  "permission_mode": "default",
+  "hook_event_name": "PreToolUse",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "npm test --token=CLAUDE_COMMAND_SECRET_SENTINEL",
+    "description": "CLAUDE_DESCRIPTION_SENTINEL",
+    "timeout": 120000,
+    "run_in_background": false
+  },
+  "tool_use_id": "CLAUDE_TOOL_USE_SENTINEL"
+}
