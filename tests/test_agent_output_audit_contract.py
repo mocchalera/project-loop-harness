@@ -187,6 +187,20 @@ def test_invalid_or_authority_widening_fields_fail_closed(field: str, value: obj
     assert not validate_agent_output_audit(record).ok
 
 
+@pytest.mark.parametrize("field", ["host", "reason_code"])
+@pytest.mark.parametrize("value", [[], {}])
+def test_unhashable_lookup_fields_return_validation_errors(
+    field: str,
+    value: object,
+) -> None:
+    record = {**_record(), field: value}
+
+    result = validate_agent_output_audit(record)
+
+    assert not result.ok
+    assert any(error.startswith(f"$.{field}:") for error in result.errors)
+
+
 def test_schema_property_allowlist_matches_runtime_allowlist() -> None:
     schema = agent_output_audit_schema()
 

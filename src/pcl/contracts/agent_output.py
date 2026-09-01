@@ -277,20 +277,23 @@ def validate_agent_output_classification(
 def validate_agent_output_audit(value: Any) -> AgentOutputAuditValidationResult:
     errors = validate_schema(value, agent_output_audit_schema())
     if isinstance(value, dict):
-        protocol = AGENT_OUTPUT_AUDIT_HOST_PROTOCOLS.get(value.get("host"))
+        host = value.get("host")
+        protocol = AGENT_OUTPUT_AUDIT_HOST_PROTOCOLS.get(host) if isinstance(host, str) else None
         if protocol is not None:
             expected_event, expected_tool = protocol
             if value.get("event") != expected_event:
                 errors.append(
-                    f"$.event: {value.get('host')} observations require {expected_event!r}"
+                    f"$.event: {host} observations require {expected_event!r}"
                 )
             if value.get("tool") != expected_tool:
-                errors.append(
-                    f"$.tool: {value.get('host')} observations require {expected_tool!r}"
-                )
+                errors.append(f"$.tool: {host} observations require {expected_tool!r}")
         classification = value.get("classification")
         reason_code = value.get("reason_code")
-        expected_classification = AGENT_OUTPUT_AUDIT_REASON_CLASSIFICATIONS.get(reason_code)
+        expected_classification = (
+            AGENT_OUTPUT_AUDIT_REASON_CLASSIFICATIONS.get(reason_code)
+            if isinstance(reason_code, str)
+            else None
+        )
         if expected_classification is not None and classification != expected_classification:
             errors.append(
                 "$.classification: must match the frozen classification for the reason code"
