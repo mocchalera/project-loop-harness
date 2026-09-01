@@ -1,7 +1,7 @@
 # Cross-agent output-budget rollout plan
 
-Status: Phase 1 and Phase 2a merged through PR #17; Phase 2b local audit
-normalizer under review; remaining rollout slices deferred for GitHub Issue #13
+Status: Phase 1, Phase 2a, and Phase 2b merged through PR #18; remaining rollout
+slices deferred for GitHub Issue #13
 
 Date: 2026-08-31
 
@@ -32,8 +32,8 @@ human rollout decision is included in Phase 1.
 
 ## Phase 2a audit contract status
 
-The current isolated candidate freezes `agent-output-audit/v1` before any host
-adapter or storage is added. It accepts only the documented Claude Code
+The merged Phase 2a implementation freezes `agent-output-audit/v1` before any
+host adapter or storage is added. It accepts only the documented Claude Code
 `PreToolUse`/`Bash` and Gemini CLI `BeforeTool`/`run_shell_command` tuples,
 rejects unknown fields, and fixes `action: observed_only` plus
 `may_rewrite: false`.
@@ -49,14 +49,14 @@ report, retention GC, installer, or rollout. Those remain separate gates.
 
 ## Phase 2b local normalizer status
 
-The current isolated candidate adds one importable, deterministic normalizer
-for synthetic documented Claude Code and Gemini CLI events. It obtains the
-accepted event/tool identities from the Phase 2a protocol table, requires the
-documented string-valued `tool_input.command`, and deliberately does not parse
-that shell string into argv. The resulting classification therefore remains
-`unknown` with reason `host_command_string_not_tokenized`, and the command and
-all unrelated host fields are discarded before the strict audit record is
-returned.
+The merged Phase 2b implementation adds one importable, deterministic
+normalizer for synthetic documented Claude Code and Gemini CLI events. It
+obtains the accepted event/tool identities from the Phase 2a protocol table,
+requires the documented string-valued `tool_input.command`, and deliberately
+does not parse that shell string into argv. The resulting classification
+therefore remains `unknown` with reason `host_command_string_not_tokenized`,
+and the command and all unrelated host fields are discarded before the strict
+audit record is returned.
 
 This slice has no hook process/response, CLI registration, storage, installer,
 host-file write, command execution, retry, block, or rewrite behavior. An

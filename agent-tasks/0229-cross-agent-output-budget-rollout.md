@@ -1,12 +1,11 @@
 # 0229 — Cross-agent output-budget default rollout
 
-Status: **Phase 1 and Phase 2a merged through PR #17; Phase 2b local audit
-normalizer under review; task not complete**. The policy/classifier/Skill,
-rendering, and bounded `agent-output-audit/v1` contract are on `main`. The
-current isolated candidate only normalizes synthetic Claude Code and Gemini CLI
-events into that contract. Inspect-first installers, executable hook adapters,
-audit storage/report/GC, cross-host dogfood, and the human rollout decision
-remain unimplemented. The full task still requires the remaining gates below.
+Status: **Phase 1, Phase 2a, and Phase 2b merged through PR #18; task not
+complete**. The policy/classifier/Skill, rendering, bounded
+`agent-output-audit/v1` contract, and local audit normalizer are on `main`.
+Inspect-first installers, executable hook adapters, audit storage/report/GC,
+cross-host dogfood, and the human rollout decision remain unimplemented. The
+full task still requires the remaining gates below.
 
 Priority: P1 · Milestone: post-v0.6.0 · Origin: GitHub Issue #13
 
@@ -34,8 +33,8 @@ The following are the next slices and are not complete here:
 
 ## Phase 2a audit contract boundary
 
-This candidate adds only the data boundary required before an audit adapter can
-be safely implemented:
+The merged Phase 2a implementation adds only the data boundary required before
+an audit adapter can be safely implemented:
 
 - strict `agent-output-audit/v1` schema and validator;
 - exact documented Claude Code `PreToolUse`/`Bash` and Gemini CLI
