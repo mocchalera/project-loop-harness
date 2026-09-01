@@ -32,6 +32,7 @@ EXPECTED_COMMANDS = [
     "ingest-agent-run",
     "evidence",
     "exec",
+    "agent-output",
     "profile",
     "contract",
     "evidence-set",

@@ -5,6 +5,7 @@ from pathlib import Path
 import sqlite3
 import sys
 
+from .agent_output_handlers import handle_agent_output_command
 from .agent_exec_handlers import handle_agent_exec_command
 from .audit import (
     AuditCommandError,
@@ -176,6 +177,15 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "guide":
             return handle_guide(args.topic, json_output=json_output, output=sys.stdout)
+
+        agent_output_status = handle_agent_output_command(
+            args,
+            paths,
+            json_output=json_output,
+            output=sys.stdout,
+        )
+        if agent_output_status is not None:
+            return agent_output_status
 
         agent_exec_status = handle_agent_exec_command(
             args,

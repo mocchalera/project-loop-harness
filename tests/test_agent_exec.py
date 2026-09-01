@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -9,12 +10,34 @@ import sys
 
 import pytest
 
-from pcl.agent_exec import FAIL_MAX_BYTES, FAIL_MAX_LINES, REDACTED_ARGUMENT, gc_agent_exec
+from pcl.agent_exec import (
+    FAIL_MAX_BYTES,
+    FAIL_MAX_LINES,
+    REDACTED_ARGUMENT,
+    gc_agent_exec,
+    run_agent_exec,
+)
 from pcl.cli import _extract_global_options, main as cli_main
 from pcl.parser_agent_exec import AGENT_EXEC_ARGV_SENTINEL
+from pcl.redaction import REDACTED_SECRET
 
 
 RUN_ID_RE = re.compile(r"AX-\d{8}T\d{6}Z-[a-f0-9]{12}")
+
+
+def _assert_no_sensitive_fixture_leak(value: str) -> None:
+    if "SENTINEL" in value:
+        raise AssertionError("sensitive fixture value was leaked")
+
+
+def _assert_no_path_fixture_leak(value: str) -> None:
+    if "REVIEWER_PATH_SENTINEL" in value:
+        raise AssertionError("path fixture value was leaked")
+
+
+def _assert_no_secret_signature_fixture_leak(value: str) -> None:
+    if "github_pat_" in value or "AKIA" in value:
+        raise AssertionError("secret signature fixture value was leaked")
 
 
 def _prepare(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
@@ -233,6 +256,143 @@ def test_secret_shaped_argv_and_output_are_redacted(
     assert metadata["command_redacted"] is True
 
 
+@pytest.mark.parametrize(
+    "secret_argv",
+    [
+        ["--client-secret", "SENTINEL"],
+        ["--client-secret=SENTINEL"],
+        ["--AuthToken=SENTINEL"],
+        ["--Client-Secret=SENTINEL"],
+        ["--ClientSecret=SENTINEL"],
+        ["--clientSecret=SENTINEL"],
+        ["--client_secret=SENTINEL"],
+        ["--client-secret:SENTINEL=tail"],
+        ["--client-secret:SENTINEL"],
+        ["authorization:SENTINEL=tail"],
+        ["proxy-authorization:SENTINEL=tail"],
+        ["API_TOKEN=SENTINEL"],
+        ["--CLIENT_SECRET=SENTINEL"],
+        ["AWS_SECRET_ACCESS_KEY=SENTINEL"],
+    ],
+)
+def test_compound_secret_keys_are_redacted_from_exec_metadata(
+    secret_argv: list[str],
+    tmp_path: Path,
+) -> None:
+    state_root = tmp_path / "state"
+    outcome = run_agent_exec(
+        [sys.executable, "-c", "raise SystemExit(0)", *secret_argv],
+        cwd=tmp_path,
+        timeout_seconds=5,
+        max_output_bytes=1024,
+        state_root=state_root,
+    )
+
+    metadata_path = next(state_root.rglob("meta.json"))
+    metadata_text = metadata_path.read_text(encoding="utf-8")
+    assert outcome.result["status"] == "PASS"
+    _assert_no_sensitive_fixture_leak(metadata_text)
+    assert REDACTED_ARGUMENT in metadata_text
+
+
+@pytest.mark.parametrize(
+    "secret_argv",
+    [
+        pytest.param(["token=SENTINEL"], id="lowercase-equals"),
+        pytest.param(["password:SENTINEL"], id="lowercase-colon"),
+        pytest.param(["client-secret=SENTINEL"], id="kebab-equals"),
+        pytest.param(["clientSecret:SENTINEL"], id="camel-colon"),
+        pytest.param(["AuthToken=SENTINEL"], id="pascal-equals"),
+        pytest.param(["api_key:SENTINEL"], id="snake-colon"),
+        pytest.param(
+            ["github_pat_abcdefghijklmnopqrstSENTINEL"],
+            id="github-pat-signature",
+        ),
+        pytest.param(["AKIA1234567890ABCDEF"], id="aws-access-key-signature"),
+    ],
+)
+def test_explicit_secret_keys_are_redacted_without_changing_child_argv(
+    secret_argv: list[str],
+    tmp_path: Path,
+) -> None:
+    child_argv_path = tmp_path / "child-argv.json"
+    script = (
+        "import json, pathlib, sys; "
+        "pathlib.Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]), encoding='utf-8')"
+    )
+    state_root = tmp_path / "state"
+
+    outcome = run_agent_exec(
+        [sys.executable, "-c", script, str(child_argv_path), *secret_argv],
+        cwd=tmp_path,
+        timeout_seconds=5,
+        max_output_bytes=1024,
+        state_root=state_root,
+    )
+
+    metadata_text = next(state_root.rglob("meta.json")).read_text(encoding="utf-8")
+    assert outcome.result["status"] == "PASS"
+    assert json.loads(child_argv_path.read_text(encoding="utf-8")) == secret_argv
+    _assert_no_sensitive_fixture_leak(json.dumps(outcome.result))
+    _assert_no_sensitive_fixture_leak(metadata_text)
+    _assert_no_secret_signature_fixture_leak(json.dumps(outcome.result))
+    _assert_no_secret_signature_fixture_leak(metadata_text)
+    assert REDACTED_ARGUMENT in metadata_text or REDACTED_SECRET in metadata_text
+
+
+@pytest.mark.parametrize(
+    "secret_argv",
+    [
+        pytest.param(
+            ["--header=Authorization:Basic SENTINEL"],
+            id="equals-authorization",
+        ),
+        pytest.param(
+            ["--header:Authorization:Basic SENTINEL"],
+            id="colon-authorization",
+        ),
+        pytest.param(
+            ["--header", "Authorization:Basic SENTINEL"],
+            id="separated-authorization",
+        ),
+        pytest.param(
+            ["--header=Proxy-Authorization:Basic SENTINEL"],
+            id="equals-proxy-authorization",
+        ),
+        pytest.param(
+            ["--header", "pRoXy-AuThOrIzAtIoN:Basic SENTINEL"],
+            id="separated-mixed-proxy-authorization",
+        ),
+    ],
+)
+def test_nested_sensitive_headers_are_redacted_without_changing_child_argv(
+    secret_argv: list[str],
+    tmp_path: Path,
+) -> None:
+    child_argv_path = tmp_path / "child-argv.json"
+    script = (
+        "import json, pathlib, sys; "
+        "pathlib.Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]), encoding='utf-8')"
+    )
+    state_root = tmp_path / "state"
+
+    outcome = run_agent_exec(
+        [sys.executable, "-c", script, str(child_argv_path), *secret_argv],
+        cwd=tmp_path,
+        timeout_seconds=5,
+        max_output_bytes=1024,
+        state_root=state_root,
+    )
+
+    metadata_path = next(state_root.rglob("meta.json"))
+    metadata_text = metadata_path.read_text(encoding="utf-8")
+    assert outcome.result["status"] == "PASS"
+    assert json.loads(child_argv_path.read_text(encoding="utf-8")) == secret_argv
+    _assert_no_sensitive_fixture_leak(json.dumps(outcome.result))
+    _assert_no_sensitive_fixture_leak(metadata_text)
+    assert REDACTED_ARGUMENT in metadata_text
+
+
 def test_local_absolute_paths_are_omitted_from_command_and_diagnostic(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -251,6 +411,308 @@ def test_local_absolute_paths_are_omitted_from_command_and_diagnostic(
     metadata_text = next(state_root.rglob("meta.json")).read_text(encoding="utf-8")
     assert str(work_root) not in metadata_text
     assert "<absolute-path>" in metadata_text
+
+
+@pytest.mark.parametrize(
+    "file_uri",
+    [
+        pytest.param(
+            "file:///private/REVIEWER_PATH_SENTINEL/file.py",
+            id="posix",
+        ),
+        pytest.param(
+            "file://localhost/private/REVIEWER_PATH_SENTINEL/file.py",
+            id="localhost",
+        ),
+        pytest.param(
+            "file://127.0.0.2/private/REVIEWER_PATH_SENTINEL/file.py",
+            id="loopback-ipv4",
+        ),
+        pytest.param(
+            "file://localhost./private/REVIEWER_PATH_SENTINEL/file.py",
+            id="localhost-trailing-dot",
+        ),
+        pytest.param(
+            "file://[0:0:0:0:0:0:0:1]/private/REVIEWER_PATH_SENTINEL/file.py",
+            id="loopback-ipv6",
+        ),
+    ],
+)
+def test_local_file_uris_are_redacted_from_public_failure_surfaces(
+    file_uri: str,
+    tmp_path: Path,
+) -> None:
+    script = "import sys; print('RuntimeError: ' + sys.argv[-1]); raise SystemExit(2)"
+    state_root = tmp_path / "state"
+
+    outcome = run_agent_exec(
+        [sys.executable, "-c", script, "--url", file_uri],
+        cwd=tmp_path,
+        timeout_seconds=5,
+        max_output_bytes=1024,
+        state_root=state_root,
+    )
+
+    metadata_path = next(state_root.rglob("meta.json"))
+    diagnostic_path = next(state_root.rglob("diagnostic.redacted.log"))
+    metadata_text = metadata_path.read_text(encoding="utf-8")
+    diagnostic_text = diagnostic_path.read_text(encoding="utf-8")
+    result_text = json.dumps(outcome.result)
+
+    assert outcome.result["status"] == "FAIL"
+    _assert_no_path_fixture_leak(result_text)
+    _assert_no_path_fixture_leak(metadata_text)
+    _assert_no_path_fixture_leak(outcome.presentation)
+    _assert_no_path_fixture_leak(diagnostic_text)
+    assert "<absolute-path>" in result_text
+    assert "<absolute-path>" in metadata_text
+    assert "<absolute-path>" in outcome.presentation
+    assert "<absolute-path>" in diagnostic_text
+
+
+@pytest.mark.parametrize(
+    "path_argv",
+    [
+        pytest.param(["/private/REVIEWER_PATH_SENTINEL/file.py"], id="posix-raw"),
+        pytest.param([r"C:\REVIEWER_PATH_SENTINEL\file.py"], id="windows-drive-raw"),
+        pytest.param([r"\\REVIEWER_PATH_SENTINEL\share\file.py"], id="windows-unc-raw"),
+        pytest.param(["~/REVIEWER_PATH_SENTINEL/file.py"], id="home-raw"),
+        pytest.param(
+            ["--rootdir:/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="posix-colon",
+        ),
+        pytest.param(
+            ["--rootdir=/private/REVIEWER_PATH_SENTINEL/file=tail.py"],
+            id="posix-equals-with-equals",
+        ),
+        pytest.param(
+            ["--rootdir", "/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="posix-separated",
+        ),
+        pytest.param(
+            [r"--rootdir:C:\REVIEWER_PATH_SENTINEL\file.py"],
+            id="windows-drive-colon",
+        ),
+        pytest.param(
+            [r"--rootdir=\\REVIEWER_PATH_SENTINEL\share\file.py"],
+            id="windows-unc-equals",
+        ),
+        pytest.param(
+            ["--rootdir:~/REVIEWER_PATH_SENTINEL/file.py"],
+            id="home-colon",
+        ),
+        pytest.param(
+            ["file:///private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-posix-raw",
+        ),
+        pytest.param(
+            ["file://localhost/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-localhost-raw",
+        ),
+        pytest.param(
+            ["file://127.0.0.2/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-loopback-ipv4-raw",
+        ),
+        pytest.param(
+            ["file://localhost./private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-localhost-trailing-dot-raw",
+        ),
+        pytest.param(
+            [
+                "file://[0:0:0:0:0:0:0:1]/private/REVIEWER_PATH_SENTINEL/file.py",
+            ],
+            id="file-uri-loopback-ipv6-raw",
+        ),
+        pytest.param(
+            ["file:///C:/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-windows-drive",
+        ),
+        pytest.param(
+            ["--rootdir=file:///private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-equals",
+        ),
+        pytest.param(
+            ["--rootdir:file://localhost/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-colon",
+        ),
+        pytest.param(
+            ["--rootdir=file://127.0.0.2/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-loopback-ipv4-equals",
+        ),
+        pytest.param(
+            ["--rootdir:file://localhost./private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-localhost-trailing-dot-colon",
+        ),
+        pytest.param(
+            ["--rootdir", "file:///private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="file-uri-separated",
+        ),
+        pytest.param(
+            [
+                "--rootdir",
+                "file://[0:0:0:0:0:0:0:1]/private/REVIEWER_PATH_SENTINEL/file.py",
+            ],
+            id="file-uri-loopback-ipv6-separated",
+        ),
+    ],
+)
+def test_path_bearing_argv_reaches_child_unchanged_but_metadata_is_redacted(
+    path_argv: list[str],
+    tmp_path: Path,
+) -> None:
+    expected_digests = repr(
+        [hashlib.sha256(value.encode("utf-8")).hexdigest() for value in path_argv]
+    )
+    script = (
+        "import hashlib, sys; "
+        "actual = [hashlib.sha256(value.encode('utf-8')).hexdigest() "
+        "for value in sys.argv[1:]]; "
+        f"raise SystemExit(0 if actual == {expected_digests} else 17)"
+    )
+    state_root = tmp_path / "state"
+
+    outcome = run_agent_exec(
+        [sys.executable, "-c", script, *path_argv],
+        cwd=tmp_path,
+        timeout_seconds=5,
+        max_output_bytes=1024,
+        state_root=state_root,
+    )
+
+    metadata_text = next(state_root.rglob("meta.json")).read_text(encoding="utf-8")
+    assert outcome.result["status"] == "PASS"
+    assert outcome.result["command_redacted"] is True
+    _assert_no_path_fixture_leak(json.dumps(outcome.result))
+    _assert_no_path_fixture_leak(metadata_text)
+    assert "<absolute-path>" in metadata_text
+
+
+@pytest.mark.parametrize(
+    "path_argv",
+    [
+        pytest.param(
+            ["--search-path=relative:/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="posix-equals",
+        ),
+        pytest.param(
+            ["--search-path:relative:/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="posix-colon",
+        ),
+        pytest.param(
+            ["--search-path", "relative:/private/REVIEWER_PATH_SENTINEL/file.py"],
+            id="posix-separated",
+        ),
+        pytest.param(
+            ["--search-path=relative;C:\\REVIEWER_PATH_SENTINEL\\file.py"],
+            id="windows-drive-list",
+        ),
+        pytest.param(
+            ["--search-path", r"relative;\\REVIEWER_PATH_SENTINEL\share\file.py"],
+            id="windows-unc-list",
+        ),
+        pytest.param(
+            ["--search-path=relative,~/REVIEWER_PATH_SENTINEL/file.py"],
+            id="home-list",
+        ),
+    ],
+)
+def test_path_list_values_are_redacted_without_changing_child_argv(
+    path_argv: list[str],
+    tmp_path: Path,
+) -> None:
+    expected_digests = repr(
+        [hashlib.sha256(value.encode("utf-8")).hexdigest() for value in path_argv]
+    )
+    script = (
+        "import hashlib, sys; "
+        "actual = [hashlib.sha256(value.encode('utf-8')).hexdigest() "
+        "for value in sys.argv[1:]]; "
+        f"raise SystemExit(0 if actual == {expected_digests} else 17)"
+    )
+    state_root = tmp_path / "state"
+
+    outcome = run_agent_exec(
+        [sys.executable, "-c", script, *path_argv],
+        cwd=tmp_path,
+        timeout_seconds=5,
+        max_output_bytes=1024,
+        state_root=state_root,
+    )
+
+    metadata_text = next(state_root.rglob("meta.json")).read_text(encoding="utf-8")
+    assert outcome.result["status"] == "PASS"
+    _assert_no_path_fixture_leak(json.dumps(outcome.result))
+    _assert_no_path_fixture_leak(metadata_text)
+    assert "<absolute-path>" in metadata_text
+
+
+@pytest.mark.parametrize(
+    "url_argv",
+    [
+        pytest.param(
+            ["--url", "authorization://example.test/resource"],
+            id="separated-authorization-uri",
+        ),
+        pytest.param(
+            ["--url", "Proxy-Authorization://example.test/resource"],
+            id="separated-proxy-authorization-uri",
+        ),
+        pytest.param(
+            ["--url=authorization://example.test/resource"],
+            id="equals-authorization-uri",
+        ),
+        pytest.param(
+            ["--url", "file://remote.example/resource"],
+            id="separated-remote-file-uri",
+        ),
+    ],
+)
+def test_authorization_uri_values_remain_unredacted_without_changing_child_argv(
+    url_argv: list[str],
+    tmp_path: Path,
+) -> None:
+    child_argv_path = tmp_path / "child-argv.json"
+    script = (
+        "import json, pathlib, sys; "
+        "pathlib.Path(sys.argv[1]).write_text(json.dumps(sys.argv[2:]), encoding='utf-8')"
+    )
+    state_root = tmp_path / "state"
+
+    outcome = run_agent_exec(
+        [sys.executable, "-c", script, str(child_argv_path), *url_argv],
+        cwd=tmp_path,
+        timeout_seconds=5,
+        max_output_bytes=1024,
+        state_root=state_root,
+    )
+
+    metadata_text = next(state_root.rglob("meta.json")).read_text(encoding="utf-8")
+    result_text = json.dumps(outcome.result)
+    uri_values = (
+        "authorization://example.test/resource",
+        "Proxy-Authorization://example.test/resource",
+        "file://remote.example/resource",
+    )
+    assert outcome.result["status"] == "PASS"
+    assert json.loads(child_argv_path.read_text(encoding="utf-8")) == url_argv
+    assert any(value in result_text for value in uri_values)
+    assert any(value in metadata_text for value in uri_values)
+
+
+def test_windows_absolute_executable_is_redacted_without_echoing_path(tmp_path: Path) -> None:
+    state_root = tmp_path / "state"
+    outcome = run_agent_exec(
+        [r"C:\REVIEWER_PATH_SENTINEL\tool.exe"],
+        cwd=tmp_path,
+        timeout_seconds=5,
+        max_output_bytes=1024,
+        state_root=state_root,
+    )
+
+    metadata_text = next(state_root.rglob("meta.json")).read_text(encoding="utf-8")
+    assert outcome.result["status"] == "INFRA_ERROR"
+    _assert_no_path_fixture_leak(json.dumps(outcome.result))
+    _assert_no_path_fixture_leak(metadata_text)
 
 
 def test_long_argv_is_bounded_in_machine_result(

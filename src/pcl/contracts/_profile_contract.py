@@ -213,6 +213,20 @@ def _array_constraints(
         ]
         if len(serialized) != len(set(serialized)):
             errors.append(f"{path}: items must be unique")
+    contains = schema.get("contains")
+    if isinstance(contains, Mapping):
+        matching = 0
+        for index, item in enumerate(value):
+            item_errors: list[str] = []
+            _validate(item, contains, f"{path}[{index}]", item_errors)
+            if not item_errors:
+                matching += 1
+        minimum = schema.get("minContains", 1)
+        maximum = schema.get("maxContains")
+        if isinstance(minimum, int) and matching < minimum:
+            errors.append(f"{path}: contains at least {minimum} matching item(s)")
+        if isinstance(maximum, int) and matching > maximum:
+            errors.append(f"{path}: contains at most {maximum} matching item(s)")
 
 
 def _matches_type(value: Any, expected: Any) -> bool:

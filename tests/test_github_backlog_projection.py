@@ -474,7 +474,7 @@ def test_committed_bootstrap_map_resolves_repo_anchors(tmp_path: Path) -> None:
     map_path = repo_root / "scripts" / "github-issue-map.json"
     mapping = load_issue_map(map_path)
     issues = sorted(entry["issue"] for entry in mapping["issues"])
-    assert issues == [1, 2, 3, 8]
+    assert issues == [1, 2, 3, 8, 13]
     shutil.copytree(repo_root / "agent-tasks", tmp_path / "agent-tasks")
     for entry in mapping["issues"]:
         for ref in set(

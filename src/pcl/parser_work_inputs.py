@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from .contracts.claim_set import CLAIM_SET_CONTRACT_VERSION
+from .contracts.agent_output import (
+    AGENT_OUTPUT_CLASSIFICATION_CONTRACT_VERSION,
+    AGENT_OUTPUT_POLICY_CONTRACT_VERSION,
+)
 from .contracts.completion_packet import COMPLETION_PACKET_CONTRACT_VERSION
 from .contracts.completion_policy import COMPLETION_POLICY_CONTRACT_VERSION
 from .contracts.council_run import COUNCIL_RUN_CONTRACT_VERSION
@@ -206,6 +210,8 @@ def add_work_input_parsers(sub) -> None:
             VERIFICATION_PLAN_CONTRACT_VERSION,
             DECISION_PROPOSAL_CONTRACT_VERSION,
             PROGRESS_RECEIPT_CONTRACT_VERSION,
+            AGENT_OUTPUT_POLICY_CONTRACT_VERSION,
+            AGENT_OUTPUT_CLASSIFICATION_CONTRACT_VERSION,
         ],
         dest="contract_type",
     )

@@ -169,6 +169,33 @@ These are useful after the CLI is already installed and understood:
 The wrappers do not replace the runtime. State mutations still go through
 `pcl`.
 
+## Bounded noisy verification output
+
+The Phase 1 agent-output surface is read-only and works without project-local
+state. Inspect the canonical policy and classify an already-tokenized argv:
+
+```bash
+pcl agent-output policy --json
+pcl agent-output classify --argv-json '["npm","run","verify:full"]' --json
+```
+
+For an `eligible` direct, non-interactive verification command, use the
+returned `pcl exec --` prefix. Leave `negative`, `unknown`, and
+`already_wrapped` results unchanged; the classifier never reparses shell text
+or authorizes a rewrite. PASS results do not require diagnostic reads, failed
+results expose only bounded diagnostics, and automatic retries/raw-log uploads
+are not part of this policy.
+
+Render the same shared Skill and host-specific note for a supported host with:
+
+```bash
+pcl agent-output render --host codex
+```
+
+Phase 1 does not install global files, add hooks, persist audit records, or
+claim cross-host adoption. Those remain the next inspect-first installer,
+audit/storage, dogfood, and human-decision slices in the Issue #13 plan.
+
 ## New Project Start
 
 Run these steps from the target project root.

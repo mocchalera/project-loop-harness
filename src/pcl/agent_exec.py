@@ -16,20 +16,42 @@ from .agent_exec_error_window import (
     ErrorWindowResult,
     combine_error_windows,
 )
+from .agent_exec_validation import (
+    AGENT_EXEC_MAX_OUTPUT_BYTES,
+    are_valid_agent_exec_env_names,
+    compile_agent_exec_redaction_patterns,
+    is_valid_agent_exec_max_output_bytes,
+    is_valid_agent_exec_timeout,
+)
 from .contracts.agent_exec_result import (
     AGENT_EXEC_RESULT_CONTRACT_VERSION,
     validate_agent_exec_result,
 )
 from .errors import InvalidInputError
 from .guarded_process import execute_guarded_process
+from .path_safety import (
+    is_path_like,
+    is_path_list_like,
+    redact_local_file_uris,
+    split_path_list_value,
+    split_path_value,
+)
 from .redaction import redact_bytes
+from .sensitive import (
+    is_option_shaped_key,
+    is_sensitive_header_value,
+    is_sensitive_key,
+    is_sensitive_key_value,
+    split_nested_sensitive_header,
+    split_key_value,
+)
 
 
 PASS_MAX_LINES = 5
 PASS_MAX_BYTES = 2_048
 FAIL_MAX_LINES = 120
 FAIL_MAX_BYTES = 24_576
-MAX_OUTPUT_BYTES_PER_STREAM = 8 * 1024 * 1024
+MAX_OUTPUT_BYTES_PER_STREAM = AGENT_EXEC_MAX_OUTPUT_BYTES
 MAX_COMMAND_ITEM_BYTES = 256
 MAX_COMMAND_TOTAL_BYTES = 2_048
 MAX_DIAGNOSTIC_LINE_BYTES = 1_024
@@ -40,10 +62,6 @@ RUN_ID_PATTERN = re.compile(r"^AX-(\d{8})T\d{6}Z-([a-f0-9]{12})$")
 ERROR_LINE_PATTERN = re.compile(
     r"(?i)(?:\berror\b|\bfail(?:ed|ure)?\b|assert(?:ion)?|exception|traceback|"
     r"\bpanic\b|\bfatal\b|timed?\s*out|not found|permission denied|segmentation fault)"
-)
-SENSITIVE_OPTION_PATTERN = re.compile(
-    r"^--?(?:api[-_]?key|token|secret|password|private[-_]?key)$",
-    re.IGNORECASE,
 )
 UNIX_ABSOLUTE_PATH_PATTERN = re.compile(r"(?<![:/\w])/(?:[^\s:]+/)*[^\s:]+")
 WINDOWS_ABSOLUTE_PATH_PATTERN = re.compile(r"\b[A-Za-z]:\\[^\r\n\t]+")
@@ -86,9 +104,9 @@ def run_agent_exec(
 ) -> AgentExecOutcome:
     if not argv:
         raise InvalidInputError("`pcl exec --` requires at least one argv item.")
-    if timeout_seconds < 1:
+    if not is_valid_agent_exec_timeout(timeout_seconds):
         raise InvalidInputError("--timeout-seconds must be at least 1.")
-    if not 1 <= max_output_bytes <= MAX_OUTPUT_BYTES_PER_STREAM:
+    if not is_valid_agent_exec_max_output_bytes(max_output_bytes):
         raise InvalidInputError(
             f"--max-output-bytes must be between 1 and {MAX_OUTPUT_BYTES_PER_STREAM}."
         )
@@ -96,6 +114,11 @@ def run_agent_exec(
         raise InvalidInputError("Agent execution argv is limited to 256 items.")
     if any("\x00" in item for item in argv):
         raise InvalidInputError("Agent execution argv cannot contain NUL bytes.")
+    allowed_env_names = tuple(allowed_env_names)
+    if not are_valid_agent_exec_env_names(allowed_env_names):
+        raise InvalidInputError(
+            "Agent execution allowlist contains an invalid environment variable name."
+        )
 
     patterns = _compile_redaction_patterns(redaction_patterns)
     root = _prepare_state_root(state_root or default_agent_exec_state_root())
@@ -382,16 +405,12 @@ def render_agent_exec_human(result: dict[str, Any], diagnostic_text: str = "") -
 
 
 def _compile_redaction_patterns(patterns: Iterable[str]) -> tuple[Pattern[str], ...]:
-    compiled: list[Pattern[str]] = []
-    for pattern in patterns:
-        try:
-            compiled.append(re.compile(pattern))
-        except re.error as exc:
-            raise InvalidInputError(
-                "Invalid --redact-pattern regular expression.",
-                details={"pattern": pattern},
-            ) from exc
-    return tuple(compiled)
+    try:
+        return compile_agent_exec_redaction_patterns(patterns)
+    except re.error as exc:
+        raise InvalidInputError(
+            "Invalid --redact-pattern regular expression.",
+        ) from exc
 
 
 def _new_run_id() -> str:
@@ -479,19 +498,52 @@ def _redact_argv(
     redacted: list[str] = []
     changed = False
     redact_next = False
+    redact_header_value_next = False
+    path_value_next = False
+    selection_value_next = False
     total_bytes = 0
     for index, item in enumerate(argv):
         if redact_next:
             value = REDACTED_ARGUMENT
             item_changed = True
             redact_next = False
+            redact_header_value_next = False
+            path_value_next = False
+            selection_value_next = False
+        elif redact_header_value_next and is_sensitive_header_value(item):
+            value = REDACTED_ARGUMENT
+            item_changed = True
+            redact_header_value_next = False
+            path_value_next = False
+            selection_value_next = False
+        elif path_value_next and (is_path_like(item) or is_path_list_like(item)):
+            value = "<absolute-path>"
+            item_changed = True
+            redact_header_value_next = False
+            path_value_next = False
+            selection_value_next = False
         else:
-            redacted_bytes, item_changed = redact_bytes(
-                item.encode("utf-8"), additional_patterns=patterns
-            )
-            value = redacted_bytes.decode("utf-8", errors="replace")
-            if SENSITIVE_OPTION_PATTERN.fullmatch(item):
-                redact_next = True
+            redact_header_value_next = False
+            path_value_next = False
+            is_selection_value = selection_value_next
+            selection_value_next = False
+            if is_selection_value:
+                value, item_changed = item, False
+            else:
+                value, item_changed = _redact_sensitive_argument(item)
+            if not item_changed:
+                redacted_bytes, item_changed = redact_bytes(
+                    item.encode("utf-8"), additional_patterns=patterns
+                )
+                value = redacted_bytes.decode("utf-8", errors="replace")
+            if is_option_shaped_key(item):
+                if _is_selection_value_option(item):
+                    selection_value_next = item in {"-k", "--keyword", "-m", "--markexpr"}
+                elif is_sensitive_key(item):
+                    redact_next = True
+                else:
+                    redact_header_value_next = True
+                path_value_next = True
         value, path_changed = _sanitize_argument(value, cwd=cwd, executable=index == 0)
         value, clipped = _clip_argument(value)
         encoded_size = len(value.encode("utf-8")) + (1 if redacted else 0)
@@ -505,15 +557,40 @@ def _redact_argv(
     return redacted, changed
 
 
+def _redact_sensitive_argument(item: str) -> tuple[str, bool]:
+    nested_header = split_nested_sensitive_header(item)
+    if nested_header is not None:
+        key, separator, _value = nested_header
+        return f"{key}{separator}{REDACTED_ARGUMENT}", True
+    key_value = split_key_value(item)
+    if key_value is not None:
+        key, separator, _value = key_value
+        if is_sensitive_key_value(item):
+            return f"{key}{separator}{REDACTED_ARGUMENT}", True
+    return item, False
+
+
+def _is_selection_value_option(token: str) -> bool:
+    if token in {"-k", "--keyword", "-m", "--markexpr"}:
+        return True
+    if token.startswith(("-k", "-m")) and not token.startswith("--") and len(token) > 2:
+        return True
+    return "=" in token and token.split("=", 1)[0].lower() in {"--keyword", "--markexpr"}
+
+
 def _sanitize_argument(value: str, *, cwd: Path, executable: bool) -> tuple[str, bool]:
-    if os.path.isabs(value):
+    if is_path_like(value):
         if executable:
-            return f"<executable:{Path(value).name}>", True
+            return "<executable:redacted>", True
         return "<absolute-path>", True
-    if "=" in value:
-        key, candidate = value.split("=", 1)
-        if os.path.isabs(candidate):
-            return f"{key}=<absolute-path>", True
+    path_value = split_path_value(value)
+    if path_value is not None:
+        key, separator, _candidate = path_value
+        return f"{key}{separator}<absolute-path>", True
+    path_list_value = split_path_list_value(value)
+    if path_list_value is not None:
+        key, separator, _candidate = path_list_value
+        return f"{key}{separator}<absolute-path>", True
     sanitized, changed = _replace_known_paths(value, cwd=cwd)
     return sanitized, changed
 
@@ -662,8 +739,7 @@ def _sanitize_diagnostic(selection: DiagnosticSelection, *, cwd: Path) -> Diagno
 
 
 def _replace_known_paths(value: str, *, cwd: Path) -> tuple[str, bool]:
-    changed = False
-    result = value
+    result, changed = redact_local_file_uris(value)
     replacements = [
         (str(cwd.resolve()), "<project-root>"),
         (str(Path.home().resolve()), "<home>"),

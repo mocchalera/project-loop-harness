@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 
+from .agent_exec_validation import AGENT_EXEC_MAX_OUTPUT_BYTES
+
 
 # NUL cannot arrive through a real OS argv item. It therefore distinguishes the
 # separator inserted by `_extract_global_options` from user-supplied text.
 AGENT_EXEC_ARGV_SENTINEL = "\0PCL_AGENT_EXEC_ARGV\0"
 DEFAULT_AGENT_EXEC_TIMEOUT_SECONDS = 120
-DEFAULT_AGENT_EXEC_MAX_OUTPUT_BYTES = 8 * 1024 * 1024
+DEFAULT_AGENT_EXEC_MAX_OUTPUT_BYTES = AGENT_EXEC_MAX_OUTPUT_BYTES
 
 
 def add_agent_exec_parser(sub: argparse._SubParsersAction) -> None:

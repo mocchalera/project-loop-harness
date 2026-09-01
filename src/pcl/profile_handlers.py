@@ -12,6 +12,14 @@ from .contracts.claim_set import (
     load_claim_set,
     validate_claim_set,
 )
+from .contracts.agent_output import (
+    AGENT_OUTPUT_CLASSIFICATION_CONTRACT_VERSION,
+    AGENT_OUTPUT_POLICY_CONTRACT_VERSION,
+    load_agent_output_classification,
+    load_agent_output_policy,
+    validate_agent_output_classification,
+    validate_agent_output_policy,
+)
 from .contracts.completion_packet import (
     COMPLETION_PACKET_CONTRACT_VERSION,
     load_completion_packet,
@@ -596,6 +604,14 @@ def _validate_contract_file(
         PROGRESS_RECEIPT_CONTRACT_VERSION: (
             load_progress_receipt,
             validate_progress_receipt,
+        ),
+        AGENT_OUTPUT_POLICY_CONTRACT_VERSION: (
+            load_agent_output_policy,
+            validate_agent_output_policy,
+        ),
+        AGENT_OUTPUT_CLASSIFICATION_CONTRACT_VERSION: (
+            load_agent_output_classification,
+            validate_agent_output_classification,
         ),
     }
     load_packet, validate_packet = contract_handlers[contract_type]

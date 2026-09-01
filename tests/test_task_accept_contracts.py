@@ -112,6 +112,9 @@ def test_mcp_write_mode_uses_cli_service_and_canonical_envelope_bytes(
         separators=(",", ":"),
     )
     assert result["content"] == [{"type": "text", "text": canonical}]
+    assert result["structuredContent"]["schema_version"] == TASK_ACCEPT_ENVELOPE_SCHEMA["$id"]
+    assert TASK_ACCEPT_ENVELOPE_SCHEMA["$id"] in canonical
+    assert "[REDACTED_SECRET]" not in canonical
     assert result["isError"] is False
 
 

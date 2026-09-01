@@ -1,10 +1,34 @@
 # 0229 — Cross-agent output-budget default rollout
 
-Status: **proposed / not started**. Implement only after GitHub Issue #13 and
-`docs/plan-cross-agent-output-budget-rollout.md` are accepted on `main`, and
-after task 0228 has a merged two-family dogfood closeout.
+Status: **Phase 1 implementation under review; task not complete**. The
+contract/classifier/Skill/rendering slice is implemented on an isolated branch.
+Inspect-first installers, audit-only hooks/storage, cross-host dogfood, and the
+human rollout decision remain unimplemented. The full task still requires the
+remaining gates below.
 
 Priority: P1 · Milestone: post-v0.6.0 · Origin: GitHub Issue #13
+
+## Phase 1 implementation boundary
+
+This slice is intentionally limited to the read-only public CLI surfaces:
+
+- `agent-output-policy/v1` and `agent-output-classification/v1` contracts;
+- pure classification of already-tokenized argv with stable reason codes and
+  `may_rewrite: false`;
+- one packaged `agent-output-budget` Skill and compact global fragment;
+- deterministic Codex, Claude Code, Gemini CLI, OpenCode, and AGI Cockpit
+  projections generated from the shared source.
+
+The following are the next slices and are not complete here:
+
+1. inspect-first installers with dry-run, hash recheck, apply, status, and
+   exact rollback;
+2. audit-only Claude/Gemini adapters and documented host-protocol fixtures;
+3. bounded audit storage, report, and retention GC;
+4. real cross-host dogfood for Codex, Claude Code, Gemini CLI, OpenCode, and an
+   AGI Cockpit worker;
+5. the explicit human rollout decision: `policy-only`, `continue-audit`, or a
+   separately scoped rewrite proposal.
 
 ## Problem
 

@@ -6,6 +6,9 @@ import sys
 import time
 import tracemalloc
 
+import pytest
+
+from pcl.errors import InvalidInputError
 from pcl.guarded_process import build_subprocess_env, execute_guarded_process
 from pcl.redaction import REDACTED_SECRET, compile_redaction_patterns
 
@@ -123,3 +126,8 @@ def test_environment_uses_allowlist_and_does_not_inherit_secret(monkeypatch) -> 
     }
     assert contract["values_recorded"] is False
     assert os.environ["PCL_TEST_SECRET"] == "must-not-leak"
+
+
+def test_environment_rejects_invalid_allowlist_names() -> None:
+    with pytest.raises(InvalidInputError):
+        build_subprocess_env(additional_allowed_names={"BAD-NAME"})

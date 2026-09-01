@@ -3,19 +3,14 @@ from __future__ import annotations
 import re
 from typing import Any, Iterable, Pattern
 
+from .agent_exec_validation import compile_agent_exec_redaction_patterns
 from .errors import InvalidInputError
+from .sensitive import SECRET_SIGNATURE_PATTERNS
 
 
 REDACTED_SECRET = "[REDACTED_SECRET]"
 
-SECRET_PATTERNS: tuple[Pattern[str], ...] = (
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.DOTALL),
-    re.compile(r"sk-[A-Za-z0-9_-]{20,}\b"),
-    re.compile(r"\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{20,}\b"),
-    re.compile(r"\bgithub_pat_[A-Za-z0-9_]{20,}\b"),
-    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b"),
-)
+SECRET_PATTERNS: tuple[Pattern[str], ...] = SECRET_SIGNATURE_PATTERNS
 KEY_VALUE_SECRET = re.compile(
     r"\b(api[_-]?key|token|secret|password|private[_-]?key)\b"
     r"(\s*[:=]\s*)(['\"]?)([^'\"\s,}]{8,})(['\"]?)",
@@ -24,16 +19,10 @@ KEY_VALUE_SECRET = re.compile(
 
 
 def compile_redaction_patterns(patterns: Iterable[str] = ()) -> tuple[Pattern[str], ...]:
-    compiled = []
-    for pattern in patterns:
-        try:
-            compiled.append(re.compile(pattern))
-        except re.error as exc:
-            raise InvalidInputError(
-                f"Invalid executor redaction pattern: {exc}",
-                details={"pattern": pattern},
-            ) from exc
-    return tuple(compiled)
+    try:
+        return compile_agent_exec_redaction_patterns(patterns)
+    except re.error as exc:
+        raise InvalidInputError(f"Invalid executor redaction pattern: {exc}") from exc
 
 
 def redact_text(

@@ -1,6 +1,7 @@
 # Cross-agent output-budget rollout plan
 
-Status: proposed for GitHub Issue #13
+Status: Phase 1 implementation under review; remaining rollout slices deferred
+for GitHub Issue #13
 
 Date: 2026-08-31
 
@@ -9,6 +10,25 @@ Repository task: `agent-tasks/0229-cross-agent-output-budget-rollout.md`
 Dependency: Issue #8 / task 0228 project-agnostic `pcl exec` runtime
 
 Priority: P1 · Milestone: post-v0.6.0
+
+## Phase 1 implementation status
+
+The current implementation is a read-only vertical slice and does not complete
+the rollout plan. It provides the two frozen data contracts, a pure
+already-tokenized-argv classifier, one packaged `agent-output-budget` Skill, a
+compact global fragment, deterministic projections for all five named hosts,
+and the public `pcl agent-output policy|classify|render` commands.
+
+The next implementation slices remain explicitly open:
+
+1. inspect-first installers for supported host files;
+2. audit-only Claude and Gemini adapters;
+3. bounded audit storage, aggregate report, and retention GC;
+4. real cross-host dogfood and rollback/reinstall evidence;
+5. an explicit human rollout decision before any rewrite proposal.
+
+No installer, hook, audit storage/report/GC, cross-host adoption claim, or
+human rollout decision is included in Phase 1.
 
 ## 1. Decision
 
@@ -81,8 +101,10 @@ Typical eligible families:
 - builds: `python -m build`, `npm run build`, `cargo build`, package builds;
 - project validation: scripts named `validate`, `verify`, `verify:*`, `check`,
   or local-CI equivalents;
-- package installation and verbose deterministic code generation when the
-  resulting output is not itself the requested artifact.
+- exact non-interactive package installation forms: `pip install --no-input`,
+  `python -m pip install --no-input`, and `go install`; plus verbose deterministic
+  code generation when the resulting output is not itself the requested artifact.
+  Installers that may prompt remain negative.
 
 The policy must support repository-declared exact argv additions without
 turning arbitrary shell text into executable policy.
@@ -100,7 +122,7 @@ The following are deterministic negative cases:
 - watch mode, development servers, `tail -f`, and other long-lived streaming
   processes;
 - arbitrary pipelines, redirections, substitutions, here-documents, compound
-  expressions, or shell functions;
+  expressions, standalone background operators, or shell functions;
 - commands whose command line cannot be safely reduced to an argv shape;
 - any command explicitly marked `output_is_artifact` by repository policy.
 
@@ -130,7 +152,7 @@ The packaged policy is data, not executable shell text. It contains:
   "schema": "agent-output-policy/v1",
   "eligible_argv_rules": [],
   "negative_argv_rules": [],
-  "unsafe_shell_markers": [],
+  "unsafe_shell_markers": ["|", ">", ">>", "<", "$(", "`", "&&", "||", ";", "&", "\n", "\r", "heredoc", "function"],
   "result_handling": {
     "pass_reads_diagnostics": false,
     "automatic_retry": false,
