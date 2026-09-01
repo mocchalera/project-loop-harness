@@ -1,7 +1,7 @@
 # Agent output audit contract
 
-Status: Phase 2a contract merged through PR #17; Phase 2b local normalizer under
-review for GitHub Issue #13
+Status: Phase 2a contract and Phase 2b local normalizer merged through PR #18
+for GitHub Issue #13
 
 This document freezes the local observation record that future Claude Code and
 Gemini CLI audit-only adapters may emit. It does **not** install a hook, write an

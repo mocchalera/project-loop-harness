@@ -197,10 +197,10 @@ claim cross-host adoption. Those remain the next inspect-first installer,
 audit/storage, dogfood, and human-decision slices in the Issue #13 plan.
 
 Phase 2a freezes the strict local observation shape in
-`docs/agent-output-audit-contract.md`. The Phase 2b candidate adds only a pure
-normalizer for synthetic documented Claude Code and Gemini CLI events. It still
-does not install or invoke a hook, emit a host response, write an audit file,
-synchronize a host, or authorize rewriting.
+`docs/agent-output-audit-contract.md`. The merged Phase 2b implementation adds
+only a pure normalizer for synthetic documented Claude Code and Gemini CLI
+events. It still does not install or invoke a hook, emit a host response, write
+an audit file, synchronize a host, or authorize rewriting.
 
 ## New Project Start
 
