@@ -1,7 +1,7 @@
 # Cross-agent output-budget rollout plan
 
-Status: Phase 1 implementation under review; remaining rollout slices deferred
-for GitHub Issue #13
+Status: Phase 1 merged through PR #16; Phase 2a audit contract under review;
+remaining rollout slices deferred for GitHub Issue #13
 
 Date: 2026-08-31
 
@@ -13,7 +13,7 @@ Priority: P1 · Milestone: post-v0.6.0
 
 ## Phase 1 implementation status
 
-The current implementation is a read-only vertical slice and does not complete
+The merged implementation is a read-only vertical slice and does not complete
 the rollout plan. It provides the two frozen data contracts, a pure
 already-tokenized-argv classifier, one packaged `agent-output-budget` Skill, a
 compact global fragment, deterministic projections for all five named hosts,
@@ -29,6 +29,23 @@ The next implementation slices remain explicitly open:
 
 No installer, hook, audit storage/report/GC, cross-host adoption claim, or
 human rollout decision is included in Phase 1.
+
+## Phase 2a audit contract status
+
+The current isolated candidate freezes `agent-output-audit/v1` before any host
+adapter or storage is added. It accepts only the documented Claude Code
+`PreToolUse`/`Bash` and Gemini CLI `BeforeTool`/`run_shell_command` tuples,
+rejects unknown fields, and fixes `action: observed_only` plus
+`may_rewrite: false`.
+
+The command-shape digest is computed only from classification, reason code, and
+already-wrapped state. It is never computed from argv, shell text, tool input,
+paths, sessions, environment values, or output. The pure builder accepts no raw
+command parameter. The full contract and deferred boundaries are documented in
+`docs/agent-output-audit-contract.md`.
+
+Phase 2a does not implement a hook response, host configuration, audit file,
+report, retention GC, installer, or rollout. Those remain separate gates.
 
 ## 1. Decision
 

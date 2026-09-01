@@ -45,6 +45,7 @@ def test_source_wheel_and_sdist_expose_the_same_agent_output_surface(tmp_path: P
         "pcl/agent_output_handlers.py",
         "pcl/parser_agent_output.py",
         "pcl/contracts/agent_output.py",
+        "pcl/contracts/schemas/agent-output-audit-v1.schema.json",
         "pcl/contracts/schemas/agent-output-policy-v1.schema.json",
         "pcl/contracts/schemas/agent-output-classification-v1.schema.json",
         "pcl/templates/agent-output-budget/GLOBAL_FRAGMENT.md",
@@ -88,3 +89,28 @@ def test_source_wheel_and_sdist_expose_the_same_agent_output_surface(tmp_path: P
     wheel_results = [_run_cli(wheel_path, project_root, *command) for command in commands]
     sdist_results = [_run_cli(sdist_path, project_root, *command) for command in commands]
     assert source_results == wheel_results == sdist_results
+
+    audit_script = (
+        "import json; "
+        "from pcl.agent_output_policy import classify_agent_output_argv; "
+        "from pcl.contracts import build_agent_output_audit_record, validate_agent_output_audit; "
+        "record=build_agent_output_audit_record("
+        "observed_at='2026-09-01T00:00:00Z',host='gemini-cli',event='BeforeTool',"
+        "tool='run_shell_command',classification=classify_agent_output_argv(['pytest'])); "
+        "print(json.dumps({'ok':validate_agent_output_audit(record).ok,'record':record},sort_keys=True))"
+    )
+
+    def run_audit_contract(pythonpath: str) -> object:
+        result = subprocess.run(
+            [sys.executable, "-c", audit_script],
+            cwd=project_root,
+            env={**os.environ, "PYTHONPATH": pythonpath},
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return json.loads(result.stdout)
+
+    assert run_audit_contract(source_path) == run_audit_contract(wheel_path) == run_audit_contract(
+        sdist_path
+    )
