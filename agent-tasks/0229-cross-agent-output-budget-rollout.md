@@ -1,10 +1,11 @@
 # 0229 — Cross-agent output-budget default rollout
 
-Status: **Phase 1 implementation under review; task not complete**. The
-contract/classifier/Skill/rendering slice is implemented on an isolated branch.
-Inspect-first installers, audit-only hooks/storage, cross-host dogfood, and the
-human rollout decision remain unimplemented. The full task still requires the
-remaining gates below.
+Status: **Phase 1 merged through PR #16; Phase 2a audit contract under review;
+task not complete**. The contract/classifier/Skill/rendering slice is on `main`.
+The bounded `agent-output-audit/v1` record and privacy-reduced field allowlist
+are the current isolated candidate. Inspect-first installers, audit-only host
+adapters/storage, cross-host dogfood, and the human rollout decision remain
+unimplemented. The full task still requires the remaining gates below.
 
 Priority: P1 · Milestone: post-v0.6.0 · Origin: GitHub Issue #13
 
@@ -29,6 +30,23 @@ The following are the next slices and are not complete here:
    AGI Cockpit worker;
 5. the explicit human rollout decision: `policy-only`, `continue-audit`, or a
    separately scoped rewrite proposal.
+
+## Phase 2a audit contract boundary
+
+This candidate adds only the data boundary required before an audit adapter can
+be safely implemented:
+
+- strict `agent-output-audit/v1` schema and validator;
+- exact documented Claude Code `PreToolUse`/`Bash` and Gemini CLI
+  `BeforeTool`/`run_shell_command` protocol identities;
+- an explicit persisted-field allowlist with unknown fields rejected;
+- a pure builder that accepts a validated classification but no raw command;
+- a category-only command-shape digest recomputed from classification,
+  reason code, and already-wrapped state.
+
+It does not install or invoke a hook, write audit storage, synchronize host
+files, capture output, or authorize rewriting. See
+`docs/agent-output-audit-contract.md`.
 
 ## Problem
 

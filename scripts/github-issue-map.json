@@ -78,11 +78,14 @@
           "src/pcl/agent_output_handlers.py",
           "src/pcl/parser_agent_output.py",
           "src/pcl/contracts/agent_output.py",
+          "src/pcl/contracts/schemas/agent-output-audit-v1.schema.json",
           "src/pcl/contracts/schemas/agent-output-policy-v1.schema.json",
           "src/pcl/contracts/schemas/agent-output-classification-v1.schema.json",
           "src/pcl/templates/agent-output-budget/SKILL.md",
           "src/pcl/templates/agent-output-budget/GLOBAL_FRAGMENT.md",
           "src/pcl/templates/agent-output-budget/policy.json",
+          "docs/agent-output-audit-contract.md",
+          "tests/test_agent_output_audit_contract.py",
           "tests/test_agent_output_policy.py",
           "tests/test_agent_output_distribution.py"
         ]

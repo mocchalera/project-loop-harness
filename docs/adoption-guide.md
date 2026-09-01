@@ -196,6 +196,10 @@ Phase 1 does not install global files, add hooks, persist audit records, or
 claim cross-host adoption. Those remain the next inspect-first installer,
 audit/storage, dogfood, and human-decision slices in the Issue #13 plan.
 
+The Phase 2a candidate freezes the strict local observation shape in
+`docs/agent-output-audit-contract.md`. It still does not install or invoke a
+hook, write an audit file, synchronize a host, or authorize rewriting.
+
 ## New Project Start
 
 Run these steps from the target project root.
