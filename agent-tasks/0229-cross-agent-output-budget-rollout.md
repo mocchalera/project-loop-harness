@@ -1,11 +1,12 @@
 # 0229 — Cross-agent output-budget default rollout
 
-Status: **Phase 1 merged through PR #16; Phase 2a audit contract under review;
-task not complete**. The contract/classifier/Skill/rendering slice is on `main`.
-The bounded `agent-output-audit/v1` record and privacy-reduced field allowlist
-are the current isolated candidate. Inspect-first installers, audit-only host
-adapters/storage, cross-host dogfood, and the human rollout decision remain
-unimplemented. The full task still requires the remaining gates below.
+Status: **Phase 1 and Phase 2a merged through PR #17; Phase 2b local audit
+normalizer under review; task not complete**. The policy/classifier/Skill,
+rendering, and bounded `agent-output-audit/v1` contract are on `main`. The
+current isolated candidate only normalizes synthetic Claude Code and Gemini CLI
+events into that contract. Inspect-first installers, executable hook adapters,
+audit storage/report/GC, cross-host dogfood, and the human rollout decision
+remain unimplemented. The full task still requires the remaining gates below.
 
 Priority: P1 · Milestone: post-v0.6.0 · Origin: GitHub Issue #13
 
@@ -47,6 +48,23 @@ be safely implemented:
 It does not install or invoke a hook, write audit storage, synchronize host
 files, capture output, or authorize rewriting. See
 `docs/agent-output-audit-contract.md`.
+
+## Phase 2b local normalizer boundary
+
+This slice consumes the Phase 2a contract without adding a runnable hook. One
+pure deterministic normalizer:
+
+- accepts only the frozen Claude Code `PreToolUse`/`Bash` and Gemini CLI
+  `BeforeTool`/`run_shell_command` identities;
+- reads only the documented `tool_input.command` string shape;
+- never tokenizes or reconstructs that shell string, so it records
+  `unknown`/`host_command_string_not_tokenized`;
+- discards session, transcript, cwd, description, path, and command values;
+- returns a validated `agent-output-audit/v1` record with `observed_only` and
+  `may_rewrite: false`.
+
+It adds no stdout response, process entry point, storage, host configuration,
+hook registration, command execution, or lifecycle authority.
 
 ## Problem
 

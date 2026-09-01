@@ -1,0 +1,14 @@
+{
+  "session_id": "GEMINI_SESSION_SENTINEL",
+  "transcript_path": "/Users/fixture/GEMINI_TRANSCRIPT_SENTINEL.jsonl",
+  "cwd": "/Users/fixture/GEMINI_CWD_SENTINEL",
+  "hook_event_name": "BeforeTool",
+  "timestamp": "2026-09-01T00:00:00Z",
+  "tool_name": "run_shell_command",
+  "tool_input": {
+    "command": "pytest /Users/fixture/GEMINI_ABSOLUTE_PATH_SENTINEL",
+    "description": "GEMINI_DESCRIPTION_SENTINEL",
+    "dir_path": "/Users/fixture/GEMINI_DIR_SENTINEL",
+    "is_background": false
+  }
+}

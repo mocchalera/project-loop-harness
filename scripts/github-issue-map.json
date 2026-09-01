@@ -74,6 +74,7 @@
           "agent-tasks/0229-cross-agent-output-budget-rollout.md",
           "docs/plan-cross-agent-output-budget-rollout.md",
           "src/pcl/agent_output_policy.py",
+          "src/pcl/agent_output_audit.py",
           "src/pcl/agent_output_renderer.py",
           "src/pcl/agent_output_handlers.py",
           "src/pcl/parser_agent_output.py",
@@ -85,6 +86,7 @@
           "src/pcl/templates/agent-output-budget/GLOBAL_FRAGMENT.md",
           "src/pcl/templates/agent-output-budget/policy.json",
           "docs/agent-output-audit-contract.md",
+          "tests/test_agent_output_audit_adapter.py",
           "tests/test_agent_output_audit_contract.py",
           "tests/test_agent_output_policy.py",
           "tests/test_agent_output_distribution.py"
